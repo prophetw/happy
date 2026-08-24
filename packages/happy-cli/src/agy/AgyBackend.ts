@@ -91,6 +91,7 @@ export class AgyBackend implements AgentBackend {
   private activeTurnReject: ((err: Error) => void) | null = null;
   private activeTurnStderr = '';
   private isTurnRunning = false;
+  private isStartingChild = false;
   private isDisposed = false;
   private pendingModelRestart = false;
 
@@ -124,10 +125,9 @@ export class AgyBackend implements AgentBackend {
     // The model is only applied as a spawn-time `--model` flag, so a live child
     // keeps running the old model until respawned. Restart the persistent process
     // to honor the change; the respawn passes `--conversation <id>` so context is
-    // preserved. Never kill mid-turn — that would fail the in-flight prompt — so
-    // defer to the sendPrompt finally block while a turn is running.
+    // preserved. Never kill mid-turn or during startup — defer until turn finishes or child initializes.
     if (this.child && !this.child.killed) {
-      if (this.isTurnRunning) {
+      if (this.isTurnRunning || this.isStartingChild) {
         this.pendingModelRestart = true;
       } else {
         this.restartChildForModelChange();
@@ -136,12 +136,15 @@ export class AgyBackend implements AgentBackend {
   }
 
   private restartChildForModelChange(): void {
+    if (!this.child) return;
     this.log(
       `Model changed to "${this.model ?? 'default'}" — restarting persistent agy process ` +
         `(conversation ${this.conversationId ?? 'none'} is preserved on respawn)`,
     );
-    this.child?.kill('SIGTERM');
+    const oldChild = this.child;
+    (oldChild as any)._killedForRestart = true;
     this.child = null;
+    oldChild.kill('SIGTERM');
   }
 
   setDiscoveredModels(models: DiscoveredModel[]): void {
@@ -304,16 +307,29 @@ export class AgyBackend implements AgentBackend {
 
   private async ensureChildRunning(): Promise<void> {
     if (this.child && !this.child.killed) {
-      return;
+      if (this.pendingModelRestart) {
+        this.pendingModelRestart = false;
+        this.restartChildForModelChange();
+      } else {
+        return;
+      }
     }
 
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
+        this.isStartingChild = true;
         await this.spawnPersistentChild();
+        this.isStartingChild = false;
+        if (this.pendingModelRestart) {
+          this.pendingModelRestart = false;
+          this.restartChildForModelChange();
+          continue;
+        }
         return;
       } catch (err) {
+        this.isStartingChild = false;
         lastError = err instanceof Error ? err : new Error(String(err));
         const isRetryable = isRetryableAgyError(lastError.message, this.activeTurnStderr);
         if (isRetryable && attempt < this.maxRetries && !this.isDisposed) {
@@ -429,6 +445,9 @@ export class AgyBackend implements AgentBackend {
         // would be written into the void via `this.child?.stdin?.write` on null.
         if (this.child === child) {
           this.child = null;
+        }
+        if ((child as any)._killedForRestart || this.isDisposed) {
+          return;
         }
         if (!initialized) {
           initialized = true;

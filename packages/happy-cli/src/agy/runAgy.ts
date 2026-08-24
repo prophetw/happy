@@ -156,8 +156,9 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     }
   }
 
+  type AgyTurnMode = { permissionMode?: PermissionMode; model?: string };
   const sessionManager = new AcpSessionManager();
-  const messageQueue = new MessageQueue2<Record<string, never>>(() => '');
+  const messageQueue = new MessageQueue2<AgyTurnMode>((mode) => JSON.stringify(mode));
   let shouldExit = false;
   let abortController = new AbortController();
   let thinking = false;
@@ -248,31 +249,22 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
   session.onUserMessage((message) => {
     if (!message.content.text) return;
 
-    if (message.meta?.permissionMode) {
-      backend.setPermissionMode(message.meta.permissionMode as PermissionMode);
-    }
-    if (message.meta?.hasOwnProperty('model') && message.meta.model) {
-      const canonicalModel = resolveAgyModelName(message.meta.model, discoveredModels) ?? message.meta.model;
-      backend.setModel(canonicalModel);
-      displayedModel = canonicalModel;
-      session.updateMetadata((currentMetadata) => ({
-        ...currentMetadata,
-        currentModelCode: displayedModel,
-      }));
-      if (hasTTY) {
-        messageBuffer.addMessage(`[MODEL:${displayedModel}]`, 'system');
-      }
-    }
+    const mode: AgyTurnMode = {
+      permissionMode: message.meta?.permissionMode as PermissionMode | undefined,
+      model: message.meta?.model
+        ? (resolveAgyModelName(message.meta.model, discoveredModels) ?? message.meta.model)
+        : undefined,
+    };
 
     const specialCommand = parseSpecialCommand(message.content.text);
     if (specialCommand.type === 'clear') {
       log('Detected /clear command');
-      messageQueue.pushIsolateAndClear(message.content.text, {});
+      messageQueue.pushIsolateAndClear(message.content.text, mode);
       return;
     }
 
     messageBuffer.addMessage(message.content.text, 'user');
-    messageQueue.push(message.content.text, {});
+    messageQueue.push(message.content.text, mode);
   });
   session.keepAlive(thinking, 'remote');
 
@@ -303,6 +295,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
   try {
     await backend.startSession();
     log('Backend ready');
+    session.sendSessionEvent({ type: 'ready' });
 
     while (!shouldExit) {
       const waitSignal = abortController.signal;
@@ -311,6 +304,21 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
         if (shouldExit) break;
         if (waitSignal.aborted) continue;
         break;
+      }
+
+      if (batch.mode.permissionMode) {
+        backend.setPermissionMode(batch.mode.permissionMode);
+      }
+      if (batch.mode.model && batch.mode.model !== displayedModel) {
+        displayedModel = batch.mode.model;
+        backend.setModel(displayedModel);
+        session.updateMetadata((currentMetadata) => ({
+          ...currentMetadata,
+          currentModelCode: displayedModel,
+        }));
+        if (hasTTY) {
+          messageBuffer.addMessage(`[MODEL:${displayedModel}]`, 'system');
+        }
       }
 
       const specialCommand = parseSpecialCommand(batch.message);
