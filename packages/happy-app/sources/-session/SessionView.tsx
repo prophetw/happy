@@ -888,6 +888,7 @@ export function SessionViewLoaded({
         session.presence,
         session.metadata?.claudeSessionId,
         session.metadata?.codexThreadId,
+        session.metadata?.agyConversationId,
     ]);
     const [goalActionInFlight, setGoalActionInFlight] = React.useState<AgentGoalAction | null>(null);
     const handleGoalAction = React.useCallback(async (action: AgentGoalAction) => {

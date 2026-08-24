@@ -34,14 +34,14 @@ interface UseSessionQuickActionsOptions {
     onAfterCopySessionMetadata?: () => void;
 }
 
-type ResumeAvailability = {
+export type ResumeAvailability = {
     canResume: boolean;
     canShowResume: boolean;
     subtitle: string;
     message: string;
 };
 
-function getResumeAvailability(session: Session, machine: Machine | null | undefined, isConnected: boolean): ResumeAvailability {
+export function getResumeAvailability(session: Session, machine: Machine | null | undefined, isConnected: boolean): ResumeAvailability {
     if (isRigMetadata(session.metadata) || session.metadata?.capabilities?.resume === false) {
         return {
             canResume: false,
@@ -70,7 +70,11 @@ function getResumeAvailability(session: Session, machine: Machine | null | undef
         };
     }
 
-    const hasBackendResumeId = Boolean(session.metadata?.claudeSessionId || session.metadata?.codexThreadId);
+    const hasBackendResumeId = Boolean(
+        session.metadata?.claudeSessionId ||
+        session.metadata?.codexThreadId ||
+        session.metadata?.agyConversationId
+    );
     if (!hasBackendResumeId) {
         const message = t('sessionInfo.resumeSessionMissingBackendId');
         return {
@@ -139,6 +143,7 @@ export function useSessionQuickActions(
         session.metadata?.path,
         session.metadata?.claudeSessionId,
         session.metadata?.codexThreadId,
+        session.metadata?.agyConversationId,
     ]);
     const canFork = Boolean(
         expResumeSession

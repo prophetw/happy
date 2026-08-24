@@ -183,7 +183,7 @@ export const MetadataSchema = z.object({
 
 export type Metadata = z.infer<typeof MetadataSchema>;
 
-export const AgentGoalSourceSchema = z.enum(['claude', 'codex']);
+export const AgentGoalSourceSchema = z.enum(['claude', 'codex', 'agy']);
 
 export const AgentGoalProgressStepSchema = z.object({
     text: z.string().trim().min(1),
