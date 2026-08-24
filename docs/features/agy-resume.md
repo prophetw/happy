@@ -14,7 +14,8 @@ Feature document for resuming Antigravity (`flavor: "agy"`) sessions across Happ
 | App 会话视图 | `packages/happy-app/sources/-session/SessionView.tsx` | 会话界面底栏渲染恢复提示/按钮及 Agent Goal 状态同步 |
 | CLI 会话恢复解析 | `packages/happy-cli/src/resume/resolveHappySession.ts` | 会话元数据解析与 schema 校验（包含 `agyConversationId`） |
 | CLI 恢复命令构建 | `packages/happy-cli/src/resume/handleResumeCommand.ts` | 将 `flavor: "agy"` 映射为 `happy agy --resume <conversationId>` 启动参数 |
-| Daemon 运行器 | `packages/happy-cli/src/daemon/run.ts` | 后台守护进程响应 `resume-happy-session` RPC 并拉起对应子进程 |
+| CLI 运行器 | `packages/happy-cli/src/agy/runAgy.ts` | 读取 `HAPPY_RECONNECT_SESSION_ID` 重连已有 Happy 会话，防止生成重复会话 |
+| Daemon 运行器 | `packages/happy-cli/src/daemon/run.ts` | 后台守护进程响应 `resume-happy-session` RPC 并注入重连环境变量拉起对应子进程 |
 
 ## 架构关系与数据流
 
@@ -74,5 +75,6 @@ Happy iOS App (SessionView)
 
 - `2026-08-24`:
   - 修复 `useSessionQuickActions.ts` 中 `hasBackendResumeId` 缺少 `session.metadata?.agyConversationId` 导致 iOS App 无法直接展示「Resume Session」按钮的问题。
+  - 修复 `runAgy.ts` 在收到恢复环境变量 `HAPPY_RECONNECT_SESSION_ID` 时未进行重连从而导致每次 resume 产生重复新会话的问题。
   - 在 `SessionView.tsx`、`agentGoalStatus.ts` 以及 `resolveHappySession.ts` 中补充 `agyConversationId` / `agy` 相关的依赖与 schema 支持。
   - 新增 `useSessionQuickActions.test.ts` 测试套件覆盖 `agy`、`claude`、`codex` 恢复可用性判定。

@@ -27,13 +27,13 @@ import { initialMachineMetadata } from '@/daemon/run';
 import { createSessionMetadata } from '@/utils/createSessionMetadata';
 import { setupOfflineReconnection } from '@/utils/setupOfflineReconnection';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
-import { encodeBase64 } from '@/api/encryption';
+import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { connectionState } from '@/utils/serverConnectionErrors';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { AgyDisplay } from '@/ui/ink/AgyDisplay';
 import type { AgentMessage } from '@/agent/core';
-import type { PermissionMode } from '@/api/types';
+import type { Session as ApiSession, PermissionMode } from '@/api/types';
 import { createAgyBackend } from './createAgyBackend';
 import { DEFAULT_AGY_MODEL } from './constants';
 import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
@@ -101,7 +101,30 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     metadata.agyConversationId = initialConversationId;
   }
 
-  const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+  // Check for session reconnection env vars (set by daemon for resume-in-place)
+  const reconnectSessionId = process.env.HAPPY_RECONNECT_SESSION_ID;
+  const reconnectKeyBase64 = process.env.HAPPY_RECONNECT_ENCRYPTION_KEY;
+  const reconnectVariant = process.env.HAPPY_RECONNECT_ENCRYPTION_VARIANT as 'legacy' | 'dataKey' | undefined;
+  const reconnectSeq = process.env.HAPPY_RECONNECT_SEQ;
+  const reconnectMetadataVersion = process.env.HAPPY_RECONNECT_METADATA_VERSION;
+  const reconnectAgentStateVersion = process.env.HAPPY_RECONNECT_AGENT_STATE_VERSION;
+
+  let response: ApiSession | null;
+  if (reconnectSessionId && reconnectKeyBase64 && reconnectVariant) {
+    logger.debug(`[START] Reconnecting to existing agy session ${reconnectSessionId}`);
+    response = {
+      id: reconnectSessionId,
+      seq: parseInt(reconnectSeq || '0', 10),
+      encryptionKey: decodeBase64(reconnectKeyBase64),
+      encryptionVariant: reconnectVariant,
+      metadata,
+      metadataVersion: parseInt(reconnectMetadataVersion || '0', 10),
+      agentState: state,
+      agentStateVersion: parseInt(reconnectAgentStateVersion || '0', 10),
+    };
+  } else {
+    response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+  }
   if (response) {
     log(`Happy Session ID: ${response.id}`);
   }
