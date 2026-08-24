@@ -39,6 +39,7 @@ import { DEFAULT_AGY_MODEL } from './constants';
 import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
 import { extractSessionTitle } from './title';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
+import { fetchAgyUsage, formatAgyUsageMarkdown, formatAgyUsageTerminal } from './usage';
 
 export interface RunAgyOptions {
   credentials: Credentials;
@@ -97,6 +98,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     description: m.description ?? null,
   }));
   metadata.currentModelCode = initialModel;
+  metadata.slashCommands = ['usage', 'clear', 'compact'];
   if (initialConversationId) {
     metadata.agyConversationId = initialConversationId;
   }
@@ -262,6 +264,11 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
       messageQueue.pushIsolateAndClear(message.content.text, mode);
       return;
     }
+    if (specialCommand.type === 'usage') {
+      log('Detected /usage command');
+      messageQueue.pushIsolateAndClear(message.content.text, mode);
+      return;
+    }
 
     messageBuffer.addMessage(message.content.text, 'user');
     messageQueue.push(message.content.text, mode);
@@ -338,6 +345,49 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
         thinking = false;
         session.keepAlive(false, 'remote');
         session.sendSessionEvent({ type: 'ready' });
+        continue;
+      }
+
+      if (specialCommand.type === 'usage') {
+        log('Handling /usage command - fetching agy quota and usage');
+        thinking = true;
+        session.keepAlive(true, 'remote');
+        try {
+          const usageStatus = await fetchAgyUsage({ log });
+          const markdownReport = formatAgyUsageMarkdown(usageStatus);
+
+          if (hasTTY) {
+            const terminalReport = formatAgyUsageTerminal(usageStatus);
+            messageBuffer.addMessage(terminalReport, 'system');
+          }
+
+          sendEnvelopes(sessionManager.startTurn());
+          sendEnvelopes(
+            sessionManager.mapMessage({
+              type: 'model-output',
+              textDelta: markdownReport,
+            }),
+          );
+          sendEnvelopes(sessionManager.endTurn('completed'));
+        } catch (error) {
+          const errText = `⚠️ Failed to fetch usage: ${error instanceof Error ? error.message : String(error)}`;
+          log(errText);
+          if (hasTTY) {
+            messageBuffer.addMessage(errText, 'status');
+          }
+          sendEnvelopes(sessionManager.startTurn());
+          sendEnvelopes(
+            sessionManager.mapMessage({
+              type: 'model-output',
+              textDelta: errText,
+            }),
+          );
+          sendEnvelopes(sessionManager.endTurn('failed'));
+        } finally {
+          thinking = false;
+          session.keepAlive(false, 'remote');
+          session.sendSessionEvent({ type: 'ready' });
+        }
         continue;
       }
 

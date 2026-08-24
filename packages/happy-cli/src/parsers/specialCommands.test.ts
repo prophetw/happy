@@ -68,6 +68,16 @@ describe('parseSpecialCommand', () => {
         expect(result.originalMessage).toBeUndefined();
     });
 
+    it('should detect usage, mcp, and skills commands', () => {
+        expect(parseSpecialCommand('/usage').type).toBe('usage');
+        expect(parseSpecialCommand('  /usage  ').type).toBe('usage');
+        expect(parseSpecialCommand('/usage agy').type).toBe('usage');
+        expect(parseSpecialCommand('/mcp').type).toBe('mcp');
+        expect(parseSpecialCommand('  /mcp  ').type).toBe('mcp');
+        expect(parseSpecialCommand('/skills').type).toBe('skills');
+        expect(parseSpecialCommand('  /skills  ').type).toBe('skills');
+    });
+
     it('should handle edge cases correctly', () => {
         // Test with extra whitespace
         expect(parseSpecialCommand('  /compact test  ').type).toBe('compact');
