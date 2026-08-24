@@ -15,6 +15,7 @@ import {
     buttonStyle,
     contentShape,
     disabled,
+    environment,
     frame,
     shapes,
     tint,
@@ -68,11 +69,15 @@ export function NativeOptionsPicker({
             <Host ignoreSafeArea="keyboard" style={styles.host}>
                 <Menu
                     // NativeOptionsPicker sits over the dark focus overlay (focusBackdrop),
-                    // so its label must always use a white tint to stay legible in both
-                    // light and dark modes.
+                    // so its label must always use dark colorScheme environment and white
+                    // tint to stay legible in both light and dark modes.
                     // No glass capsule: the plain style leaves the system less
                     // chrome to morph when the menu opens.
-                    modifiers={[tint('#FFFFFF'), buttonStyle('plain')]}
+                    modifiers={[
+                        environment({ key: 'colorScheme', value: 'dark' }),
+                        tint('#FFFFFF'),
+                        buttonStyle('plain'),
+                    ]}
                     label={(
                         // The whole row is the label, so every part of it opens
                         // the menu: the icon, the value, and the space between.

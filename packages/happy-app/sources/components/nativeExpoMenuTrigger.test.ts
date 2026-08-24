@@ -41,6 +41,7 @@ vi.mock('@expo/ui/swift-ui/modifiers', () => ({
     buttonStyle: (value: string) => ({ type: 'buttonStyle', value }),
     contentShape: (shape: unknown) => ({ type: 'contentShape', shape }),
     disabled: (value: boolean) => ({ type: 'disabled', value: { disabled: value } }),
+    environment: (value: unknown) => ({ type: 'environment', value }),
     font: (value: unknown) => ({ type: 'font', value }),
     frame: (value: unknown) => ({ type: 'frame', value }),
     foregroundColor: (value: string) => ({ type: 'foregroundColor', value }),
@@ -164,6 +165,8 @@ describe('iOS Expo-native menu triggers', () => {
         }));
         expect(picker.root.findByType('ExpoMenu' as any).props.modifiers)
             .toContainEqual({ type: 'tint', value: '#FFFFFF' });
+        expect(picker.root.findByType('ExpoMenu' as any).props.modifiers)
+            .toContainEqual({ type: 'environment', value: { key: 'colorScheme', value: 'dark' } });
 
         const settings = render(React.createElement(NativeSettingsMenu, {
             accessibilityLabel: 'Model',
