@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   formatCountdown,
   getMinutesUntil,
@@ -8,6 +8,7 @@ import {
   fetchAgyUsage,
   type AgyUsageStatus,
 } from './usage';
+import { AgyQuotaStore } from './statusLine';
 
 describe('formatCountdown', () => {
   it('formats minutes into hours and minutes', () => {
@@ -175,6 +176,31 @@ describe('formatAgyUsageTerminal', () => {
 });
 
 describe('fetchAgyUsage', () => {
+  beforeEach(() => {
+    AgyQuotaStore.resetInstance();
+  });
+
+  it('prioritizes live statusLine hook quota when available in AgyQuotaStore', async () => {
+    const store = AgyQuotaStore.getInstance();
+    store.update({
+      quota: {
+        gemini: {
+          '5h': { percentage: 95, resets_in_minutes: 180 },
+          weekly: { percentage: 85 },
+        },
+        claude: {
+          '5h': { percentage: 50, resets_in_minutes: 30 },
+          weekly: { percentage: 65 },
+        },
+      },
+    });
+
+    const status = await fetchAgyUsage();
+    expect(status.source).toBe('statusline-hook');
+    expect(status.groups?.gemini?.fiveHour?.percentage).toBe(95);
+    expect(status.groups?.claude?.fiveHour?.percentage).toBe(50);
+  });
+
   it('falls back to error status if no language server or token', async () => {
     const status = await fetchAgyUsage({
       tokenPath: '/non-existent/path',
@@ -185,5 +211,57 @@ describe('fetchAgyUsage', () => {
 
     expect(status.source).toBe('none');
     expect(status.models).toEqual([]);
+  });
+});
+
+describe('formatAgyUsageMarkdown with statusLine groups', () => {
+  it('formats grouped Gemini and Claude/GPT quota tables', () => {
+    const status: AgyUsageStatus = {
+      source: 'statusline-hook',
+      models: [],
+      groups: {
+        gemini: {
+          name: 'Gemini',
+          fiveHour: { percentage: 95, resetsInFormatted: '3h 00m' },
+          weekly: { percentage: 85, resetsInFormatted: '4d 12h' },
+        },
+        claude: {
+          name: 'Claude / GPT',
+          fiveHour: { percentage: 40, resetsInFormatted: '45m' },
+          weekly: { percentage: 60 },
+        },
+      },
+    };
+
+    const md = formatAgyUsageMarkdown(status);
+    expect(md).toContain('### 📊 Antigravity (`agy`) 额度与用量');
+    expect(md).toContain('`statusLine hook` (实时配额通道)');
+    expect(md).toContain('**Gemini**');
+    expect(md).toContain('🟢 **95%**');
+    expect(md).toContain('**Claude / GPT**');
+    expect(md).toContain('🟡 **40%**');
+    expect(md).toContain('5h: ↻ 3h 00m');
+  });
+});
+
+describe('formatAgyUsageTerminal with statusLine groups', () => {
+  it('formats terminal output for grouped quotas', () => {
+    const status: AgyUsageStatus = {
+      source: 'statusline-hook',
+      models: [],
+      groups: {
+        gemini: {
+          name: 'Gemini',
+          fiveHour: { percentage: 95, resetsInFormatted: '3h 00m' },
+          weekly: { percentage: 85 },
+        },
+      },
+    };
+
+    const term = formatAgyUsageTerminal(status);
+    expect(term).toContain('Antigravity (agy) Quota & Usage');
+    expect(term).toContain('Source: statusLine hook (live)');
+    expect(term).toContain('Gemini');
+    expect(term).toContain('95% remaining');
   });
 });

@@ -14,44 +14,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import chalk from 'chalk';
+import {
+  AgyQuotaStore,
+  formatCountdown,
+  getMinutesUntil,
+  type AgyStatusLineQuota,
+  type AgyQuotaGroup,
+  type AgyQuotaWindow,
+  type ModelQuotaInfo,
+  type AgyUsageStatus,
+} from './statusLine';
 
-export interface ModelQuotaInfo {
-  modelId: string;
-  label: string;
-  remainingFraction?: number; // 0.0 ~ 1.0 (1.0 = 100% remaining)
-  usedPercentage?: number;    // 0 ~ 100
-  resetTime?: string;         // ISO timestamp
-  resetsInMinutes?: number;
-  resetsInFormatted?: string;
-  maxTokens?: number;
-  isRecommended?: boolean;
-}
-
-export interface AgyUsageStatus {
-  accountName?: string;
-  email?: string;
-  planName?: string;
-  teamsTier?: string;
-  userTierName?: string;
-  availableCredits?: Array<{ creditType: string; minimumCreditAmountForUsage?: string }>;
-  availablePromptCredits?: number;
-  availableFlowCredits?: number;
-  models: ModelQuotaInfo[];
-  fiveHourWindow?: {
-    usedPercentage?: number;
-    remainingPercentage?: number;
-    resetsAt?: number;
-    resetsInFormatted?: string;
-  };
-  sevenDayWindow?: {
-    usedPercentage?: number;
-    remainingPercentage?: number;
-    resetsAt?: number;
-    resetsInFormatted?: string;
-  };
-  source: 'language-server' | 'cloudcode-api' | 'none';
-  error?: string;
-}
+export {
+  formatCountdown,
+  getMinutesUntil,
+  type ModelQuotaInfo,
+  type AgyUsageStatus,
+  type AgyQuotaGroup,
+  type AgyQuotaWindow,
+  type AgyStatusLineQuota,
+};
 
 export interface FetchAgyUsageOptions {
   tokenPath?: string;
@@ -59,35 +41,6 @@ export interface FetchAgyUsageOptions {
   log?: (msg: string) => void;
   execSyncFn?: typeof execSync;
   execFileSyncFn?: typeof execFileSync;
-}
-
-/**
- * Format remaining minutes into human-readable countdown string.
- * e.g. 75 -> "1h 15m", 42 -> "42m", 0 -> "Now"
- */
-export function formatCountdown(minutes: number): string {
-  if (minutes <= 0) return 'Now';
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  if (h > 0) {
-    return `${h}h ${String(m).padStart(2, '0')}m`;
-  }
-  return `${m}m`;
-}
-
-/**
- * Calculate minutes remaining until an ISO timestamp.
- */
-export function getMinutesUntil(resetTimeStr?: string, now: number = Date.now()): number | undefined {
-  if (!resetTimeStr) return undefined;
-  try {
-    const target = new Date(resetTimeStr).getTime();
-    if (isNaN(target)) return undefined;
-    const diffMs = target - now;
-    return Math.max(0, Math.round(diffMs / 60000));
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -349,18 +302,32 @@ export function fetchFromCloudCodeApi(
 
 /**
  * Fetch Antigravity (agy) quota and usage status.
- * Combines language server probe and cloudcode API fallback.
+ *
+ * Priorities:
+ * 1. Primary (P0): Live AgyQuotaStore populated by statusLine hook JSON
+ * 2. Next (P1): Probes local Language Server RPC (GetUserStatus)
+ * 3. Fallback (P2): Google Cloud Code API (fetchAvailableModels)
  */
 export async function fetchAgyUsage(opts: FetchAgyUsageOptions = {}): Promise<AgyUsageStatus> {
   const log = opts.log ?? (() => {});
 
-  // 1. Try local language server
+  // 0. Primary: Check live statusLine hook quota store
+  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus();
+  if (
+    liveStatus &&
+    (liveStatus.models.length > 0 || (liveStatus.groups && Object.keys(liveStatus.groups).length > 0))
+  ) {
+    log('Retrieved agy usage from live statusLine hook store');
+    return liveStatus;
+  }
+
+  // 1. Next: Try local language server
   const lsStatus = fetchFromLanguageServer(opts);
   if (lsStatus && lsStatus.models.length > 0) {
     return lsStatus;
   }
 
-  // 2. Try Google Cloud Code API with stored token
+  // 2. Next: Try Google Cloud Code API with stored token
   const token = getStoredAgyOAuthToken(opts.tokenPath);
   if (token) {
     const apiStatus = fetchFromCloudCodeApi(token, opts);
@@ -369,11 +336,11 @@ export async function fetchAgyUsage(opts: FetchAgyUsageOptions = {}): Promise<Ag
     }
   }
 
-  log('Could not retrieve agy usage from language server or CloudCode API');
+  log('Could not retrieve agy usage from statusLine hook, language server, or CloudCode API');
   return {
     source: 'none',
     models: [],
-    error: 'Antigravity language server is not running and no active OAuth token was found.',
+    error: 'Antigravity language server is not running and no active OAuth token or statusLine quota was found.',
   };
 }
 
@@ -381,7 +348,10 @@ export async function fetchAgyUsage(opts: FetchAgyUsageOptions = {}): Promise<Ag
  * Format AgyUsageStatus into a Markdown report for Happy chat/app.
  */
 export function formatAgyUsageMarkdown(status: AgyUsageStatus): string {
-  if (status.source === 'none' || status.models.length === 0) {
+  const hasModels = status.models && status.models.length > 0;
+  const hasGroups = status.groups && Object.keys(status.groups).length > 0;
+
+  if (status.source === 'none' || (!hasModels && !hasGroups)) {
     return `### ⚠️ Antigravity (agy) Quota Unavailable\n\n${status.error || 'Unable to retrieve current usage quota. Ensure Antigravity CLI or IDE is logged in.'}`;
   }
 
@@ -397,6 +367,9 @@ export function formatAgyUsageMarkdown(status: AgyUsageStatus): string {
   if (status.userTierName || status.planName) {
     details.push(`- **套餐**: **${status.userTierName || status.planName}**`);
   }
+  if (status.source === 'statusline-hook') {
+    details.push(`- **数据源**: \`statusLine hook\` (实时配额通道)`);
+  }
   if (status.availableCredits && status.availableCredits.length > 0) {
     const creditsStr = status.availableCredits.map((c) => c.creditType).join(', ');
     details.push(`- **可用额度/积分**: ${creditsStr}`);
@@ -406,62 +379,105 @@ export function formatAgyUsageMarkdown(status: AgyUsageStatus): string {
     lines.push('');
   }
 
-  lines.push('#### ⏳ 5 小时滚动额度 (5-Hour Rolling Quota)');
-  lines.push('');
-  lines.push('| 模型 (Model) | 剩余额度 | 已用比例 | 重置倒计时 (Reset In) |');
-  lines.push('|:---|:---:|:---:|:---|');
+  // 1. Grouped quota table (Gemini 5h & Weekly, Claude / GPT 5h & Weekly)
+  if (hasGroups) {
+    lines.push('#### ⏳ 滚动额度状态 (Rolling Quotas)');
+    lines.push('');
+    lines.push('| 模型分类 (Category) | 5 小时额度 (5h) | 每周额度 (Weekly) | 重置倒计时 (Reset In) |');
+    lines.push('|:---|:---:|:---:|:---|');
 
-  // Group or sort models for clean presentation
-  const sortedModels = [...status.models].sort((a, b) => {
-    const getScore = (m: ModelQuotaInfo) => {
-      const name = m.label.toLowerCase();
-      if (name.includes('3.7 flash (high)')) return 1;
-      if (name.includes('3.7 flash')) return 2;
-      if (name.includes('sonnet')) return 3;
-      if (name.includes('opus')) return 4;
-      if (name.includes('3.1 pro')) return 5;
-      if (name.includes('3.6 flash')) return 6;
-      if (name.includes('3.5 flash')) return 7;
-      return 10;
-    };
-    return getScore(a) - getScore(b);
-  });
+    for (const [key, group] of Object.entries(status.groups!)) {
+      const isClaude = key.toLowerCase().includes('claude') || group.name.toLowerCase().includes('claude');
+      const icon = isClaude ? '🔮' : '⚡';
 
-  for (const m of sortedModels) {
-    const icon = m.label.toLowerCase().includes('claude')
-      ? '🔮'
-      : m.label.toLowerCase().includes('pro')
-      ? '🧠'
-      : m.label.toLowerCase().includes('gpt')
-      ? '🌐'
-      : '⚡';
-
-    let remStr = '未知';
-    let usedStr = '未知';
-    if (typeof m.remainingFraction === 'number') {
-      const remPct = Math.round(m.remainingFraction * 100);
-      remStr = remPct >= 80 ? `🟢 **${remPct}%**` : remPct >= 40 ? `🟡 **${remPct}%**` : `🔴 **${remPct}%**`;
-      usedStr = `${100 - remPct}%`;
-    }
-
-    let resetStr = '-';
-    if (m.resetsInFormatted) {
-      resetStr = `↻ ${m.resetsInFormatted}`;
-      if (m.resetTime) {
-        try {
-          const timePart = new Date(m.resetTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-          resetStr += ` (${timePart})`;
-        } catch {
-          // ignore
+      const formatWin = (w?: AgyQuotaWindow) => {
+        if (!w) return '-';
+        if (typeof w.percentage === 'number') {
+          const pct = w.percentage;
+          return pct >= 80 ? `🟢 **${pct}%**` : pct >= 40 ? `🟡 **${pct}%**` : `🔴 **${pct}%**`;
         }
-      }
-    }
+        if (typeof w.remainingFraction === 'number') {
+          const pct = Math.round(w.remainingFraction * 100);
+          return pct >= 80 ? `🟢 **${pct}%**` : pct >= 40 ? `🟡 **${pct}%**` : `🔴 **${pct}%**`;
+        }
+        return '未知';
+      };
 
-    lines.push(`| ${icon} **${m.label}** | ${remStr} | ${usedStr} | ${resetStr} |`);
+      const fiveHourStr = formatWin(group.fiveHour);
+      const weeklyStr = formatWin(group.weekly);
+      const resetPart: string[] = [];
+      if (group.fiveHour?.resetsInFormatted) {
+        resetPart.push(`5h: ↻ ${group.fiveHour.resetsInFormatted}`);
+      }
+      if (group.weekly?.resetsInFormatted) {
+        resetPart.push(`Weekly: ↻ ${group.weekly.resetsInFormatted}`);
+      }
+      const resetStr = resetPart.length > 0 ? resetPart.join(' / ') : '-';
+
+      lines.push(`| ${icon} **${group.name}** | ${fiveHourStr} | ${weeklyStr} | ${resetStr} |`);
+    }
+    lines.push('');
   }
 
-  lines.push('');
-  lines.push('> 💡 **提示**：Flash 与 Pro 模型各自拥有独立的 5 小时滚动额度池。当单模型额度用尽时，将在显示的时间自动刷新重置。');
+  // 2. Per-model quota table (if present and not redundant with groups)
+  if (hasModels && (!hasGroups || status.source !== 'statusline-hook')) {
+    lines.push('#### ⏳ 5 小时滚动额度 (5-Hour Rolling Quota)');
+    lines.push('');
+    lines.push('| 模型 (Model) | 剩余额度 | 已用比例 | 重置倒计时 (Reset In) |');
+    lines.push('|:---|:---:|:---:|:---|');
+
+    // Group or sort models for clean presentation
+    const sortedModels = [...status.models].sort((a, b) => {
+      const getScore = (m: ModelQuotaInfo) => {
+        const name = m.label.toLowerCase();
+        if (name.includes('3.7 flash (high)')) return 1;
+        if (name.includes('3.7 flash')) return 2;
+        if (name.includes('sonnet')) return 3;
+        if (name.includes('opus')) return 4;
+        if (name.includes('3.1 pro')) return 5;
+        if (name.includes('3.6 flash')) return 6;
+        if (name.includes('3.5 flash')) return 7;
+        return 10;
+      };
+      return getScore(a) - getScore(b);
+    });
+
+    for (const m of sortedModels) {
+      const icon = m.label.toLowerCase().includes('claude')
+        ? '🔮'
+        : m.label.toLowerCase().includes('pro')
+        ? '🧠'
+        : m.label.toLowerCase().includes('gpt')
+        ? '🌐'
+        : '⚡';
+
+      let remStr = '未知';
+      let usedStr = '未知';
+      if (typeof m.remainingFraction === 'number') {
+        const remPct = Math.round(m.remainingFraction * 100);
+        remStr = remPct >= 80 ? `🟢 **${remPct}%**` : remPct >= 40 ? `🟡 **${remPct}%**` : `🔴 **${remPct}%**`;
+        usedStr = `${100 - remPct}%`;
+      }
+
+      let resetStr = '-';
+      if (m.resetsInFormatted) {
+        resetStr = `↻ ${m.resetsInFormatted}`;
+        if (m.resetTime) {
+          try {
+            const timePart = new Date(m.resetTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+            resetStr += ` (${timePart})`;
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      lines.push(`| ${icon} **${m.label}** | ${remStr} | ${usedStr} | ${resetStr} |`);
+    }
+    lines.push('');
+  }
+
+  lines.push('> 💡 **提示**：Gemini 与 Claude/GPT 模型池各自拥有独立的 5 小时滚动与每周额度。优先通过 `statusLine.quota` 实时同步。');
 
   return lines.join('\n');
 }
@@ -470,7 +486,10 @@ export function formatAgyUsageMarkdown(status: AgyUsageStatus): string {
  * Format AgyUsageStatus for CLI terminal display.
  */
 export function formatAgyUsageTerminal(status: AgyUsageStatus): string {
-  if (status.source === 'none' || status.models.length === 0) {
+  const hasModels = status.models && status.models.length > 0;
+  const hasGroups = status.groups && Object.keys(status.groups).length > 0;
+
+  if (status.source === 'none' || (!hasModels && !hasGroups)) {
     return chalk.yellow(`⚠️ Antigravity (agy) quota unavailable: ${status.error || 'Check login status'}`);
   }
 
@@ -479,14 +498,36 @@ export function formatAgyUsageTerminal(status: AgyUsageStatus): string {
   if (status.email) {
     lines.push(chalk.dim(`Account: ${status.email} | Plan: ${status.userTierName || status.planName || 'Standard'}`));
   }
+  if (status.source === 'statusline-hook') {
+    lines.push(chalk.dim('Source: statusLine hook (live)'));
+  }
   lines.push('');
-  lines.push(chalk.bold('5-Hour Window Model Quotas:'));
 
-  for (const m of status.models) {
-    const remPct = typeof m.remainingFraction === 'number' ? Math.round(m.remainingFraction * 100) : 0;
-    const color = remPct >= 80 ? chalk.green : remPct >= 40 ? chalk.yellow : chalk.red;
-    const reset = m.resetsInFormatted ? chalk.dim(`(resets in ${m.resetsInFormatted})`) : '';
-    lines.push(`  ${m.label.padEnd(32)} ${color(`${remPct}% remaining`.padEnd(16))} ${reset}`);
+  if (hasGroups) {
+    lines.push(chalk.bold('Rolling Window Quotas:'));
+    for (const [, group] of Object.entries(status.groups!)) {
+      lines.push(`  ${chalk.bold(group.name)}:`);
+      if (group.fiveHour) {
+        const pct = group.fiveHour.percentage ?? 0;
+        const color = pct >= 80 ? chalk.green : pct >= 40 ? chalk.yellow : chalk.red;
+        const reset = group.fiveHour.resetsInFormatted ? chalk.dim(`(resets in ${group.fiveHour.resetsInFormatted})`) : '';
+        lines.push(`    5-Hour Window:  ${color(`${pct}% remaining`.padEnd(16))} ${reset}`);
+      }
+      if (group.weekly) {
+        const pct = group.weekly.percentage ?? 0;
+        const color = pct >= 80 ? chalk.green : pct >= 40 ? chalk.yellow : chalk.red;
+        const reset = group.weekly.resetsInFormatted ? chalk.dim(`(resets in ${group.weekly.resetsInFormatted})`) : '';
+        lines.push(`    Weekly Window:  ${color(`${pct}% remaining`.padEnd(16))} ${reset}`);
+      }
+    }
+  } else if (hasModels) {
+    lines.push(chalk.bold('5-Hour Window Model Quotas:'));
+    for (const m of status.models) {
+      const remPct = typeof m.remainingFraction === 'number' ? Math.round(m.remainingFraction * 100) : 0;
+      const color = remPct >= 80 ? chalk.green : remPct >= 40 ? chalk.yellow : chalk.red;
+      const reset = m.resetsInFormatted ? chalk.dim(`(resets in ${m.resetsInFormatted})`) : '';
+      lines.push(`  ${m.label.padEnd(32)} ${color(`${remPct}% remaining`.padEnd(16))} ${reset}`);
+    }
   }
 
   return lines.join('\n');
