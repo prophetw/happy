@@ -204,6 +204,7 @@ describe('fetchAgyUsage', () => {
   it('falls back to error status if no language server or token', async () => {
     const status = await fetchAgyUsage({
       tokenPath: '/non-existent/path',
+      statusLineStatePath: false,
       execSyncFn: () => {
         throw new Error('No process');
       },

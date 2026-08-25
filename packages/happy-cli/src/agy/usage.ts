@@ -41,6 +41,7 @@ export interface FetchAgyUsageOptions {
   log?: (msg: string) => void;
   execSyncFn?: typeof execSync;
   execFileSyncFn?: typeof execFileSync;
+  statusLineStatePath?: string | false;
 }
 
 /**
@@ -209,6 +210,52 @@ export function parseLanguageServerUserStatus(userStatus: any): AgyUsageStatus {
     });
   }
 
+  const groups: Record<string, AgyQuotaGroup> = {};
+
+  const mainGemini =
+    models.find((m) => m.label.toLowerCase().includes('gemini') && m.label.toLowerCase().includes('high')) ||
+    models.find((m) => m.label.toLowerCase().includes('gemini'));
+  if (mainGemini) {
+    groups.gemini = {
+      name: 'Gemini',
+      fiveHour: {
+        remainingFraction: mainGemini.remainingFraction,
+        percentage:
+          typeof mainGemini.remainingFraction === 'number'
+            ? Math.round(mainGemini.remainingFraction * 100)
+            : undefined,
+        usedPercentage: mainGemini.usedPercentage,
+        resetTime: mainGemini.resetTime,
+        resetsInMinutes: mainGemini.resetsInMinutes,
+        resetsInFormatted: mainGemini.resetsInFormatted,
+      },
+    };
+  }
+
+  const mainClaude = models.find(
+    (m) =>
+      m.label.toLowerCase().includes('claude') ||
+      m.label.toLowerCase().includes('sonnet') ||
+      m.label.toLowerCase().includes('opus') ||
+      m.label.toLowerCase().includes('gpt'),
+  );
+  if (mainClaude) {
+    groups.claude = {
+      name: 'Claude / GPT (3P)',
+      fiveHour: {
+        remainingFraction: mainClaude.remainingFraction,
+        percentage:
+          typeof mainClaude.remainingFraction === 'number'
+            ? Math.round(mainClaude.remainingFraction * 100)
+            : undefined,
+        usedPercentage: mainClaude.usedPercentage,
+        resetTime: mainClaude.resetTime,
+        resetsInMinutes: mainClaude.resetsInMinutes,
+        resetsInFormatted: mainClaude.resetsInFormatted,
+      },
+    };
+  }
+
   return {
     accountName,
     email,
@@ -219,6 +266,7 @@ export function parseLanguageServerUserStatus(userStatus: any): AgyUsageStatus {
     availablePromptCredits,
     availableFlowCredits,
     models,
+    groups: Object.keys(groups).length > 0 ? groups : undefined,
     source: 'language-server',
   };
 }
@@ -312,7 +360,11 @@ export async function fetchAgyUsage(opts: FetchAgyUsageOptions = {}): Promise<Ag
   const log = opts.log ?? (() => {});
 
   // 0. Primary: Check live statusLine hook quota store
-  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus();
+  const loadFromDisk = opts.statusLineStatePath !== false;
+  if (typeof opts.statusLineStatePath === 'string') {
+    AgyQuotaStore.getInstance().loadFromFile(opts.statusLineStatePath);
+  }
+  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus(loadFromDisk);
   if (
     liveStatus &&
     (liveStatus.models.length > 0 || (liveStatus.groups && Object.keys(liveStatus.groups).length > 0))

@@ -167,7 +167,7 @@ describe('AgyQuotaStore', () => {
 
   it('stores and notifies listeners when new statusLine payload arrives', () => {
     const store = AgyQuotaStore.getInstance();
-    expect(store.hasQuota()).toBe(false);
+    expect(store.hasQuota(false)).toBe(false);
 
     let notifiedCount = 0;
     const unsubscribe = store.subscribe((quota) => {
@@ -200,5 +200,32 @@ describe('AgyQuotaStore', () => {
     expect(usageStatus?.models.length).toBeGreaterThan(0);
 
     unsubscribe();
+  });
+
+  it('parses native Agy statusline state with 3p-5h, 3p-weekly, gemini-5h, gemini-weekly', () => {
+    const rawState = {
+      model: { id: 'Gemini 3.7 Flash (High)', display_name: 'Gemini 3.7 Flash (High)' },
+      quota: {
+        '3p-5h': { remaining_fraction: 1, reset_time: '2026-08-25T04:57:40Z', reset_in_seconds: 16468 },
+        '3p-weekly': { remaining_fraction: 1, reset_time: '2026-08-31T23:57:40Z', reset_in_seconds: 603268 },
+        'gemini-5h': { remaining_fraction: 0.99, reset_time: '2026-08-25T04:39:11Z', reset_in_seconds: 15359 },
+        'gemini-weekly': { remaining_fraction: 0.48, reset_time: '2026-08-29T12:32:04Z', reset_in_seconds: 389332 },
+      },
+      plan_tier: 'Google AI Pro',
+      email: 'testuser@example.com',
+    };
+
+    const quota = parseStatusLineQuota(rawState);
+    expect(quota).toBeDefined();
+    expect(quota?.gemini?.name).toBe('Gemini');
+    expect(quota?.gemini?.fiveHour?.percentage).toBe(99);
+    expect(quota?.gemini?.weekly?.percentage).toBe(48);
+
+    expect(quota?.claude?.name).toBe('Claude / GPT');
+    expect(quota?.claude?.fiveHour?.percentage).toBe(100);
+    expect(quota?.claude?.weekly?.percentage).toBe(100);
+
+    expect(quota?.email).toBe('testuser@example.com');
+    expect(quota?.planTier).toBe('Google AI Pro');
   });
 });

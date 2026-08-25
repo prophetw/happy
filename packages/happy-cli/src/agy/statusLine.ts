@@ -15,6 +15,10 @@
  * usage into stream-json.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
 export interface ModelQuotaInfo {
   modelId: string;
   label: string;
@@ -111,6 +115,9 @@ export interface AgyStatusLineQuota {
   gemini?: AgyQuotaGroup;
   claude?: AgyQuotaGroup;
   models?: ModelQuotaInfo[];
+  accountName?: string;
+  email?: string;
+  planTier?: string;
   raw?: Record<string, unknown>;
   updatedAt: number;
 }
@@ -120,12 +127,15 @@ export interface AgyStatusLinePayload {
   conversation_id?: string | null;
   model?: string | { id?: string; displayName?: string; [key: string]: unknown };
   quota?: Record<string, unknown>;
+  rate_limits?: Record<string, unknown>;
   context_window?: Record<string, unknown>;
+  plan_tier?: string;
+  email?: string;
   [key: string]: unknown;
 }
 
 /**
- * Parses a quota window object (e.g. five_hour, weekly).
+ * Parses a quota window object (e.g. five_hour, weekly, gemini-5h, 3p-5h).
  */
 export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWindow | undefined {
   if (!rawWindow || typeof rawWindow !== 'object') {
@@ -178,11 +188,9 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
     remainingFraction = percentage / 100;
   }
 
-  const resetTime: string | undefined =
+  let resetTime: string | undefined =
     rawWindow.reset_time ||
-    rawWindow.resetTime ||
-    rawWindow.resets_at ||
-    rawWindow.resetsAt;
+    rawWindow.resetTime;
 
   let resetInSeconds: number | undefined =
     typeof rawWindow.reset_in_seconds === 'number'
@@ -190,6 +198,23 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
       : typeof rawWindow.resetInSeconds === 'number'
       ? rawWindow.resetInSeconds
       : undefined;
+
+  // Handle resets_at unix timestamp (seconds or ms)
+  const resetsAtRaw = rawWindow.resets_at || rawWindow.resetsAt;
+  if (typeof resetsAtRaw === 'number' && resetsAtRaw > 0) {
+    const epochMs = resetsAtRaw < 1e11 ? resetsAtRaw * 1000 : resetsAtRaw;
+    const diffMs = epochMs - now;
+    if (resetInSeconds === undefined) {
+      resetInSeconds = Math.max(0, Math.round(diffMs / 1000));
+    }
+    if (!resetTime) {
+      try {
+        resetTime = new Date(epochMs).toISOString();
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   let resetsInMinutes: number | undefined =
     typeof rawWindow.resets_in_minutes === 'number'
@@ -207,6 +232,10 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
   let resetsInFormatted: string | undefined = rawWindow.resets_in_formatted || rawWindow.resetsInFormatted;
   if (!resetsInFormatted && resetsInMinutes !== undefined) {
     resetsInFormatted = formatCountdown(resetsInMinutes);
+  }
+
+  if (percentage === undefined && remainingFraction === undefined && usedPercentage === undefined) {
+    return undefined;
   }
 
   return {
@@ -257,25 +286,78 @@ export function parseQuotaGroup(name: string, rawGroup: any, now = Date.now()): 
 }
 
 /**
- * Parses the raw `quota` object from Agy statusLine payload into structured AgyStatusLineQuota.
+ * Parses the raw `quota` object or full payload from Agy statusLine into structured AgyStatusLineQuota.
  */
-export function parseStatusLineQuota(rawQuota: any, now = Date.now()): AgyStatusLineQuota | null {
-  if (!rawQuota || typeof rawQuota !== 'object') {
+export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): AgyStatusLineQuota | null {
+  if (!rawQuotaOrPayload || typeof rawQuotaOrPayload !== 'object') {
     return null;
   }
 
-  const geminiRaw = rawQuota.gemini ?? rawQuota.Gemini ?? rawQuota.google;
-  const claudeRaw =
-    rawQuota.claude ??
-    rawQuota.Claude ??
-    rawQuota['claude/gpt'] ??
-    rawQuota.claude_gpt ??
-    rawQuota.gpt ??
-    rawQuota.GPT ??
-    rawQuota.anthropic;
+  const rawQuota = rawQuotaOrPayload.quota || rawQuotaOrPayload.rate_limits || rawQuotaOrPayload;
+  const rateLimits = rawQuotaOrPayload.rate_limits;
 
-  const gemini = parseQuotaGroup('Gemini', geminiRaw, now);
-  const claude = parseQuotaGroup('Claude / GPT', claudeRaw, now);
+  // 1. Native Agy statusline keys: gemini-5h, gemini-weekly, 3p-5h, 3p-weekly
+  const gemini5h = parseQuotaWindow(
+    rawQuota['gemini-5h'] ??
+      rawQuota['gemini_5h'] ??
+      rawQuota.gemini?.five_hour ??
+      rawQuota.gemini?.['5h'] ??
+      rawQuota.gemini?.fiveHour ??
+      rateLimits?.five_hour,
+    now,
+  );
+
+  const geminiWeekly = parseQuotaWindow(
+    rawQuota['gemini-weekly'] ??
+      rawQuota['gemini_weekly'] ??
+      rawQuota.gemini?.weekly ??
+      rawQuota.gemini?.['7d'] ??
+      rawQuota.gemini?.weeklyWindow ??
+      rateLimits?.seven_day,
+    now,
+  );
+
+  const claude5h = parseQuotaWindow(
+    rawQuota['3p-5h'] ??
+      rawQuota['3p_5h'] ??
+      rawQuota['claude-5h'] ??
+      rawQuota['claude_5h'] ??
+      rawQuota.claude?.five_hour ??
+      rawQuota.claude?.['5h'] ??
+      rawQuota['claude/gpt']?.five_hour ??
+      rawQuota.gpt?.five_hour,
+    now,
+  );
+
+  const claudeWeekly = parseQuotaWindow(
+    rawQuota['3p-weekly'] ??
+      rawQuota['3p_weekly'] ??
+      rawQuota['claude-weekly'] ??
+      rawQuota['claude_weekly'] ??
+      rawQuota.claude?.weekly ??
+      rawQuota.claude?.['7d'] ??
+      rawQuota['claude/gpt']?.weekly ??
+      rawQuota.gpt?.weekly,
+    now,
+  );
+
+  let gemini: AgyQuotaGroup | undefined = undefined;
+  if (gemini5h || geminiWeekly) {
+    gemini = {
+      name: 'Gemini',
+      fiveHour: gemini5h,
+      weekly: geminiWeekly,
+    };
+  }
+
+  let claude: AgyQuotaGroup | undefined = undefined;
+  if (claude5h || claudeWeekly) {
+    claude = {
+      name: 'Claude / GPT',
+      fiveHour: claude5h,
+      weekly: claudeWeekly,
+    };
+  }
 
   // If models list or map is directly present inside quota
   const models: ModelQuotaInfo[] = [];
@@ -299,8 +381,10 @@ export function parseStatusLineQuota(rawQuota: any, now = Date.now()): AgyStatus
     }
   }
 
+  const email = rawQuotaOrPayload.email || rawQuota.email;
+  const planTier = rawQuotaOrPayload.plan_tier || rawQuotaOrPayload.planTier || rawQuota.plan_tier || rawQuota.planTier;
+
   if (!gemini && !claude && models.length === 0) {
-    // Check if flat top-level five_hour or weekly is present
     const topFiveHour = parseQuotaWindow(rawQuota.five_hour ?? rawQuota['5h'] ?? rawQuota.fiveHour, now);
     const topWeekly = parseQuotaWindow(rawQuota.weekly ?? rawQuota['7d'] ?? rawQuota.weeklyWindow, now);
     if (topFiveHour || topWeekly) {
@@ -310,7 +394,9 @@ export function parseStatusLineQuota(rawQuota: any, now = Date.now()): AgyStatus
           fiveHour: topFiveHour,
           weekly: topWeekly,
         },
-        raw: rawQuota,
+        email,
+        planTier,
+        raw: rawQuotaOrPayload,
         updatedAt: now,
       };
     }
@@ -321,7 +407,9 @@ export function parseStatusLineQuota(rawQuota: any, now = Date.now()): AgyStatus
     gemini,
     claude,
     models: models.length > 0 ? models : undefined,
-    raw: rawQuota,
+    email,
+    planTier,
+    raw: rawQuotaOrPayload,
     updatedAt: now,
   };
 }
@@ -350,7 +438,7 @@ export function parseStatusLinePayload(
     return null;
   }
 
-  const quota = payload.quota ? parseStatusLineQuota(payload.quota, now) : null;
+  const quota = parseStatusLineQuota(payload, now);
   return {
     payload,
     quota,
@@ -360,7 +448,7 @@ export function parseStatusLinePayload(
 /**
  * Agy Quota Store (Singleton & Instance)
  *
- * Holds the latest live quota state received from Agy statusLine hooks.
+ * Holds the latest live quota state received from Agy statusLine hooks and files.
  */
 export class AgyQuotaStore {
   private static instance: AgyQuotaStore | null = null;
@@ -381,12 +469,15 @@ export class AgyQuotaStore {
     }
   }
 
-  getQuota(): AgyStatusLineQuota | null {
+  getQuota(loadFromDisk = true): AgyStatusLineQuota | null {
+    if (!this.currentQuota && loadFromDisk) {
+      this.loadFromFile();
+    }
     return this.currentQuota;
   }
 
-  hasQuota(): boolean {
-    return this.currentQuota !== null;
+  hasQuota(loadFromDisk = true): boolean {
+    return this.getQuota(loadFromDisk) !== null;
   }
 
   clear(): void {
@@ -410,6 +501,41 @@ export class AgyQuotaStore {
     return false;
   }
 
+  /**
+   * Attempts to load quota state from local statusline files.
+   */
+  loadFromFile(customPath?: string, now = Date.now()): boolean {
+    const candidatePaths = customPath !== undefined
+      ? (customPath ? [customPath] : [])
+      : [
+          path.join(os.homedir(), '.gemini/antigravity-cli/statusline-state.json'),
+          path.join(os.homedir(), '.config/gemini/statusline-state.json'),
+          path.join(os.homedir(), '.happy/agy-statusline.json'),
+        ];
+
+    for (const filePath of candidatePaths) {
+      if (fs.existsSync(filePath)) {
+        try {
+          const stats = fs.statSync(filePath);
+          // Only load if updated within last 24 hours
+          if (now - stats.mtimeMs < 24 * 3600 * 1000) {
+            const raw = fs.readFileSync(filePath, 'utf8').trim();
+            if (raw.startsWith('{')) {
+              const parsed = parseStatusLinePayload(raw, now);
+              if (parsed?.quota) {
+                this.currentQuota = parsed.quota;
+                return true;
+              }
+            }
+          }
+        } catch {
+          // ignore read error
+        }
+      }
+    }
+    return false;
+  }
+
   subscribe(listener: (quota: AgyStatusLineQuota) => void): () => void {
     this.listeners.add(listener);
     if (this.currentQuota) {
@@ -427,87 +553,90 @@ export class AgyQuotaStore {
   /**
    * Converts the current statusLine quota to standard AgyUsageStatus.
    */
-  toUsageStatus(): AgyUsageStatus | null {
-    if (!this.currentQuota) {
+  toUsageStatus(loadFromDisk = true): AgyUsageStatus | null {
+    const quota = this.getQuota(loadFromDisk);
+    if (!quota) {
       return null;
     }
 
     const models: ModelQuotaInfo[] = [];
 
-    if (this.currentQuota.models && this.currentQuota.models.length > 0) {
-      models.push(...this.currentQuota.models);
+    if (quota.models && quota.models.length > 0) {
+      models.push(...quota.models);
     } else {
-      if (this.currentQuota.gemini?.fiveHour) {
+      if (quota.gemini?.fiveHour) {
         models.push({
           modelId: 'gemini-5h-window',
           label: 'Gemini (5h Window)',
-          remainingFraction: this.currentQuota.gemini.fiveHour.remainingFraction,
-          usedPercentage: this.currentQuota.gemini.fiveHour.usedPercentage,
-          resetTime: this.currentQuota.gemini.fiveHour.resetTime,
-          resetsInMinutes: this.currentQuota.gemini.fiveHour.resetsInMinutes,
-          resetsInFormatted: this.currentQuota.gemini.fiveHour.resetsInFormatted,
+          remainingFraction: quota.gemini.fiveHour.remainingFraction,
+          usedPercentage: quota.gemini.fiveHour.usedPercentage,
+          resetTime: quota.gemini.fiveHour.resetTime,
+          resetsInMinutes: quota.gemini.fiveHour.resetsInMinutes,
+          resetsInFormatted: quota.gemini.fiveHour.resetsInFormatted,
         });
       }
-      if (this.currentQuota.gemini?.weekly) {
+      if (quota.gemini?.weekly) {
         models.push({
           modelId: 'gemini-weekly-window',
           label: 'Gemini (Weekly Window)',
-          remainingFraction: this.currentQuota.gemini.weekly.remainingFraction,
-          usedPercentage: this.currentQuota.gemini.weekly.usedPercentage,
-          resetTime: this.currentQuota.gemini.weekly.resetTime,
-          resetsInMinutes: this.currentQuota.gemini.weekly.resetsInMinutes,
-          resetsInFormatted: this.currentQuota.gemini.weekly.resetsInFormatted,
+          remainingFraction: quota.gemini.weekly.remainingFraction,
+          usedPercentage: quota.gemini.weekly.usedPercentage,
+          resetTime: quota.gemini.weekly.resetTime,
+          resetsInMinutes: quota.gemini.weekly.resetsInMinutes,
+          resetsInFormatted: quota.gemini.weekly.resetsInFormatted,
         });
       }
-      if (this.currentQuota.claude?.fiveHour) {
+      if (quota.claude?.fiveHour) {
         models.push({
           modelId: 'claude-5h-window',
           label: 'Claude / GPT (5h Window)',
-          remainingFraction: this.currentQuota.claude.fiveHour.remainingFraction,
-          usedPercentage: this.currentQuota.claude.fiveHour.usedPercentage,
-          resetTime: this.currentQuota.claude.fiveHour.resetTime,
-          resetsInMinutes: this.currentQuota.claude.fiveHour.resetsInMinutes,
-          resetsInFormatted: this.currentQuota.claude.fiveHour.resetsInFormatted,
+          remainingFraction: quota.claude.fiveHour.remainingFraction,
+          usedPercentage: quota.claude.fiveHour.usedPercentage,
+          resetTime: quota.claude.fiveHour.resetTime,
+          resetsInMinutes: quota.claude.fiveHour.resetsInMinutes,
+          resetsInFormatted: quota.claude.fiveHour.resetsInFormatted,
         });
       }
-      if (this.currentQuota.claude?.weekly) {
+      if (quota.claude?.weekly) {
         models.push({
           modelId: 'claude-weekly-window',
           label: 'Claude / GPT (Weekly Window)',
-          remainingFraction: this.currentQuota.claude.weekly.remainingFraction,
-          usedPercentage: this.currentQuota.claude.weekly.usedPercentage,
-          resetTime: this.currentQuota.claude.weekly.resetTime,
-          resetsInMinutes: this.currentQuota.claude.weekly.resetsInMinutes,
-          resetsInFormatted: this.currentQuota.claude.weekly.resetsInFormatted,
+          remainingFraction: quota.claude.weekly.remainingFraction,
+          usedPercentage: quota.claude.weekly.usedPercentage,
+          resetTime: quota.claude.weekly.resetTime,
+          resetsInMinutes: quota.claude.weekly.resetsInMinutes,
+          resetsInFormatted: quota.claude.weekly.resetsInFormatted,
         });
       }
     }
 
     const groups: Record<string, AgyQuotaGroup> = {};
-    if (this.currentQuota.gemini) {
-      groups.gemini = this.currentQuota.gemini;
+    if (quota.gemini) {
+      groups.gemini = quota.gemini;
     }
-    if (this.currentQuota.claude) {
-      groups.claude = this.currentQuota.claude;
+    if (quota.claude) {
+      groups.claude = quota.claude;
     }
 
     return {
-      planName: 'Google AI Pro',
+      email: quota.email,
+      planName: quota.planTier || 'Google AI Pro',
+      userTierName: quota.planTier || 'Google AI Pro',
       models,
       groups,
-      statusLineQuota: this.currentQuota,
-      fiveHourWindow: this.currentQuota.gemini?.fiveHour
+      statusLineQuota: quota,
+      fiveHourWindow: quota.gemini?.fiveHour
         ? {
-            remainingPercentage: this.currentQuota.gemini.fiveHour.percentage,
-            usedPercentage: this.currentQuota.gemini.fiveHour.usedPercentage,
-            resetsInFormatted: this.currentQuota.gemini.fiveHour.resetsInFormatted,
+            remainingPercentage: quota.gemini.fiveHour.percentage,
+            usedPercentage: quota.gemini.fiveHour.usedPercentage,
+            resetsInFormatted: quota.gemini.fiveHour.resetsInFormatted,
           }
         : undefined,
-      sevenDayWindow: this.currentQuota.gemini?.weekly
+      sevenDayWindow: quota.gemini?.weekly
         ? {
-            remainingPercentage: this.currentQuota.gemini.weekly.percentage,
-            usedPercentage: this.currentQuota.gemini.weekly.usedPercentage,
-            resetsInFormatted: this.currentQuota.gemini.weekly.resetsInFormatted,
+            remainingPercentage: quota.gemini.weekly.percentage,
+            usedPercentage: quota.gemini.weekly.usedPercentage,
+            resetsInFormatted: quota.gemini.weekly.resetsInFormatted,
           }
         : undefined,
       source: 'statusline-hook',
