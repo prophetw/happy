@@ -22,10 +22,12 @@ import type {
 } from '@/agent/core/AgentBackend';
 import { resolveAgyModelName, type DiscoveredModel } from './discoverModels';
 import type { SpawnFn } from './AgyBackend';
+import type { AgyPermissionHandler } from './permissionHandler';
 
 export interface AgySdkBackendOptions {
   cwd: string;
   permissionMode: PermissionMode;
+  permissionHandler?: AgyPermissionHandler;
   model?: string;
   models?: DiscoveredModel[];
   conversationId?: string | null;
@@ -48,6 +50,7 @@ export class AgySdkBackend implements AgentBackend {
   private readonly spawnFn: SpawnFn;
 
   private permissionMode: PermissionMode;
+  private permissionHandler?: AgyPermissionHandler;
   private model?: string;
   private models?: DiscoveredModel[];
   private conversationId: string | null = null;
@@ -64,6 +67,7 @@ export class AgySdkBackend implements AgentBackend {
   constructor(opts: AgySdkBackendOptions) {
     this.cwd = opts.cwd;
     this.permissionMode = opts.permissionMode;
+    this.permissionHandler = opts.permissionHandler;
     this.models = opts.models;
     this.model = resolveAgyModelName(opts.model, this.models);
     this.conversationId = opts.conversationId ?? null;
@@ -81,6 +85,7 @@ export class AgySdkBackend implements AgentBackend {
 
   setPermissionMode(mode: PermissionMode): void {
     this.permissionMode = mode;
+    this.permissionHandler?.setPermissionMode(mode);
   }
 
   setModel(model: string | undefined): void {

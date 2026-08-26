@@ -30,6 +30,7 @@ import type {
 import { resolveAgyBin, AGY_PRINT_TIMEOUT } from './constants';
 import { resolveAgyModelName, type DiscoveredModel } from './discoverModels';
 import { StreamJsonParser, type AgyResult } from './streamJson';
+import type { AgyPermissionHandler } from './permissionHandler';
 
 export type SpawnFn = typeof spawn;
 
@@ -38,6 +39,8 @@ export interface AgyBackendOptions {
   cwd: string;
   /** Initial permission mode. */
   permissionMode: PermissionMode;
+  /** Optional permission handler. */
+  permissionHandler?: AgyPermissionHandler;
   /** Initial model display name or slug. */
   model?: string;
   /** List of discovered models for resolving slugs to display names. */
@@ -81,6 +84,7 @@ export class AgyBackend implements AgentBackend {
   private readonly maxRetries: number;
 
   private permissionMode: PermissionMode;
+  private permissionHandler?: AgyPermissionHandler;
   private model?: string;
   private models?: DiscoveredModel[];
   private conversationId: string | null = null;
@@ -98,6 +102,7 @@ export class AgyBackend implements AgentBackend {
   constructor(opts: AgyBackendOptions) {
     this.cwd = opts.cwd;
     this.permissionMode = opts.permissionMode;
+    this.permissionHandler = opts.permissionHandler;
     this.models = opts.models;
     this.model = resolveAgyModelName(opts.model, this.models);
     this.conversationId = opts.conversationId ?? null;
@@ -113,6 +118,7 @@ export class AgyBackend implements AgentBackend {
 
   setPermissionMode(mode: PermissionMode): void {
     this.permissionMode = mode;
+    this.permissionHandler?.setPermissionMode(mode);
   }
 
   setModel(model: string | undefined): void {

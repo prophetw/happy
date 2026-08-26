@@ -40,6 +40,7 @@ import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
 import { extractSessionTitle } from './title';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { fetchAgyUsage, formatAgyUsageMarkdown, formatAgyUsageTerminal } from './usage';
+import { AgyPermissionHandler } from './permissionHandler';
 
 export interface RunAgyOptions {
   credentials: Credentials;
@@ -132,6 +133,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
   }
 
   let session: ApiSessionClient;
+  let permissionHandler: AgyPermissionHandler;
   const { session: initialSession, reconnectionHandle } = setupOfflineReconnection({
     api,
     sessionTag,
@@ -140,9 +142,16 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     response,
     onSessionSwap: (newSession) => {
       session = newSession;
+      if (permissionHandler) {
+        permissionHandler.updateSession(newSession);
+      }
     },
   });
   session = initialSession;
+
+  permissionHandler = new AgyPermissionHandler(session);
+  permissionHandler.reset('Previous CLI process exited before responding');
+  permissionHandler.setPermissionMode(initialPermissionMode);
 
   if (response) {
     try {
@@ -206,6 +215,20 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
       messageBuffer.addMessage(msg.textDelta, 'assistant');
     } else if (msg.type === 'tool-call') {
       messageBuffer.addMessage(`🔧 ${msg.toolName}`, 'status');
+      permissionHandler.handleToolCall(msg.callId, msg.toolName, msg.args).catch((err) => {
+        logger.debug('[agy] Tool permission rejected or aborted:', err);
+      });
+    } else if (msg.type === 'tool-result') {
+      permissionHandler.completeToolCall(msg.callId, msg.toolName, (msg as any).result);
+    } else if (msg.type === 'permission-request') {
+      const payload = (msg as any).payload || {};
+      session.sendAgentMessage('agy', {
+        type: 'permission-request',
+        permissionId: msg.id,
+        toolName: payload.toolName || (msg as any).reason || 'unknown',
+        description: (msg as any).reason || payload.toolName || '',
+        options: payload,
+      });
     } else if (msg.type === 'status') {
       const nextThinking = msg.status === 'running';
       if (thinking !== nextThinking) {
@@ -281,6 +304,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
 
   async function handleAbort() {
     log('Abort requested');
+    permissionHandler.abortAll();
     try {
       await backend.cancel(sessionTag);
     } catch (error) {
@@ -315,6 +339,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
 
       if (batch.mode.permissionMode) {
         backend.setPermissionMode(batch.mode.permissionMode);
+        permissionHandler.setPermissionMode(batch.mode.permissionMode);
       }
       if (batch.mode.model && batch.mode.model !== displayedModel) {
         displayedModel = batch.mode.model;
@@ -332,6 +357,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
       if (specialCommand.type === 'clear') {
         log('Handling /clear command - resetting agy session');
         backend.reset();
+        permissionHandler.reset();
         delete metadata.agyConversationId;
         delete metadata.summary;
         session.updateMetadata((currentMetadata) => {
