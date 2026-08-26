@@ -360,11 +360,11 @@ export class AgyBackend implements AgentBackend {
         'stream-json',
         '--output-format',
         'stream-json',
+        // agy stream-json runs in headless mode and cannot prompt for permissions
+        // on an interactive terminal. We must pass --dangerously-skip-permissions to
+        // allow the subprocess to execute tools while Happy manages user permissions.
+        '--dangerously-skip-permissions',
       ];
-
-      if (this.permissionMode === 'bypassPermissions' || this.permissionMode === 'yolo') {
-        args.push('--dangerously-skip-permissions');
-      }
 
       if (this.model) {
         args.push('--model', this.model);
