@@ -331,7 +331,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     compactContainer: {
         backgroundColor: 'transparent',
-        marginVertical: 1,
+        marginVertical: 2,
         overflow: 'visible',
     },
     inlineContainer: {

@@ -117,6 +117,24 @@ export const MetadataSchema = z.object({
         text: z.string(),
         updatedAt: z.number()
     }).optional(),
+    /**
+     * When the session last did something a person would call activity: the
+     * newest visible user message, visible agent text, or user-facing question.
+     * Tool calls, tool results, reasoning, permission prompts, heartbeats and
+     * metadata writes deliberately do not advance it, so a long tool-only tail
+     * cannot float a session to the top of the list.
+     *
+     * The agent publishes it, so every device sorts the same way — unlike
+     * `Session.lastMessageSentAt`, which only knows what this device sent.
+     */
+    lastMeaningfulMessageAt: z.number().optional(),
+    /** Rig's branch/worktree comparison against its merge base with origin/main. */
+    git: z.object({
+        changedFiles: z.number().int().nonnegative(),
+        countsExact: z.boolean(),
+        deletions: z.number().int().nonnegative(),
+        insertions: z.number().int().nonnegative(),
+    }).passthrough().optional(),
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexThreadId: z.string().optional(), // Codex app-server thread ID
@@ -333,6 +351,11 @@ export const AgentStateSchema = z.object({
         reason: z.string().nullish(),
         mode: z.string().nullish(),
         allowedTools: z.array(z.string()).nullish(),
+        // The CLI completes a request by echoing the RPC's own field name,
+        // `allowTools`, so every deployed CLI reports the "don't ask again"
+        // grant under this key. Declared here so parsing keeps it; the
+        // reducer folds it into `allowedTools` when reading.
+        allowTools: z.array(z.string()).nullish(),
         decision: z.enum(['approved', 'approved_for_session', 'denied', 'abort']).nullish(),
         toolUseId: z.string().nullish()
     })).nullish(),
@@ -369,6 +392,8 @@ export interface Session {
     updatedAt: number,
     active: boolean,
     activeAt: number,
+    /** Account-scoped Project linkage supplied beside the encrypted session. */
+    projectId?: string | null,
     metadata: Metadata | null,
     metadataVersion: number,
     agentState: AgentState | null,

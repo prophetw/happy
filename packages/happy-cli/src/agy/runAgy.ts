@@ -34,6 +34,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { AgyDisplay } from '@/ui/ink/AgyDisplay';
 import type { AgentMessage } from '@/agent/core';
 import type { Session as ApiSession, PermissionMode } from '@/api/types';
+import { normalizeRemotePermissionMode } from '@/claude/utils/permissionMode';
 import { createAgyBackend } from './createAgyBackend';
 import { DEFAULT_AGY_MODEL } from './constants';
 import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
@@ -275,7 +276,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     if (!message.content.text) return;
 
     const mode: AgyTurnMode = {
-      permissionMode: message.meta?.permissionMode as PermissionMode | undefined,
+      permissionMode: normalizeRemotePermissionMode(message.meta?.permissionMode),
       model: message.meta?.model
         ? (resolveAgyModelName(message.meta.model, discoveredModels) ?? message.meta.model)
         : undefined,

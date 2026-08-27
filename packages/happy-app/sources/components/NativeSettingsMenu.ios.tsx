@@ -15,6 +15,7 @@ import {
     tint,
 } from '@expo/ui/swift-ui/modifiers';
 import type { NativeSettingsMenuProps } from './NativeSettingsMenu';
+import { orderNativeMenuItems } from './nativeMenuOrder';
 
 const systemImage = (name: string) => (
     name as React.ComponentProps<typeof Button>['systemImage']
@@ -47,15 +48,28 @@ export function NativeSettingsMenu({
     groups,
     children,
     style,
+    onMenuOpen,
     flat = false,
     triggerLabel,
     triggerSystemImage,
     triggerAlignment = 'center',
+    anchor = 'bottom',
 }: NativeSettingsMenuProps) {
     const { theme } = useUnistyles();
     const nativeTrigger = triggerLabel !== undefined || triggerSystemImage !== undefined;
+    // A top-anchored menu opens downward, which iOS already lays out top-down;
+    // only the upward, bottom-up case needs the pre-reversal.
+    const orderItems = <T,>(items: readonly T[]): T[] => (
+        anchor === 'bottom' ? orderNativeMenuItems(items, 'ios') : [...items]
+    );
     return (
-        <View style={[styles.container, style]}>
+        <View
+            style={[styles.container, style]}
+            onStartShouldSetResponderCapture={() => {
+                onMenuOpen?.();
+                return false;
+            }}
+        >
             <View
                 pointerEvents="none"
                 accessible={false}
@@ -70,7 +84,15 @@ export function NativeSettingsMenu({
                 SwiftUI shifts the menu's invisible trigger up by the keyboard
                 height while the host's RN frame stays put, so the chip becomes
                 untappable whenever the keyboard is open. */}
-            <Host ignoreSafeArea="keyboard" style={styles.host}>
+            <Host
+                // SwiftUI hosts do not reliably re-resolve modifiers when the
+                // app theme flips at runtime, so a chip tinted for dark mode
+                // stayed white on the light composer until a cold restart.
+                // Remounting the host on a theme change re-applies the tint.
+                key={theme.dark ? 'dark' : 'light'}
+                ignoreSafeArea="keyboard"
+                style={styles.host}
+            >
                 <Menu
                     // The tint is what colors the label, so with a native trigger
                     // it has to follow the theme: a fixed white renders the chip
@@ -124,20 +146,22 @@ export function NativeSettingsMenu({
                         </HStack>
                     )}
                 >
-                    {flat ? groups.flatMap((group) => (
-                        group.options.map((option) => (
-                            <Button
-                                key={`${group.key}:${option.key}`}
-                                label={option.label}
-                                systemImage={option.key === group.selectedKey ? systemImage('checkmark') : undefined}
-                                modifiers={[disabled(option.disabled === true)]}
-                                onPress={() => group.onSelect(option.key)}
-                            />
-                        ))
-                    )) : groups.map((group) => (
+                    {flat ? orderItems(groups.flatMap((group) => (
+                        group.options.map((option) => ({ group, option }))
+                    ))).map(({ group, option }) => (
+                        <Button
+                            key={`${group.key}:${option.key}`}
+                            label={option.label}
+                            systemImage={option.key === group.selectedKey
+                                ? systemImage('checkmark')
+                                : option.systemImage ? systemImage(option.systemImage) : undefined}
+                            modifiers={[disabled(option.disabled === true)]}
+                            onPress={() => group.onSelect(option.key)}
+                        />
+                    )) : orderItems(groups).map((group) => (
                         <Section
                             key={group.key}
-                            header={(
+                            header={(group.title ?? group.label) ? (
                                 <HStack spacing={6}>
                                     {group.systemImage ? (
                                         <Image systemName={sectionSystemImage(group.systemImage)} size={14} />
@@ -146,13 +170,15 @@ export function NativeSettingsMenu({
                                         the current value, which the chip already shows. */}
                                     <Text>{group.title ?? group.label}</Text>
                                 </HStack>
-                            )}
+                            ) : undefined}
                         >
-                            {group.options.map((option) => (
+                            {orderItems(group.options).map((option) => (
                                 <Button
                                     key={option.key}
                                     label={option.label}
-                                    systemImage={option.key === group.selectedKey ? systemImage('checkmark') : undefined}
+                                    systemImage={option.key === group.selectedKey
+                                        ? systemImage('checkmark')
+                                        : option.systemImage ? systemImage(option.systemImage) : undefined}
                                     modifiers={[disabled(option.disabled === true)]}
                                     onPress={() => group.onSelect(option.key)}
                                 />

@@ -1,17 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import {
+    filterPermissionModesForCli,
+    modeSupportedByCli,
+    permissionModeSupportedByCli,
     getAgyModelModes,
+    getAgyPermissionModes,
     getAvailableModels,
     getAvailablePermissionModes,
     getCodexModelModes,
+    getCodexPermissionModes,
     getClaudeModelModes,
     getClaudePermissionModes,
+    getGeminiPermissionModes,
     getDefaultEffortKey,
     getDefaultModelKey,
+    getEffortLevelsForModel,
     getDefaultPermissionModeKey,
+    includeConfiguredModel,
+    getOpenClawPermissionModes,
     mapMetadataOptions,
     resolveCurrentOption,
 } from './modelModeOptions';
+import { sortPermissionModes } from '@/utils/permissionModeLabels';
 import { rigMetadataFixture } from '@/sync/__testdata__/rigMetadata';
 
 const translate = (key: string) => `tr:${key}`;
@@ -27,54 +37,148 @@ describe('modelModeOptions', () => {
         ]);
     });
 
-    it('builds claude permission fallbacks with translated names', () => {
+    it('names claude permission modes with one word each, most-used first', () => {
         const modes = getClaudePermissionModes(translate);
-        expect(modes.map((mode) => mode.key)).toEqual(['default', 'plan', 'dontAsk', 'acceptEdits', 'bypassPermissions']);
-        expect(modes[0].name).toBe('tr:agentInput.permissionMode.default');
+        expect(modes.map((mode) => [mode.key, mode.name])).toEqual([
+            ['auto', 'Auto'],
+            ['acceptEdits', 'Edits'],
+            ['plan', 'Plan'],
+            ['bypassPermissions', 'Yolo'],
+            ['default', 'Default'],
+        ]);
+        expect(modes[0].description).toBe('tr:agentInput.permissionMode.auto');
     });
 
-    it('builds codex model fallbacks', () => {
+    // auto belongs to the Agent SDK's own PermissionMode union and is carried
+    // by MessageMetaSchema. dontAsk is in neither, so sending it fails
+    // UserMessageSchema.safeParse and drops the whole prompt.
+    it('offers auto and still drops dontAsk, which the CLI rejects', () => {
+        const keys = getClaudePermissionModes(translate).map((mode) => mode.key);
+        expect(keys).toContain('auto');
+        expect(keys).not.toContain('dontAsk');
+    });
+
+    it('leads both shipped harnesses with Auto', () => {
+        expect(getClaudePermissionModes(translate)[0].key).toBe('auto');
+        expect(getCodexPermissionModes(translate)[0].key).toBe('auto');
+    });
+
+    it('never calls a harness default Auto, which is a reviewed mode and not a default', () => {
+        const named = (modes: { key: string; name: string }[]) => modes.find((mode) => mode.key === 'default')?.name;
+        expect(named(getClaudePermissionModes(translate))).toBe('Default');
+        expect(named(getCodexPermissionModes(translate))).toBe('Default');
+        expect(named(getAgyPermissionModes(translate))).toBe('Default');
+        expect(named(getGeminiPermissionModes(translate))).toBe('Default');
+    });
+
+    // The hardcoded catalogs are written in order rather than sorted, so this
+    // is what stops them drifting out of step with the rank table.
+    it.each([
+        ['claude', getClaudePermissionModes],
+        ['codex', getCodexPermissionModes],
+        ['gemini', getGeminiPermissionModes],
+        ['openclaw', getOpenClawPermissionModes],
+    ] as const)('lists %s modes in the shared rank order', (_flavor, build) => {
+        const modes = build(translate);
+        expect(modes.map((mode) => mode.key)).toEqual(sortPermissionModes(modes).map((mode) => mode.key));
+    });
+
+    it('leads agy with Default, the one harness where Default is the safe mode', () => {
+        // Deliberately against the shared ranking: agy --print cannot prompt, so
+        // its Default is the sandboxed launch default rather than "ask me first".
+        expect(getAgyPermissionModes(translate).map((mode) => mode.key)).toEqual([
+            'default',
+            'bypassPermissions',
+        ]);
+        expect(getDefaultPermissionModeKey('agy')).toBe('default');
+    });
+
+    it('only offers gemini modes runGemini actually honours', () => {
+        // auto_edit is absent from MessageMetaSchema and would drop the whole
+        // message; plan passes the schema but runGemini ignores it.
+        const keys = getGeminiPermissionModes(translate).map((mode) => mode.key);
+        expect(keys).not.toContain('auto_edit');
+        expect(keys).not.toContain('plan');
+    });
+
+    it('only offers the curated codex harness models', () => {
         const models = getCodexModelModes();
         expect(models.map((model) => model.key)).toEqual([
-            'default',
             'gpt-5.6-sol',
             'gpt-5.6-terra',
             'gpt-5.6-luna',
-            'gpt-5.5',
-            'gpt-5.4',
-            'gpt-5.3-codex',
-            'gpt-5.2-codex',
-            'gpt-5.1-codex-max',
-            'gpt-5.2',
-            'gpt-5.1-codex-mini',
         ]);
-        expect(models[0].name).toBe('default model');
-        expect(models[1].name).toBe('gpt-5.6 sol');
+        expect(models[0].name).toBe('GPT-5.6 Sol');
     });
 
-    it('builds claude model fallbacks with fable 5', () => {
+    it('adds a configured custom codex model without expanding the shared catalog', () => {
+        const models = getCodexModelModes();
+        const withCustom = includeConfiguredModel('codex', models, 'my-workspace-model');
+
+        expect(withCustom.map((model) => model.key)).toEqual([
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+            'gpt-5.6-luna',
+            'my-workspace-model',
+        ]);
+        expect(models).toHaveLength(3);
+        expect(includeConfiguredModel('claude', models, 'my-workspace-model')).toBe(models);
+    });
+
+    it('only offers the current-generation claude models', () => {
         const models = getClaudeModelModes();
         expect(models.map((model) => model.key)).toEqual([
-            'default',
+            'claude-fable-5',
             'claude-opus-5',
-            'opus',
-            'fable',
-            'sonnet',
-            'haiku',
+            'claude-opus-5[1m]',
+            'claude-sonnet-5',
         ]);
-        expect(models.find((model) => model.key === 'fable')).toEqual({
-            key: 'fable',
-            name: 'fable 5',
-            description: null,
-        });
+        expect(models.map((model) => model.name)).toEqual([
+            'Fable 5',
+            'Opus 5',
+            'Opus 5 [1M]',
+            'Sonnet 5',
+        ]);
+        // No `default model` row, and no alias keys: an alias would silently
+        // resolve to an older model than the row claims.
+        expect(models.some((model) => model.key === 'default')).toBe(false);
+        expect(models.some((model) => ['opus', 'sonnet', 'fable', 'haiku'].includes(model.key))).toBe(false);
+    });
+
+    it('offers every codex model the levels its own registry publishes', () => {
+        // Straight from codex-rs/models-manager/models.json: sol and terra
+        // publish ultra, luna does not. The difference is the whole point of
+        // asking per model rather than per flavor.
+        expect(getEffortLevelsForModel('codex', 'gpt-5.6-sol').map((level) => level.key))
+            .toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+        expect(getEffortLevelsForModel('codex', 'gpt-5.6-terra').map((level) => level.key))
+            .toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+        expect(getEffortLevelsForModel('codex', 'gpt-5.6-luna').map((level) => level.key))
+            .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    });
+
+    it('falls back to the conservative codex range for an unknown model', () => {
+        const keys = getEffortLevelsForModel('codex', 'my-workspace-model').map((level) => level.key);
+        expect(keys).toEqual(['low', 'medium', 'high', 'xhigh']);
+    });
+
+    it('offers claude the SDK effort union for every model', () => {
+        // Claude's scale belongs to the SDK, not the model: an unreachable level
+        // is silently downgraded, so all three models get the same list.
+        for (const model of ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5']) {
+            const keys = getEffortLevelsForModel('claude', model).map((level) => level.key);
+            expect(keys).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+            // Claude's floor is `low`; there is no off.
+            expect(keys).not.toContain('off');
+        }
     });
 
     it('uses code defaults for agent defaults', () => {
-        expect(getDefaultPermissionModeKey('claude')).toBe('bypassPermissions');
-        expect(getDefaultModelKey('claude')).toBe('opus');
+        expect(getDefaultPermissionModeKey('claude')).toBe('auto');
+        expect(getDefaultModelKey('claude')).toBe('claude-opus-5');
         expect(getDefaultEffortKey('claude')).toBe('medium');
-        expect(getDefaultPermissionModeKey('codex')).toBe('yolo');
-        expect(getDefaultModelKey('codex')).toBe('gpt-5.5');
+        expect(getDefaultPermissionModeKey('codex')).toBe('auto');
+        expect(getDefaultModelKey('codex')).toBe('gpt-5.6-sol');
         expect(getDefaultEffortKey('codex')).toBe('medium');
     });
 
@@ -108,7 +212,13 @@ describe('modelModeOptions', () => {
             operatingModes: [{ code: 'metadata-only', value: 'Metadata Mode', description: null }],
         } as any, translate);
 
-        expect(modes.map((mode) => mode.key)).toEqual(['default', 'read-only', 'safe-yolo', 'yolo']);
+        expect(modes.map((mode) => [mode.key, mode.name])).toEqual([
+            ['auto', 'Auto'],
+            ['safe-yolo', 'Workspace'],
+            ['read-only', 'Read'],
+            ['yolo', 'Yolo'],
+            ['default', 'Default'],
+        ]);
         expect(modes.find((mode) => mode.key === 'safe-yolo')?.description).toBe('tr:agentInput.codexPermissionMode.safeYoloDescription');
     });
 
@@ -121,8 +231,8 @@ describe('modelModeOptions', () => {
         } as any, translate);
 
         expect(modes).toEqual([
-            { key: 'build', name: 'Build', description: 'Do build steps' },
             { key: 'plan', name: 'Plan', description: 'Plan first' },
+            { key: 'build', name: 'Build', description: 'Do build steps' },
         ]);
     });
 
@@ -160,7 +270,7 @@ describe('modelModeOptions', () => {
         expect(models.some((model) => model.key === 'default')).toBe(false);
     });
 
-    it('renders all native Rig permission codes and semantic kinds without flavor fallbacks', () => {
+    it('renders all native Happy permission codes and semantic kinds without flavor fallbacks', () => {
         const modes = getAvailablePermissionModes('codex', rigMetadataFixture, translate);
         expect(modes.map((mode) => [mode.key, mode.name, mode.semanticKind])).toEqual([
             ['auto', 'Auto', 'safe-yolo'],
@@ -194,7 +304,62 @@ describe('modelModeOptions', () => {
 
         expect(getAvailableModels('codex', metadata, translate)).toEqual(getCodexModelModes());
         expect(getAvailablePermissionModes('codex', metadata, translate).map((mode) => mode.key)).toEqual([
-            'default', 'read-only', 'safe-yolo', 'yolo',
+            'auto', 'safe-yolo', 'read-only', 'yolo', 'default',
         ]);
+    });
+
+    // `auto` is tagged sinceCliVersion 1.2.1-beta.2. compareVersions cannot see
+    // prerelease numbers, so beta.1 vs beta.2 is the case that matters most.
+    // No version stays permissive: it means the client is not happy-cli.
+    it('gates a tagged mode on the CLI version that has to parse it', () => {
+        const auto = { sinceCliVersion: '1.2.1-beta.2' };
+        expect(modeSupportedByCli(auto, '1.2.1-beta.2')).toBe(true);
+        expect(modeSupportedByCli(auto, '1.2.1')).toBe(true);
+        expect(modeSupportedByCli(auto, '1.3.0')).toBe(true);
+        expect(modeSupportedByCli(auto, '1.2.1-beta.1')).toBe(false);
+        expect(modeSupportedByCli(auto, '1.2.0')).toBe(false);
+        expect(modeSupportedByCli(auto, '0.11.2')).toBe(false);
+        expect(modeSupportedByCli(auto, undefined)).toBe(true);
+        expect(modeSupportedByCli(auto, null)).toBe(true);
+        // Build metadata is ignored, as semver requires.
+        expect(modeSupportedByCli(auto, '1.2.1-beta.2+local')).toBe(true);
+        expect(modeSupportedByCli(auto, '1.2.0+local')).toBe(false);
+        // A present-but-mangled version hides tagged modes: more likely old than new.
+        expect(modeSupportedByCli(auto, 'not-a-version')).toBe(false);
+        // Untagged modes are offered to every CLI, however old.
+        expect(modeSupportedByCli({}, '0.9.0')).toBe(true);
+        expect(modeSupportedByCli({}, 'not-a-version')).toBe(true);
+    });
+
+    // The outbound-message side of the same gate: the send path asks this
+    // before serializing a saved key, and refuses loudly on false rather than
+    // substituting a different mode.
+    it('answers whether the session CLI can parse a saved mode key', () => {
+        expect(permissionModeSupportedByCli('auto', '1.2.1-beta.1')).toBe(false);
+        expect(permissionModeSupportedByCli('auto', '1.2.0')).toBe(false);
+        expect(permissionModeSupportedByCli('auto', '1.2.1-beta.2')).toBe(true);
+        expect(permissionModeSupportedByCli('auto', undefined)).toBe(true);
+        expect(permissionModeSupportedByCli('plan', '1.2.0')).toBe(true);
+        expect(permissionModeSupportedByCli(undefined, '1.2.0')).toBe(true);
+        expect(permissionModeSupportedByCli(null, '1.2.0')).toBe(true);
+    });
+
+    it('hides auto from session pickers when the session CLI is too old', () => {
+        const oldCli = { path: '/tmp', host: 'host', version: '1.2.0' } as any;
+        expect(getAvailablePermissionModes('claude', oldCli, translate).map((mode) => mode.key)).toEqual([
+            'acceptEdits', 'plan', 'bypassPermissions', 'default',
+        ]);
+        expect(getAvailablePermissionModes('codex', oldCli, translate).map((mode) => mode.key)).toEqual([
+            'safe-yolo', 'read-only', 'yolo', 'default',
+        ]);
+    });
+
+    it('drops only auto when filtering for an old CLI, and nothing when new', () => {
+        const modes = getClaudePermissionModes(translate);
+        expect(filterPermissionModesForCli(modes, '1.2.0').map((mode) => mode.key)).toEqual([
+            'acceptEdits', 'plan', 'bypassPermissions', 'default',
+        ]);
+        expect(filterPermissionModesForCli(modes, '1.2.1-beta.2')).toEqual(modes);
+        expect(filterPermissionModesForCli(modes, undefined)).toEqual(modes);
     });
 });

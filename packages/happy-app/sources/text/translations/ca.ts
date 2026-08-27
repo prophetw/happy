@@ -15,10 +15,17 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const ca: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'toca per finalitzar',
+        connecting: 'Connectant…',
+        error: 'Error de connexió',
+        active: 'Assistent de veu actiu',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Safata',
-        sessions: 'Terminals',
+        sessions: 'Sessions',
         settings: 'Configuració',
     },
 
@@ -81,6 +88,7 @@ export const ca: TranslationStructure = {
         offline: 'fora de línia',
         lastSeen: ({ time }: { time: string }) => `vist per última vegada ${time}`,
         permissionRequired: 'permís requerit',
+        inputRequired: 'esperant la teva resposta',
         activeNow: 'Actiu ara',
         unknown: 'desconegut',
         unread: 'nous resultats',
@@ -163,13 +171,6 @@ export const ca: TranslationStructure = {
         },
         chat: 'Xat',
         chatDescription: 'Personalitza l\'aspecte dels missatges del xat',
-        sessionStatusBar: 'Informació d\'estat de la sessió',
-        sessionStatusBarDescription: 'Tria on es mostren la branca, el model, l\'esforç i el context',
-        sessionStatusDisplayOptions: {
-            hidden: 'Ocult',
-            above: 'Sobre el compositor',
-            below: 'Sota el compositor',
-        },
         usageLimitShowRemaining: 'Mostra la quota restant',
         usageLimitShowRemainingDescription: 'Els indicadors de límit compten enrere en lloc d\'endavant',
         userMessageBubbleColor: 'Color dels teus missatges',
@@ -186,33 +187,35 @@ export const ca: TranslationStructure = {
         displayDescription: 'Controla la disposició i l\'espaiat',
         compactToolCalls: 'Crides d\'eines compactes',
         compactToolCallsDescription: 'Mostra les crides no interactives en una sola línia; obre una fila per veure\'n els detalls',
-        inlineToolCalls: 'Crides d\'eines en línia',
-        inlineToolCallsDescription: 'Mostra les crides d\'eines directament als missatges de xat',
-        expandTodoLists: 'Expandeix les llistes de tasques',
-        expandTodoListsDescription: 'Mostra totes les tasques en lloc de només els canvis',
-        showLineNumbersInDiffs: 'Mostra els números de línia a les diferències',
-        showLineNumbersInDiffsDescription: 'Mostra els números de línia a les diferències de codi',
         showLineNumbersInToolViews: 'Mostra els números de línia a les vistes d\'eines',
         showLineNumbersInToolViewsDescription: 'Mostra els números de línia a les diferències de vistes d\'eines',
-        wrapLinesInDiffs: 'Ajusta les línies a les diferències',
-        wrapLinesInDiffsDescription: 'Ajusta les línies llargues en lloc de desplaçament horitzontal a les vistes de diferències',
-        diffStyle: 'Vista de diferències',
-        diffStyleDescription: 'Mostra les diferències en una sola columna (unified) o una al costat de l\'altra (split). La vista split només funciona al web.',
-        diffStyleOptions: {
-            unified: 'Unified',
-            split: 'Split',
-        },
-        alwaysShowContextSize: 'Mostra sempre la mida del context',
-        alwaysShowContextSizeDescription: 'Mostra l\'ús del context fins i tot quan no estigui prop del límit',
+        alwaysShowContextSize: 'Mostra l\'ús',
+        alwaysShowContextSizeDescription: 'Context i límits del pla sota el camp de missatge. Els avisos prop del límit sempre es mostren.',
+        input: 'Entrada',
+        inputDescription: 'Configura el camp de missatge',
+        showHarnessIconInSessionHeader: 'Mostrar la icona de l\'arnès a la capçalera de la sessió',
+        showHarnessIconInSessionHeaderDescription: 'Mostra la icona de l\'arnès a la capçalera de la sessió',
+        showHarnessIconsInSessionList: 'Mostrar les icones d\'arnès a la llista de sessions',
+        showHarnessIconsInSessionListDescription: 'Mostra les icones d\'arnès als avatars de la llista de sessions',
+        avatars: 'Avatars',
+        avatarsDescription: 'Tria l\'aspecte dels avatars de sessió generats',
         avatarStyle: 'Estil d\'avatar',
-        avatarStyleDescription: 'Tria l\'aparença de l\'avatar de la sessió',
-        avatarOptions: {
-            pixelated: 'Pixelat',
-            gradient: 'Gradient',
+        avatarStyleOptions: {
             brutalist: 'Brutalista',
+            pixelated: 'Pixelat',
+            gradient: 'Degradat',
         },
-        showFlavorIcons: "Mostrar icones de proveïdors d'IA",
-        showFlavorIconsDescription: "Mostrar icones del proveïdor d'IA als avatars de sessió",
+        avatarMonochrome: 'Avatars en blanc i negre',
+        avatarMonochromeDescription: 'Mostra els avatars sense color',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filtre',
+        groupingTitle: 'Agrupació',
+        flatList: 'Llista plana',
+        groupByProject: 'Agrupa per projecte',
+        appearanceSettings: 'Configuració d\'aparença',
     },
 
     settingsFeatures: {
@@ -232,17 +235,8 @@ export const ca: TranslationStructure = {
         commandPaletteDisabled: 'Accés ràpid a comandes desactivat',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Pulsació llarga obre modal de còpia',
-        hideInactiveSessions: 'Amaga les sessions inactives',
-        hideInactiveSessionsSubtitle: 'Mostra només els xats actius a la llista',
         groupToolCalls: 'Agrupa les crides a eines',
         groupToolCallsSubtitle: 'Replega les crides consecutives a eines en un sol contenidor',
-        privacy: 'Privadesa',
-        privacyDescription: 'Desactiva completament tota l\'analítica i telemetria. No s\'enviaran dades a PostHog ni a cap altre servei de seguiment.',
-        disableAnalytics: 'Desactivar analítica',
-        analyticsDisabled: 'Tot el seguiment i telemetria desactivats',
-        analyticsEnabled: 'Analítica anònima d\'ús activa',
-        imageUpload: 'Pujada d\'imatges',
-        imageUploadSubtitle: 'Adjunta imatges als missatges perquè els agents compatibles les analitzin',
     },
 
     errors: {
@@ -356,7 +350,12 @@ export const ca: TranslationStructure = {
         failedToConnectToServer: 'Ha fallat la connexió amb el servidor',
         currentlyUsingCustomServer: 'Actualment utilitzant un servidor personalitzat',
         customServerUrlLabel: 'URL del servidor personalitzat',
-        advancedFeatureFooter: 'Aquesta és una funció avançada. Només canvia el servidor si saps el que fas. Hauràs de tancar la sessió i tornar-la a iniciar després de canviar els servidors.'
+        advancedFeatureFooter: 'Aquesta és una funció avançada. Només canvia el servidor si saps el que fas. Hauràs de tancar la sessió i tornar-la a iniciar després de canviar els servidors.',
+        services: 'Serveis',
+        useCustomServerForVoice: 'Utilitza el servidor personalitzat per a la veu',
+        customServerVoiceEnabled: 'Les credencials i l’ús de veu utilitzen el teu servidor personalitzat',
+        customServerVoiceDisabled: 'La veu utilitza Happy Cloud i la teva subscripció de Happy',
+        customServerVoiceFooter: 'Quan està desactivat, iniciar la veu contacta amb Happy Cloud i ElevenLabs. Activa-ho només si el teu servidor personalitzat està configurat per a veu.',
     },
 
     sessionInfo: {
@@ -390,7 +389,6 @@ export const ca: TranslationStructure = {
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
         resumeSessionMachineOffline: 'This machine is offline. Resume is only available while it is online.',
-        resumeSessionNeedsHappyAgent: 'Resume is unavailable on this machine. Run `happy-agent auth login` to enable it.',
         resumeSessionMissingMachine: 'This session is missing its machine metadata, so it cannot be resumed.',
         resumeSessionMissingBackendId: 'This session does not have a resumable Claude or Codex identifier.',
         resumeSessionUnexpectedDirectoryPrompt: 'Resume cannot create directories. Start the session manually from its original path.',
@@ -443,20 +441,15 @@ export const ca: TranslationStructure = {
             stopGoal: 'Atura objectiu',
             editGoal: 'Edita objectiu',
         },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Context ${used} de ${total} tokens, ${percent}%`,
-            limitFiveHour: 'Límit de 5 hores',
-            limitSevenDay: 'Límit de 7 dies',
-            limitResets: ({ time }: { time: string }) => `es restableix ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `fa ${age}`,
-            limitRemaining: ({ percent }: { percent: number }) => `${percent}% restant`,
-        },
     },
 
     agentInput: {
         permissionMode: {
             title: 'MODE DE PERMISOS',
+            auto: 'decideix pel seu compte, pregunta si dubta',
             default: 'Per defecte',
+            agyDefault: "sandbox d'agy, sense preguntes",
+            openclawInert: "no s'aplica a openclaw",
             acceptEdits: 'Accepta edicions',
             plan: 'Mode de planificació',
             dontAsk: 'No preguntis',
@@ -485,6 +478,7 @@ export const ca: TranslationStructure = {
             safeYolo: 'Safe YOLO',
             yolo: 'YOLO',
             defaultDescription: "pregunta abans d'ordres no fiables",
+            autoDescription: 'decideix pel seu compte, pregunta si dubta',
             readOnlyDescription: 'sense escriptura',
             safeYoloDescription: "sense preguntes, sandbox de l'espai de treball",
             yoloDescription: 'sense preguntes, accés complet',
@@ -513,7 +507,14 @@ export const ca: TranslationStructure = {
             badgePlan: 'Planificació',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restant`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de context`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% setmana`,
+        },
+        usagePopup: {
+            session: 'Sessió',
+            week: 'Setmana',
+            resets: ({ time }: { time: string }) => `Es restableix ${time}`,
         },
         suggestion: {
             fileLabel: 'FITXER',

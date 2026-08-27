@@ -26,10 +26,17 @@ function plural({ count, one, few, many }: { count: number; one: string; few: st
  * Must match the exact structure of the English translations
  */
 export const ru: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'нажмите, чтобы завершить',
+        connecting: 'Подключение…',
+        error: 'Ошибка соединения',
+        active: 'Голосовой ассистент активен',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Входящие',
-        sessions: 'Терминалы',
+        sessions: 'Сессии',
         settings: 'Настройки',
     },
 
@@ -149,13 +156,6 @@ export const ru: TranslationStructure = {
         },
         chat: 'Чат',
         chatDescription: 'Настройте внешний вид сообщений в чате',
-        sessionStatusBar: 'Информация о сессии',
-        sessionStatusBarDescription: 'Выберите, где показывать ветку, модель, усилия и контекст',
-        sessionStatusDisplayOptions: {
-            hidden: 'Скрыто',
-            above: 'Над полем ввода',
-            below: 'Под полем ввода',
-        },
         usageLimitShowRemaining: 'Показывать остаток',
         usageLimitShowRemainingDescription: 'Индикаторы лимита отсчитывают остаток, а не использование',
         userMessageBubbleColor: 'Цвет ваших сообщений',
@@ -172,33 +172,35 @@ export const ru: TranslationStructure = {
         displayDescription: 'Управление макетом и интервалами',
         compactToolCalls: 'Компактные вызовы инструментов',
         compactToolCallsDescription: 'Показывать неинтерактивные вызовы одной строкой; нажмите строку для подробностей',
-        inlineToolCalls: 'Встроенные вызовы инструментов',
-        inlineToolCallsDescription: 'Отображать вызовы инструментов прямо в сообщениях чата',
-        expandTodoLists: 'Развернуть списки задач',
-        expandTodoListsDescription: 'Показывать все задачи вместо только изменений',
-        showLineNumbersInDiffs: 'Показывать номера строк в различиях',
-        showLineNumbersInDiffsDescription: 'Отображать номера строк в различиях кода',
         showLineNumbersInToolViews: 'Показывать номера строк в представлениях инструментов',
         showLineNumbersInToolViewsDescription: 'Отображать номера строк в различиях представлений инструментов',
-        wrapLinesInDiffs: 'Перенос строк в различиях',
-        wrapLinesInDiffsDescription: 'Переносить длинные строки вместо горизонтальной прокрутки в представлениях различий',
-        diffStyle: 'Вид сравнения',
-        diffStyleDescription: 'Показывать различия в одну колонку (unified) или рядом (split). Режим split доступен только на web.',
-        diffStyleOptions: {
-            unified: 'Unified',
-            split: 'Split',
+        alwaysShowContextSize: 'Показывать использование',
+        alwaysShowContextSizeDescription: 'Контекст и лимиты плана под полем ввода. Предупреждения у лимита видны всегда.',
+        input: 'Ввод',
+        inputDescription: 'Настройка поля ввода',
+        showHarnessIconInSessionHeader: 'Показывать значок harness в заголовке сессии',
+        showHarnessIconInSessionHeaderDescription: 'Отображать значок harness в заголовке сессии',
+        showHarnessIconsInSessionList: 'Показывать значки harness в списке сессий',
+        showHarnessIconsInSessionListDescription: 'Отображать значки harness на аватарах в списке сессий',
+        avatars: 'Аватары',
+        avatarsDescription: 'Выберите, как выглядят генерируемые аватары сессий',
+        avatarStyle: 'Стиль аватаров',
+        avatarStyleOptions: {
+            brutalist: 'Брутализм',
+            pixelated: 'Пиксельный',
+            gradient: 'Градиент',
         },
-        alwaysShowContextSize: 'Всегда показывать размер контекста',
-        alwaysShowContextSizeDescription: 'Отображать использование контекста даже когда не близко к лимиту',
-        avatarStyle: 'Стиль аватара',
-        avatarStyleDescription: 'Выберите внешний вид аватара сессии',
-        avatarOptions: {
-            pixelated: 'Пиксельная',
-            gradient: 'Градиентная',
-            brutalist: 'Бруталистская',
-        },
-        showFlavorIcons: 'Показывать иконки провайдеров ИИ',
-        showFlavorIconsDescription: 'Отображать иконки провайдеров ИИ на аватарах сессий',
+        avatarMonochrome: 'Чёрно-белые аватары',
+        avatarMonochromeDescription: 'Отображать аватары без цвета',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Фильтр',
+        groupingTitle: 'Группировка',
+        flatList: 'Общий список',
+        groupByProject: 'Группировать по проектам',
+        appearanceSettings: 'Настройки внешнего вида',
     },
 
     settingsFeatures: {
@@ -218,17 +220,8 @@ export const ru: TranslationStructure = {
         commandPaletteDisabled: 'Быстрый доступ к командам отключён',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Долгое нажатие открывает модальное окно копирования',
-        hideInactiveSessions: 'Скрывать неактивные сессии',
-        hideInactiveSessionsSubtitle: 'Показывать в списке только активные чаты',
         groupToolCalls: 'Группировать вызовы инструментов',
         groupToolCallsSubtitle: 'Сворачивать подряд идущие вызовы инструментов в один блок',
-        privacy: 'Конфиденциальность',
-        privacyDescription: 'Полностью отключает всю аналитику и телеметрию. Никакие данные не будут отправляться в PostHog или другие сервисы отслеживания.',
-        disableAnalytics: 'Отключить аналитику',
-        analyticsDisabled: 'Вся аналитика и телеметрия отключены',
-        analyticsEnabled: 'Анонимная аналитика использования активна',
-        imageUpload: 'Загрузка изображений',
-        imageUploadSubtitle: 'Прикрепляйте изображения к сообщениям для анализа поддерживаемыми агентами',
     },
 
     errors: {
@@ -312,7 +305,12 @@ export const ru: TranslationStructure = {
         failedToConnectToServer: 'Не удалось подключиться к серверу',
         currentlyUsingCustomServer: 'Сейчас используется пользовательский сервер',
         customServerUrlLabel: 'URL пользовательского сервера',
-        advancedFeatureFooter: 'Это расширенная функция. Изменяйте сервер только если знаете, что делаете. Вам нужно будет выйти и войти снова после изменения серверов.'
+        advancedFeatureFooter: 'Это расширенная функция. Изменяйте сервер только если знаете, что делаете. Вам нужно будет выйти и войти снова после изменения серверов.',
+        services: 'Сервисы',
+        useCustomServerForVoice: 'Использовать пользовательский сервер для голоса',
+        customServerVoiceEnabled: 'Голосовые учетные данные и данные об использовании обрабатываются вашим сервером',
+        customServerVoiceDisabled: 'Голос использует Happy Cloud и вашу подписку Happy',
+        customServerVoiceFooter: 'Если выключено, при запуске голосового режима используются Happy Cloud и ElevenLabs. Включайте только если на вашем сервере настроена голосовая связь.',
     },
 
     sessionInfo: {
@@ -346,7 +344,6 @@ export const ru: TranslationStructure = {
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
         resumeSessionMachineOffline: 'This machine is offline. Resume is only available while it is online.',
-        resumeSessionNeedsHappyAgent: 'Resume is unavailable on this machine. Run `happy-agent auth login` to enable it.',
         resumeSessionMissingMachine: 'This session is missing its machine metadata, so it cannot be resumed.',
         resumeSessionMissingBackendId: 'This session does not have a resumable Claude or Codex identifier.',
         resumeSessionUnexpectedDirectoryPrompt: 'Resume cannot create directories. Start the session manually from its original path.',
@@ -398,14 +395,6 @@ export const ru: TranslationStructure = {
             stopGoal: 'Остановить цель',
             editGoal: 'Изменить цель',
         },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Контекст ${used} из ${total} токенов, ${percent}%`,
-            limitFiveHour: 'Лимит 5 часов',
-            limitSevenDay: 'Лимит 7 дней',
-            limitResets: ({ time }: { time: string }) => `сброс ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `данные ${age} назад`,
-            limitRemaining: ({ percent }: { percent: number }) => `осталось ${percent}%`,
-        },
     },
 
     profile: {
@@ -427,6 +416,7 @@ export const ru: TranslationStructure = {
         offline: 'offline',
         lastSeen: ({ time }: { time: string }) => `в сети ${time}`,
         permissionRequired: 'требуется разрешение',
+        inputRequired: 'ожидает вашего ответа',
         activeNow: 'Активен сейчас',
         unknown: 'неизвестно',
         unread: 'новые результаты',
@@ -472,7 +462,10 @@ export const ru: TranslationStructure = {
     agentInput: {
         permissionMode: {
             title: 'РЕЖИМ РАЗРЕШЕНИЙ',
+            auto: 'решает сам, спрашивает при сомнении',
             default: 'По умолчанию',
+            agyDefault: 'песочница agy, без запросов',
+            openclawInert: 'не применяется в openclaw',
             acceptEdits: 'Принимать правки',
             plan: 'Режим планирования',
             dontAsk: 'Не спрашивать',
@@ -501,6 +494,7 @@ export const ru: TranslationStructure = {
             safeYolo: 'Safe YOLO',
             yolo: 'YOLO',
             defaultDescription: 'спрашивать перед недоверенными командами',
+            autoDescription: 'решает сам, спрашивает при сомнении',
             readOnlyDescription: 'без записи',
             safeYoloDescription: 'без запросов, песочница рабочей папки',
             yoloDescription: 'без запросов, полный доступ',
@@ -529,7 +523,14 @@ export const ru: TranslationStructure = {
             badgePlan: 'Планирование',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `Осталось ${percent}%`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `Контекст ${used} / ${total}`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% контекста`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% за неделю`,
+        },
+        usagePopup: {
+            session: 'Сессия',
+            week: 'Неделя',
+            resets: ({ time }: { time: string }) => `Сброс ${time}`,
         },
         suggestion: {
             fileLabel: 'ФАЙЛ',

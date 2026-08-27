@@ -15,10 +15,17 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const es: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'toca para finalizar',
+        connecting: 'Conectando…',
+        error: 'Error de conexión',
+        active: 'Asistente de voz activo',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Bandeja',
-        sessions: 'Terminales',
+        sessions: 'Sesiones',
         settings: 'Configuración',
     },
 
@@ -81,6 +88,7 @@ export const es: TranslationStructure = {
         offline: 'desconectado',
         lastSeen: ({ time }: { time: string }) => `visto por última vez ${time}`,
         permissionRequired: 'permiso requerido',
+        inputRequired: 'esperando tu respuesta',
         activeNow: 'Activo ahora',
         unknown: 'desconocido',
         unread: 'nuevos resultados',
@@ -163,13 +171,6 @@ export const es: TranslationStructure = {
         },
         chat: 'Chat',
         chatDescription: 'Personaliza la apariencia de los mensajes del chat',
-        sessionStatusBar: 'Información de estado de la sesión',
-        sessionStatusBarDescription: 'Elige dónde aparecen la rama, el modelo, el esfuerzo y el contexto',
-        sessionStatusDisplayOptions: {
-            hidden: 'Oculto',
-            above: 'Sobre el compositor',
-            below: 'Bajo el compositor',
-        },
         usageLimitShowRemaining: 'Mostrar cuota restante',
         usageLimitShowRemainingDescription: 'Los indicadores de límite cuentan hacia atrás en vez de hacia adelante',
         userMessageBubbleColor: 'Color de tus mensajes',
@@ -186,33 +187,35 @@ export const es: TranslationStructure = {
         displayDescription: 'Controla diseño y espaciado',
         compactToolCalls: 'Llamadas a herramientas compactas',
         compactToolCallsDescription: 'Muestra las llamadas no interactivas en una sola línea; abre una fila para ver los detalles',
-        inlineToolCalls: 'Llamadas a herramientas en línea',
-        inlineToolCallsDescription: 'Mostrar llamadas a herramientas directamente en mensajes de chat',
-        expandTodoLists: 'Expandir listas de tareas',
-        expandTodoListsDescription: 'Mostrar todas las tareas en lugar de solo cambios',
-        showLineNumbersInDiffs: 'Mostrar números de línea en diferencias',
-        showLineNumbersInDiffsDescription: 'Mostrar números de línea en diferencias de código',
         showLineNumbersInToolViews: 'Mostrar números de línea en vistas de herramientas',
         showLineNumbersInToolViewsDescription: 'Mostrar números de línea en diferencias de vistas de herramientas',
-        wrapLinesInDiffs: 'Ajustar líneas en diferencias',
-        wrapLinesInDiffsDescription: 'Ajustar líneas largas en lugar de desplazamiento horizontal en vistas de diferencias',
-        diffStyle: 'Vista de diferencias',
-        diffStyleDescription: 'Mostrar diferencias en una sola columna (unified) o lado a lado (split). La vista split solo funciona en web.',
-        diffStyleOptions: {
-            unified: 'Unified',
-            split: 'Split',
-        },
-        alwaysShowContextSize: 'Mostrar siempre tamaño del contexto',
-        alwaysShowContextSizeDescription: 'Mostrar uso del contexto incluso cuando no esté cerca del límite',
+        alwaysShowContextSize: 'Mostrar uso',
+        alwaysShowContextSizeDescription: 'Contexto y límites del plan bajo el campo de mensaje. Los avisos cerca del límite siempre se muestran.',
+        input: 'Entrada',
+        inputDescription: 'Configura el campo de mensaje',
+        showHarnessIconInSessionHeader: 'Mostrar el icono del harness en el encabezado de la sesión',
+        showHarnessIconInSessionHeaderDescription: 'Mostrar el icono del harness en el encabezado de la sesión',
+        showHarnessIconsInSessionList: 'Mostrar iconos de harness en la lista de sesiones',
+        showHarnessIconsInSessionListDescription: 'Mostrar iconos de harness en los avatares de la lista de sesiones',
+        avatars: 'Avatares',
+        avatarsDescription: 'Elige cómo se ven los avatares de sesión generados',
         avatarStyle: 'Estilo de avatar',
-        avatarStyleDescription: 'Elige la apariencia del avatar de sesión',
-        avatarOptions: {
-            pixelated: 'Pixelado',
-            gradient: 'Gradiente',
+        avatarStyleOptions: {
             brutalist: 'Brutalista',
+            pixelated: 'Pixelado',
+            gradient: 'Degradado',
         },
-        showFlavorIcons: 'Mostrar íconos de proveedor de IA',
-        showFlavorIconsDescription: 'Mostrar íconos del proveedor de IA en los avatares de sesión',
+        avatarMonochrome: 'Avatares en blanco y negro',
+        avatarMonochromeDescription: 'Mostrar los avatares sin color',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filtro',
+        groupingTitle: 'Agrupación',
+        flatList: 'Lista plana',
+        groupByProject: 'Agrupar por proyecto',
+        appearanceSettings: 'Configuración de apariencia',
     },
 
     settingsFeatures: {
@@ -232,17 +235,8 @@ export const es: TranslationStructure = {
         commandPaletteDisabled: 'Acceso rápido a comandos deshabilitado',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Pulsación larga abre modal de copiado',
-        hideInactiveSessions: 'Ocultar sesiones inactivas',
-        hideInactiveSessionsSubtitle: 'Muestra solo los chats activos en tu lista',
         groupToolCalls: 'Agrupar llamadas a herramientas',
         groupToolCallsSubtitle: 'Contrae las llamadas consecutivas a herramientas en un solo contenedor',
-        privacy: 'Privacidad',
-        privacyDescription: 'Desactiva completamente toda la analítica y telemetría. No se enviarán datos a PostHog ni a ningún otro servicio de seguimiento.',
-        disableAnalytics: 'Desactivar analítica',
-        analyticsDisabled: 'Todo el seguimiento y telemetría desactivados',
-        analyticsEnabled: 'Analítica anónima de uso activa',
-        imageUpload: 'Subida de imágenes',
-        imageUploadSubtitle: 'Adjunta imágenes a los mensajes para que los agentes compatibles las analicen',
     },
 
     errors: {
@@ -356,7 +350,12 @@ export const es: TranslationStructure = {
         failedToConnectToServer: 'Falló al conectar con el servidor',
         currentlyUsingCustomServer: 'Actualmente usando servidor personalizado',
         customServerUrlLabel: 'URL del servidor personalizado',
-        advancedFeatureFooter: 'Esta es una característica avanzada. Solo cambia el servidor si sabes lo que haces. Necesitarás cerrar sesión e iniciarla nuevamente después de cambiar servidores.'
+        advancedFeatureFooter: 'Esta es una característica avanzada. Solo cambia el servidor si sabes lo que haces. Necesitarás cerrar sesión e iniciarla nuevamente después de cambiar servidores.',
+        services: 'Servicios',
+        useCustomServerForVoice: 'Usar servidor personalizado para voz',
+        customServerVoiceEnabled: 'Las credenciales y el uso de voz utilizan tu servidor personalizado',
+        customServerVoiceDisabled: 'La voz utiliza Happy Cloud y tu suscripción de Happy',
+        customServerVoiceFooter: 'Cuando está desactivado, iniciar la voz contacta con Happy Cloud y ElevenLabs. Actívalo solo si tu servidor personalizado está configurado para voz.',
     },
 
     sessionInfo: {
@@ -390,7 +389,6 @@ export const es: TranslationStructure = {
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
         resumeSessionMachineOffline: 'This machine is offline. Resume is only available while it is online.',
-        resumeSessionNeedsHappyAgent: 'Resume is unavailable on this machine. Run `happy-agent auth login` to enable it.',
         resumeSessionMissingMachine: 'This session is missing its machine metadata, so it cannot be resumed.',
         resumeSessionMissingBackendId: 'This session does not have a resumable Claude or Codex identifier.',
         resumeSessionUnexpectedDirectoryPrompt: 'Resume cannot create directories. Start the session manually from its original path.',
@@ -443,20 +441,15 @@ export const es: TranslationStructure = {
             stopGoal: 'Detener objetivo',
             editGoal: 'Editar objetivo',
         },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Contexto ${used} de ${total} tokens, ${percent}%`,
-            limitFiveHour: 'Límite de 5 horas',
-            limitSevenDay: 'Límite de 7 días',
-            limitResets: ({ time }: { time: string }) => `se restablece ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `hace ${age}`,
-            limitRemaining: ({ percent }: { percent: number }) => `${percent}% restante`,
-        },
     },
 
     agentInput: {
         permissionMode: {
             title: 'MODO DE PERMISOS',
+            auto: 'decide por sí mismo, pregunta si duda',
             default: 'Por defecto',
+            agyDefault: 'sandbox de agy, sin preguntas',
+            openclawInert: 'no se aplica en openclaw',
             acceptEdits: 'Aceptar ediciones',
             plan: 'Modo de planificación',
             dontAsk: 'No preguntar',
@@ -485,6 +478,7 @@ export const es: TranslationStructure = {
             safeYolo: 'Safe YOLO',
             yolo: 'YOLO',
             defaultDescription: 'preguntar antes de comandos no confiables',
+            autoDescription: 'decide por sí mismo, pregunta si duda',
             readOnlyDescription: 'sin escritura',
             safeYoloDescription: 'sin preguntas, sandbox del espacio de trabajo',
             yoloDescription: 'sin preguntas, acceso completo',
@@ -513,7 +507,14 @@ export const es: TranslationStructure = {
             badgePlan: 'Planificación',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restante`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de contexto`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% contexto`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% semana`,
+        },
+        usagePopup: {
+            session: 'Sesión',
+            week: 'Semana',
+            resets: ({ time }: { time: string }) => `Se restablece ${time}`,
         },
         suggestion: {
             fileLabel: 'ARCHIVO',

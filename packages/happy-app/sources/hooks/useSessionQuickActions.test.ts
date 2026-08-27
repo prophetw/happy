@@ -73,6 +73,7 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/agentDefaults', () => ({
     resolveMessageModeMeta: () => ({}),
+    CLI_VERSION_WITH_AUTO: '1.2.1-beta.2',
 }));
 
 vi.mock('@/hooks/useHappyAction', () => ({
@@ -128,6 +129,9 @@ function createMockMachine(active = true): Machine {
     return {
         id: 'machine-1',
         active,
+        metadata: {
+            resumeSupport: { rpcAvailable: true },
+        },
     } as unknown as Machine;
 }
 
@@ -215,6 +219,22 @@ describe('getResumeAvailability', () => {
             capabilities: { resume: false } as any,
         });
         const machine = createMockMachine(true);
+
+        const result = getResumeAvailability(session, machine, false);
+        expect(result.canResume).toBe(false);
+        expect(result.canShowResume).toBe(false);
+    });
+
+    it('hides resume when the daemon does not publish resumeSupport', () => {
+        const session = createMockSession({
+            flavor: 'agy',
+            agyConversationId: 'ff7de001-44eb-4736-9d05-8b8dac3a8281',
+        });
+        const machine = {
+            id: 'machine-1',
+            active: true,
+            metadata: {},
+        } as unknown as Machine;
 
         const result = getResumeAvailability(session, machine, false);
         expect(result.canResume).toBe(false);

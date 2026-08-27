@@ -114,6 +114,7 @@ function expectNoVisibleTriggerContent(
 
 describe('iOS Expo-native menu triggers', () => {
     it('draws the picker row in SwiftUI and keeps the RN row for layout alone', () => {
+        const onMenuOpen = vi.fn();
         const renderer = render(React.createElement(NativeOptionsPicker, {
             title: 'Machine',
             triggerLabel: 'Mac',
@@ -121,6 +122,7 @@ describe('iOS Expo-native menu triggers', () => {
             options: [{ key: 'mac', label: 'Mac' }],
             selectedKey: 'mac',
             onSelect: vi.fn(),
+            onMenuOpen,
             children: React.createElement('Trigger'),
         }));
 
@@ -133,6 +135,8 @@ describe('iOS Expo-native menu triggers', () => {
 
         const container = renderer.root.findAllByType('View' as any).find((view: any) => view.props.style?.position === 'relative');
         expect(container?.props.hitSlop).toBeUndefined();
+        expect(container?.props.onStartShouldSetResponderCapture()).toBe(false);
+        expect(onMenuOpen).toHaveBeenCalledOnce();
         expect(renderer.root.findByType('ExpoHost' as any).props.style).toEqual({ position: 'absolute', inset: 0 });
 
         const menu = renderer.root.findByType('ExpoMenu' as any);
@@ -151,10 +155,10 @@ describe('iOS Expo-native menu triggers', () => {
     });
 
     // The menu tint, not foregroundColor, is what paints a SwiftUI label.
-    // NativeOptionsPicker sits over the dark focus overlay (focusBackdrop) and
-    // uses a white tint to stay legible in both light and dark modes, while
-    // NativeSettingsMenu sits over the composer chip and tracks theme text color.
-    it('paints native picker trigger with white and settings trigger with theme text color', () => {
+    // The focus backdrop behind NativeOptionsPicker follows the theme (light
+    // dim in light mode, dark dim in dark mode), so the picker tracks theme
+    // text color just like NativeSettingsMenu does over the composer chip.
+    it('paints native picker and settings triggers with theme text color', () => {
         const picker = render(React.createElement(NativeOptionsPicker, {
             title: 'Machine',
             triggerLabel: 'Mac',
@@ -164,9 +168,9 @@ describe('iOS Expo-native menu triggers', () => {
             children: React.createElement('Trigger'),
         }));
         expect(picker.root.findByType('ExpoMenu' as any).props.modifiers)
-            .toContainEqual({ type: 'tint', value: '#FFFFFF' });
+            .toContainEqual({ type: 'tint', value: THEME_TEXT_COLOR });
         expect(picker.root.findByType('ExpoMenu' as any).props.modifiers)
-            .toContainEqual({ type: 'environment', value: { key: 'colorScheme', value: 'dark' } });
+            .not.toContainEqual({ type: 'environment', value: { key: 'colorScheme', value: 'dark' } });
 
         const settings = render(React.createElement(NativeSettingsMenu, {
             accessibilityLabel: 'Model',
@@ -251,6 +255,7 @@ describe('iOS Expo-native menu triggers', () => {
 
     it('renders grouped settings as sections in one native menu with full trigger bounds', () => {
         const onSelect = vi.fn();
+        const onMenuOpen = vi.fn();
         const renderer = render(React.createElement(NativeSettingsMenu, {
             accessibilityLabel: 'Settings',
             groups: [{
@@ -266,6 +271,7 @@ describe('iOS Expo-native menu triggers', () => {
                 onSelect,
             }],
             style: { width: 42, height: 42 },
+            onMenuOpen,
             children: React.createElement('Trigger'),
         }));
 
@@ -277,6 +283,8 @@ describe('iOS Expo-native menu triggers', () => {
         const container = renderer.root.findAllByType('View' as any).find((view: any) => Array.isArray(view.props.style));
         expect(container?.props.style).toContainEqual({ width: 42, height: 42 });
         expect(container?.props.hitSlop).toBeUndefined();
+        expect(container?.props.onStartShouldSetResponderCapture()).toBe(false);
+        expect(onMenuOpen).toHaveBeenCalledOnce();
         expect(renderer.root.findByType('ExpoHost' as any).props.style).toEqual({ position: 'absolute', inset: 0 });
         expectFullTriggerHitArea(menus[0].props.label, 40);
         expectInvisibleTrigger(menus[0].props.label);

@@ -1,6 +1,19 @@
 import type { ApprovalPolicy, SandboxMode } from './codexAppServerTypes';
 import type { PermissionMode } from '@/api/types';
 
+export const CODEX_REMOTE_PERMISSION_MODES = [
+    'auto',
+    'default',
+    'read-only',
+    'safe-yolo',
+    'yolo',
+] as const satisfies readonly PermissionMode[];
+
+export function isRemoteCodexPermissionMode(value: unknown): value is typeof CODEX_REMOTE_PERMISSION_MODES[number] {
+    return typeof value === 'string'
+        && (CODEX_REMOTE_PERMISSION_MODES as readonly string[]).includes(value);
+}
+
 export function resolveCodexExecutionPolicy(
     permissionMode: PermissionMode,
     sandboxManagedByHappy: boolean,
@@ -15,6 +28,7 @@ export function resolveCodexExecutionPolicy(
     const approvalPolicy: ApprovalPolicy = (() => {
         switch (permissionMode) {
             // Codex native modes
+            case 'auto': return 'on-request';                      // Codex decides, asks only when it needs more
             case 'default': return 'untrusted';                    // Ask for non-trusted commands
             case 'read-only': return 'never';                      // Never ask, read-only enforced by sandbox
             case 'safe-yolo': return 'never';                      // Workspace sandbox enforces safety; do not prompt
@@ -30,6 +44,7 @@ export function resolveCodexExecutionPolicy(
     const sandbox: SandboxMode = (() => {
         switch (permissionMode) {
             // Codex native modes
+            case 'auto': return 'workspace-write';                 // Codex's own Auto preset: on-request + workspace
             case 'default': return 'workspace-write';              // Can write in workspace
             case 'read-only': return 'read-only';                  // Read-only filesystem
             case 'safe-yolo': return 'workspace-write';            // Can write in workspace
