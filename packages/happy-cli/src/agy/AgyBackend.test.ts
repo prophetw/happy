@@ -744,4 +744,53 @@ describe('AgyBackend model switching', () => {
     );
     await expect(turn).resolves.toBeUndefined();
   });
+
+  it('passes the default printTimeout (60m) to agy process', async () => {
+    const { child, stdout } = makeFakeChild();
+    const spawnFn = vi.fn(() => child) as unknown as SpawnFn;
+
+    const backend = new AgyBackend({
+      cwd: '/work',
+      permissionMode: 'default',
+      spawnFn,
+    });
+
+    const startPromise = backend.startSession();
+    stdout.emit(
+      'data',
+      '{"event":"init","conversation_id":"c-timeout-default","init":{"cwd":"/work"}}\n'
+    );
+    await startPromise;
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    const spawnArgs = vi.mocked(spawnFn).mock.calls[0][1] as string[];
+    const timeoutIdx = spawnArgs.indexOf('--print-timeout');
+    expect(timeoutIdx).toBeGreaterThanOrEqual(0);
+    expect(spawnArgs[timeoutIdx + 1]).toBe('60m');
+  });
+
+  it('passes custom printTimeout when configured', async () => {
+    const { child, stdout } = makeFakeChild();
+    const spawnFn = vi.fn(() => child) as unknown as SpawnFn;
+
+    const backend = new AgyBackend({
+      cwd: '/work',
+      permissionMode: 'default',
+      printTimeout: '30m',
+      spawnFn,
+    });
+
+    const startPromise = backend.startSession();
+    stdout.emit(
+      'data',
+      '{"event":"init","conversation_id":"c-timeout-custom","init":{"cwd":"/work"}}\n'
+    );
+    await startPromise;
+
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    const spawnArgs = vi.mocked(spawnFn).mock.calls[0][1] as string[];
+    const timeoutIdx = spawnArgs.indexOf('--print-timeout');
+    expect(timeoutIdx).toBeGreaterThanOrEqual(0);
+    expect(spawnArgs[timeoutIdx + 1]).toBe('30m');
+  });
 });

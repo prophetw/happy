@@ -374,6 +374,10 @@ export class AgyBackend implements AgentBackend {
         args.push('--conversation', this.conversationId);
       }
 
+      if (this.printTimeout) {
+        args.push('--print-timeout', this.printTimeout);
+      }
+
       args.push('--add-dir', this.cwd);
 
       this.log(`Spawning persistent agy: ${resolveAgyBin()} ${args.join(' ')}`);

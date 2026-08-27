@@ -33,7 +33,7 @@ runAgy.ts  session.onUserMessage
 AgyBackend (persistent process driver)
    │  spawn: agy --input-format stream-json --output-format stream-json
    │            [--dangerously-skip-permissions] [--model <name>]
-   │            [--conversation <id>] --add-dir <cwd>
+   │            [--conversation <id>] [--print-timeout <timeout>] --add-dir <cwd>
    ▼
 agy child process  ──NDJSON over stdout──▶  StreamJsonParser ──▶ AgentMessage events
 ```
@@ -75,7 +75,7 @@ bridge request, so changes apply on the next turn with no restart.
 ## Key Data Structures
 
 - `AgyBackendOptions` — `cwd`, `permissionMode`, `model`, `models`
-  (discovered list for slug resolution), `conversationId`, `spawnFn`
+  (discovered list for slug resolution), `conversationId`, `printTimeout` (defaults to `AGY_PRINT_TIMEOUT` = 60m), `spawnFn`
   (injectable for tests), `maxRetries`.
 - Stream-json events (see `streamJson.ts`): `init`, `step_update`
   (text/thinking/tool deltas), `result` (`SUCCESS` | `ERROR`).
@@ -119,6 +119,9 @@ respawn args carrying new `--model` + preserved `--conversation`).
 
 ## Change Log
 
+- 2026-08-27: Pass `--print-timeout` to persistent `agy` child process and update
+  default `AGY_PRINT_TIMEOUT` to 60 minutes (`60m`), preventing long-running
+  complex multi-step tasks from timing out after the default 5 minutes.
 - 2026-08-21: Fix race where a late `close` event from the killed process
   cleared the replacement's `this.child` reference after a model-change
   restart, silently dropping the next prompt (`this.child?.stdin?.write` on

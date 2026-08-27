@@ -179,11 +179,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const activityLabel = getToolActivityLabel(tool);
     const isInlineCodexPatch = Platform.OS === 'web' && tool.name === 'CodexPatch';
     const renderCardHeader = isCompactActivityTool || shouldRenderToolCardHeader(tool.name, Platform.OS);
-    const renderPermissionFooter = () => (
-        tool.permission && sessionId && tool.name !== 'AskUserQuestion'
-            ? <PermissionFooter permission={tool.permission} sessionId={sessionId} toolName={tool.name} toolInput={tool.input} metadata={props.metadata} />
-            : null
-    );
+    const isYolo = props.metadata?.permissionMode === 'yolo'
+        || props.metadata?.permissionMode === 'bypassPermissions'
+        || props.metadata?.dangerouslySkipPermissions === true;
+    const renderPermissionFooter = () => {
+        if (!tool.permission || !sessionId || tool.name === 'AskUserQuestion') {
+            return null;
+        }
+        if (isYolo && tool.permission.status === 'approved') {
+            return null;
+        }
+        return <PermissionFooter permission={tool.permission} sessionId={sessionId} toolName={tool.name} toolInput={tool.input} metadata={props.metadata} />;
+    };
 
     const renderHeaderContent = () => {
         if (isCompactActivityTool) {

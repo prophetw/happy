@@ -35,19 +35,13 @@ describe('AgyPermissionHandler', () => {
     );
   });
 
-  it('auto-approves always-safe tools regardless of permission mode', async () => {
+  it('auto-approves always-safe tools regardless of permission mode without writing to completedRequests', async () => {
     const handler = new AgyPermissionHandler(session);
     handler.setPermissionMode('default');
 
     const result = await handler.handleToolCall('cid-1', 'change_title', { title: 'New title' });
     expect(result).toEqual({ decision: 'approved' });
-
-    expect(currentState.completedRequests?.['cid-1']).toEqual(
-      expect.objectContaining({
-        tool: 'change_title',
-        status: 'approved',
-      }),
-    );
+    expect(currentState.completedRequests?.['cid-1']).toBeUndefined();
     expect(currentState.requests?.['cid-1']).toBeUndefined();
   });
 
@@ -57,16 +51,18 @@ describe('AgyPermissionHandler', () => {
 
     const result = await handler.handleToolCall('change_title-12345', 'custom_tool', {});
     expect(result).toEqual({ decision: 'approved' });
-    expect(currentState.completedRequests?.['change_title-12345']).toBeDefined();
+    expect(currentState.completedRequests?.['change_title-12345']).toBeUndefined();
+    expect(currentState.requests?.['change_title-12345']).toBeUndefined();
   });
 
-  it('auto-approves all tools in yolo and bypassPermissions mode', async () => {
+  it('auto-approves all tools in yolo and bypassPermissions mode without writing completedRequests', async () => {
     const handler = new AgyPermissionHandler(session);
     handler.setPermissionMode('yolo');
 
     const result = await handler.handleToolCall('call-yolo', 'run_command', { CommandLine: 'rm -rf /' });
     expect(result).toEqual({ decision: 'approved_for_session' });
-    expect(currentState.completedRequests?.['call-yolo']?.status).toBe('approved');
+    expect(currentState.completedRequests?.['call-yolo']).toBeUndefined();
+    expect(currentState.requests?.['call-yolo']).toBeUndefined();
   });
 
   it('auto-approves read-only tools in safe-yolo mode but asks for dangerous tools', async () => {

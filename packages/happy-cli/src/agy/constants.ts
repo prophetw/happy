@@ -80,8 +80,8 @@ export const AGY_MODELS = [
  */
 export const DEFAULT_AGY_MODEL = 'Gemini 3.1 Pro (High)';
 
-/** Timeout passed to `agy --print-timeout` for a single print turn. */
-export const AGY_PRINT_TIMEOUT = '10m';
+/** Timeout passed to `agy --print-timeout` for a single turn (default 60 minutes). */
+export const AGY_PRINT_TIMEOUT = '60m';
 
 /**
  * Path to agy's per-workspace conversation cache. agy records the most recent

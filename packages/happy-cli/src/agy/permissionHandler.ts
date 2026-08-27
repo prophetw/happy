@@ -132,25 +132,6 @@ export class AgyPermissionHandler extends BasePermissionHandler {
         `${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`,
       );
 
-      this.session.updateAgentState((currentState) => ({
-        ...currentState,
-        completedRequests: {
-          ...currentState.completedRequests,
-          [toolCallId]: {
-            tool: toolName,
-            arguments: input,
-            createdAt: Date.now(),
-            completedAt: Date.now(),
-            status: 'approved',
-            decision:
-              this.currentPermissionMode === 'yolo' ||
-              this.currentPermissionMode === 'bypassPermissions'
-                ? 'approved_for_session'
-                : 'approved',
-          },
-        },
-      }));
-
       return {
         decision:
           this.currentPermissionMode === 'yolo' ||
@@ -177,16 +158,17 @@ export class AgyPermissionHandler extends BasePermissionHandler {
   }
 
   /**
-   * Mark a tool call as completed in agentState
+   * Mark a tool call as completed in agentState if it was pending
    */
   completeToolCall(toolCallId: string, toolName: string, input: unknown): void {
     this.session.updateAgentState((currentState) => {
-      const { [toolCallId]: pending, ...remainingRequests } = currentState.requests || {};
-      const existingCompleted = currentState.completedRequests?.[toolCallId];
-
-      if (!pending && existingCompleted) {
+      const pending = currentState.requests?.[toolCallId];
+      if (!pending) {
         return currentState;
       }
+
+      const { [toolCallId]: _, ...remainingRequests } = currentState.requests || {};
+      const existingCompleted = currentState.completedRequests?.[toolCallId];
 
       return {
         ...currentState,
@@ -196,7 +178,7 @@ export class AgyPermissionHandler extends BasePermissionHandler {
           [toolCallId]: existingCompleted || {
             tool: toolName,
             arguments: input,
-            createdAt: pending?.createdAt || Date.now(),
+            createdAt: pending.createdAt || Date.now(),
             completedAt: Date.now(),
             status: 'approved',
             decision: 'approved',

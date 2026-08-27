@@ -27,7 +27,8 @@ sequenceDiagram
     Backend-->>CLI: 产生 tool-call 事件 (如 run_command / write_to_file)
     CLI->>Handler: handleToolCall(callId, toolName, args)
     alt shouldAutoApprove (yolo 或安全只读工具)
-        Handler-->>CLI: auto-approve (写入 completedRequests)
+        Handler-->>CLI: auto-approve (返回 approved/approved_for_session，不写入 requests / completedRequests)
+        CLI->>Backend: 继续执行工具
     else 需用户确认 (default 模式)
         Handler->>Server: 更新 agentState.requests (写入待审批项)
         Server->>App: 同步 agentState.requests
@@ -64,7 +65,7 @@ sequenceDiagram
 ## 5. 权限模式策略矩阵
 | 模式 (`permissionMode`) | 行为策略 |
 | :--- | :--- |
-| `yolo` / `bypassPermissions` | 全部工具自动放行（`approved_for_session`），带 `--dangerously-skip-permissions` |
+| `yolo` / `bypassPermissions` | 全部工具自动放行（`approved_for_session`），带 `--dangerously-skip-permissions`，不产生审批请求与确认卡片 |
 | `safe-yolo` / `read-only` | 安全只读工具（`view_file`, `list_dir`, `grep_search` 等）自动放行，危险工具（`run_command`, `write` 等）需审批 |
 | `acceptEdits` | 文件修改类工具自动放行，命令执行类工具（`bash`, `run_command`）需审批 |
 | `default` | 除内省与元数据工具（`change_title`, `think`）外，所有工具均需用户确认 |
@@ -79,4 +80,5 @@ sequenceDiagram
 - `pnpm --filter happy typecheck`：验证 TypeScript 类型完整性。
 
 ## 8. 变更记录
+- **2026-08-27**：修复 YOLO / auto-approve 模式下错误向 `completedRequests` 写入记录导致 iOS 客户端渲染审批选项的问题；客户端 `ToolView` 与 `PermissionFooter` 适配决策型审批并增加 YOLO 模式下对已批准工具确认 UI 的隐藏保护。
 - **2026-08-26**：初版创建。引入 `AgyPermissionHandler` 并打通 `runAgy.ts` 中的工具权限审批上报与客户端 RPC 闭环。
