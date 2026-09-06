@@ -18,6 +18,7 @@ recovery with full context preservation.
 | `packages/happy-cli/src/agy/AgyBackend.ts` | `AgentBackend` implementation owning the persistent agy child process |
 | `packages/happy-cli/src/agy/streamJson.ts` | NDJSON stream parser (text deltas, thinking, tool calls, results) |
 | `packages/happy-cli/src/agy/discoverModels.ts` | `agy models` discovery + slug/display-name resolution |
+| `packages/happy-cli/src/agy/skills.ts` | Skills discovery, standalone print invocation, and formatters (avoids stream-json `/skills` errors) |
 | `packages/happy-cli/src/agy/AgySdkBackend.ts` | Alternative Python SDK-bridge backend (model is passed per-turn, so it needs no restart-on-model-change) |
 
 ## Architecture
@@ -81,7 +82,7 @@ bridge request, so changes apply on the next turn with no restart.
   (text/thinking/tool deltas), `result` (`SUCCESS` | `ERROR`).
 - `DiscoveredModel { code, value, slug?, description? }` — `code`/`value` are
   display names accepted by `agy --model`; `resolveAgyModelName()` maps slugs
-  (e.g. `gemini-3.7-flash-high`) to display names.
+  (e.g. `gemini-3.8-flash-high`) to display names.
 
 ## External Dependencies
 
@@ -119,6 +120,11 @@ respawn args carrying new `--model` + preserved `--conversation`).
 
 ## Change Log
 
+- 2026-09-06: Intercept `/skills` in `runAgy.ts` and handle via standalone `agy --print /skills` invocation, preventing `stream-json` error (`/skills is answered by the CLI itself and is unavailable with --input-format stream-json`). Populates skills into session metadata on startup and exposes `happy skills` CLI subcommand.
+- 2026-09-03: Update model catalog for agy: add Gemini 3.8 Flash (High/Medium/Low),
+  retire legacy Gemini 3.1 / 3.5 / 3.6 models to keep pickers concise, and update
+  default agy model to Gemini 3.8 Flash (High). Filter retired models from discovery
+  and client dropdown menus.
 - 2026-08-27: Pass `--print-timeout` to persistent `agy` child process and update
   default `AGY_PRINT_TIMEOUT` to 60 minutes (`60m`), preventing long-running
   complex multi-step tasks from timing out after the default 5 minutes.

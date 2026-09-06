@@ -76,6 +76,8 @@ describe('parseSpecialCommand', () => {
         expect(parseSpecialCommand('  /mcp  ').type).toBe('mcp');
         expect(parseSpecialCommand('/skills').type).toBe('skills');
         expect(parseSpecialCommand('  /skills  ').type).toBe('skills');
+        expect(parseSpecialCommand('/skills list').type).toBe('skills');
+        expect(parseSpecialCommand('/skills list').originalMessage).toBe('/skills list');
     });
 
     it('should handle edge cases correctly', () => {

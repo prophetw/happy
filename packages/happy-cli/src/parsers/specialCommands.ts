@@ -79,8 +79,11 @@ export function parseSpecialCommand(message: string): SpecialCommandResult {
     if (trimmed === '/mcp') {
         return { type: 'mcp' };
     }
-    if (trimmed === '/skills') {
-        return { type: 'skills' };
+    if (trimmed === '/skills' || trimmed.startsWith('/skills ')) {
+        return {
+            type: 'skills',
+            originalMessage: message.trim(),
+        };
     }
     if (trimmed === '/usage' || trimmed.startsWith('/usage ')) {
         return {

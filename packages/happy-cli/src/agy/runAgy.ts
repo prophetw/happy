@@ -41,6 +41,13 @@ import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
 import { extractSessionTitle } from './title';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { fetchAgyUsage, formatAgyUsageMarkdown, formatAgyUsageTerminal } from './usage';
+import {
+  discoverAgySkillsFilesystem,
+  fetchAgySkills,
+  formatAgySkillsMarkdown,
+  formatAgySkillsTerminal,
+  getAgySkillCommandNames,
+} from './skills';
 import { AgyPermissionHandler } from './permissionHandler';
 
 export interface RunAgyOptions {
@@ -100,7 +107,16 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     description: m.description ?? null,
   }));
   metadata.currentModelCode = initialModel;
-  metadata.slashCommands = ['usage', 'clear', 'compact'];
+
+  const initialSkills = await discoverAgySkillsFilesystem({ cwd: process.cwd() });
+  const initialSkillCommands = getAgySkillCommandNames(initialSkills);
+  metadata.slashCommands = Array.from(
+    new Set(['usage', 'clear', 'compact', 'skills', ...initialSkillCommands]),
+  );
+  if (initialSkillCommands.length > 0) {
+    metadata.skills = initialSkillCommands;
+  }
+
   if (initialConversationId) {
     metadata.agyConversationId = initialConversationId;
   }
@@ -293,6 +309,11 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
       messageQueue.pushIsolateAndClear(message.content.text, mode);
       return;
     }
+    if (specialCommand.type === 'skills') {
+      log('Detected /skills command');
+      messageQueue.pushIsolateAndClear(message.content.text, mode);
+      return;
+    }
 
     messageBuffer.addMessage(message.content.text, 'user');
     messageQueue.push(message.content.text, mode);
@@ -398,6 +419,63 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
           sendEnvelopes(sessionManager.endTurn('completed'));
         } catch (error) {
           const errText = `⚠️ Failed to fetch usage: ${error instanceof Error ? error.message : String(error)}`;
+          log(errText);
+          if (hasTTY) {
+            messageBuffer.addMessage(errText, 'status');
+          }
+          sendEnvelopes(sessionManager.startTurn());
+          sendEnvelopes(
+            sessionManager.mapMessage({
+              type: 'model-output',
+              textDelta: errText,
+            }),
+          );
+          sendEnvelopes(sessionManager.endTurn('failed'));
+        } finally {
+          thinking = false;
+          session.keepAlive(false, 'remote');
+          session.sendSessionEvent({ type: 'ready' });
+        }
+        continue;
+      }
+
+      if (specialCommand.type === 'skills') {
+        log('Handling /skills command - fetching available skills via agy');
+        thinking = true;
+        session.keepAlive(true, 'remote');
+        try {
+          const skillsResult = await fetchAgySkills({ cwd: process.cwd(), log });
+          const markdownReport = formatAgySkillsMarkdown(skillsResult);
+
+          if (hasTTY) {
+            const terminalReport = formatAgySkillsTerminal(skillsResult);
+            messageBuffer.addMessage(terminalReport, 'system');
+          }
+
+          // Update session metadata with newly discovered skills if any
+          const skillCommands = getAgySkillCommandNames(skillsResult.skills);
+          if (skillCommands.length > 0) {
+            metadata.skills = skillCommands;
+            metadata.slashCommands = Array.from(
+              new Set([...(metadata.slashCommands ?? ['usage', 'clear', 'compact', 'skills']), ...skillCommands]),
+            );
+            session.updateMetadata((currentMetadata) => ({
+              ...currentMetadata,
+              skills: metadata.skills,
+              slashCommands: metadata.slashCommands,
+            }));
+          }
+
+          sendEnvelopes(sessionManager.startTurn());
+          sendEnvelopes(
+            sessionManager.mapMessage({
+              type: 'model-output',
+              textDelta: markdownReport,
+            }),
+          );
+          sendEnvelopes(sessionManager.endTurn('completed'));
+        } catch (error) {
+          const errText = `⚠️ Failed to fetch skills: ${error instanceof Error ? error.message : String(error)}`;
           log(errText);
           if (hasTTY) {
             messageBuffer.addMessage(errText, 'status');

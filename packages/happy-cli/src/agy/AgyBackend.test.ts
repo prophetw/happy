@@ -484,7 +484,7 @@ describe('AgyBackend model switching', () => {
     const backend = new AgyBackend({
       cwd: '/work',
       permissionMode: 'default',
-      model: 'Gemini 3.5 Flash (Low)',
+      model: 'Gemini 3.7 Flash (Low)',
       spawnFn,
     });
 
@@ -495,9 +495,9 @@ describe('AgyBackend model switching', () => {
     );
     await startPromise;
 
-    backend.setModel('Gemini 3.5 Flash (Low)');
+    backend.setModel('Gemini 3.7 Flash (Low)');
     // Also a no-op when the slug resolves to the same display name.
-    backend.setModel('gemini-3.5-flash-low');
+    backend.setModel('gemini-3.7-flash-low');
 
     expect(child.kill).not.toHaveBeenCalled();
     expect(spawnFn).toHaveBeenCalledTimes(1);
@@ -514,7 +514,7 @@ describe('AgyBackend model switching', () => {
     const backend = new AgyBackend({
       cwd: '/work',
       permissionMode: 'default',
-      model: 'Gemini 3.5 Flash (Low)',
+      model: 'Gemini 3.7 Flash (Low)',
       spawnFn,
     });
 
@@ -525,7 +525,7 @@ describe('AgyBackend model switching', () => {
     );
     await startPromise;
 
-    backend.setModel('Gemini 3.7 Flash (High)');
+    backend.setModel('Gemini 3.8 Flash (High)');
 
     expect(first.child.kill).toHaveBeenCalledWith('SIGTERM');
 
@@ -534,7 +534,7 @@ describe('AgyBackend model switching', () => {
 
     expect(spawnFn).toHaveBeenCalledTimes(2);
     const respawnArgs = (spawnFn as unknown as ReturnType<typeof vi.fn>).mock.calls[1][1] as string[];
-    expect(respawnArgs).toContain('Gemini 3.7 Flash (High)');
+    expect(respawnArgs).toContain('Gemini 3.8 Flash (High)');
     expect(respawnArgs).toEqual(
       expect.arrayContaining(['--conversation', 'c-switch'])
     );
@@ -549,7 +549,7 @@ describe('AgyBackend model switching', () => {
       '{"event":"result","result":{"conversation_id":"c-switch","status":"SUCCESS"}}\n'
     );
     await expect(turn).resolves.toBeUndefined();
-    expect(backend.getModel()).toBe('Gemini 3.7 Flash (High)');
+    expect(backend.getModel()).toBe('Gemini 3.8 Flash (High)');
     expect(backend.getConversationId()).toBe('c-switch');
   });
 
@@ -564,7 +564,7 @@ describe('AgyBackend model switching', () => {
     const backend = new AgyBackend({
       cwd: '/work',
       permissionMode: 'default',
-      model: 'Gemini 3.5 Flash (Low)',
+      model: 'Gemini 3.7 Flash (Low)',
       spawnFn,
     });
 
@@ -579,7 +579,7 @@ describe('AgyBackend model switching', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     // Model change arrives mid-turn: the running prompt must not be killed.
-    backend.setModel('Gemini 3.7 Flash (High)');
+    backend.setModel('Gemini 3.8 Flash (High)');
     expect(first.child.kill).not.toHaveBeenCalled();
 
     first.stdout.emit(
@@ -596,7 +596,7 @@ describe('AgyBackend model switching', () => {
 
     expect(spawnFn).toHaveBeenCalledTimes(2);
     const respawnArgs = (spawnFn as unknown as ReturnType<typeof vi.fn>).mock.calls[1][1] as string[];
-    expect(respawnArgs).toContain('Gemini 3.7 Flash (High)');
+    expect(respawnArgs).toContain('Gemini 3.8 Flash (High)');
     expect(respawnArgs).toEqual(
       expect.arrayContaining(['--conversation', 'c-defer'])
     );
@@ -624,7 +624,7 @@ describe('AgyBackend model switching', () => {
     const backend = new AgyBackend({
       cwd: '/work',
       permissionMode: 'default',
-      model: 'Gemini 3.5 Flash (Low)',
+      model: 'Gemini 3.7 Flash (Low)',
       spawnFn,
     });
 
@@ -636,7 +636,7 @@ describe('AgyBackend model switching', () => {
     await startPromise;
 
     // Model change kills the old child — its close event has NOT fired yet.
-    backend.setModel('Gemini 3.7 Flash (High)');
+    backend.setModel('Gemini 3.8 Flash (High)');
     expect(first.child.kill).toHaveBeenCalledWith('SIGTERM');
 
     // The next prompt spawns the replacement...
@@ -792,5 +792,20 @@ describe('AgyBackend model switching', () => {
     const timeoutIdx = spawnArgs.indexOf('--print-timeout');
     expect(timeoutIdx).toBeGreaterThanOrEqual(0);
     expect(spawnArgs[timeoutIdx + 1]).toBe('30m');
+  });
+
+  it('rejects /skills prompt with informative error before writing to stdin', async () => {
+    const { child } = makeFakeChild();
+    const spawnFn = vi.fn(() => child) as unknown as SpawnFn;
+
+    const backend = new AgyBackend({
+      cwd: '/work',
+      permissionMode: 'default',
+      spawnFn,
+    });
+
+    await expect(backend.sendPrompt('/work', '/skills')).rejects.toThrow(
+      '/skills is answered by the CLI itself and is unavailable with --input-format stream-json; run it as its own --print /skills invocation',
+    );
   });
 });

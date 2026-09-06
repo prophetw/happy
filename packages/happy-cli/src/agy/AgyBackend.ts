@@ -216,6 +216,14 @@ export class AgyBackend implements AgentBackend {
       throw new Error('AgyBackend is disposed');
     }
 
+    const trimmedPrompt = prompt.trim();
+    if (trimmedPrompt === '/skills') {
+      const errText =
+        '/skills is answered by the CLI itself and is unavailable with --input-format stream-json; run it as its own --print /skills invocation';
+      this.emit({ type: 'status', status: 'error', detail: errText });
+      throw new Error(errText);
+    }
+
     this.emit({ type: 'status', status: 'running' });
     this.isTurnRunning = true;
     this.activeTurnStderr = '';
