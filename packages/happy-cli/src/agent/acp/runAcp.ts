@@ -866,8 +866,22 @@ export async function runAcp(opts: {
       if (msg.status === 'idle') {
         clearPendingTurn();
       }
-      if (msg.status === 'error' || msg.status === 'stopped') {
+      if (msg.status === 'stopped') {
         stopRunnerFromBackendStatus(msg.status, msg.detail);
+      } else if (msg.status === 'error') {
+        if (!acpSessionId) {
+          // Startup failure (e.g. the agent binary failed to spawn) leaves no
+          // usable ACP session, so the runner cannot continue.
+          stopRunnerFromBackendStatus(msg.status, msg.detail);
+        } else {
+          // Turn-scoped failure: reject the in-flight turn so the loop reports
+          // it, but keep the session alive — the backend process is still up
+          // and later turns may succeed.
+          const reason = msg.detail
+            ? `${opts.agentName} backend error: ${msg.detail}`
+            : `${opts.agentName} backend error`;
+          clearPendingTurn(new Error(reason));
+        }
       }
     }
 
@@ -1015,7 +1029,7 @@ export async function runAcp(opts: {
         logAcp('error', `Prompt error from ${opts.agentName}: ${detail}`);
         clearPendingTurn(error instanceof Error ? error : new Error(String(error)));
         await turnEnded.catch(() => {});
-        throw error;
+        continue;
       }
     }
   } finally {

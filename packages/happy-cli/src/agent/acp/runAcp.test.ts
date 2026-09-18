@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
     setModelCalls: [] as string[],
     startSessionMessages: [] as any[],
     sendPromptError: null as Error | null,
+    sendPromptStatusErrorDetail: null as string | null,
     startSessionCalls: 0,
     cancelCalls: [] as string[],
     disposeCalls: 0,
@@ -148,6 +149,12 @@ vi.mock('./AcpBackend', () => ({
       if (mocks.backendState.sendPromptError) {
         throw mocks.backendState.sendPromptError;
       }
+      if (mocks.backendState.sendPromptStatusErrorDetail) {
+        for (const listener of mocks.backendState.listeners) {
+          listener({ type: 'status', status: 'error', detail: mocks.backendState.sendPromptStatusErrorDetail });
+        }
+        return;
+      }
       for (const listener of mocks.backendState.listeners) {
         listener({ type: 'status', status: 'running' });
         listener({ type: 'model-output', textDelta: 'hello' });
@@ -206,6 +213,7 @@ describe('runAcp', () => {
     mocks.backendState.setModelCalls = [];
     mocks.backendState.startSessionMessages = [];
     mocks.backendState.sendPromptError = null;
+    mocks.backendState.sendPromptStatusErrorDetail = null;
     mocks.backendState.startSessionCalls = 0;
     mocks.backendState.cancelCalls = [];
     mocks.backendState.disposeCalls = 0;
@@ -452,7 +460,7 @@ describe('runAcp', () => {
     expect(mocks.backendState.disposeCalls).toBe(1);
   });
 
-  it('surfaces a prompt exception when no backend error status was emitted', async () => {
+  it('surfaces a prompt exception and keeps the runner alive for later turns', async () => {
     mocks.backendState.sendPromptError = new Error('model switch failed');
     const runPromise = runAcp({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
@@ -460,10 +468,6 @@ describe('runAcp', () => {
       command: 'opencode',
       args: ['acp'],
     });
-    const runOutcome = runPromise.then(
-      () => null,
-      (error: unknown) => error,
-    );
 
     await vi.waitFor(() => {
       expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
@@ -473,11 +477,80 @@ describe('runAcp', () => {
       content: { type: 'text', text: 'Use that model' },
     });
 
-    expect(await runOutcome).toMatchObject({ message: 'model switch failed' });
-    expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
-      type: 'message',
-      message: 'opencode error: model switch failed',
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
+        type: 'message',
+        message: 'opencode error: model switch failed',
+      });
     });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+
+    // A later turn succeeds: the runner must still be waiting for messages.
+    mocks.backendState.sendPromptError = null;
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Try again' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts.map((entry) => entry.prompt)).toContain('Try again');
+    });
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+    });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+    expect(mocks.backendState.disposeCalls).toBe(0);
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+  });
+
+  it('keeps the runner alive when the backend reports an error status mid-session', async () => {
+    mocks.backendState.sendPromptStatusErrorDetail = 'turn failed: effort not supported';
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'opencode',
+      command: 'opencode',
+      args: ['acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'hello' },
+    });
+
+    // The failure lands as a service envelope inside the failed turn.
+    await vi.waitFor(() => {
+      const serviceEnvelope = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+        .map((call) => call[0])
+        .find((envelope) => envelope?.ev?.t === 'service');
+      expect(serviceEnvelope?.ev?.text).toBe('Error: turn failed: effort not supported');
+    });
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+    });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+    expect(mocks.backendState.disposeCalls).toBe(0);
+
+    mocks.backendState.sendPromptStatusErrorDetail = null;
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'retry' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts.map((entry) => entry.prompt)).toContain('retry');
+    });
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+    });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+
+    await mocks.getKillHandler()!();
+    await runPromise;
   });
 
   it('updates session metadata with ACP config options (models and operating modes)', async () => {
