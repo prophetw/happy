@@ -17,10 +17,10 @@ Feature document for Antigravity (`agy`) StatusLine Hook integration and real-ti
 
 | 组件 | 文件 | 角色 |
 |---|---|---|
-| StatusLine 解析与配额缓存 | `packages/happy-cli/src/agy/statusLine.ts` | 解析 `statusLine.quota` JSON，维护 `AgyQuotaStore` 单例与订阅通知 |
-| 配额采集与多源协调 | `packages/happy-cli/src/agy/usage.ts` | 统一 `fetchAgyUsage` 优先级调度（statusLine -> LS -> API），格式化输出 |
-| 会话运行与交互 | `packages/happy-cli/src/agy/runStreamJsonAgy.ts` | 拦截 `/usage` 指令并下发实时配额 Markdown 报表 |
-| 单元测试 | `packages/happy-cli/src/agy/statusLine.test.ts` | 验证多级窗口解析、分组格式、`AgyQuotaStore` 状态机 |
+| StatusLine 解析与配额缓存 | `packages/happy-cli/src/agyStream/statusLine.ts` | 解析 `statusLine.quota` JSON，维护 `AgyQuotaStore` 单例与订阅通知 |
+| 配额采集与多源协调 | `packages/happy-cli/src/agyStream/usage.ts` | 统一 `fetchAgyUsage` 优先级调度（statusLine -> LS -> API），格式化输出 |
+| 会话运行与交互 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 拦截 `/usage` 指令并下发实时配额 Markdown 报表 |
+| 单元测试 | `packages/happy-cli/src/agyStream/statusLine.test.ts` | 验证多级窗口解析、分组格式、`AgyQuotaStore` 状态机 |
 
 ## 架构关系与数据流
 
@@ -102,14 +102,14 @@ export interface AgyStatusLineQuota {
 ## 测试验证方式
 
 1. **单元测试**：
-   - `pnpm --filter happy test src/agy/statusLine.test.ts`
-   - `pnpm --filter happy test src/agy/usage.test.ts`
+   - `pnpm --filter happy test src/agyStream/statusLine.test.ts`
+   - `pnpm --filter happy test src/agyStream/usage.test.ts`
 2. **全量编译与回归测试**：
    - `pnpm --filter happy test src/agy`
 
 ## 变更记录
 
 - `2026-08-25`:
-  - 初始设计与实现：创建 `packages/happy-cli/src/agy/statusLine.ts`。
+  - 初始设计与实现：创建 `packages/happy-cli/src/agyStream/statusLine.ts`。
   - 实现双通道解耦架构与实时 `AgyQuotaStore`。
   - 集成至 `usage.ts` 并完成全量自动化测试。

@@ -1,10 +1,10 @@
 /**
  * Agy (Antigravity CLI) Constants
  *
- * Centralized constants for the agy integration: the binary name, the available
- * model display names (from `agy models`), the default model, and the print-mode
- * timeout. agy is a plain-text streaming CLI, so there are no env-var-based API
- * keys or MCP wiring like the Gemini ACP integration.
+ * Centralized constants for the agy integration: the binary name, Happy's
+ * logical model choices, their agy display-name mapping, defaults, and the
+ * print-mode timeout. agy is a plain-text streaming CLI, so there are no
+ * env-var-based API keys or MCP wiring like the Gemini ACP integration.
  */
 
 import os from 'node:os';
@@ -62,48 +62,17 @@ export function resolveAgyBin(): string {
 }
 
 /**
- * Model display names accepted by `agy --model`, as printed by `agy models`.
- * agy expects the full display string, not a slug.
- * Older models (Gemini 3.1, 3.5, 3.6) are retired to keep the selection clean.
+ * Logical model names shown in Happy. Gemini thinking variants are one model
+ * here and are resolved from the independent effort selection below.
  */
 export const AGY_MODELS = [
-  'Gemini 3.8 Flash (High)',
-  'Gemini 3.8 Flash (Medium)',
-  'Gemini 3.8 Flash (Low)',
-  'Gemini 3.7 Flash (High)',
-  'Gemini 3.7 Flash (Medium)',
-  'Gemini 3.7 Flash (Low)',
+  'Gemini 3.8 Flash',
   'Claude Sonnet 4.6 (Thinking)',
   'Claude Opus 4.6 (Thinking)',
   'GPT-OSS 120B (Medium)',
 ] as const;
 
-/**
- * Retired agy models that are filtered from discovery and pickers to keep menus concise.
- */
-export const RETIRED_AGY_MODELS: ReadonlySet<string> = new Set([
-  'Gemini 3.6 Flash (High)',
-  'Gemini 3.6 Flash (Medium)',
-  'Gemini 3.6 Flash (Low)',
-  'Gemini 3.5 Flash (High)',
-  'Gemini 3.5 Flash (Medium)',
-  'Gemini 3.5 Flash (Low)',
-  'Gemini 3.1 Pro (High)',
-  'Gemini 3.1 Pro (Low)',
-]);
-
-export function isRetiredAgyModel(name: string): boolean {
-  if (RETIRED_AGY_MODELS.has(name)) return true;
-  return /gemini\s*3\.[156]/i.test(name) || /gemini-3\.[156]/i.test(name);
-}
-
-/**
- * Base name of the Gemini 3.8 Flash family in `agy models`. agy's catalog only
- * lists the effort-suffixed variants; Happy's app picker sends this base name
- * together with an effort level, which resolveAgyModelSelection combines.
- */
 export const AGY_GEMINI_3_8_FLASH_MODEL = 'Gemini 3.8 Flash';
-
 export const AGY_EFFORTS = ['low', 'medium', 'high'] as const;
 export type AgyEffort = typeof AGY_EFFORTS[number];
 
@@ -111,21 +80,33 @@ export type AgyEffort = typeof AGY_EFFORTS[number];
  * Default agy model. A Gemini model on purpose: this backend exists as a fallback
  * for when Claude Code is rate-limited, so we should not default onto a Claude model.
  */
-export const DEFAULT_AGY_MODEL = 'Gemini 3.8 Flash (High)';
-export const DEFAULT_AGY_EFFORT: AgyEffort = 'high';
+export const DEFAULT_AGY_MODEL = AGY_GEMINI_3_8_FLASH_MODEL;
+export const DEFAULT_AGY_EFFORT: AgyEffort = 'medium';
 
-/**
- * Validate an effort level coming off the wire (message meta). Unknown values
- * and null/undefined (reset) fall back to the default effort.
- */
 export function normalizeAgyEffort(effort: string | null | undefined): AgyEffort {
   return AGY_EFFORTS.includes(effort as AgyEffort)
     ? effort as AgyEffort
     : DEFAULT_AGY_EFFORT;
 }
 
-/** Timeout passed to `agy --print-timeout` for a single turn (default 60 minutes). */
-export const AGY_PRINT_TIMEOUT = '60m';
+/**
+ * Resolve Happy's model + effort picks to the exact display name accepted by
+ * `agy --model`. Non-Gemini choices and saved legacy display names pass through.
+ */
+export function resolveAgyModelName(
+  model: string,
+  effort: string | null | undefined,
+): string {
+  if (model !== AGY_GEMINI_3_8_FLASH_MODEL) {
+    return model;
+  }
+  const resolvedEffort = normalizeAgyEffort(effort);
+  const effortLabel = resolvedEffort[0].toUpperCase() + resolvedEffort.slice(1);
+  return `${AGY_GEMINI_3_8_FLASH_MODEL} (${effortLabel})`;
+}
+
+/** Timeout passed to `agy --print-timeout` for a single print turn. */
+export const AGY_PRINT_TIMEOUT = '10m';
 
 /**
  * Path to agy's per-workspace conversation cache. agy records the most recent

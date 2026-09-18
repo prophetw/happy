@@ -6,14 +6,20 @@ Happy session protocol, app UI, and resume plumbing.
 
 | Engine | Directory | Default | Process model |
 |--------|-----------|---------|---------------|
-| `stream-json` | `packages/happy-cli/src/agy/` | **yes** | One persistent `agy --output-format stream-json` process per session; NDJSON events mapped to Happy envelopes |
-| `sdk` | `packages/happy-cli/src/agy/` (`AgySdkBackend`) | no | Python SDK bridge (`bridge/server.py`); only when a Gemini API key is configured |
-| `legacy` | `packages/happy-cli/src/agyLegacy/` | no | One `agy --print` process per turn; conversation id recovered from agy's on-disk cache |
+| `stream-json` | `packages/happy-cli/src/agyStream/` | **yes** | One persistent `agy --output-format stream-json` process per session; NDJSON events mapped to Happy envelopes |
+| `sdk` | `packages/happy-cli/src/agyStream/` (`AgySdkBackend`) | no | Python SDK bridge (`bridge/server.py`); only when a Gemini API key is configured |
+| `legacy` | `packages/happy-cli/src/agy/` | no | One `agy --print` process per turn; conversation id recovered from agy's on-disk cache |
 
 The stream-json engine is a strict superset of legacy: it adds structured tool
 call/result events, permission prompts, live model switching, skills, title and
 statusline/quota channels, and precise `agyConversationId` bookkeeping. Legacy
 is kept frozen as an escape hatch.
+
+> **Directory layout is intentional.** `src/agy/` holds the original per-turn
+> engine and is kept byte-identical to upstream (`slopus/happy`); it must not
+> be edited locally, so upstream changes to it merge cleanly. All new-engine,
+> dispatcher, and engine-switch code lives in `src/agyStream/` (new directory,
+> unknown to upstream) and therefore never conflicts with upstream merges.
 
 ## Engine selection
 
@@ -26,7 +32,7 @@ Resolution order (first valid value wins):
 
 `cli` is accepted as an alias for `stream-json` (the original
 `HAPPY_AGY_ENGINE` vocabulary was `sdk|cli`). Invalid values fall through to
-the next level. See `src/agy/engine.ts` + `engine.test.ts`.
+the next level. See `src/agyStream/engine.ts` + `engine.test.ts`.
 
 Backend auto-detection: with no explicit selection, `createAgyBackend` upgrades
 the session to the SDK bridge when `GEMINI_API_KEY` is set. An explicit
@@ -44,7 +50,7 @@ The app picker sends the model as a display name plus an independent effort
 level in message meta (`meta.model`, `meta.effort`; `null` effort = reset).
 
 - `resolveAgyModelSelection(model, effort, models?)`
-  (`src/agy/discoverModels.ts`) combines them: `'Gemini 3.8 Flash' + 'high'`
+  (`src/agyStream/discoverModels.ts`) combines them: `'Gemini 3.8 Flash' + 'high'`
   → `'Gemini 3.8 Flash (High)'`. Names already carrying a variant suffix and
   non-Gemini models pass through unchanged, so a suffix always wins.
 - The stream-json engine keeps `selectedModel`/`selectedEffort` state across

@@ -14,7 +14,7 @@ Feature document for resuming Antigravity (`flavor: "agy"`) sessions across Happ
 | App 会话视图 | `packages/happy-app/sources/-session/SessionView.tsx` | 会话界面底栏渲染恢复提示/按钮及 Agent Goal 状态同步 |
 | CLI 会话恢复解析 | `packages/happy-cli/src/resume/resolveHappySession.ts` | 会话元数据解析与 schema 校验（包含 `agyConversationId`） |
 | CLI 恢复命令构建 | `packages/happy-cli/src/resume/handleResumeCommand.ts` | 将 `flavor: "agy"` 映射为 `happy agy --resume <conversationId>` 启动参数 |
-| CLI 运行器 | `packages/happy-cli/src/agy/runStreamJsonAgy.ts` | 读取 `HAPPY_RECONNECT_SESSION_ID` 重连已有 Happy 会话，防止生成重复会话 |
+| CLI 运行器 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 读取 `HAPPY_RECONNECT_SESSION_ID` 重连已有 Happy 会话，防止生成重复会话 |
 | Daemon 运行器 | `packages/happy-cli/src/daemon/run.ts` | 后台守护进程响应 `resume-happy-session` RPC 并注入重连环境变量拉起对应子进程 |
 
 ## 架构关系与数据流

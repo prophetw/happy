@@ -4,7 +4,7 @@
  * Two backends coexist (see docs/features/agy-engines.md):
  *   - stream-json: persistent single-process engine driving agy's
  *     `--input-format stream-json` NDJSON protocol (default).
- *   - legacy: the original per-turn `agy --print` backend (src/agyLegacy).
+ *   - legacy: the original per-turn `agy --print` backend (src/agy).
  *   - sdk: optional Python SDK bridge engine (requires the
  *     google-antigravity package; only when an API key is configured).
  *

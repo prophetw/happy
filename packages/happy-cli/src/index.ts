@@ -445,7 +445,7 @@ Conversation history is preserved on the server, but in-flight tool calls are in
     return;
   } else if (subcommand === 'agy') {
     try {
-      const { runAgy } = await import('@/agy/runAgy');
+      const { runAgy } = await import('@/agyStream/runAgy');
 
       let startedBy: 'daemon' | 'terminal' | undefined = undefined;
       let verbose = false;
@@ -496,7 +496,7 @@ Conversation history is preserved on the server, but in-flight tool calls are in
     return;
   } else if (subcommand === 'usage') {
     try {
-      const { fetchAgyUsage, formatAgyUsageTerminal, formatAgyUsageMarkdown } = await import('@/agy/usage');
+      const { fetchAgyUsage, formatAgyUsageTerminal, formatAgyUsageMarkdown } = await import('@/agyStream/usage');
       const isMarkdown = args.includes('--markdown') || args.includes('-m');
       const isJson = args.includes('--json');
 
@@ -518,7 +518,7 @@ Conversation history is preserved on the server, but in-flight tool calls are in
     }
   } else if (subcommand === 'skills') {
     try {
-      const { fetchAgySkills, formatAgySkillsTerminal, formatAgySkillsMarkdown } = await import('@/agy/skills');
+      const { fetchAgySkills, formatAgySkillsTerminal, formatAgySkillsMarkdown } = await import('@/agyStream/skills');
       const isMarkdown = args.includes('--markdown') || args.includes('-m');
       const isJson = args.includes('--json');
 

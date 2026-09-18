@@ -20,10 +20,10 @@ describe('buildAgyArgs', () => {
   });
 
   it('passes the model via --model', () => {
-    const args = buildAgyArgs({ prompt: 'p', permissionMode: 'default', model: 'Gemini 3.8 Flash (Medium)' });
+    const args = buildAgyArgs({ prompt: 'p', permissionMode: 'default', model: 'Gemini 3.8 Flash (High)' });
     const idx = args.indexOf('--model');
     expect(idx).toBeGreaterThanOrEqual(0);
-    expect(args[idx + 1]).toBe('Gemini 3.8 Flash (Medium)');
+    expect(args[idx + 1]).toBe('Gemini 3.8 Flash (High)');
   });
 
   it('resumes a conversation via --conversation when an id is given', () => {
@@ -50,5 +50,12 @@ describe('buildAgyArgs', () => {
     const idx = args.indexOf('--print-timeout');
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(args[idx + 1]).toBe('10m');
+  });
+
+  it('always includes --output-format stream-json', () => {
+    const args = buildAgyArgs({ prompt: 'p', permissionMode: 'default' });
+    const idx = args.indexOf('--output-format');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('stream-json');
   });
 });

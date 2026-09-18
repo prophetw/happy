@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import os from 'os';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { findAgyBin } from '@/agyLegacy/constants';
+import { findAgyBin } from '@/agy/constants';
 
 export interface CLIAvailability {
   claude: boolean;

@@ -17,10 +17,10 @@ Feature document for Antigravity (`agy`) skills discovery, `/skills` slash comma
 
 | 组件 | 文件 | 角色 |
 |---|---|---|
-| 技能引擎与格式化 | `packages/happy-cli/src/agy/skills.ts` | 封装 JSON/文本解析、文件系统扫描、独立 CLI 进程调用及 Markdown/Terminal 格式化 |
-| 会话层指令拦截 | `packages/happy-cli/src/agy/runStreamJsonAgy.ts` | 会话初始化时预载技能元数据，拦截 `/skills` 并在队列循环中调用技能引擎下发 Turn 信封 |
+| 技能引擎与格式化 | `packages/happy-cli/src/agyStream/skills.ts` | 封装 JSON/文本解析、文件系统扫描、独立 CLI 进程调用及 Markdown/Terminal 格式化 |
+| 会话层指令拦截 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 会话初始化时预载技能元数据，拦截 `/skills` 并在队列循环中调用技能引擎下发 Turn 信封 |
 | 特殊指令解析器 | `packages/happy-cli/src/parsers/specialCommands.ts` | 识别 `/skills` 及附带参数（如 `/skills list`）并标记为 `skills` 特殊指令 |
-| 常驻进程安全防御 | `packages/happy-cli/src/agy/AgyBackend.ts` | 在 `sendPrompt` 入口防御性校验，阻止意外向 `stream-json` 输入流写入 `/skills` |
+| 常驻进程安全防御 | `packages/happy-cli/src/agyStream/AgyBackend.ts` | 在 `sendPrompt` 入口防御性校验，阻止意外向 `stream-json` 输入流写入 `/skills` |
 | 独立终端命令 | `packages/happy-cli/src/index.ts` | 支持终端直接执行 `happy skills [--markdown \| --json]` |
 
 ## 架构关系与数据流
@@ -88,8 +88,8 @@ export interface AgySkillsResult {
 ## 测试验证方式
 
 1. **单元测试**：
-   - `packages/happy-cli/src/agy/skills.test.ts`：覆盖 YAML Frontmatter 解析（单行、折叠多行）、JSON 结构解析、文本对齐与 ANSI 剥离解析、文件系统多目录扫描、多级回退机制及格式化器。
-   - `packages/happy-cli/src/agy/AgyBackend.test.ts`：验证 `AgyBackend.sendPrompt` 拦截 `/skills` 提示词。
+   - `packages/happy-cli/src/agyStream/skills.test.ts`：覆盖 YAML Frontmatter 解析（单行、折叠多行）、JSON 结构解析、文本对齐与 ANSI 剥离解析、文件系统多目录扫描、多级回退机制及格式化器。
+   - `packages/happy-cli/src/agyStream/AgyBackend.test.ts`：验证 `AgyBackend.sendPrompt` 拦截 `/skills` 提示词。
    - `packages/happy-cli/src/parsers/specialCommands.test.ts`：验证 `/skills` 与带参数情况的指令解析。
 2. **端到端执行测试**：
    - `node packages/happy-cli/dist/index.mjs skills`
@@ -99,7 +99,7 @@ export interface AgySkillsResult {
 ## 变更记录
 
 - **2026-09-06**：
-  - 新增 `packages/happy-cli/src/agy/skills.ts` 与 `skills.test.ts`。
+  - 新增 `packages/happy-cli/src/agyStream/skills.ts` 与 `skills.test.ts`。
   - 在 `runAgy.ts` 启动时预载技能元数据至 `metadata.slashCommands` 与 `metadata.skills`。
   - 在 `runAgy.ts` 中拦截 `/skills` 特殊指令并转为独立 Print 进程执行与信封下发。
   - 在 `AgyBackend.ts` 的 `sendPrompt` 中新增防御性守卫，防止写入 `stream-json` 通道。

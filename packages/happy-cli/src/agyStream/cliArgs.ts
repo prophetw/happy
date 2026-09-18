@@ -24,7 +24,7 @@ const SKIP_PERMISSION_MODES: ReadonlySet<PermissionMode> = new Set<PermissionMod
 export interface BuildAgyArgsOptions {
   /** The user prompt for this turn. */
   prompt: string;
-  /** Model display name passed to `--model` (e.g. "Gemini 3.8 Flash (Medium)"). */
+  /** Model display name passed to `--model` (e.g. "Gemini 3.8 Flash (High)"). */
   model?: string;
   /** Conversation id to resume via `--conversation`; omit/null for a fresh conversation. */
   conversationId?: string | null;
@@ -60,7 +60,7 @@ export function buildAgyArgs(opts: BuildAgyArgsOptions): string[] {
   if (opts.printTimeout) {
     args.push('--print-timeout', opts.printTimeout);
   }
-
+  args.push('--output-format', 'stream-json');
   args.push('--print', opts.prompt);
   return args;
 }

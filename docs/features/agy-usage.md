@@ -19,9 +19,9 @@ Feature document for `/usage` slash command and Antigravity (`agy`) quota & rate
 | 组件 | 文件 | 角色 |
 |---|---|---|
 | 指令解析 | `packages/happy-cli/src/parsers/specialCommands.ts` | 解析 `/usage` 指令并标记为特殊系统命令类型 |
-| StatusLine 解析与配额存储 | `packages/happy-cli/src/agy/statusLine.ts` | 解析 `statusLine.quota` JSON（Gemini/Claude 5h & Weekly），维护实时 `AgyQuotaStore` |
-| 额度采集与格式化 | `packages/happy-cli/src/agy/usage.ts` | 优先从 `AgyQuotaStore` 读取，回退探测 Language Server 与 Cloud Code API 并格式化输出 |
-| 运行时拦截与响应 | `packages/happy-cli/src/agy/runStreamJsonAgy.ts` | 在会话层拦截 `/usage` 指令，调用采集模块并直接向客户端下发模型输出与状态信封 |
+| StatusLine 解析与配额存储 | `packages/happy-cli/src/agyStream/statusLine.ts` | 解析 `statusLine.quota` JSON（Gemini/Claude 5h & Weekly），维护实时 `AgyQuotaStore` |
+| 额度采集与格式化 | `packages/happy-cli/src/agyStream/usage.ts` | 优先从 `AgyQuotaStore` 读取，回退探测 Language Server 与 Cloud Code API 并格式化输出 |
+| 运行时拦截与响应 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 在会话层拦截 `/usage` 指令，调用采集模块并直接向客户端下发模型输出与状态信封 |
 | CLI 独立命令 | `packages/happy-cli/src/index.ts` | 提供 `happy usage [--markdown | --json]` 终端直接查询能力 |
 | 客户端自动补全 | `packages/happy-app/sources/sync/suggestionCommands.ts` | 将 `usage` 纳入全端 Slash Command 补全与提示列表中 |
 
@@ -136,8 +136,8 @@ export interface AgyUsageStatus {
 ## 测试验证方式
 
 1. **单元测试**：
-   - `packages/happy-cli/src/agy/statusLine.test.ts`：验证 `statusLine.quota` 解析、Gemini/Claude 分组与 `AgyQuotaStore` 状态机。
-   - `packages/happy-cli/src/agy/usage.test.ts`：验证 P0 优先从 `statusLine.quota` 采集配额、分层表格 Markdown 与 Terminal 输出。
+   - `packages/happy-cli/src/agyStream/statusLine.test.ts`：验证 `statusLine.quota` 解析、Gemini/Claude 分组与 `AgyQuotaStore` 状态机。
+   - `packages/happy-cli/src/agyStream/usage.test.ts`：验证 P0 优先从 `statusLine.quota` 采集配额、分层表格 Markdown 与 Terminal 输出。
    - `packages/happy-cli/src/parsers/specialCommands.test.ts`：验证 `/usage` 特殊指令精准解析。
 2. **全量回归测试**：
    - `pnpm --filter happy test src/agy`
@@ -150,10 +150,10 @@ export interface AgyUsageStatus {
 
 - `2026-08-25`:
   - 架构重构：引入双通道解耦设计（`stream-json` 负责对话流，`statusLine hook` 负责配额 JSON）。
-  - 新增 `packages/happy-cli/src/agy/statusLine.ts` 实现 `parseStatusLinePayload` 与实时 `AgyQuotaStore`。
-  - 在 `packages/happy-cli/src/agy/usage.ts` 中将 `statusLine.quota` 提升为 P0 采集源，支持 Gemini 与 Claude/GPT 5h/Weekly 滚动额度展示。
+  - 新增 `packages/happy-cli/src/agyStream/statusLine.ts` 实现 `parseStatusLinePayload` 与实时 `AgyQuotaStore`。
+  - 在 `packages/happy-cli/src/agyStream/usage.ts` 中将 `statusLine.quota` 提升为 P0 采集源，支持 Gemini 与 Claude/GPT 5h/Weekly 滚动额度展示。
   - 编写 `statusLine.test.ts` 与更新 `usage.test.ts`，全量测试通过。
 - `2026-08-24`:
-  - 新增 `packages/happy-cli/src/agy/usage.ts` 实现本地 Language Server 与 CloudCode API 额度采集。
+  - 新增 `packages/happy-cli/src/agyStream/usage.ts` 实现本地 Language Server 与 CloudCode API 额度采集。
   - 在 `specialCommands.ts` 中注册 `/usage` 指令解析并在 `runAgy.ts` 中实现拦截。
 
