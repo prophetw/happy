@@ -445,7 +445,7 @@ Conversation history is preserved on the server, but in-flight tool calls are in
     return;
   } else if (subcommand === 'agy') {
     try {
-      const { runAgy } = await import('@/agy/runAgy');
+      const { runAgy } = await import('@/agyLegacy/runAgy');
 
       let startedBy: 'daemon' | 'terminal' | undefined = undefined;
       let verbose = false;

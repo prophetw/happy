@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import os from 'os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { findAgyBin } from '@/agy/constants';
+import { findAgyBin } from '@/agyLegacy/constants';
 import { detectCLIAvailability } from './detectCLI';
 
 vi.mock('child_process', () => ({ execSync: vi.fn() }));
@@ -14,7 +14,7 @@ vi.mock('os', () => ({
     platform: vi.fn(() => 'darwin'),
   },
 }));
-vi.mock('@/agy/constants', () => ({ findAgyBin: vi.fn() }));
+vi.mock('@/agyLegacy/constants', () => ({ findAgyBin: vi.fn() }));
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
