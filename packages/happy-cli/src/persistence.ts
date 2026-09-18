@@ -46,6 +46,8 @@ interface Settings {
   sandboxConfig?: SandboxConfig
   serverUrl?: string
   webappUrl?: string
+  /** Which agy backend engine sessions spawn with (see src/agy/engine.ts). */
+  agyEngine?: 'legacy' | 'stream-json' | 'sdk'
 }
 
 const defaultSettings: Settings = {

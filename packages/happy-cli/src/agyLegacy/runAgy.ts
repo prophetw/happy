@@ -45,7 +45,7 @@ export interface RunAgyOptions {
   verbose?: boolean;
 }
 
-export async function runAgy(opts: RunAgyOptions): Promise<void> {
+export async function runLegacyAgy(opts: RunAgyOptions): Promise<void> {
   const verbose = opts.verbose === true;
   const sessionTag = randomUUID();
   connectionState.setBackend('agy');
