@@ -10,7 +10,7 @@ import { layout } from './layout';
 import { MultiTextInput, KeyPressEvent } from './MultiTextInput';
 import { Typography } from '@/constants/Typography';
 import { PermissionMode, ModelMode } from './PermissionModeSelector';
-import { EffortLevel } from './modelModeOptions';
+import { EffortLevel, groupModelModesByProvider } from './modelModeOptions';
 import { hapticsLight, hapticsError } from './haptics';
 import { Shaker, ShakeInstance } from './Shaker';
 import { StatusDot } from './StatusDot';
@@ -20,13 +20,11 @@ import { AgentInputAutocomplete } from './AgentInputAutocomplete';
 import { FloatingOverlay } from './FloatingOverlay';
 import { TextInputState, MultiTextInputHandle } from './MultiTextInput';
 import { applySuggestion } from './autocomplete/applySuggestion';
-import { GitStatusBadge, useHasMeaningfulGitStatus } from './GitStatusBadge';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSetting } from '@/sync/storage';
 import { hackMode, hackModes } from '@/sync/modeHacks';
 import { getPermissionModeMenuLabel, getPermissionModeShortLabel } from '@/utils/permissionModeLabels';
 import { getUsageLimitDisplayPercentage, getUsageLimitRows, formatUsageLimitResetTime, type UsageLimitsLike } from '@/utils/sessionStatusBar';
-import { compactCount } from '@/utils/rigGitLineChanges';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 import { Metadata } from '@/sync/storageTypes';
@@ -103,9 +101,6 @@ interface AgentInputProps {
      * out, so callers anchoring to AgentInput would float above empty space.
      */
     onActionAreaOffsetChange?: (offset: number) => void;
-    sessionStatusGitBranch?: string | null;
-    /** Unstaged line changes for the checkout, matching the session list. */
-    sessionStatusGitChanges?: { insertions: number; deletions: number; approximate: boolean } | null;
     /** Plan quota windows from agent state, for the week stat and its popup. */
     sessionStatusUsageLimits?: UsageLimitsLike | null;
     onFileViewerPress?: () => void;
@@ -503,13 +498,11 @@ const getContextStatus = (contextSize: number, alwaysShow: boolean = false, them
 
 type StatusRowProps = {
     connectionStatus?: AgentInputProps['connectionStatus'];
-    gitBranch: string | null;
-    gitChanges: { insertions: number; deletions: number; approximate: boolean } | null;
 };
 
 const AgentInputStatusRow = React.memo(function AgentInputStatusRow(p: StatusRowProps) {
     const { theme } = useUnistyles();
-    if (!p.connectionStatus && !p.gitBranch) {
+    if (!p.connectionStatus) {
         return null;
     }
     return (
@@ -597,27 +590,6 @@ const AgentInputStatusRow = React.memo(function AgentInputStatusRow(p: StatusRow
                     </>
                 )}
             </View>
-            {p.gitBranch && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 }}>
-                    <Octicons name="git-branch" size={11} color={theme.colors.textSecondary} />
-                    <Text style={{ fontSize: 11, color: theme.colors.textSecondary, flexShrink: 1, ...Typography.default() }} numberOfLines={1}>
-                        {p.gitBranch}
-                    </Text>
-                    {p.gitChanges?.approximate && (
-                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>≈</Text>
-                    )}
-                    {p.gitChanges && p.gitChanges.insertions > 0 && (
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.gitAddedText, ...Typography.default() }}>
-                            +{compactCount(p.gitChanges.insertions)}
-                        </Text>
-                    )}
-                    {p.gitChanges && p.gitChanges.deletions > 0 && (
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: theme.colors.gitRemovedText, ...Typography.default() }}>
-                            -{compactCount(p.gitChanges.deletions)}
-                        </Text>
-                    )}
-                </View>
-            )}
         </View>
     );
 });
@@ -861,6 +833,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         hackModes(props.availableModes ?? [])
     ), [props.availableModes]);
     const availableModels = props.availableModels ?? [];
+    const availableModelProviderGroups = React.useMemo(
+        () => groupModelModesByProvider(availableModels),
+        [availableModels],
+    );
     const availableEffortLevels = props.availableEffortLevels ?? [];
     const modelLabel = props.modelMode?.name ?? t('agentInput.model.title');
     const effortLabel = props.effortLevel?.name;
@@ -1299,20 +1275,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const modelSettingsGroups = React.useMemo<NativeSettingsMenuGroup[]>(() => {
         const groups: NativeSettingsMenuGroup[] = [];
         if (availableModels.length > 0 && props.onModelModeChange) {
-            groups.push({
-                key: 'model',
+            groups.push(...groupModelModesByProvider(availableModels).map((providerGroup) => ({
+                key: `model:${providerGroup.key}`,
                 label: props.modelMode?.name ?? t('agentInput.model.title'),
-                title: t('agentInput.model.title'),
+                title: providerGroup.title ?? t('agentInput.model.title'),
                 systemImage: 'cube',
-                options: availableModels.map((model) => ({ key: model.key, label: model.name, disabled: model.disabled })),
+                options: providerGroup.models.map((model) => ({ key: model.key, label: model.name, disabled: model.disabled })),
                 selectedKey: props.modelMode?.key,
-                onSelect: (key) => {
-                    const model = availableModels.find((candidate) => candidate.key === key);
+                onSelect: (key: string) => {
+                    const model = providerGroup.models.find((candidate) => candidate.key === key);
                     if (!model) return;
                     hapticsLight();
                     props.onModelModeChange?.(model);
                 },
-            });
+            })));
         }
         if (availableEffortLevels.length > 0 && props.onEffortLevelChange) {
             groups.push({
@@ -1333,7 +1309,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return groups;
     }, [availableEffortLevels, availableModels, props.effortLevel?.key, props.modelMode?.key, props.onEffortLevelChange, props.onModelModeChange]);
 
-    const modelSettingsGroup = modelSettingsGroups.find((group) => group.key === 'model');
+    const modelProviderSettingsGroups = modelSettingsGroups.filter((group) => group.key.startsWith('model:'));
     const effortSettingsGroup = modelSettingsGroups.find((group) => group.key === 'effort');
 
     const renderModelValue = () => (
@@ -1527,7 +1503,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             </Shaker>
                         )}
 
-                        <GitStatusButton sessionId={props.sessionId} onPress={props.onFileViewerPress} />
+                        <FileViewerButton sessionId={props.sessionId} onPress={props.onFileViewerPress} />
 
                         {props.onPickImages && (
                             <Pressable
@@ -1889,12 +1865,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     <>
                                         {openPicker === 'model' && (
                                         <View style={styles.overlaySection}>
-                                            <Text style={styles.overlaySectionTitle}>
-                                                {props.modelMode?.name ?? t('agentInput.model.title')}
-                                            </Text>
-                                            {availableModels.length > 0 ? availableModels.map((model) => {
-                                                const isSelected = props.modelMode?.key === model.key;
-                                                return (
+                                            <Text style={styles.overlaySectionTitle}>{t('agentInput.model.title')}</Text>
+                                            {availableModels.length > 0 ? availableModelProviderGroups.map((providerGroup) => (
+                                                <View key={providerGroup.key}>
+                                                    {providerGroup.title ? (
+                                                        <Text style={styles.overlaySectionTitle}>{providerGroup.title}</Text>
+                                                    ) : null}
+                                                    {providerGroup.models.map((model) => {
+                                                        const isSelected = props.modelMode?.key === model.key;
+                                                        return (
                                                     <BubblePressable
                                                         key={model.key}
                                                         disabled={!props.onModelModeChange || model.disabled}
@@ -1968,8 +1947,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                             )}
                                                         </View>
                                                     </BubblePressable>
-                                                );
-                                            }) : (
+                                                        );
+                                                    })}
+                                                </View>
+                                            )) : (
                                                 <Text style={{
                                                     fontSize: 13,
                                                     color: theme.colors.textSecondary,
@@ -2062,8 +2043,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 <AnimatedFade visible={props.showStatusDetails !== false}>
                     <AgentInputStatusRow
                         connectionStatus={props.connectionStatus}
-                        gitBranch={props.sessionStatusGitBranch ?? null}
-                        gitChanges={props.sessionStatusGitChanges ?? null}
                     />
 
                     <AgentInputContextChips
@@ -2188,11 +2167,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     sits against the send button and the pair does
                                     not drift when either label changes width. */}
                                 <View style={{ flex: 1 }} />
-                                {useNativeSettingsMenus && modelSettingsGroup ? (
+                                {useNativeSettingsMenus && modelProviderSettingsGroups.length > 0 ? (
                                     <NativeSettingsMenu
                                         accessibilityLabel={t('agentInput.model.title')}
-                                        groups={[modelSettingsGroup]}
-                                        flat
+                                        groups={modelProviderSettingsGroups}
                                         triggerLabel={modelLabel}
                                         triggerAlignment="trailing"
                                         style={styles.mobileModelMenuFrame}
@@ -2273,7 +2251,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         )}
 
                         {!compactMobileComposer && (
-                            <GitStatusButton sessionId={props.sessionId} onPress={props.onFileViewerPress} />
+                            <FileViewerButton sessionId={props.sessionId} onPress={props.onFileViewerPress} />
                         )}
 
                         <Shaker ref={shakerRef}>
@@ -2373,10 +2351,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     );
 }));
 
-// Git Status Button Component
-function GitStatusButton({ sessionId, onPress }: { sessionId?: string, onPress?: () => void }) {
-    const hasMeaningfulGitStatus = useHasMeaningfulGitStatus(sessionId || '');
-    const styles = stylesheet;
+// Keep file browsing available without duplicating the header's git statistics.
+function FileViewerButton({ sessionId, onPress }: { sessionId?: string, onPress?: () => void }) {
     const { theme } = useUnistyles();
 
     if (!sessionId || !onPress) {
@@ -2397,20 +2373,14 @@ function GitStatusButton({ sessionId, onPress }: { sessionId?: string, onPress?:
                 overflow: 'hidden',
             })}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.files')}
             onPress={() => {
                 hapticsLight();
                 onPress?.();
             }}
         >
-            {hasMeaningfulGitStatus ? (
-                <GitStatusBadge sessionId={sessionId} />
-            ) : (
-                <Octicons
-                    name="git-branch"
-                    size={16}
-                    color={theme.colors.button.secondary.tint}
-                />
-            )}
+            <Octicons name="file-directory" size={16} color={theme.colors.button.secondary.tint} />
         </BubblePressable>
     );
 }

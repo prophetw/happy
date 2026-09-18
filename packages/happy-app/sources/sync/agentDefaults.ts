@@ -37,7 +37,7 @@ const codeAgentDefaults: Record<AgentKey, AgentDefaultConfig> = {
     codex: { permissionMode: 'auto', modelMode: 'gpt-5.6-sol', effortLevel: 'medium' },
     gemini: { permissionMode: 'default', modelMode: 'gemini-2.5-pro', effortLevel: null },
     openclaw: { permissionMode: 'default', modelMode: 'default', effortLevel: null },
-    agy: { permissionMode: 'default', modelMode: 'Gemini 3.1 Pro (High)', effortLevel: null },
+    agy: { permissionMode: 'default', modelMode: 'Gemini 3.8 Flash', effortLevel: 'medium' },
     // dsh's model catalog arrives over ACP (session config options), so the
     // default here only selects the catalog's ambient "no override" entry.
     dsh: { permissionMode: 'default', modelMode: 'default', effortLevel: null },

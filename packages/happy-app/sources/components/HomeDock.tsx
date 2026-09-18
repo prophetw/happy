@@ -31,7 +31,7 @@ import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDef
 import { formatLastSeen, formatPathRelativeToHome } from '@/utils/sessionUtils';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
-import { listWorktrees } from '@/utils/worktree';
+import { useWorktrees } from '@/hooks/useWorktrees';
 import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
 import {
     collectMachineChoices,
@@ -48,6 +48,7 @@ import {
     getHardcodedPermissionModes,
     filterPermissionModesForCli,
     getSupportsWorktree,
+    groupModelModesByProvider,
     includeConfiguredModel,
     type ModeOption,
 } from './modelModeOptions';
@@ -488,6 +489,14 @@ const styles = StyleSheet.create((theme) => ({
     optionList: {
         flexGrow: 0,
     },
+    optionSectionTitle: {
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        paddingHorizontal: 8,
+        paddingTop: 8,
+        paddingBottom: 4,
+        ...Typography.default('semiBold'),
+    },
     option: {
         minHeight: 48,
         flexDirection: 'row',
@@ -772,7 +781,6 @@ export const HomeDock = React.memo(({
     const selectedWorktreeKey = sessionType === 'worktree'
         ? worktreeKey ?? '__new__'
         : '__none__';
-    const [existingWorktrees, setExistingWorktrees] = React.useState<ModeOption[]>([]);
     const agentWorkspaces = React.useMemo(
         () => collectSessionWorkspaces({
             machineIds: placeMachineIds,
@@ -781,55 +789,43 @@ export const HomeDock = React.memo(({
         }),
         [placeMachineIds, selectedProjectId, sessionList],
     );
-
-    React.useEffect(() => {
-        const path = resolveAbsolutePath(selectedPath ?? '~', selectedHomeDir);
-
-        // A Happy Agent project keeps its own workspaces, each with a name somebody chose. Those
-        // are better than the branches git reports, so git is only asked when nothing knows better.
-        // Starting in one only needs its directory, so this does not wait on the worktree
-        // capability the daemon advertises for making new ones.
-        if (selectedProjectId) {
-            setExistingWorktrees(agentWorkspaces.map((workspace) => ({
-                key: workspace.key,
-                name: workspace.name,
-                description: workspace.path,
-            })));
-            return;
-        }
-
-        // Only Happy CLI's daemon answers the worktree RPC, so it is asked directly rather than
-        // through whichever machine the draft happens to name.
-        const happyMachine = selectedChoice?.happyMachine ?? null;
-        if (!supportsWorktree || !happyMachine || !isMachineOnline(happyMachine) || !path) {
-            setExistingWorktrees([]);
-            return;
-        }
-
-        let cancelled = false;
-        listWorktrees(happyMachine.id, path).then((worktrees) => {
-            if (cancelled) return;
-            setExistingWorktrees(worktrees.map((worktree) => ({
-                key: worktree.path,
-                name: worktree.branch,
-                description: worktree.path,
-            })));
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [agentWorkspaces, selectedChoice, selectedHomeDir, selectedPath, selectedProjectId, supportsWorktree]);
-
+    const resolvedWorktreePath = React.useMemo(
+        () => resolveAbsolutePath(selectedPath ?? '~', selectedHomeDir),
+        [selectedHomeDir, selectedPath],
+    );
+    const happyMachine = selectedChoice?.happyMachine ?? null;
+    const happyMachineId = happyMachine?.id ?? null;
+    const happyMachineOnline = happyMachine !== null && isMachineOnline(happyMachine);
     // Happy Agent calls these workspaces, and names them; git calls them worktrees.
     const picksWorkspaces = selectedProjectId !== null;
+    const { worktrees, refresh: refreshWorktrees } = useWorktrees(
+        happyMachineId,
+        resolvedWorktreePath,
+        !picksWorkspaces && supportsWorktree && happyMachineOnline,
+    );
+    // Native workspaces are already in the session store; deriving their options must not fetch Git.
+    const existingWorktrees = React.useMemo<ModeOption[]>(() => picksWorkspaces
+        ? agentWorkspaces.map((workspace) => ({
+            key: workspace.key,
+            name: workspace.name,
+            description: workspace.path,
+        }))
+        : worktrees.map((worktree) => ({
+            key: worktree.path,
+            name: worktree.branch,
+            description: worktree.path,
+        })), [agentWorkspaces, picksWorkspaces, worktrees]);
+    const createsNativeHappyAgentWorkspace = agentType === 'rig'
+        && picksWorkspaces
+        && rigCreation !== null;
     const worktreeCreationMachine = React.useMemo(
         () => resolveWorktreeCreationMachine(selectedChoice, agentType, supportsWorktree),
         [agentType, selectedChoice, supportsWorktree],
     );
-    // Happy Agent can ask its paired Happy CLI daemon to create the checkout
-    // even when its own machine metadata does not advertise worktrees.
-    const canCreateWorktree = supportsWorktree
-        || (picksWorkspaces && worktreeCreationMachine !== null);
+    // Happy Agent owns workspace creation through its catalog-native spawn.
+    // Happy CLI's Git RPC remains only for the ordinary code-agent worktree flow.
+    const canCreateWorktree = createsNativeHappyAgentWorkspace
+        || (agentType !== 'rig' && worktreeCreationMachine !== null);
 
     React.useEffect(() => {
         if (!supportsWorktree && !picksWorkspaces && sessionType === 'worktree') {
@@ -847,13 +843,12 @@ export const HomeDock = React.memo(({
             }];
         }
         const options: ModeOption[] = [
-            // Starting in no workspace means starting in the project's own
-            // checkout, which is a place with a name rather than an absence.
-            { key: '__none__', name: picksWorkspaces ? 'Main' : 'No worktree' },
-            // Making one is a separate ability from starting in one that already exists.
             ...(canCreateWorktree
                 ? [{ key: '__new__', name: picksWorkspaces ? 'Create New' : 'Create new worktree' }]
                 : []),
+            // Starting in no workspace means starting in the project's own
+            // checkout, which is a place with a name rather than an absence.
+            { key: '__none__', name: picksWorkspaces ? 'Main' : 'No worktree' },
             ...existingWorktrees,
         ];
         if (
@@ -1290,19 +1285,26 @@ export const HomeDock = React.memo(({
         return { title: t('agentInput.effort.title'), options: effortOptions, selectedKey: currentEffort?.key, onSelect: setEffortLevel };
     };
 
-    const agentSettingsGroups: NativeSettingsMenuGroup[] = agentRows.map((row) => {
+    const agentSettingsGroups: NativeSettingsMenuGroup[] = agentRows.flatMap((row) => {
         const config = getAgentPickerConfig(row.page as AgentSetting);
-        return {
-            key: row.page,
+        const sections = row.page === 'model'
+            ? groupModelModesByProvider(modelOptions).map((providerGroup) => ({
+                key: `model:${providerGroup.key}`,
+                title: providerGroup.title ?? config.title,
+                options: providerGroup.models,
+            }))
+            : [{ key: row.page, title: config.title, options: config.options }];
+        return sections.map((section) => ({
+            key: section.key,
             label: row.value || config.title,
-            title: config.title,
+            title: section.title,
             systemImage: {
                 agent: 'cpu',
                 model: 'cube',
                 permission: 'shield',
                 effort: 'bolt',
             }[row.page],
-            options: config.options.map((option) => ({
+            options: section.options.map((option) => ({
                 key: option.key,
                 // The permission menu spells the mode out; only its chip is
                 // short on space. Model and effort read fine on their own.
@@ -1311,9 +1313,9 @@ export const HomeDock = React.memo(({
             })),
             selectedKey: config.selectedKey,
             onSelect: config.onSelect,
-        };
+        }));
     });
-    const modelSettingsGroup = agentSettingsGroups.find((group) => group.key === 'model');
+    const modelSettingsGroups = agentSettingsGroups.filter((group) => group.key.startsWith('model:'));
     const effortSettingsGroup = agentSettingsGroups.find((group) => group.key === 'effort');
     const permissionSettingsGroup = agentSettingsGroups.find((group) => group.key === 'permission');
 
@@ -1380,7 +1382,10 @@ export const HomeDock = React.memo(({
             return (
                 <Pressable
                     key={row.page}
-                    onPress={() => setSheetPage(row.page as PickerPage)}
+                    onPress={() => {
+                        if (row.page === 'worktree') refreshWorktrees();
+                        setSheetPage(row.page as PickerPage);
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel={`${row.label}: ${row.value}`}
                 >
@@ -1405,7 +1410,10 @@ export const HomeDock = React.memo(({
                 }[row.page]}
                 options={config.options.map((option) => ({ key: option.key, label: option.name }))}
                 selectedKey={config.selectedKey}
-                onMenuOpen={markNativeMenuOpen}
+                onMenuOpen={() => {
+                    markNativeMenuOpen();
+                    if (row.page === 'worktree') refreshWorktrees();
+                }}
                 onSelect={(key) => {
                     nativeMenuOpenRef.current = false;
                     config.onSelect(key);
@@ -1485,6 +1493,13 @@ export const HomeDock = React.memo(({
     // Only reached with a page selected: `sheetVisible` gates the whole sheet.
     const renderSettingsSheet = (page: PickerPage) => {
         const config = getPickerConfig(page);
+        const optionSections = page === 'model'
+            ? groupModelModesByProvider(modelOptions).map((providerGroup) => ({
+                key: providerGroup.key,
+                title: providerGroup.title,
+                options: providerGroup.models,
+            }))
+            : [{ key: page, title: null, options: config.options }];
         return (
             <View style={styles.settingsStack}>
                 <MobileGlassSurface
@@ -1507,10 +1522,15 @@ export const HomeDock = React.memo(({
                         </Text>
                     </View>
                     <ScrollView style={styles.optionList} keyboardShouldPersistTaps="always">
-                        {config.options.map((option) => {
-                            const selectable = isHomeDockOptionSelectable(option.disabled);
-                            const selected = option.key === config.selectedKey;
-                            return (
+                        {optionSections.map((section) => (
+                            <React.Fragment key={section.key}>
+                                {section.title ? (
+                                    <Text style={styles.optionSectionTitle}>{section.title}</Text>
+                                ) : null}
+                                {section.options.map((option) => {
+                                    const selectable = isHomeDockOptionSelectable(option.disabled);
+                                    const selected = option.key === config.selectedKey;
+                                    return (
                                 <Pressable
                                     key={option.key}
                                     disabled={!selectable}
@@ -1541,8 +1561,10 @@ export const HomeDock = React.memo(({
                                         )}
                                     </View>
                                 </Pressable>
-                            );
-                        })}
+                                    );
+                                })}
+                            </React.Fragment>
+                        ))}
                     </ScrollView>
                 </MobileGlassSurface>
             </View>
@@ -1747,11 +1769,10 @@ export const HomeDock = React.memo(({
                         {/* Pushes model/effort right so the pair sits against the
                             send button instead of drifting when a label changes. */}
                         <View style={{ flex: 1 }} />
-                        {modelSettingsGroup ? (
+                        {modelSettingsGroups.length > 0 ? (
                             renderMenuControl({
                                 page: 'model',
-                                groups: [modelSettingsGroup],
-                                flat: true,
+                                groups: modelSettingsGroups,
                                 style: styles.nativeModeMenu,
                                 accessibilityLabel: t('agentInput.model.title'),
                                 triggerLabel: currentModel?.name ?? currentAgent.name,

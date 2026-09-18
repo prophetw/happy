@@ -449,24 +449,11 @@ Conversation history is preserved on the server, but in-flight tool calls are in
 
       let startedBy: 'daemon' | 'terminal' | undefined = undefined;
       let verbose = false;
-      let model: string | undefined = undefined;
-      let permissionMode: any = undefined;
-      let dangerouslySkipPermissions = false;
-      let resumeConversationId: string | undefined = undefined;
       for (let i = 1; i < args.length; i++) {
         if (args[i] === '--started-by') {
           startedBy = args[++i] as 'daemon' | 'terminal';
         } else if (args[i] === '--verbose') {
           verbose = true;
-        } else if (args[i] === '--model') {
-          model = args[++i];
-        } else if (args[i] === '--permission-mode') {
-          permissionMode = args[++i];
-        } else if (args[i] === '--resume') {
-          resumeConversationId = args[++i];
-        } else if (args[i] === '--dangerously-skip-permissions' || args[i] === '--yolo' || args[i] === '-y') {
-          dangerouslySkipPermissions = true;
-          permissionMode = 'bypassPermissions';
         }
       }
 
@@ -477,10 +464,6 @@ Conversation history is preserved on the server, but in-flight tool calls are in
         credentials,
         startedBy,
         verbose,
-        model,
-        permissionMode,
-        dangerouslySkipPermissions,
-        resumeConversationId,
       });
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
@@ -520,50 +503,6 @@ Conversation history is preserved on the server, but in-flight tool calls are in
       process.exit(1)
     }
     return;
-  } else if (subcommand === 'usage') {
-    try {
-      const { fetchAgyUsage, formatAgyUsageTerminal, formatAgyUsageMarkdown } = await import('@/agy/usage');
-      const isMarkdown = args.includes('--markdown') || args.includes('-m');
-      const isJson = args.includes('--json');
-
-      const status = await fetchAgyUsage();
-      if (isJson) {
-        console.log(JSON.stringify(status, null, 2));
-      } else if (isMarkdown) {
-        console.log(formatAgyUsageMarkdown(status));
-      } else {
-        console.log(formatAgyUsageTerminal(status));
-      }
-      process.exit(0);
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
-      if (process.env.DEBUG) {
-        console.error(error);
-      }
-      process.exit(1);
-    }
-  } else if (subcommand === 'skills') {
-    try {
-      const { fetchAgySkills, formatAgySkillsTerminal, formatAgySkillsMarkdown } = await import('@/agy/skills');
-      const isMarkdown = args.includes('--markdown') || args.includes('-m');
-      const isJson = args.includes('--json');
-
-      const skillsResult = await fetchAgySkills({ cwd: process.cwd() });
-      if (isJson) {
-        console.log(JSON.stringify(skillsResult.skills, null, 2));
-      } else if (isMarkdown) {
-        console.log(formatAgySkillsMarkdown(skillsResult));
-      } else {
-        console.log(formatAgySkillsTerminal(skillsResult));
-      }
-      process.exit(0);
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
-      if (process.env.DEBUG) {
-        console.error(error);
-      }
-      process.exit(1);
-    }
   } else if (subcommand === 'logout') {
     // Keep for backward compatibility - redirect to auth logout
     console.log(chalk.yellow('Note: "happy logout" is deprecated. Use "happy auth logout" instead.\n'));

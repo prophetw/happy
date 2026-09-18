@@ -385,6 +385,8 @@ export const es: TranslationStructure = {
         quickActions: 'Acciones rápidas',
         viewMachine: 'Ver máquina',
         viewMachineSubtitle: 'Ver detalles de máquina y sesiones',
+        viewChanges: 'Ver cambios',
+        viewChangesSubtitle: 'Diferencias de todos los archivos sin confirmar',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -563,15 +565,14 @@ export const es: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => count === 1 ? 'Se editó 1 archivo' : `Se editaron ${count} archivos`,
-        readFiles: ({ count }: { count: number }) => count === 1 ? 'Se leyó 1 archivo' : `Se leyeron ${count} archivos`,
-        ranCommands: ({ count }: { count: number }) => count === 1 ? 'Se ejecutó 1 comando' : `Se ejecutaron ${count} comandos`,
-        searched: ({ count }: { count: number }) => count === 1 ? 'Se buscó 1 vez' : `Se buscó ${count} veces`,
-        fetchedUrls: ({ count }: { count: number }) => count === 1 ? 'Se obtuvo 1 URL' : `Se obtuvieron ${count} URLs`,
-        ranTasks: ({ count }: { count: number }) => count === 1 ? 'Se ejecutó 1 tarea' : `Se ejecutaron ${count} tareas`,
-        usedTools: ({ count }: { count: number }) => count === 1 ? 'Se usó 1 herramienta' : `Se usaron ${count} herramientas`,
+        ran: 'Ejecutado',
+        edited: 'Editado',
+        read: 'Leído',
+        searched: 'Búsqueda',
+        fetched: 'Obtenido',
+        ranTask: 'Tarea ejecutada',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Ocultar',
     },
 
     tools: {
@@ -678,6 +679,16 @@ export const es: TranslationStructure = {
         fileConflictDescription: 'Este archivo fue modificado en el dispositivo mientras lo editabas. Recarga para ver la última versión.',
         reload: 'Recargar',
         overwrite: 'Sobrescribir',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Mostrar ${count} líneas más`,
+        tapToExpand: ({ count }: { count: number }) => `${count} líneas modificadas — toca para expandir`,
+        ignoreWhitespace: 'Ignorar espacios en blanco',
+        imageBefore: 'Antes',
+        imageAfter: 'Después',
+        unchangedLines: ({ count }: { count: number }) => `${count} sin cambios`,
+        noChanges: 'Sin cambios',
+        binaryFile: 'Archivo binario no mostrado',
     },
     sideChat: {
         panelTitle: 'Chat lateral',

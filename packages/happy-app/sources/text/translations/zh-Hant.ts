@@ -385,6 +385,8 @@ export const zhHant: TranslationStructure = {
         quickActions: '快速操作',
         viewMachine: '查看裝置',
         viewMachineSubtitle: '查看裝置詳情和工作階段',
+        viewChanges: '查看變更',
+        viewChangesSubtitle: '所有未提交檔案的差異',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -563,15 +565,14 @@ export const zhHant: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => `編輯了 ${count} 個檔案`,
-        readFiles: ({ count }: { count: number }) => `讀取了 ${count} 個檔案`,
-        ranCommands: ({ count }: { count: number }) => `執行了 ${count} 個指令`,
-        searched: ({ count }: { count: number }) => `搜尋了 ${count} 次`,
-        fetchedUrls: ({ count }: { count: number }) => `取得了 ${count} 個 URL`,
-        ranTasks: ({ count }: { count: number }) => `執行了 ${count} 個任務`,
-        usedTools: ({ count }: { count: number }) => `使用了 ${count} 個工具`,
+        ran: '已執行',
+        edited: '已編輯',
+        read: '已讀取',
+        searched: '已搜尋',
+        fetched: '已取得',
+        ranTask: '已執行任務',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: '隱藏',
     },
 
     tools: {
@@ -678,6 +679,16 @@ export const zhHant: TranslationStructure = {
         fileConflictDescription: '編輯期間檔案已在裝置上被修改。重新載入以查看最新版本。',
         reload: '重新載入',
         overwrite: '覆蓋',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `再顯示 ${count} 行`,
+        tapToExpand: ({ count }: { count: number }) => `${count} 行變更 — 點按展開`,
+        ignoreWhitespace: '忽略空白',
+        imageBefore: '修改前',
+        imageAfter: '修改後',
+        unchangedLines: ({ count }: { count: number }) => `${count} 行未變更`,
+        noChanges: '沒有變更',
+        binaryFile: '不顯示二進位檔案',
     },
     sideChat: {
         panelTitle: '側邊聊天',

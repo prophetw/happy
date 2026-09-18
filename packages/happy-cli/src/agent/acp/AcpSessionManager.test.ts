@@ -87,43 +87,32 @@ describe('AcpSessionManager turn lifecycle', () => {
     expect(isCuid(start2[0].turn!)).toBe(true);
   });
 
-  it('ignores non-error status messages in mapMessage', () => {
+  it('ignores status messages in mapMessage', () => {
     const mapper = new AcpSessionManager();
     expect(mapper.mapMessage({ type: 'status', status: 'running' })).toHaveLength(0);
     expect(mapper.mapMessage({ type: 'status', status: 'idle' })).toHaveLength(0);
+    // An agent envelope without a turn is invalid, so pre-turn errors remain a
+    // runner-level concern and must use the legacy session event fallback.
+    expect(mapper.mapMessage({ type: 'status', status: 'error' })).toHaveLength(0);
     expect(mapper.mapMessage({ type: 'status', status: 'stopped' })).toHaveLength(0);
     expect(mapper.mapMessage({ type: 'status', status: 'starting' })).toHaveLength(0);
   });
 
-  it('maps error status to a visible service message attached to the turn', () => {
+  it('maps an in-turn error to a visible service message', () => {
     const mapper = new AcpSessionManager();
-    const start = mapper.startTurn()[0];
+    const started = mapper.startTurn();
+    const envelopes = mapper.mapMessage({
+      type: 'status',
+      status: 'error',
+      detail: 'model is not available',
+    });
 
-    const envelopes = mapper.mapMessage({ type: 'status', status: 'error', detail: 'Model rate limit reached' });
     expect(envelopes).toHaveLength(1);
-    expect(envelopes[0].ev).toEqual({ t: 'service', text: '⚠️ Model rate limit reached' });
-    expect(envelopes[0].role).toBe('agent');
-    expect(envelopes[0].turn).toBe(start.turn);
-  });
-
-  it('uses a fallback service text for error status without detail', () => {
-    const mapper = new AcpSessionManager();
-    mapper.startTurn();
-
-    const envelopes = mapper.mapMessage({ type: 'status', status: 'error' });
-    expect(envelopes).toHaveLength(1);
-    expect(envelopes[0].ev).toEqual({ t: 'service', text: '⚠️ Agent error' });
-  });
-
-  it('flushes pending output before the error service message', () => {
-    const mapper = new AcpSessionManager();
-    mapper.startTurn();
-    mapper.mapMessage({ type: 'model-output', textDelta: 'partial answer' });
-
-    const envelopes = mapper.mapMessage({ type: 'status', status: 'error', detail: 'stream interrupted' });
-    expect(envelopes).toHaveLength(2);
-    expect(envelopes[0].ev).toEqual({ t: 'text', text: 'partial answer' });
-    expect(envelopes[1].ev).toEqual({ t: 'service', text: '⚠️ stream interrupted' });
+    expect(envelopes[0].turn).toBe(started[0].turn);
+    expect(envelopes[0].ev).toEqual({
+      t: 'service',
+      text: 'Error: model is not available',
+    });
   });
 
   it('flushes pending text on endTurn()', () => {

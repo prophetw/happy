@@ -399,6 +399,8 @@ export const en = {
         quickActions: 'Quick Actions',
         viewMachine: 'View Machine',
         viewMachineSubtitle: 'View machine details and sessions',
+        viewChanges: 'View changes',
+        viewChangesSubtitle: 'Diffs for every uncommitted file',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -588,15 +590,16 @@ export const en = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => count === 1 ? 'Edited 1 file' : `Edited ${count} files`,
-        readFiles: ({ count }: { count: number }) => count === 1 ? 'Read 1 file' : `Read ${count} files`,
-        ranCommands: ({ count }: { count: number }) => count === 1 ? 'Ran 1 command' : `Ran ${count} commands`,
-        searched: ({ count }: { count: number }) => count === 1 ? 'Searched 1 time' : `Searched ${count} times`,
-        fetchedUrls: ({ count }: { count: number }) => count === 1 ? 'Fetched 1 URL' : `Fetched ${count} URLs`,
-        ranTasks: ({ count }: { count: number }) => count === 1 ? 'Ran 1 task' : `Ran ${count} tasks`,
-        usedTools: ({ count }: { count: number }) => count === 1 ? 'Used 1 tool' : `Used ${count} tools`,
+        // Labels for single-tool activity rows; the detail follows inline
+        // ("Ran: git status"), so they carry no counts.
+        ran: 'Ran',
+        edited: 'Edited',
+        read: 'Read',
+        searched: 'Searched',
+        fetched: 'Fetched',
+        ranTask: 'Ran task',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Hide',
     },
 
     tools: {
@@ -703,6 +706,16 @@ export const en = {
         fileConflictDescription: 'This file was modified on the device while you were editing. Reload to see the latest version.',
         reload: 'Reload',
         overwrite: 'Overwrite',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Show ${count} more lines`,
+        tapToExpand: ({ count }: { count: number }) => `${count} changed lines — tap to expand`,
+        ignoreWhitespace: 'Ignore whitespace',
+        imageBefore: 'Before',
+        imageAfter: 'After',
+        unchangedLines: ({ count }: { count: number }) => `${count} unchanged`,
+        noChanges: 'No changes',
+        binaryFile: 'Binary file not shown',
     },
     sideChat: {
         panelTitle: 'Side chat',

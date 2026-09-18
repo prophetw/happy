@@ -22,13 +22,13 @@ import { EmptyMessages } from '@/components/EmptyMessages';
 import { Avatar } from '@/components/Avatar';
 import { VoiceAssistantStatusBar, VOICE_PILL_TOTAL_HEIGHT } from '@/components/VoiceAssistantStatusBar';
 import { useDraft } from '@/hooks/useDraft';
+import { useSessionVisibility } from '@/hooks/useSessionVisibility';
 import { useImagePicker } from '@/hooks/useImagePicker';
 import { Modal } from '@/modal';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { getCurrentVoiceConversationId, getCurrentVoiceSessionDurationSeconds, startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
-import { gitStatusSync } from '@/sync/gitStatusSync';
 import { sessionAbort, sessionCancelCommunication, sessionGoalAction, sessionSetAgentModes, spawnSideChat, sessionKill, sessionArchive } from '@/sync/ops';
-import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
+import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionProjectAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
 import { useSession } from '@/sync/storage';
 import { getSessionForkSource } from '@/utils/sessionFork';
 import { useHappyAction } from '@/hooks/useHappyAction';
@@ -41,12 +41,10 @@ import { tracking } from '@/track';
 import { getVoiceMessageCount, getVoiceOnboardingPromptLoadCount } from '@/sync/persistence';
 import { isRunningOnMac } from '@/utils/platform';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/responsive';
-import { resolveStatusBarGitBranch } from '@/utils/sessionStatusBar';
-import { visibleRigGitLineChanges } from '@/utils/rigGitLineChanges';
+import { resolveSessionGitPresentation } from '@/utils/sessionGitPresentation';
 import { FilesSidebar, SidebarMode } from '@/components/FilesSidebar';
 import { AllFilesDiffView } from '@/components/AllFilesDiffView';
 import { FileViewPanel } from '@/components/FileViewPanel';
-import { prefetchPierreDiff } from '@/components/diff/PierreDiffView';
 import { GitFileStatus } from '@/sync/gitStatusFiles';
 import { useOverlayNav } from '@/-session/sessionOverlayNav';
 import { formatPathRelativeToHome, getResumeCommandBlock, getSessionAvatarId, getSessionName, useSessionStatus } from '@/utils/sessionUtils';
@@ -55,6 +53,7 @@ import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import * as React from 'react';
 import { useMemo } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
@@ -66,7 +65,6 @@ import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
 import { performAgentGoalAction } from './agentGoalActionHandler';
 import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
 import {
-    getRigGitSummary,
     getRigReasoningSelection,
     isRigMetadata,
     isRigMetadataV1,
@@ -85,7 +83,14 @@ import { AnimatedFade } from '@/components/AnimatedOverlay';
 export const SessionView = React.memo((props: { id: string }) => {
     const sessionId = props.id;
     const router = useRouter();
+    const isFocused = useIsFocused();
     const session = useSession(sessionId);
+    const projectAvatar = useSessionProjectAvatar(sessionId);
+    const gitStatus = useSessionGitStatus(sessionId);
+    const headerGit = React.useMemo(
+        () => resolveSessionGitPresentation(session?.metadata, gitStatus),
+        [session?.metadata, gitStatus],
+    );
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
@@ -314,8 +319,8 @@ export const SessionView = React.memo((props: { id: string }) => {
     // Wire intra-session back / forward into the global SidebarNavigator arrows.
     const canOverlayBack = overlayHistory.cursor > 0;
     const canOverlayForward = overlayHistory.cursor < overlayHistory.stack.length - 1;
-    React.useEffect(() => {
-        useOverlayNav.getState().publish({
+    useFocusEffect(React.useCallback(() => {
+        const controls = {
             canBack: canOverlayBack,
             canForward: canOverlayForward,
             back: () => {
@@ -332,30 +337,27 @@ export const SessionView = React.memo((props: { id: string }) => {
                 ));
                 return true;
             },
-        });
-        return () => useOverlayNav.getState().reset();
-    }, [canOverlayBack, canOverlayForward]);
-
-    // Warm Pierre's lazy web chunks while the user is still reading chat.
-    React.useEffect(() => {
-        prefetchPierreDiff();
-    }, []);
+        };
+        useOverlayNav.getState().publish(controls);
+        return () => {
+            if (useOverlayNav.getState().back === controls.back) {
+                useOverlayNav.getState().reset();
+            }
+        };
+    }, [canOverlayBack, canOverlayForward]));
 
     // Compute header props based on session state
     const headerProps = useMemo(() => {
         if (!isDataReady) {
-            return { title: '', folderName: undefined, isConnected: false };
+            return { title: '', isConnected: false };
         }
         if (!session) {
-            return { title: t('errors.sessionDeleted'), folderName: undefined, isConnected: false };
+            return { title: t('errors.sessionDeleted'), isConnected: false };
         }
         const isConnected = session.presence === 'online';
-        const pathSegments = session.metadata?.path?.split(/[/\\]/).filter(Boolean);
-        const folderName = pathSegments?.[pathSegments.length - 1];
         const sessionName = getSessionName(session);
         return {
             title: sessionName,
-            folderName,
             isConnected,
         };
     }, [session, isDataReady]);
@@ -366,12 +368,15 @@ export const SessionView = React.memo((props: { id: string }) => {
                 hitSlop={10}
             >
                 <Avatar
+                    bot={!!session.metadata?.bot}
                     id={getSessionAvatarId(session)}
                     size={28}
                     monochrome={!headerProps.isConnected}
                     flavor={session.metadata?.flavor}
                     clientId={session.metadata?.client?.id}
                     badgeLocation="sessionHeader"
+                    imageUrl={projectAvatar?.uri}
+                    thumbhash={projectAvatar?.thumbhash}
                 />
             </Pressable>
         )
@@ -427,6 +432,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                         key={sessionId}
                         sessionId={sessionId}
                         session={session}
+                        active={isFocused}
                         onHeaderBackdropVisibilityChange={contentRunsUnderHeader
                             ? setHeaderBackdropVisible
                             : undefined}
@@ -445,8 +451,8 @@ export const SessionView = React.memo((props: { id: string }) => {
                 }}>
                     <ChatHeaderView
                         title={headerProps.title}
-                        folderName={headerProps.folderName}
-                        isConnected={headerProps.isConnected}
+                        subtitle={session && isDataReady ? headerGit.subtitle : undefined}
+                        gitChanges={session && isDataReady ? headerGit.changes : null}
                         backdropVisible={headerBackdropVisible}
                         extraPathSegment={fileViewPath ?? undefined}
                         rightSlot={(diffViewOpen || !!fileViewPath) ? headerRightSlot : headerRight}
@@ -621,11 +627,13 @@ const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) 
 export function SessionViewLoaded({
     sessionId,
     session,
+    active = true,
     embedded = false,
     onHeaderBackdropVisibilityChange,
 }: {
     sessionId: string;
     session: Session;
+    active?: boolean;
     embedded?: boolean;
     onHeaderBackdropVisibilityChange?: (visible: boolean) => void;
 }) {
@@ -759,7 +767,6 @@ export function SessionViewLoaded({
 
     const sessionStatus = useSessionStatus(session);
     const sessionUsage = useSessionUsage(sessionId);
-    const gitStatus = useSessionGitStatus(sessionId);
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
     const experiments = useSetting('experiments');
     const { canResume, resumeSession, resumingSession } = useSessionQuickActions(session);
@@ -894,30 +901,6 @@ export function SessionViewLoaded({
             contextWindow: source.contextWindow,
         };
     }, [sessionUsage, session.latestUsage]);
-    const metadataGitBranch = React.useMemo(() => {
-        const gitBranch = (session.metadata as { gitBranch?: unknown } | null)?.gitBranch;
-        return typeof gitBranch === 'string' && gitBranch.trim() ? gitBranch.trim() : null;
-    }, [session.metadata]);
-    const statusBarGitBranch = resolveStatusBarGitBranch(gitStatus?.branch, metadataGitBranch);
-    // Same source and fallback chain as the session list rows.
-    const statusBarGitChanges = React.useMemo(() => {
-        const liveInsertions = gitStatus?.unstagedLinesAdded ?? 0;
-        const liveDeletions = gitStatus?.unstagedLinesRemoved ?? 0;
-        if (liveInsertions > 0 || liveDeletions > 0) {
-            return { approximate: false, insertions: liveInsertions, deletions: liveDeletions };
-        }
-        const rigGit = getRigGitSummary(session.metadata);
-        if (rigGit && rigGit.changedFiles !== null) {
-            return visibleRigGitLineChanges({
-                changedFiles: rigGit.changedFiles,
-                countsExact: rigGit.countsExact ?? true,
-                deletions: rigGit.deletions ?? 0,
-                insertions: rigGit.insertions ?? 0,
-            });
-        }
-        return null;
-    }, [gitStatus?.unstagedLinesAdded, gitStatus?.unstagedLinesRemoved, session.metadata]);
-
     const visibleAgentGoal = React.useMemo(() => (
         resolveVisibleAgentGoalStatus(session)
     ), [
@@ -996,33 +979,7 @@ export function SessionViewLoaded({
         isMicActive: false,
     }), [handleMicrophonePress, voiceSessionActive]);
 
-    // Trigger session visibility and initialize git status sync
-    React.useLayoutEffect(() => {
-
-        // Trigger session sync
-        sync.onSessionVisible(sessionId);
-
-        // Mark session as currently being viewed (clears unread). Skipped when
-        // embedded (e.g. the side-chat panel) so a second mounted chat body
-        // doesn't steal "currently viewing" from the primary session.
-        if (!embedded) {
-            storage.getState().setCurrentViewingSession(sessionId);
-        }
-
-        // Initialize git status sync for this session
-        gitStatusSync.getSync(sessionId).invalidate();
-
-        return () => {
-            if (embedded) {
-                return;
-            }
-            // Clear viewing session on unmount
-            const current = storage.getState().currentViewingSessionId;
-            if (current === sessionId) {
-                storage.getState().setCurrentViewingSession(null);
-            }
-        };
-    }, [sessionId, realtimeStatus, embedded]);
+    useSessionVisibility(sessionId, active, embedded, realtimeStatus);
 
     let content = (
         <>
@@ -1030,6 +987,7 @@ export function SessionViewLoaded({
                 {messages.length > 0 && (
                     <ChatList
                         session={session}
+                        active={active}
                         topContentInset={chatListTopContentInset}
                         bottomContentInset={usesFloatingMobileDock ? bottomDockInset : undefined}
                         scrollButtonInset={usesFloatingMobileDock ? scrollButtonInset : undefined}
@@ -1095,8 +1053,6 @@ export function SessionViewLoaded({
                 alwaysShowContextSize={alwaysShowContextSize}
                 zenMode={zenMode}
                 showStatusDetails={showBottomDockDetails}
-                sessionStatusGitBranch={statusBarGitBranch ?? 'main'}
-                sessionStatusGitChanges={statusBarGitChanges}
                 sessionStatusUsageLimits={session.agentState?.usageLimits ?? null}
                 onActionAreaOffsetChange={usesFloatingMobileDock ? handleComposerCardOffsetChange : undefined}
             />

@@ -38,11 +38,12 @@ import type { NewSessionAgentType } from '@/sync/persistence';
 import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { machineSpawnNewSession, sessionSetAgentModes } from '@/sync/ops';
-import { createWorktree, listWorktrees } from '@/utils/worktree';
+import { createWorktree } from '@/utils/worktree';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
+import { useWorktrees } from '@/hooks/useWorktrees';
 import { useShallow } from 'zustand/react/shallow';
 import type { MultiTextInputHandle } from '@/components/MultiTextInput';
 import { Modal } from '@/modal';
@@ -88,6 +89,7 @@ import {
     resolveSpawnRequestId,
 } from '@/sync/spawnRequestId';
 import { resolvePermissionStyle, resolveSelectedOption } from '@/utils/newSessionModeSelection';
+import { resolveHappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
 import { MobileGlassSurface } from '@/components/MobileGlass';
 import { getNativeGlassInteractivity } from '@/components/glassInteractionPolicy';
 import { BubblePressable } from '@/components/BubblePressable';
@@ -121,7 +123,7 @@ const ALL_AGENTS: { key: AgentKey; label: string }[] = [
     { key: 'rig', label: 'happy' },
 ];
 
-type PickerItem = { key: string; label: string; subtitle?: string; dimmed?: boolean };
+type PickerItem = { key: string; label: string; subtitle?: string; dimmed?: boolean; section?: string };
 
 type PickerType = 'machine' | 'path' | 'worktree' | 'agent' | 'model' | 'effort' | 'permission' | 'settings';
 
@@ -382,7 +384,16 @@ function PickerContent({
                 {fixedItems && fixedItems.length > 0 && filtered.length > 0 && (
                     <View style={[pickerStyles.divider, { backgroundColor: theme.colors.divider }]} />
                 )}
-                {filtered.map(renderOption)}
+                {filtered.map((item, index) => (
+                    <React.Fragment key={item.key}>
+                        {item.section && item.section !== filtered[index - 1]?.section ? (
+                            <Text style={[pickerStyles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                                {item.section}
+                            </Text>
+                        ) : null}
+                        {renderOption(item)}
+                    </React.Fragment>
+                ))}
                 {filtered.length === 0 && search.length > 0 && (
                     <Text style={[pickerStyles.emptyText, { color: theme.colors.textSecondary }]}>
                         no results
@@ -943,51 +954,40 @@ function NewSessionScreen() {
         return () => clearTimeout(timeout);
     }, [resolvedSelectedPath]);
 
-    // Existing Happy Agent workspaces are named places in the same project. Git worktrees remain
-    // available for ordinary CLI projects, and their RPC always goes to Happy CLI's machine even
-    // when the session itself will be started by Happy Agent.
+    // Existing Happy Agent workspaces are named places in the same project. Happy Agent creates
+    // new ones through its own catalog; Git worktree RPCs remain for ordinary code-agent projects.
     const picksWorkspaces = selectedProjectId !== null;
+    const createsNativeHappyAgentWorkspace = selectedAgent === 'rig'
+        && picksWorkspaces
+        && rigCreation !== null;
     const worktreeMachine = selectedChoice?.happyMachine ?? selectedMachine;
     const canPickWorktree = supportsWorktree || picksWorkspaces;
     const worktreeCreationMachine = React.useMemo(
         () => resolveWorktreeCreationMachine(selectedChoice, selectedAgent, supportsWorktree),
         [selectedAgent, selectedChoice, supportsWorktree],
     );
-    const canCreateWorktree = supportsWorktree
-        || (picksWorkspaces && worktreeCreationMachine !== null);
+    const canCreateWorktree = createsNativeHappyAgentWorkspace
+        || (selectedAgent !== 'rig' && worktreeCreationMachine !== null);
+    const worktreeMachineId = worktreeMachine?.id ?? null;
+    const worktreeMachineOnline = worktreeMachine !== null && isMachineOnline(worktreeMachine);
 
-    // Fetch existing worktrees/workspaces from the selected computer/path
-    const [worktreeItems, setWorktreeItems] = React.useState<PickerItem[]>([]);
-    React.useEffect(() => {
-        if (!debouncedResolvedSelectedPath) {
-            setWorktreeItems([]);
-            return;
-        }
-
-        if (picksWorkspaces) {
-            setWorktreeItems(agentWorkspaces.map((workspace) => ({
-                key: workspace.key,
-                label: workspace.name,
-                subtitle: workspace.path,
-            })));
-            return;
-        }
-
-        if (!supportsWorktree || !worktreeMachine || !isMachineOnline(worktreeMachine)) {
-            setWorktreeItems([]);
-            return;
-        }
-        let cancelled = false;
-        listWorktrees(worktreeMachine.id, debouncedResolvedSelectedPath).then(worktrees => {
-            if (cancelled) return;
-            setWorktreeItems(worktrees.map(wt => ({
-                key: wt.path,
-                label: wt.branch,
-                subtitle: wt.path,
-            })));
-        });
-        return () => { cancelled = true; };
-    }, [agentWorkspaces, debouncedResolvedSelectedPath, picksWorkspaces, supportsWorktree, worktreeMachine]);
+    const { worktrees, refresh: refreshWorktrees } = useWorktrees(
+        worktreeMachineId,
+        debouncedResolvedSelectedPath,
+        !picksWorkspaces && supportsWorktree && worktreeMachineOnline,
+    );
+    // Native workspace options follow session updates without triggering Git discovery.
+    const worktreeItems = React.useMemo<PickerItem[]>(() => picksWorkspaces
+        ? (debouncedResolvedSelectedPath ? agentWorkspaces.map((workspace) => ({
+            key: workspace.key,
+            label: workspace.name,
+            subtitle: workspace.path,
+        })) : [])
+        : worktrees.map((worktree) => ({
+            key: worktree.path,
+            label: worktree.branch,
+            subtitle: worktree.path,
+        })), [agentWorkspaces, debouncedResolvedSelectedPath, picksWorkspaces, worktrees]);
 
     React.useEffect(() => {
         if (!canPickWorktree) {
@@ -1004,10 +1004,10 @@ function NewSessionScreen() {
     }, [canPickWorktree, worktreeItems, worktreeKey]);
 
     const worktreeFixedItems = React.useMemo<PickerItem[]>(() => [
-        { key: '__none__', label: picksWorkspaces ? 'no workspace' : 'no worktree' },
         ...(canCreateWorktree
-            ? [{ key: '__new__', label: picksWorkspaces ? 'new workspace' : 'new worktree' }]
+            ? [{ key: '__new__', label: picksWorkspaces ? 'Create New' : 'new worktree' }]
             : []),
+        { key: '__none__', label: picksWorkspaces ? 'Main' : 'no worktree' },
     ], [canCreateWorktree, picksWorkspaces]);
 
     // Filter available agents based on the daemon that actually runs each harness on this
@@ -1152,6 +1152,7 @@ function NewSessionScreen() {
         }
 
         closePicker();
+        if (type === 'worktree') refreshWorktrees();
         if (isDesktop || !Keyboard.isVisible()) {
             setActivePicker(type);
             return;
@@ -1169,7 +1170,7 @@ function NewSessionScreen() {
         pickerOpenTimerRef.current = setTimeout(finishOpening, 420);
         composerInputRef.current?.blur();
         Keyboard.dismiss();
-    }, [activePicker, cancelPendingPickerOpen, closePicker, isDesktop]);
+    }, [activePicker, cancelPendingPickerOpen, closePicker, isDesktop, refreshWorktrees]);
 
     const isOffline = selectedMachine ? !isMachineOnline(selectedMachine) : false;
     const agent = availableAgents.find(a => a.key === selectedAgent)
@@ -1224,9 +1225,9 @@ function NewSessionScreen() {
         ? formatPathRelativeToHome(trimPathInput(selectedPath), selectedHomeDir)
         : '~';
     const worktreeLabel = worktreeKey === '__none__'
-        ? picksWorkspaces ? 'no workspace' : 'no worktree'
+        ? picksWorkspaces ? 'Main' : 'no worktree'
         : worktreeKey === '__new__'
-            ? picksWorkspaces ? 'new workspace' : 'new worktree'
+            ? picksWorkspaces ? 'Create New' : 'new worktree'
             : worktreeItems.find(wt => wt.key === worktreeKey)?.label || worktreeKey;
     const selectedMachineKey = selectedChoice?.id ?? selectedMachineId;
 
@@ -1414,14 +1415,32 @@ function NewSessionScreen() {
         }
         const agentSupportsWorktree = spawnRigCreation?.supportsWorktrees
             ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType));
-        const creationMachine = resolveWorktreeCreationMachine(
-            choice,
-            agentType,
-            agentSupportsWorktree,
-        );
-        const canCreateSelectedWorktree = agentSupportsWorktree
-            || (picksWorkspaces && creationMachine !== null);
         const requestedWorktree = canPickWorktree ? worktreeKey : '__none__';
+        let happyAgentTarget: ReturnType<typeof resolveHappyAgentSpawnTarget>;
+        try {
+            happyAgentTarget = spawnRigCreation
+                ? resolveHappyAgentSpawnTarget({
+                    projectId: selectedProjectId,
+                    workspaceSelection: requestedWorktree,
+                    workspaces: agentWorkspaces,
+                })
+                : null;
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : 'The selected workspace is unavailable',
+            );
+            return;
+        }
+        const creationMachine = happyAgentTarget
+            ? null
+            : resolveWorktreeCreationMachine(
+                choice,
+                agentType,
+                agentSupportsWorktree,
+            );
+        const canCreateSelectedWorktree = happyAgentTarget?.kind === 'newWorkspace'
+            || creationMachine !== null;
         const worktreeSelection = !canCreateSelectedWorktree && requestedWorktree === '__new__'
             ? '__none__'
             : requestedWorktree;
@@ -1448,7 +1467,7 @@ function NewSessionScreen() {
 
             // Handle worktree selection
             let spawnDirectory = absolutePath;
-            if (worktreeSelection === '__new__') {
+            if (worktreeSelection === '__new__' && !happyAgentTarget) {
                 if (!creationMachine) {
                     Modal.alert(t('common.error'), picksWorkspaces
                         ? 'This computer cannot create a new workspace'
@@ -1461,7 +1480,7 @@ function NewSessionScreen() {
                     return;
                 }
                 spawnDirectory = worktreeResult.worktreePath;
-            } else if (worktreeSelection !== '__none__') {
+            } else if (worktreeSelection !== '__none__' && worktreeSelection !== '__new__') {
                 // Existing worktree — use its path directly
                 spawnDirectory = worktreeSelection;
             }
@@ -1477,6 +1496,7 @@ function NewSessionScreen() {
                         permissionMode: permissionKey,
                         effort: currentEffort?.key,
                     }),
+                    ...(happyAgentTarget ? { happyAgentTarget } : {}),
                 }
                 : {
                     machineId: machine.id,
@@ -1571,7 +1591,7 @@ function NewSessionScreen() {
         } finally {
             if (isMountedRef.current) setIsSpawning(false);
         }
-    }, [allMachines, canPickWorktree, currentEffort?.key, currentModelKey, currentPermission?.key, effectiveAgentDefaults.effortLevel, effectiveAgentDefaults.modelMode, effectiveAgentDefaults.permissionMode, navigateToSession, picksWorkspaces, router, selectedAgent, selectedMachineId, selectedPath, worktreeKey]);
+    }, [agentWorkspaces, allMachines, canPickWorktree, currentEffort?.key, currentModelKey, currentPermission?.key, effectiveAgentDefaults.effortLevel, effectiveAgentDefaults.modelMode, effectiveAgentDefaults.permissionMode, navigateToSession, picksWorkspaces, router, selectedAgent, selectedMachineId, selectedPath, selectedProjectId, worktreeKey]);
 
     const canSend = selectedMachineId && selectedMachine && isMachineOnline(selectedMachine) && !isSpawning;
     React.useEffect(() => {

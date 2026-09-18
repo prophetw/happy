@@ -8,6 +8,7 @@ import {
     getEffortLevelsForModel,
     getHardcodedModelModes,
     getHardcodedPermissionModes,
+    includeConfiguredModel,
     type ModeOption,
 } from '@/components/modelModeOptions';
 import { useAllMachines, useSettingMutable } from '@/sync/storage';
@@ -236,7 +237,11 @@ export default function AgentsSettingsScreen() {
                 const codeDefaults = getCodeAgentDefaults(agent);
                 const effectiveDefaults = resolveAgentDefaultConfig(agentDefaultOverrides, agent);
                 const permissionOptions = getHardcodedPermissionModes(agent, t);
-                const modelOptions = getHardcodedModelModes(agent, t).filter((option) => option.key !== 'default');
+                const modelOptions = includeConfiguredModel(
+                    agent,
+                    getHardcodedModelModes(agent, t),
+                    effectiveDefaults.modelMode,
+                ).filter((option) => option.key !== 'default');
                 const effortOptions = getEffortLevelsForModel(agent, effectiveDefaults.modelMode);
                 const fields: FieldConfig[] = [
                     {

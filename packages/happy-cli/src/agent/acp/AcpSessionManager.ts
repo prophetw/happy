@@ -80,8 +80,6 @@ export class AcpSessionManager {
 
     this.currentTurnId = createId();
     this.acpCallToSessionCall.clear();
-    this.pendingText = '';
-    this.pendingType = null;
     return [
       createEnvelope('agent', { t: 'turn-start' }, { turn: this.currentTurnId, time: this.nextTime() }),
     ];
@@ -96,8 +94,6 @@ export class AcpSessionManager {
     const turnId = this.currentTurnId;
     this.currentTurnId = null;
     this.acpCallToSessionCall.clear();
-    this.pendingText = '';
-    this.pendingType = null;
     return [
       ...flushed,
       createEnvelope('agent', { t: 'turn-end', status }, { turn: turnId, time: this.nextTime() }),
@@ -131,17 +127,18 @@ export class AcpSessionManager {
     }
 
     if (msg.type === 'status') {
-      // Surface backend errors as visible service messages so mobile/web
-      // clients can see why a turn failed. Other statuses only drive local
-      // thinking state and stay invisible.
-      if (msg.status !== 'error') {
-        return [];
+      if (msg.status === 'error' && this.currentTurnId) {
+        const detail = msg.detail?.trim() || 'The agent stopped because of an unknown error.';
+        return [
+          ...this.flush(),
+          createEnvelope(
+            'agent',
+            { t: 'service', text: `Error: ${detail}` },
+            { turn: this.currentTurnId, time: this.nextTime() },
+          ),
+        ];
       }
-      const detail = msg.detail?.trim();
-      return [
-        ...this.flush(),
-        createEnvelope('agent', { t: 'service', text: detail ? `⚠️ ${detail}` : '⚠️ Agent error' }, turnOptions(this.currentTurnId, this.nextTime())),
-      ];
+      return [];
     }
 
     if (msg.type === 'model-output') {

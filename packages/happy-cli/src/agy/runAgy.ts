@@ -5,12 +5,9 @@
  * pattern. The daemon spawns this as:
  *   `node dist/index.mjs agy --happy-starting-mode remote --started-by daemon`
  *
- * agy is executed with `--output-format stream-json`, and this runner drives an AgyBackend
- * that maps its structured events (text deltas, tool calls, tool results, thinking) into
- * Happy's ACP Session envelopes and mobile/web UI.
- *
- * Happy session lifecycle is fully decoupled from the agy subprocess: the Happy session
- * stays alive across turns, and dynamically binds to the agy conversation ID.
+ * agy is a plain-text streaming CLI (no ACP), so this drives an AgyBackend that
+ * spawns `agy --print` per turn, and forwards its AgentMessage stream through the
+ * same session pipeline used by the other backends.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -27,37 +24,25 @@ import { initialMachineMetadata } from '@/daemon/run';
 import { createSessionMetadata } from '@/utils/createSessionMetadata';
 import { setupOfflineReconnection } from '@/utils/setupOfflineReconnection';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
-import { decodeBase64, encodeBase64 } from '@/api/encryption';
+import { encodeBase64 } from '@/api/encryption';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { connectionState } from '@/utils/serverConnectionErrors';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { AgyDisplay } from '@/ui/ink/AgyDisplay';
 import type { AgentMessage } from '@/agent/core';
-import type { Session as ApiSession, PermissionMode } from '@/api/types';
 import { normalizeRemotePermissionMode } from '@/claude/utils/permissionMode';
-import { createAgyBackend } from './createAgyBackend';
-import { DEFAULT_AGY_MODEL } from './constants';
-import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
-import { extractSessionTitle } from './title';
-import { parseSpecialCommand } from '@/parsers/specialCommands';
-import { fetchAgyUsage, formatAgyUsageMarkdown, formatAgyUsageTerminal } from './usage';
+import { AgyBackend } from './AgyBackend';
 import {
-  discoverAgySkillsFilesystem,
-  fetchAgySkills,
-  formatAgySkillsMarkdown,
-  formatAgySkillsTerminal,
-  getAgySkillCommandNames,
-} from './skills';
-import { AgyPermissionHandler } from './permissionHandler';
+  DEFAULT_AGY_EFFORT,
+  DEFAULT_AGY_MODEL,
+  normalizeAgyEffort,
+  resolveAgyModelName,
+} from './constants';
 
 export interface RunAgyOptions {
   credentials: Credentials;
   startedBy?: 'daemon' | 'terminal';
   verbose?: boolean;
-  model?: string;
-  permissionMode?: PermissionMode;
-  dangerouslySkipPermissions?: boolean;
-  resumeConversationId?: string;
 }
 
 export async function runAgy(opts: RunAgyOptions): Promise<void> {
@@ -83,74 +68,17 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     metadata: initialMachineMetadata,
   });
 
-  const discoveredModels = await discoverAgyModels({ log });
-
-  const initialModel = resolveAgyModelName(opts.model, discoveredModels) ?? DEFAULT_AGY_MODEL;
-  const isSkipPermissions =
-    opts.dangerouslySkipPermissions === true ||
-    opts.permissionMode === 'bypassPermissions' ||
-    opts.permissionMode === 'yolo';
-  const initialPermissionMode: PermissionMode =
-    opts.permissionMode ?? (isSkipPermissions ? 'bypassPermissions' : 'default');
-
-  const initialConversationId = opts.resumeConversationId;
-
   const { state, metadata } = createSessionMetadata({
     flavor: 'agy',
     machineId: settings.machineId,
     startedBy: opts.startedBy,
-    dangerouslySkipPermissions: isSkipPermissions,
   });
-  metadata.models = discoveredModels.map((m) => ({
-    code: m.code,
-    value: m.value,
-    description: m.description ?? null,
-  }));
-  metadata.currentModelCode = initialModel;
-
-  const initialSkills = await discoverAgySkillsFilesystem({ cwd: process.cwd() });
-  const initialSkillCommands = getAgySkillCommandNames(initialSkills);
-  metadata.slashCommands = Array.from(
-    new Set(['usage', 'clear', 'compact', 'skills', ...initialSkillCommands]),
-  );
-  if (initialSkillCommands.length > 0) {
-    metadata.skills = initialSkillCommands;
-  }
-
-  if (initialConversationId) {
-    metadata.agyConversationId = initialConversationId;
-  }
-
-  // Check for session reconnection env vars (set by daemon for resume-in-place)
-  const reconnectSessionId = process.env.HAPPY_RECONNECT_SESSION_ID;
-  const reconnectKeyBase64 = process.env.HAPPY_RECONNECT_ENCRYPTION_KEY;
-  const reconnectVariant = process.env.HAPPY_RECONNECT_ENCRYPTION_VARIANT as 'legacy' | 'dataKey' | undefined;
-  const reconnectSeq = process.env.HAPPY_RECONNECT_SEQ;
-  const reconnectMetadataVersion = process.env.HAPPY_RECONNECT_METADATA_VERSION;
-  const reconnectAgentStateVersion = process.env.HAPPY_RECONNECT_AGENT_STATE_VERSION;
-
-  let response: ApiSession | null;
-  if (reconnectSessionId && reconnectKeyBase64 && reconnectVariant) {
-    logger.debug(`[START] Reconnecting to existing agy session ${reconnectSessionId}`);
-    response = {
-      id: reconnectSessionId,
-      seq: parseInt(reconnectSeq || '0', 10),
-      encryptionKey: decodeBase64(reconnectKeyBase64),
-      encryptionVariant: reconnectVariant,
-      metadata,
-      metadataVersion: parseInt(reconnectMetadataVersion || '0', 10),
-      agentState: state,
-      agentStateVersion: parseInt(reconnectAgentStateVersion || '0', 10),
-    };
-  } else {
-    response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
-  }
+  const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
   if (response) {
     log(`Happy Session ID: ${response.id}`);
   }
 
   let session: ApiSessionClient;
-  let permissionHandler: AgyPermissionHandler;
   const { session: initialSession, reconnectionHandle } = setupOfflineReconnection({
     api,
     sessionTag,
@@ -159,16 +87,9 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     response,
     onSessionSwap: (newSession) => {
       session = newSession;
-      if (permissionHandler) {
-        permissionHandler.updateSession(newSession);
-      }
     },
   });
   session = initialSession;
-
-  permissionHandler = new AgyPermissionHandler(session);
-  permissionHandler.reset('Previous CLI process exited before responding');
-  permissionHandler.setPermissionMode(initialPermissionMode);
 
   if (response) {
     try {
@@ -184,32 +105,23 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     }
   }
 
-  type AgyTurnMode = { permissionMode?: PermissionMode; model?: string };
   const sessionManager = new AcpSessionManager();
-  const messageQueue = new MessageQueue2<AgyTurnMode>((mode) => JSON.stringify(mode));
+  const messageQueue = new MessageQueue2<Record<string, never>>(() => '');
   let shouldExit = false;
   let abortController = new AbortController();
   let thinking = false;
+  let errorReportedForCurrentTurn = false;
 
-  let displayedModel = initialModel;
+  let selectedModel = DEFAULT_AGY_MODEL;
+  let selectedEffort = DEFAULT_AGY_EFFORT;
+  let displayedModel = resolveAgyModelName(selectedModel, selectedEffort);
 
-  const backend = createAgyBackend({
+  const backend = new AgyBackend({
     cwd: process.cwd(),
-    permissionMode: initialPermissionMode,
-    model: initialModel,
-    models: discoveredModels,
-    conversationId: initialConversationId,
+    permissionMode: 'default',
+    model: selectedModel,
+    effort: selectedEffort,
     log,
-    onConversationId: (cid) => {
-      if (metadata.agyConversationId !== cid) {
-        metadata.agyConversationId = cid;
-        session.updateMetadata((currentMetadata) => ({
-          ...currentMetadata,
-          agyConversationId: cid,
-        }));
-        log(`Persisted agy conversation ID to session metadata: ${cid}`);
-      }
-    },
   });
 
   // Terminal UI (only with a real TTY; the daemon runs headless).
@@ -230,22 +142,6 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
 
     if (msg.type === 'model-output' && msg.textDelta) {
       messageBuffer.addMessage(msg.textDelta, 'assistant');
-    } else if (msg.type === 'tool-call') {
-      messageBuffer.addMessage(`🔧 ${msg.toolName}`, 'status');
-      permissionHandler.handleToolCall(msg.callId, msg.toolName, msg.args).catch((err) => {
-        logger.debug('[agy] Tool permission rejected or aborted:', err);
-      });
-    } else if (msg.type === 'tool-result') {
-      permissionHandler.completeToolCall(msg.callId, msg.toolName, (msg as any).result);
-    } else if (msg.type === 'permission-request') {
-      const payload = (msg as any).payload || {};
-      session.sendAgentMessage('agy', {
-        type: 'permission-request',
-        permissionId: msg.id,
-        toolName: payload.toolName || (msg as any).reason || 'unknown',
-        description: (msg as any).reason || payload.toolName || '',
-        options: payload,
-      });
     } else if (msg.type === 'status') {
       const nextThinking = msg.status === 'running';
       if (thinking !== nextThinking) {
@@ -257,7 +153,17 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
       }
     }
 
-    sendEnvelopes(sessionManager.mapMessage(msg));
+    const envelopes = sessionManager.mapMessage(msg);
+    sendEnvelopes(envelopes);
+    if (msg.type === 'status' && msg.status === 'error' && envelopes.length === 0) {
+      session.sendSessionEvent({
+        type: 'message',
+        message: `Antigravity error: ${msg.detail?.trim() || 'The agent stopped because of an unknown error.'}`,
+      });
+    }
+    if (msg.type === 'status' && msg.status === 'error') {
+      errorReportedForCurrentTurn = true;
+    }
   };
 
   backend.onMessage(onBackendMessage);
@@ -291,32 +197,32 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
   session.onUserMessage((message) => {
     if (!message.content.text) return;
 
-    const mode: AgyTurnMode = {
-      permissionMode: normalizeRemotePermissionMode(message.meta?.permissionMode),
-      model: message.meta?.model
-        ? (resolveAgyModelName(message.meta.model, discoveredModels) ?? message.meta.model)
-        : undefined,
-    };
-
-    const specialCommand = parseSpecialCommand(message.content.text);
-    if (specialCommand.type === 'clear') {
-      log('Detected /clear command');
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-      return;
+    if (message.meta?.permissionMode) {
+      const mode = normalizeRemotePermissionMode(message.meta.permissionMode);
+      if (mode) {
+        backend.setPermissionMode(mode);
+      }
     }
-    if (specialCommand.type === 'usage') {
-      log('Detected /usage command');
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-      return;
+    let selectionChanged = false;
+    if (message.meta?.hasOwnProperty('model') && message.meta.model) {
+      selectedModel = message.meta.model;
+      backend.setModel(selectedModel);
+      selectionChanged = true;
     }
-    if (specialCommand.type === 'skills') {
-      log('Detected /skills command');
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-      return;
+    if (message.meta?.hasOwnProperty('effort')) {
+      selectedEffort = normalizeAgyEffort(message.meta.effort);
+      backend.setEffort(selectedEffort);
+      selectionChanged = true;
+    }
+    if (selectionChanged) {
+      displayedModel = resolveAgyModelName(selectedModel, selectedEffort);
+      if (hasTTY) {
+        messageBuffer.addMessage(`[MODEL:${displayedModel}]`, 'system');
+      }
     }
 
     messageBuffer.addMessage(message.content.text, 'user');
-    messageQueue.push(message.content.text, mode);
+    messageQueue.push(message.content.text, {});
   });
   session.keepAlive(thinking, 'remote');
 
@@ -326,9 +232,8 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
 
   async function handleAbort() {
     log('Abort requested');
-    permissionHandler.abortAll();
     try {
-      await backend.cancel(sessionTag);
+      await backend.cancel();
     } catch (error) {
       logger.debug('[agy] Abort failed:', error);
     }
@@ -348,7 +253,6 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
   try {
     await backend.startSession();
     log('Backend ready');
-    session.sendSessionEvent({ type: 'ready' });
 
     while (!shouldExit) {
       const waitSignal = abortController.signal;
@@ -359,163 +263,18 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
         break;
       }
 
-      if (batch.mode.permissionMode) {
-        backend.setPermissionMode(batch.mode.permissionMode);
-        permissionHandler.setPermissionMode(batch.mode.permissionMode);
-      }
-      if (batch.mode.model && batch.mode.model !== displayedModel) {
-        displayedModel = batch.mode.model;
-        backend.setModel(displayedModel);
-        session.updateMetadata((currentMetadata) => ({
-          ...currentMetadata,
-          currentModelCode: displayedModel,
-        }));
-        if (hasTTY) {
-          messageBuffer.addMessage(`[MODEL:${displayedModel}]`, 'system');
-        }
-      }
-
-      const specialCommand = parseSpecialCommand(batch.message);
-      if (specialCommand.type === 'clear') {
-        log('Handling /clear command - resetting agy session');
-        backend.reset();
-        permissionHandler.reset();
-        delete metadata.agyConversationId;
-        delete metadata.summary;
-        session.updateMetadata((currentMetadata) => {
-          const nextMetadata = { ...currentMetadata };
-          delete nextMetadata.agyConversationId;
-          delete nextMetadata.summary;
-          return nextMetadata;
-        });
-        messageBuffer.addMessage('Context was reset', 'status');
-        session.sendSessionEvent({ type: 'message', message: 'Context was reset' });
-        thinking = false;
-        session.keepAlive(false, 'remote');
-        session.sendSessionEvent({ type: 'ready' });
-        continue;
-      }
-
-      if (specialCommand.type === 'usage') {
-        log('Handling /usage command - fetching agy quota and usage');
-        thinking = true;
-        session.keepAlive(true, 'remote');
-        try {
-          const usageStatus = await fetchAgyUsage({ log });
-          const markdownReport = formatAgyUsageMarkdown(usageStatus);
-
-          if (hasTTY) {
-            const terminalReport = formatAgyUsageTerminal(usageStatus);
-            messageBuffer.addMessage(terminalReport, 'system');
-          }
-
-          sendEnvelopes(sessionManager.startTurn());
-          sendEnvelopes(
-            sessionManager.mapMessage({
-              type: 'model-output',
-              textDelta: markdownReport,
-            }),
-          );
-          sendEnvelopes(sessionManager.endTurn('completed'));
-        } catch (error) {
-          const errText = `⚠️ Failed to fetch usage: ${error instanceof Error ? error.message : String(error)}`;
-          log(errText);
-          if (hasTTY) {
-            messageBuffer.addMessage(errText, 'status');
-          }
-          sendEnvelopes(sessionManager.startTurn());
-          sendEnvelopes(
-            sessionManager.mapMessage({
-              type: 'model-output',
-              textDelta: errText,
-            }),
-          );
-          sendEnvelopes(sessionManager.endTurn('failed'));
-        } finally {
-          thinking = false;
-          session.keepAlive(false, 'remote');
-          session.sendSessionEvent({ type: 'ready' });
-        }
-        continue;
-      }
-
-      if (specialCommand.type === 'skills') {
-        log('Handling /skills command - fetching available skills via agy');
-        thinking = true;
-        session.keepAlive(true, 'remote');
-        try {
-          const skillsResult = await fetchAgySkills({ cwd: process.cwd(), log });
-          const markdownReport = formatAgySkillsMarkdown(skillsResult);
-
-          if (hasTTY) {
-            const terminalReport = formatAgySkillsTerminal(skillsResult);
-            messageBuffer.addMessage(terminalReport, 'system');
-          }
-
-          // Update session metadata with newly discovered skills if any
-          const skillCommands = getAgySkillCommandNames(skillsResult.skills);
-          if (skillCommands.length > 0) {
-            metadata.skills = skillCommands;
-            metadata.slashCommands = Array.from(
-              new Set([...(metadata.slashCommands ?? ['usage', 'clear', 'compact', 'skills']), ...skillCommands]),
-            );
-            session.updateMetadata((currentMetadata) => ({
-              ...currentMetadata,
-              skills: metadata.skills,
-              slashCommands: metadata.slashCommands,
-            }));
-          }
-
-          sendEnvelopes(sessionManager.startTurn());
-          sendEnvelopes(
-            sessionManager.mapMessage({
-              type: 'model-output',
-              textDelta: markdownReport,
-            }),
-          );
-          sendEnvelopes(sessionManager.endTurn('completed'));
-        } catch (error) {
-          const errText = `⚠️ Failed to fetch skills: ${error instanceof Error ? error.message : String(error)}`;
-          log(errText);
-          if (hasTTY) {
-            messageBuffer.addMessage(errText, 'status');
-          }
-          sendEnvelopes(sessionManager.startTurn());
-          sendEnvelopes(
-            sessionManager.mapMessage({
-              type: 'model-output',
-              textDelta: errText,
-            }),
-          );
-          sendEnvelopes(sessionManager.endTurn('failed'));
-        } finally {
-          thinking = false;
-          session.keepAlive(false, 'remote');
-          session.sendSessionEvent({ type: 'ready' });
-        }
-        continue;
-      }
-
       log(`Incoming prompt: ${batch.message.slice(0, 200)}`);
-      if (!metadata.summary) {
-        const title = extractSessionTitle(batch.message);
-        metadata.summary = {
-          text: title,
-          updatedAt: Date.now(),
-        };
-        session.updateMetadata((currentMetadata) => ({
-          ...currentMetadata,
-          summary: metadata.summary,
-        }));
-        log(`Generated session title: "${title}"`);
-      }
-
+      errorReportedForCurrentTurn = false;
       sendEnvelopes(sessionManager.startTurn());
       try {
         await backend.sendPrompt(process.cwd(), batch.message);
         sendEnvelopes(sessionManager.endTurn('completed'));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
+        if (!errorReportedForCurrentTurn) {
+          session.sendSessionEvent({ type: 'message', message: `Antigravity error: ${msg}` });
+          errorReportedForCurrentTurn = true;
+        }
         log(`Turn ended: ${msg}`);
         sendEnvelopes(sessionManager.endTurn('failed'));
       }

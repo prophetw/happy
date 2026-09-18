@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { messagePlanMode } from './messagePlanMode';
 import { useShallow } from 'zustand/react/shallow'
 import equal from 'fast-deep-equal'
 import { useDeepEqual } from './storeSelectors';
@@ -109,6 +110,8 @@ interface SessionMessages {
 
 // Display-only row data — all primitives, cheap to deep-equal
 export interface SessionRowData {
+    botId?: string | null;
+    botUsername?: string | null;
     id: string;
     name: string;
     subtitle: string;
@@ -137,6 +140,7 @@ export interface SessionRowData {
     active: boolean;
     archived: boolean;
     machineId: string | null;
+    machineName?: string | null;
     // True only when the machine this session runs on is known to be offline.
     // A session that merely dropped its own socket is still live work on a live
     // machine, so the row greys out for this and never for that. Unknown
@@ -183,6 +187,8 @@ function buildSessionRowData(
     const projectAvatar = isHappyAgentSession(session) ? linkedProject?.avatar : null;
     return {
         id: session.id,
+        botId: session.metadata?.bot?.id ?? null,
+        botUsername: session.metadata?.bot?.username ?? null,
         name: getSessionName(session),
         subtitle: getSessionSubtitle(session),
         avatarId: getSessionAvatarId(session),
@@ -206,6 +212,7 @@ function buildSessionRowData(
         active: session.active,
         archived: isSessionArchived(session),
         machineId,
+        machineName: machine?.metadata?.displayName || machine?.metadata?.host || session.metadata?.host || null,
         machineOffline: machine ? !isMachineOnline(machine) : false,
         path: session.metadata?.path ?? null,
         homeDir: session.metadata?.homeDir ?? null,
@@ -224,6 +231,7 @@ function buildSessionRowData(
 
 // Unified list item type for SessionsList component
 export type SessionListViewItem =
+    | { type: 'bots'; sessions: SessionRowData[] }
     | { type: 'header'; title: string }
     | { type: 'active-sessions'; sessions: SessionRowData[] }
     | { type: 'project-group'; displayPath: string; machine: Machine }
@@ -277,7 +285,7 @@ interface StorageState {
     deleteMachine: (machineId: string) => void;
     applyLoaded: () => void;
     applyReady: () => void;
-    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[], hasReadyEvent: boolean, enteredPlanMode: boolean };
+    applyMessages: (sessionId: string, messages: NormalizedMessage[], source?: 'sync' | 'preload') => { changed: string[], hasReadyEvent: boolean, enteredPlanMode: boolean };
     applyMessagesLoaded: (sessionId: string) => void;
     applyOlderMessagesPagination: (sessionId: string, info: { hasMore: boolean }) => void;
     applyOlderMessagesLoading: (sessionId: string, isLoading: boolean) => void;
@@ -340,6 +348,7 @@ function buildSessionListViewData(
     projects: Record<string, Project> = {},
 ): SessionListViewItem[] {
     const rigProjectSessions: Session[] = [];
+    const botSessions: Session[] = [];
     const rigPathSessions: Session[] = [];
     const happySessions: Session[] = [];
     const archivedSessions: Session[] = [];
@@ -353,6 +362,10 @@ function buildSessionListViewData(
         // The archive is a flat chronological tail, not part of any project.
         if (isSessionArchived(session)) {
             archivedSessions.push(session);
+            return;
+        }
+        if (session.metadata?.bot) {
+            botSessions.push(session);
             return;
         }
         if (isRigMetadata(session.metadata)) {
@@ -382,6 +395,17 @@ function buildSessionListViewData(
 
     const listData: SessionListViewItem[] = [];
     const toRow = (session: Session) => buildSessionRowData(session, unreadSessionIds, machines, projects);
+
+    if (botSessions.length > 0) {
+        botSessions.sort((a, b) => {
+            const machineOrder = (a.metadata?.machineId ?? '').localeCompare(b.metadata?.machineId ?? '');
+            if (machineOrder !== 0) return machineOrder;
+            const aKey = a.metadata!.bot!.orderKey;
+            const bKey = b.metadata!.bot!.orderKey;
+            return aKey < bKey ? -1 : aKey > bKey ? 1 : a.id.localeCompare(b.id);
+        });
+        listData.push({ type: 'bots', sessions: botSessions.map(toRow) });
+    }
 
     const rigProjects = [
         ...buildProjectGroups(rigProjectSessions, toRow, isSessionActive),
@@ -724,7 +748,7 @@ export const storage = create<StorageState>()((set, get) => {
             ...state,
             isDataReady: true
         })),
-        applyMessages: (sessionId: string, messages: NormalizedMessage[]) => {
+        applyMessages: (sessionId: string, messages: NormalizedMessage[], source = 'sync') => {
             let changed = new Set<string>();
             let hasReadyEvent = false;
 
@@ -733,20 +757,11 @@ export const storage = create<StorageState>()((set, get) => {
             // tells us whether the batch ends with an unresolved plan entry.
             // This prevents history replays (which contain both Enter + Exit) from
             // re-triggering plan mode, while still catching real-time EnterPlanMode.
-            let shouldEnterPlanMode = false;
-            for (const msg of messages) {
-                if (msg.role === 'agent') {
-                    for (const c of msg.content) {
-                        if (c.type === 'tool-call') {
-                            if (c.name === 'EnterPlanMode' || c.name === 'enter_plan_mode') {
-                                shouldEnterPlanMode = true;
-                            } else if (c.name === 'ExitPlanMode' || c.name === 'exit_plan_mode') {
-                                shouldEnterPlanMode = false;
-                            }
-                        }
-                    }
-                }
-            }
+            const enteredPlanMode = messagePlanMode(messages) === true;
+
+            // Speculative history must not alter a session's operating mode.
+            // Its synced metadata remains authoritative while we warm the UI.
+            const shouldEnterPlanMode = enteredPlanMode && source !== 'preload';
 
             set((state) => {
 
@@ -825,7 +840,7 @@ export const storage = create<StorageState>()((set, get) => {
                 };
             });
 
-            return { changed: Array.from(changed), hasReadyEvent, enteredPlanMode: shouldEnterPlanMode };
+            return { changed: Array.from(changed), hasReadyEvent, enteredPlanMode };
         },
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const existingSession = state.sessionMessages[sessionId];
