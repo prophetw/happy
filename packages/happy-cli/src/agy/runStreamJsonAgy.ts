@@ -37,7 +37,7 @@ import type { Session as ApiSession, PermissionMode } from '@/api/types';
 import { normalizeRemotePermissionMode } from '@/claude/utils/permissionMode';
 import { createAgyBackend } from './createAgyBackend';
 import { DEFAULT_AGY_MODEL } from './constants';
-import { discoverAgyModels, resolveAgyModelName } from './discoverModels';
+import { discoverAgyModels, resolveAgyModelSelection } from './discoverModels';
 import { extractSessionTitle } from './title';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { fetchAgyUsage, formatAgyUsageMarkdown, formatAgyUsageTerminal } from './usage';
@@ -89,7 +89,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
 
   const discoveredModels = await discoverAgyModels({ log });
 
-  const initialModel = resolveAgyModelName(opts.model, discoveredModels) ?? DEFAULT_AGY_MODEL;
+  const initialModel = resolveAgyModelSelection(opts.model, undefined, discoveredModels) ?? DEFAULT_AGY_MODEL;
   const isSkipPermissions =
     opts.dangerouslySkipPermissions === true ||
     opts.permissionMode === 'bypassPermissions' ||
@@ -196,6 +196,11 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   let thinking = false;
 
   let displayedModel = initialModel;
+  // Last model/effort selection received from the app (message meta). Unlike the
+  // per-message mode below, these persist across turns so an effort-only update
+  // re-combines with the current model, mirroring the legacy engine's contract.
+  let selectedModel = opts.model;
+  let selectedEffort: string | null | undefined;
 
   const backend = createAgyBackend({
     cwd: process.cwd(),
@@ -296,10 +301,18 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   session.onUserMessage((message) => {
     if (!message.content.text) return;
 
+    if (message.meta?.model) {
+      selectedModel = message.meta.model;
+    }
+    if (message.meta && 'effort' in message.meta) {
+      // null means reset: normalizeAgyEffort falls back to the default effort.
+      selectedEffort = message.meta.effort;
+    }
+
     const mode: AgyTurnMode = {
       permissionMode: normalizeRemotePermissionMode(message.meta?.permissionMode),
-      model: message.meta?.model
-        ? (resolveAgyModelName(message.meta.model, discoveredModels) ?? message.meta.model)
+      model: selectedModel
+        ? resolveAgyModelSelection(selectedModel, selectedEffort, discoveredModels)
         : undefined,
     };
 

@@ -5,7 +5,7 @@
  * local Antigravity CLI installation, and transforms them into Happy Session metadata
  * models format:
  *   [
- *     { code: 'Gemini 3.7 Flash (High)', value: 'Gemini 3.7 Flash (High)', description: null },
+ *     { code: 'Gemini 3.8 Flash (High)', value: 'Gemini 3.8 Flash (High)', description: null },
  *     ...
  *   ]
  *
@@ -13,7 +13,9 @@
  */
 
 import { execFile } from 'node:child_process';
-import { AGY_MODELS, resolveAgyBin } from './constants';
+import { AGY_GEMINI_3_8_FLASH_MODEL, AGY_MODELS, isRetiredAgyModel, normalizeAgyEffort, resolveAgyBin } from './constants';
+
+export { isRetiredAgyModel } from './constants';
 
 export interface DiscoveredModel {
   code: string;
@@ -59,19 +61,21 @@ export function parseAgyModelsOutput(output: string): DiscoveredModel[] {
       if (parts.length >= 2) {
         const slug = parts[0];
         const displayName = parts[1];
-        if (!seenCodes.has(displayName)) {
-          seenCodes.add(displayName);
-          models.push({
-            code: displayName,
-            value: displayName,
-            slug,
-            description: null,
-          });
+        if (!isRetiredAgyModel(displayName) && !isRetiredAgyModel(slug)) {
+          if (!seenCodes.has(displayName)) {
+            seenCodes.add(displayName);
+            models.push({
+              code: displayName,
+              value: displayName,
+              slug,
+              description: null,
+            });
+          }
         }
         continue;
       } else if (parts.length === 1) {
         const name = parts[0];
-        if (!seenCodes.has(name)) {
+        if (!isRetiredAgyModel(name) && !seenCodes.has(name)) {
           seenCodes.add(name);
           models.push({
             code: name,
@@ -88,20 +92,22 @@ export function parseAgyModelsOutput(output: string): DiscoveredModel[] {
     if (multiSpaceMatch) {
       const slug = multiSpaceMatch[1].trim();
       const displayName = multiSpaceMatch[2].trim();
-      if (!seenCodes.has(displayName)) {
-        seenCodes.add(displayName);
-        models.push({
-          code: displayName,
-          value: displayName,
-          slug,
-          description: null,
-        });
+      if (!isRetiredAgyModel(displayName) && !isRetiredAgyModel(slug)) {
+        if (!seenCodes.has(displayName)) {
+          seenCodes.add(displayName);
+          models.push({
+            code: displayName,
+            value: displayName,
+            slug,
+            description: null,
+          });
+        }
       }
       continue;
     }
 
     // Fallback: single line display name
-    if (!seenCodes.has(line)) {
+    if (!isRetiredAgyModel(line) && !seenCodes.has(line)) {
       seenCodes.add(line);
       models.push({
         code: line,
@@ -116,7 +122,7 @@ export function parseAgyModelsOutput(output: string): DiscoveredModel[] {
 
 /**
  * Generate a canonical slug for a model display name.
- * e.g. "Gemini 3.7 Flash (High)" -> "gemini-3.7-flash-high"
+ * e.g. "Gemini 3.8 Flash (High)" -> "gemini-3.8-flash-high"
  */
 export function slugifyModelName(name: string): string {
   return name
@@ -128,9 +134,9 @@ export function slugifyModelName(name: string): string {
 
 /**
  * Normalize a model name or slug for fuzzy matching by stripping all punctuation and whitespace.
- * e.g. "Gemini 3.7 Flash (High)" -> "gemini37flashhigh"
- *      "gemini-3.7-flash-high"   -> "gemini37flashhigh"
- *      "gemini-3-7-flash-high"   -> "gemini37flashhigh"
+ * e.g. "Gemini 3.8 Flash (High)" -> "gemini38flashhigh"
+ *      "gemini-3.8-flash-high"   -> "gemini38flashhigh"
+ *      "gemini-3-8-flash-high"   -> "gemini38flashhigh"
  */
 export function normalizeModelKey(str: string): string {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -222,7 +228,7 @@ export function resolveAgyModelName(
   const exact = list.find((m) => m.code === trimmed || m.value === trimmed);
   if (exact) return exact.code;
 
-  // Slug match (e.g. 'gemini-3.7-flash-high' -> 'Gemini 3.7 Flash (High)')
+  // Slug match (e.g. 'gemini-3.8-flash-high' -> 'Gemini 3.8 Flash (High)')
   const slugMatch = list.find((m) => m.slug && m.slug.toLowerCase() === lower);
   if (slugMatch) return slugMatch.code;
 
@@ -232,7 +238,7 @@ export function resolveAgyModelName(
   );
   if (ciMatch) return ciMatch.code;
 
-  // Normalized key match (strips punctuation/spaces: 'gemini-3.7-flash-high' <-> 'Gemini 3.7 Flash (High)')
+  // Normalized key match (strips punctuation/spaces: 'gemini-3.8-flash-high' <-> 'Gemini 3.8 Flash (High)')
   const normMatch = list.find(
     (m) =>
       normalizeModelKey(m.code) === normalized ||
@@ -242,4 +248,27 @@ export function resolveAgyModelName(
   if (normMatch) return normMatch.code;
 
   return trimmed;
+}
+
+/**
+ * Resolve Happy's model + effort selection to the display name accepted by
+ * `agy --model`. The Gemini 3.8 Flash family is sent by the app as the base
+ * name plus an independent effort level; combine them into the suffixed
+ * variant agy expects. Names that already carry a variant (including saved
+ * legacy display names) and non-Gemini models pass through unchanged, so a
+ * suffix always wins over a conflicting effort level.
+ */
+export function resolveAgyModelSelection(
+  model: string | undefined,
+  effort: string | null | undefined,
+  models?: DiscoveredModel[],
+): string | undefined {
+  if (!model) return undefined;
+  const resolved = resolveAgyModelName(model, models);
+  if (!resolved || resolved !== AGY_GEMINI_3_8_FLASH_MODEL) {
+    return resolved;
+  }
+  const normalizedEffort = normalizeAgyEffort(effort);
+  const effortLabel = normalizedEffort[0].toUpperCase() + normalizedEffort.slice(1);
+  return `${AGY_GEMINI_3_8_FLASH_MODEL} (${effortLabel})`;
 }

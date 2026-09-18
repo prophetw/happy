@@ -64,11 +64,24 @@ export function resolveAgyBin(): string {
 /**
  * Model display names accepted by `agy --model`, as printed by `agy models`.
  * agy expects the full display string, not a slug.
+ * Older models (Gemini 3.1, 3.5, 3.6) are retired to keep the selection clean.
  */
 export const AGY_MODELS = [
+  'Gemini 3.8 Flash (High)',
+  'Gemini 3.8 Flash (Medium)',
+  'Gemini 3.8 Flash (Low)',
   'Gemini 3.7 Flash (High)',
   'Gemini 3.7 Flash (Medium)',
   'Gemini 3.7 Flash (Low)',
+  'Claude Sonnet 4.6 (Thinking)',
+  'Claude Opus 4.6 (Thinking)',
+  'GPT-OSS 120B (Medium)',
+] as const;
+
+/**
+ * Retired agy models that are filtered from discovery and pickers to keep menus concise.
+ */
+export const RETIRED_AGY_MODELS: ReadonlySet<string> = new Set([
   'Gemini 3.6 Flash (High)',
   'Gemini 3.6 Flash (Medium)',
   'Gemini 3.6 Flash (Low)',
@@ -77,16 +90,39 @@ export const AGY_MODELS = [
   'Gemini 3.5 Flash (Low)',
   'Gemini 3.1 Pro (High)',
   'Gemini 3.1 Pro (Low)',
-  'Claude Sonnet 4.6 (Thinking)',
-  'Claude Opus 4.6 (Thinking)',
-  'GPT-OSS 120B (Medium)',
-] as const;
+]);
+
+export function isRetiredAgyModel(name: string): boolean {
+  if (RETIRED_AGY_MODELS.has(name)) return true;
+  return /gemini\s*3\.[156]/i.test(name) || /gemini-3\.[156]/i.test(name);
+}
+
+/**
+ * Base name of the Gemini 3.8 Flash family in `agy models`. agy's catalog only
+ * lists the effort-suffixed variants; Happy's app picker sends this base name
+ * together with an effort level, which resolveAgyModelSelection combines.
+ */
+export const AGY_GEMINI_3_8_FLASH_MODEL = 'Gemini 3.8 Flash';
+
+export const AGY_EFFORTS = ['low', 'medium', 'high'] as const;
+export type AgyEffort = typeof AGY_EFFORTS[number];
 
 /**
  * Default agy model. A Gemini model on purpose: this backend exists as a fallback
  * for when Claude Code is rate-limited, so we should not default onto a Claude model.
  */
-export const DEFAULT_AGY_MODEL = 'Gemini 3.1 Pro (High)';
+export const DEFAULT_AGY_MODEL = 'Gemini 3.8 Flash (High)';
+export const DEFAULT_AGY_EFFORT: AgyEffort = 'high';
+
+/**
+ * Validate an effort level coming off the wire (message meta). Unknown values
+ * and null/undefined (reset) fall back to the default effort.
+ */
+export function normalizeAgyEffort(effort: string | null | undefined): AgyEffort {
+  return AGY_EFFORTS.includes(effort as AgyEffort)
+    ? effort as AgyEffort
+    : DEFAULT_AGY_EFFORT;
+}
 
 /** Timeout passed to `agy --print-timeout` for a single turn (default 60 minutes). */
 export const AGY_PRINT_TIMEOUT = '60m';

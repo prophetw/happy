@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { findAgyBin, resolveAgyBin } from './constants';
+import { AGY_EFFORTS, DEFAULT_AGY_EFFORT, findAgyBin, normalizeAgyEffort, resolveAgyBin } from './constants';
 
 vi.mock('node:child_process', () => ({ execSync: vi.fn() }));
 
@@ -43,5 +43,20 @@ describe('resolveAgyBin', () => {
       expect.stringMatching(/^(where|command -v) agy$/),
       { stdio: 'ignore', windowsHide: true },
     );
+  });
+});
+
+describe('normalizeAgyEffort', () => {
+  it('accepts the known effort levels', () => {
+    for (const effort of AGY_EFFORTS) {
+      expect(normalizeAgyEffort(effort)).toBe(effort);
+    }
+  });
+
+  it('falls back to the default effort for null, undefined, and unknown values', () => {
+    expect(normalizeAgyEffort(null)).toBe(DEFAULT_AGY_EFFORT);
+    expect(normalizeAgyEffort(undefined)).toBe(DEFAULT_AGY_EFFORT);
+    expect(normalizeAgyEffort('ultra')).toBe(DEFAULT_AGY_EFFORT);
+    expect(normalizeAgyEffort('')).toBe(DEFAULT_AGY_EFFORT);
   });
 });
