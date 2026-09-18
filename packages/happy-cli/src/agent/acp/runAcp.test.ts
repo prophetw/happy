@@ -654,4 +654,111 @@ describe('runAcp', () => {
     expect(mocks.backendState.setModeCalls).toEqual([]);
     expect(mocks.backendState.setModelCalls).toEqual([]);
   });
+
+  it('switches dsh thought level through its reasoning_effort config option and back to the provider default', async () => {
+    // dsh's ACP profile advertises reasoning as a thought_level-category
+    // select whose values are provider effort names; the provider default is
+    // the empty-string option.
+    mocks.backendState.startSessionMessages = [
+      {
+        type: 'event',
+        name: 'config_options_update',
+        payload: {
+          configOptions: [
+            {
+              type: 'select',
+              id: 'reasoning_effort',
+              name: 'Reasoning Effort',
+              category: 'thought_level',
+              currentValue: '',
+              options: [
+                { value: '', name: 'Provider default' },
+                { value: 'low', name: 'Low' },
+                { value: 'high', name: 'High' },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Reason harder' },
+      meta: { effort: 'high' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Back to default' },
+      meta: { effort: null },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(2);
+    });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+
+    expect(mocks.backendState.setConfigOptionCalls).toEqual([
+      { configId: 'reasoning_effort', value: 'high' },
+      { configId: 'reasoning_effort', value: '' },
+    ]);
+  });
+
+  it('auto-approves dsh tool permission requests locally once the app asks for bypassPermissions', async () => {
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.constructorArgs).toBeTruthy();
+    });
+
+    const permissionHandler = mocks.backendState.constructorArgs.permissionHandler;
+
+    // Default mode: the request is forwarded to the app and stays pending.
+    const pending = permissionHandler.handleToolCall('tool-0', 'Bash', { command: 'ls' });
+    pending.catch(() => {});
+    await expect(Promise.race([pending, Promise.resolve('still-pending')])).resolves.toBe('still-pending');
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Yolo mode' },
+      meta: { permissionMode: 'bypassPermissions' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    await expect(permissionHandler.handleToolCall('tool-1', 'Bash', { command: 'rm -rf build' }))
+      .resolves.toEqual({ decision: 'approved' });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+  });
 });

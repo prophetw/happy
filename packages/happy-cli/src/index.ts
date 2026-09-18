@@ -490,6 +490,36 @@ Conversation history is preserved on the server, but in-flight tool calls are in
       process.exit(1)
     }
     return;
+  } else if (subcommand === 'dsh') {
+    try {
+      const { runDsh } = await import('@/dsh/runDsh');
+
+      let startedBy: 'daemon' | 'terminal' | undefined = undefined;
+      let verbose = false;
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--started-by') {
+          startedBy = args[++i] as 'daemon' | 'terminal';
+        } else if (args[i] === '--verbose') {
+          verbose = true;
+        }
+      }
+
+      const { credentials } = await authAndSetupMachineIfNeeded();
+      await ensureDaemonRunning()
+
+      await runDsh({
+        credentials,
+        startedBy,
+        verbose,
+      });
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
+      if (process.env.DEBUG) {
+        console.error(error)
+      }
+      process.exit(1)
+    }
+    return;
   } else if (subcommand === 'usage') {
     try {
       const { fetchAgyUsage, formatAgyUsageTerminal, formatAgyUsageMarkdown } = await import('@/agy/usage');
@@ -779,6 +809,7 @@ ${chalk.bold('Usage:')}
   happy codex             Start Codex mode
   happy gemini            Start Gemini mode (ACP) [deprecated — use agy]
   happy agy               Start agy (Antigravity CLI) mode
+  happy dsh               Start dsh (DeepSeek Harness) mode
   happy acp               Start a generic ACP-compatible agent
   happy connect           Connect AI vendor API keys
   happy sandbox           Configure and manage OS-level sandboxing

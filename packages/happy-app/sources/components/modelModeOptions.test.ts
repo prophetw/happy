@@ -5,6 +5,8 @@ import {
     permissionModeSupportedByCli,
     getAgyModelModes,
     getAgyPermissionModes,
+    getDshModelModes,
+    getDshPermissionModes,
     getAvailableModels,
     getAvailablePermissionModes,
     getCodexModelModes,
@@ -91,6 +93,25 @@ describe('modelModeOptions', () => {
             'bypassPermissions',
         ]);
         expect(getDefaultPermissionModeKey('agy')).toBe('default');
+    });
+
+    it('leads dsh with Default, whose ACP profile forwards every tool call to the app', () => {
+        expect(getDshPermissionModes(translate).map((mode) => mode.key)).toEqual([
+            'default',
+            'bypassPermissions',
+        ]);
+        expect(getDshPermissionModes(translate)[0].description).toBe('tr:agentInput.permissionMode.dshDefault');
+        expect(getDefaultPermissionModeKey('dsh')).toBe('default');
+    });
+
+    it('offers dsh only the ambient default model before its ACP catalog arrives', () => {
+        // dsh's option values are opaque provider/model routes, so the
+        // pre-spawn hardcoded list cannot name them — the real picker fills in
+        // from metadata.models once the session reports its config options.
+        expect(getDshModelModes()).toEqual([
+            { key: 'default', name: 'Default model', description: null },
+        ]);
+        expect(getDefaultModelKey('dsh')).toBe('default');
     });
 
     it('only offers gemini modes runGemini actually honours', () => {

@@ -449,6 +449,7 @@ export const zhHant: TranslationStructure = {
             auto: '自行判斷，不確定時詢問',
             default: '預設',
             agyDefault: 'agy 沙箱，不詢問',
+            dshDefault: '手機上逐次確認',
             openclawInert: 'openclaw 不使用此設定',
             acceptEdits: '接受編輯',
             plan: '計畫模式',

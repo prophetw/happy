@@ -269,6 +269,7 @@ function formatEnvelopeForServerLog(agentName: string, envelope: SessionEnvelope
 type AcpSwitchMode = {
   permissionMode?: string;
   model?: string | null;
+  effort?: string | null;
 };
 
 type AcpSelectableOption = {
@@ -321,7 +322,7 @@ function flattenSelectOptions(options: unknown): AcpSelectableOption[] {
 
 function extractConfigSelector(
   configOptions: SessionConfigOption[],
-  category: 'mode' | 'model',
+  category: 'mode' | 'model' | 'thought_level',
 ): AcpConfigSelector | null {
   const optionMatchesCategory = (option: SessionConfigOption): boolean => {
     if (option.category === category) {
@@ -332,6 +333,10 @@ function extractConfigSelector(
     const name = normalizeComparable(option.name);
     if (category === 'model') {
       return id.includes('model') || name.includes('model');
+    }
+    if (category === 'thought_level') {
+      return id.includes('reasoning') || id.includes('effort') || id.includes('thought')
+        || name.includes('reasoning') || name.includes('effort') || name.includes('thought');
     }
     return id.includes('mode') || id.includes('permission') || name.includes('mode') || name.includes('permission');
   };
@@ -406,6 +411,12 @@ function resolveRequestedLegacyModelCode(models: SessionModelState, requested: s
 
 class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPermissionHandler {
   private readonly logPrefix: string;
+  /**
+   * Local auto-approval for permission modes like dsh's "allow all" that must
+   * not round-trip through the app on every tool call. dsh's ACP profile has
+   * no mode selector, so the mode the app sends can only be applied here.
+   */
+  private autoApprove = false;
 
   constructor(session: ApiSessionClient, agentName: string) {
     super(session);
@@ -416,7 +427,15 @@ class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPe
     return this.logPrefix;
   }
 
+  setAutoApprove(autoApprove: boolean): void {
+    this.autoApprove = autoApprove;
+  }
+
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+    if (this.autoApprove) {
+      logger.debug(`${this.logPrefix} Auto-approving tool (permission mode): ${toolName} (${toolCallId})`);
+      return { decision: 'approved' };
+    }
     return new Promise<PermissionResult>((resolve, reject) => {
       this.pendingRequests.set(toolCallId, {
         resolve,
@@ -436,12 +455,15 @@ type PendingTurn = {
   timeout: NodeJS.Timeout;
 };
 
-function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'acp' {
+function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'dsh' | 'acp' {
   if (agentName === 'gemini') {
     return 'gemini';
   }
   if (agentName === 'opencode') {
     return 'opencode';
+  }
+  if (agentName === 'dsh') {
+    return 'dsh';
   }
   return 'acp';
 }
@@ -520,8 +542,10 @@ export async function runAcp(opts: {
   const messageQueue = new MessageQueue2<AcpSwitchMode>((mode) => hashObject(mode));
   let currentPermissionMode: string | undefined;
   let currentModel: string | null | undefined;
+  let currentEffort: string | null | undefined;
   let modeSelector: AcpConfigSelector | null = null;
   let modelSelector: AcpConfigSelector | null = null;
+  let thoughtLevelSelector: AcpConfigSelector | null = null;
   let legacyModes: SessionModeState | null = null;
   let legacyModels: SessionModelState | null = null;
   let sawSlashCommands = false;
@@ -684,6 +708,31 @@ export async function runAcp(opts: {
     }
   };
 
+  const switchThoughtLevelIfRequested = async (requestedEffort: string | null): Promise<void> => {
+    if (!thoughtLevelSelector) {
+      return;
+    }
+
+    // null means "reset to default"; ACP providers that support a provider
+    // default expose it as an option (dsh uses the empty-string value).
+    const requested = requestedEffort ?? '';
+    const resolved = resolveRequestedCode(thoughtLevelSelector.options, requested);
+    if (resolved === null) {
+      if (requested !== '') {
+        logger.debug(`[${opts.agentName}] Ignoring unknown ACP thought level request: ${requestedEffort}`);
+      }
+      return;
+    }
+    if (resolved === thoughtLevelSelector.currentCode) {
+      return;
+    }
+
+    const switched = await backend.setSessionConfigOption(thoughtLevelSelector.configId, resolved);
+    if (switched) {
+      thoughtLevelSelector.currentCode = resolved;
+    }
+  };
+
   const onBackendMessage = (msg: AgentMessage) => {
     if (verbose) {
       logAcp('muted', `Outgoing raw backend message from ${opts.agentName}: ${formatUnknownForConsole(msg, ACP_RAW_PREVIEW_CHARS)}`);
@@ -722,6 +771,7 @@ export async function runAcp(opts: {
 
         modeSelector = extractConfigSelector(configOptions, 'mode');
         modelSelector = extractConfigSelector(configOptions, 'model');
+        thoughtLevelSelector = extractConfigSelector(configOptions, 'thought_level');
         if (verbose) {
           if (modeSelector) {
             sawModes = true;
@@ -837,6 +887,9 @@ export async function runAcp(opts: {
 
     if (typeof message.meta?.permissionMode === 'string') {
       currentPermissionMode = message.meta.permissionMode;
+      // dsh has no ACP mode selector; its "allow all" mode is enforced by
+      // locally auto-approving permission requests instead of switching modes.
+      permissionHandler.setAutoApprove(currentPermissionMode === 'bypassPermissions');
       logger.debug(`[${opts.agentName}] Requested ACP permission mode: ${currentPermissionMode}`);
     }
 
@@ -845,9 +898,15 @@ export async function runAcp(opts: {
       logger.debug(`[${opts.agentName}] Requested ACP model: ${currentModel ?? 'null'}`);
     }
 
+    if (message.meta && Object.prototype.hasOwnProperty.call(message.meta, 'effort')) {
+      currentEffort = message.meta.effort ?? null;
+      logger.debug(`[${opts.agentName}] Requested ACP thought level: ${currentEffort ?? 'default'}`);
+    }
+
     messageQueue.push(message.content.text, {
       permissionMode: currentPermissionMode,
       model: currentModel,
+      effort: currentEffort,
     });
   });
   session.keepAlive(thinking, 'remote');
@@ -919,6 +978,9 @@ export async function runAcp(opts: {
         }
         if (typeof batch.mode.model === 'string' && batch.mode.model.length > 0) {
           await switchModelIfRequested(batch.mode.model);
+        }
+        if (Object.prototype.hasOwnProperty.call(batch.mode, 'effort')) {
+          await switchThoughtLevelIfRequested(batch.mode.effort ?? null);
         }
         await backend.sendPrompt(acpSessionId, batch.message);
         await turnEnded;
