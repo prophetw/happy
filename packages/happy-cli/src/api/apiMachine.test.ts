@@ -4,10 +4,26 @@ import type { Machine } from './types';
 
 const {
     mockIo,
-    mockShouldReconnect
+    mockShouldReconnect,
+    mockDetectCLIAvailability,
+    mockDetectResumeSupport
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
-    mockShouldReconnect: vi.fn(() => true)
+    mockShouldReconnect: vi.fn(() => true),
+    mockDetectCLIAvailability: vi.fn(() => ({
+        claude: false,
+        codex: false,
+        gemini: false,
+        openclaw: false,
+        agy: false,
+        dsh: false
+    })),
+    mockDetectResumeSupport: vi.fn(() => ({
+        rpcAvailable: false,
+        requiresSameMachine: false,
+        requiresHappyAgentAuth: false,
+        happyAgentAuthenticated: false
+    }))
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -44,21 +60,11 @@ vi.mock('@/api/rpc/RpcHandlerManager', () => ({
 }));
 
 vi.mock('@/utils/detectCLI', () => ({
-    detectCLIAvailability: vi.fn(() => ({
-        claude: false,
-        codex: false,
-        gemini: false,
-        openclaw: false
-    }))
+    detectCLIAvailability: mockDetectCLIAvailability
 }));
 
 vi.mock('@/resume/localHappyAgentAuth', () => ({
-    detectResumeSupport: vi.fn(() => ({
-        rpcAvailable: false,
-        requiresSameMachine: false,
-        requiresHappyAgentAuth: false,
-        happyAgentAuthenticated: false
-    }))
+    detectResumeSupport: mockDetectResumeSupport
 }));
 
 vi.mock('@/utils/lidState', () => ({
@@ -172,6 +178,80 @@ describe('ApiMachineClient socket reconnection', () => {
         await vi.advanceTimersByTimeAsync(1);
         aliveCalls = mockSocket.emit.mock.calls.filter(([event]: [string]) => event === 'machine-alive');
         expect(aliveCalls).toHaveLength(2);
+
+        client.shutdown();
+    });
+});
+
+describe('ApiMachineClient keepalive availability republish', () => {
+    let socketHandlers: SocketHandlers;
+    let mockSocket: any;
+
+    const emitSocketEvent = (event: string, ...args: any[]) => {
+        const handlers = socketHandlers[event] || [];
+        handlers.forEach((handler) => handler(...args));
+    };
+
+    const availabilityWith = (overrides: Record<string, boolean>) => ({
+        claude: false,
+        codex: false,
+        gemini: false,
+        openclaw: false,
+        agy: false,
+        dsh: false,
+        ...overrides,
+    });
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        socketHandlers = {};
+        mockSocket = {
+            connected: false,
+            connect: vi.fn(),
+            on: vi.fn((event: string, handler: SocketHandler) => {
+                if (!socketHandlers[event]) {
+                    socketHandlers[event] = [];
+                }
+                socketHandlers[event].push(handler);
+            }),
+            emit: vi.fn(),
+            emitWithAck: vi.fn(),
+            close: vi.fn(),
+            io: {
+                on: vi.fn()
+            }
+        };
+        mockIo.mockReturnValue(mockSocket);
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({}));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('republishes machine metadata when dsh availability appears between keepalives', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        const updateSpy = vi.spyOn(client as any, 'updateMachineMetadata').mockResolvedValue(undefined);
+        client.connect();
+        emitSocketEvent('connect');
+
+        // First keepalive publishes everything, whatever the values are.
+        expect(updateSpy).toHaveBeenCalledTimes(1);
+        updateSpy.mockClear();
+
+        // dsh gets installed mid-session; the next keepalive must republish.
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ dsh: true }));
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(updateSpy).toHaveBeenCalledTimes(1);
+
+        // Nothing changed since the last keepalive; stay quiet.
+        updateSpy.mockClear();
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(updateSpy).not.toHaveBeenCalled();
 
         client.shutdown();
     });
