@@ -16,8 +16,14 @@ export function appendDaemonSpawnModeArgs(
   options: SpawnSessionOptions,
   agent: string,
 ): void {
-  if (agent !== 'claude' && agent !== 'codex') return;
+  if (agent !== 'claude' && agent !== 'codex' && agent !== 'agy') return;
 
+  // For claude/agy, 'default' is the app's ambient "no override" value — forwarding
+  // it would pin the session to prompting mode and lose the CLI's own default
+  // (e.g. a --yolo setup where sessions must bypass permissions). For codex,
+  // 'default' IS a concrete ask-first mode (untrusted + workspace-write)
+  // distinct from the codex launch default, so it must be forwarded
+  // or the user's explicit ask-first pick silently yields a yolo session.
   if (shouldForwardDaemonPermissionMode(agent, options.permissionMode)) {
     args.push('--permission-mode', options.permissionMode);
   }

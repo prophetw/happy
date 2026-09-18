@@ -473,6 +473,50 @@ Conversation history is preserved on the server, but in-flight tool calls are in
       process.exit(1)
     }
     return;
+  } else if (subcommand === 'usage') {
+    try {
+      const { fetchAgyUsage, formatAgyUsageTerminal, formatAgyUsageMarkdown } = await import('@/agy/usage');
+      const isMarkdown = args.includes('--markdown') || args.includes('-m');
+      const isJson = args.includes('--json');
+
+      const status = await fetchAgyUsage();
+      if (isJson) {
+        console.log(JSON.stringify(status, null, 2));
+      } else if (isMarkdown) {
+        console.log(formatAgyUsageMarkdown(status));
+      } else {
+        console.log(formatAgyUsageTerminal(status));
+      }
+      process.exit(0);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+      if (process.env.DEBUG) {
+        console.error(error);
+      }
+      process.exit(1);
+    }
+  } else if (subcommand === 'skills') {
+    try {
+      const { fetchAgySkills, formatAgySkillsTerminal, formatAgySkillsMarkdown } = await import('@/agy/skills');
+      const isMarkdown = args.includes('--markdown') || args.includes('-m');
+      const isJson = args.includes('--json');
+
+      const skillsResult = await fetchAgySkills({ cwd: process.cwd() });
+      if (isJson) {
+        console.log(JSON.stringify(skillsResult.skills, null, 2));
+      } else if (isMarkdown) {
+        console.log(formatAgySkillsMarkdown(skillsResult));
+      } else {
+        console.log(formatAgySkillsTerminal(skillsResult));
+      }
+      process.exit(0);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+      if (process.env.DEBUG) {
+        console.error(error);
+      }
+      process.exit(1);
+    }
   } else if (subcommand === 'logout') {
     // Keep for backward compatibility - redirect to auth logout
     console.log(chalk.yellow('Note: "happy logout" is deprecated. Use "happy auth logout" instead.\n'));
