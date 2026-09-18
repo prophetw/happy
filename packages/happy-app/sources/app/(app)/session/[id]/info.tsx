@@ -334,6 +334,21 @@ function SessionInfoContent({ session }: { session: Session }) {
                             }}
                         />
                     )}
+                    {session.metadata?.agyConversationId && (
+                        <Item
+                            title={t('sessionInfo.agyConversationId')}
+                            subtitle={`${session.metadata.agyConversationId.substring(0, 8)}...${session.metadata.agyConversationId.substring(session.metadata.agyConversationId.length - 8)}`}
+                            icon={<Ionicons name="hardware-chip-outline" size={29} color="#4285F4" />}
+                            onPress={async () => {
+                                try {
+                                    await Clipboard.setStringAsync(session.metadata!.agyConversationId!);
+                                    Modal.alert(t('common.success'), t('sessionInfo.agyConversationIdCopied'));
+                                } catch (error) {
+                                    Modal.alert(t('common.error'), t('sessionInfo.failedToCopyAgyConversationId'));
+                                }
+                            }}
+                        />
+                    )}
                     {/* Resume command — shown for disconnected sessions with a backend session ID */}
                     {/* TODO: migrate to `happy resume <happy-session-id>` once it works without happy-agent auth */}
                     {!sessionStatus.isConnected && getResumeCommand(session) && (

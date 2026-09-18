@@ -147,6 +147,7 @@ export const MetadataSchema = z.object({
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexThreadId: z.string().optional(), // Codex app-server thread ID
+    agyConversationId: z.string().optional(), // Antigravity CLI conversation ID
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),
     mcpServers: z.array(z.object({ name: z.string(), status: z.string() })).optional(),
@@ -209,7 +210,7 @@ export const MetadataSchema = z.object({
 
 export type Metadata = z.infer<typeof MetadataSchema>;
 
-export const AgentGoalSourceSchema = z.enum(['claude', 'codex']);
+export const AgentGoalSourceSchema = z.enum(['claude', 'codex', 'agy']);
 
 export const AgentGoalProgressStepSchema = z.object({
     text: z.string().trim().min(1),

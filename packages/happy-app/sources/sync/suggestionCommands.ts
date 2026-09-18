@@ -53,6 +53,7 @@ export const IGNORED_COMMANDS = [
 
 // Default commands always available
 const DEFAULT_COMMANDS: CommandItem[] = [
+    { command: 'usage', description: 'Show remaining quota and rate limits' },
     { command: 'compact', description: 'Compact the conversation history' },
     { command: 'clear', description: 'Clear the conversation' },
     { command: 'goal', description: 'Set a session goal' },
@@ -63,6 +64,7 @@ const DEFAULT_COMMANDS: CommandItem[] = [
 // Command descriptions for known tools/commands
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
     // Default commands
+    usage: 'Show remaining quota and rate limits',
     compact: 'Compact the conversation history',
     goal: 'Set a session goal',
     
