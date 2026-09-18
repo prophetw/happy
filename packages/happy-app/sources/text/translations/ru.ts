@@ -453,6 +453,13 @@ export const ru: TranslationStructure = {
         forkErrorMissingMetadata: 'Не хватает метаданных сессии для форка.',
         forkErrorGeneric: 'Не удалось форкнуть сессию.',
         forkClaudeOnly: 'Форк сейчас поддерживается только для Claude-сессий.',
+        resumeSheetTitle: 'Возобновить разговор',
+        resumeSheetSubtitle: 'Собственные разговоры Claude на этой машине, сначала новые',
+        resumeSheetConfirm: 'Возобновить',
+        resumeSheetEmpty: 'На этой машине не найдено собственных разговоров Claude',
+        resumeSheetNoPreview: 'Разговор без названия',
+        resumeClaudeOnly: 'Отсюда можно возобновлять только разговоры Claude.',
+        resumeErrorMissingMetadata: 'Не хватает метаданных сессии, необходимых для возобновления.',
     },
 
     commandPalette: {

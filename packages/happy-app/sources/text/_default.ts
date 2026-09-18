@@ -343,6 +343,13 @@ export const en = {
         forkErrorMissingMetadata: 'Missing session metadata required to fork.',
         forkErrorGeneric: 'Failed to fork the session.',
         forkClaudeOnly: 'Fork is currently only supported for Claude sessions.',
+        resumeSheetTitle: 'Resume a conversation',
+        resumeSheetSubtitle: 'Native Claude conversations on this machine, newest first',
+        resumeSheetConfirm: 'Resume',
+        resumeSheetEmpty: 'No native Claude conversations found on this machine',
+        resumeSheetNoPreview: 'Untitled conversation',
+        resumeClaudeOnly: 'Only Claude conversations can be resumed from here.',
+        resumeErrorMissingMetadata: 'Missing session metadata required to resume.',
     },
 
     commandPalette: {

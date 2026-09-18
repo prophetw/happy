@@ -17,6 +17,7 @@ import {
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/ChatHeaderView';
 import { ChatList } from '@/components/ChatList';
+import { ResumeNativeSessionSheet } from '@/components/ResumeNativeSessionSheet';
 import { Deferred } from '@/components/Deferred';
 import { EmptyMessages } from '@/components/EmptyMessages';
 import { Avatar } from '@/components/Avatar';
@@ -829,6 +830,16 @@ export function SessionViewLoaded({
     // need to re-create on every keystroke.
     const handleSend = React.useCallback(() => {
         const liveMessage = composerHandleRef.current?.getMessage() ?? '';
+        // Chat-local slash command: list the machine's native Claude
+        // conversations and mount the chosen one into a fresh Happy session.
+        if (liveMessage.trim() === '/resume' && flavor === 'claude') {
+            composerHandleRef.current?.clearMessage();
+            Modal.show({
+                component: ResumeNativeSessionSheet,
+                props: { sessionId },
+            } as any);
+            return;
+        }
         if (liveMessage.trim() || selectedImages.length > 0) {
             const attachments = selectedImages.length > 0 ? selectedImages : undefined;
             const communicationsToDismiss = [...pendingCommunications];
@@ -859,7 +870,7 @@ export function SessionViewLoaded({
                 }
             })();
         }
-    }, [sessionId, selectedImages, clearImages, pendingCommunications]);
+    }, [sessionId, selectedImages, clearImages, pendingCommunications, flavor]);
 
     const handleAbort = React.useCallback(() => {
         // Stop cancels only the active turn. Permission, model, and effort are

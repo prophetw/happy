@@ -329,6 +329,13 @@ export const es: TranslationStructure = {
         forkErrorMissingMetadata: 'Faltan metadatos de la sesión necesarios para bifurcar.',
         forkErrorGeneric: 'No se pudo bifurcar la sesión.',
         forkClaudeOnly: 'La bifurcación actualmente solo se admite para sesiones de Claude.',
+        resumeSheetTitle: 'Reanudar conversación',
+        resumeSheetSubtitle: 'Conversaciones nativas de Claude en esta máquina, primero las más recientes',
+        resumeSheetConfirm: 'Reanudar',
+        resumeSheetEmpty: 'No se encontraron conversaciones nativas de Claude en esta máquina',
+        resumeSheetNoPreview: 'Conversación sin título',
+        resumeClaudeOnly: 'Aquí solo se pueden reanudar conversaciones de Claude.',
+        resumeErrorMissingMetadata: 'Faltan metadatos de la sesión necesarios para reanudar.',
     },
 
     commandPalette: {

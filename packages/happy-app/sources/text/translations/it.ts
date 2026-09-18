@@ -327,6 +327,13 @@ export const it: TranslationStructure = {
         forkErrorMissingMetadata: 'Mancano i metadati della sessione necessari per biforcare.',
         forkErrorGeneric: 'Impossibile biforcare la sessione.',
         forkClaudeOnly: 'La biforcazione è attualmente supportata solo per le sessioni Claude.',
+        resumeSheetTitle: 'Riprendi conversazione',
+        resumeSheetSubtitle: 'Conversazioni native di Claude su questa macchina, prima le più recenti',
+        resumeSheetConfirm: 'Riprendi',
+        resumeSheetEmpty: 'Nessuna conversazione nativa di Claude trovata su questa macchina',
+        resumeSheetNoPreview: 'Conversazione senza titolo',
+        resumeClaudeOnly: 'Da qui è possibile riprendere solo conversazioni di Claude.',
+        resumeErrorMissingMetadata: 'Mancano i metadati della sessione necessari per riprendere.',
     },
 
     commandPalette: {

@@ -15,6 +15,7 @@ import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
 import { getProjectPath } from '@/claude/utils/path';
+import { listNativeClaudeSessions } from '@/claude/utils/claudeListNativeSessions';
 import {
     forkSession as claudeForkSession,
     forkAndTruncateSession as claudeForkAndTruncateSession,
@@ -237,6 +238,19 @@ export class ApiMachineClient {
                 }
                 throw error;
             }
+        });
+
+        // Enumerate the machine's native Claude sessions straight from the
+        // on-disk JSONL files — including conversations that never went
+        // through Happy. The app renders the picker and spawns a fresh
+        // Happy session with `resumeClaudeSessionId` for the chosen UUID.
+        this.rpcHandlerManager.registerHandler('claude-list-native-sessions', async (params: any) => {
+            const { directory } = params || {};
+            if (directory !== undefined && (typeof directory !== 'string' || directory.length === 0)) {
+                throw new Error('directory must be a non-empty string when provided');
+            }
+            const sessions = await listNativeClaudeSessions(directory);
+            return { type: 'success', sessions };
         });
 
         this.rpcHandlerManager.registerHandler('claude-duplicate-session', async (params: any) => {
