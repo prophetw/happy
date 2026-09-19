@@ -273,10 +273,12 @@ describe('runAcp', () => {
 
     expect(mocks.backendState.constructorArgs.command).toBe('opencode');
     expect(mocks.backendState.constructorArgs.args).toEqual(['--acp']);
-    expect(mocks.backendState.prompts[0]).toEqual({
-      sessionId: 'acp-session-1',
-      prompt: 'Build a test plan',
-    });
+    // The first prompt carries the change-title instruction after the user's
+    // message, wrapped in the happy-system sentinel (see the dedicated test).
+    expect(mocks.backendState.prompts[0].sessionId).toBe('acp-session-1');
+    expect(mocks.backendState.prompts[0].prompt).toMatch(
+      /^Build a test plan\n\n<happy-system>\n[\s\S]*change_title[\s\S]*<\/happy-system>$/,
+    );
 
     const envelopeTypes = mocks.mockSession.sendSessionProtocolMessage.mock.calls.map(([envelope]) => envelope.ev.t);
     expect(envelopeTypes).toEqual(['turn-start', 'text', 'tool-call-start', 'tool-call-end', 'turn-end']);
@@ -1003,7 +1005,7 @@ describe('runAcp', () => {
     await runPromise;
   });
 
-  it('titles the session from the first prompt and never re-titles later prompts', async () => {
+  it('appends the change-title instruction to the first prompt only and leaves the title to the model', async () => {
     const runPromise = runAcp({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
       agentName: 'dsh',
@@ -1017,17 +1019,16 @@ describe('runAcp', () => {
 
     mocks.getUserMessageHandler()!({
       role: 'user',
-      content: { type: 'text', text: 'Fix the login timeout bug\nit reproduces after 30s idle' },
+      content: { type: 'text', text: 'Fix the login timeout bug' },
     });
 
     await vi.waitFor(() => {
       expect(mocks.backendState.prompts).toHaveLength(1);
     });
 
-    // A second turn must not rename the session.
     mocks.getUserMessageHandler()!({
       role: 'user',
-      content: { type: 'text', text: 'unrelated second topic entirely' },
+      content: { type: 'text', text: 'second turn, no instruction please' },
     });
 
     await vi.waitFor(() => {
@@ -1037,35 +1038,25 @@ describe('runAcp', () => {
     await mocks.getKillHandler()!();
     await runPromise;
 
+    // First prompt: the user's message, then the instruction wrapped in the
+    // happy-system sentinel so transcript reconstruction can strip it.
+    const [firstPrompt, secondPrompt] = mocks.backendState.prompts;
+    expect(firstPrompt.prompt).toMatch(/^Fix the login timeout bug\n\n<happy-system>\n/);
+    expect(firstPrompt.prompt).toContain('change_title');
+    expect(firstPrompt.prompt).toMatch(/<\/happy-system>$/);
+    // The second prompt carries the user's message alone.
+    expect(secondPrompt.prompt).toBe('second turn, no instruction please');
+
+    // The runner no longer writes the title itself — the model calls the
+    // change_title MCP tool, which lands in metadata through the Happy MCP
+    // server. No summary writes here.
     const metadataHandlers = mocks.mockSession.updateMetadata.mock.calls.map((call) => call[0]);
-    const baseMetadata = {
-      path: '/repo',
-      host: 'host',
-      homeDir: '/home/user',
-      happyHomeDir: '/home/user/.happy',
-      happyLibDir: '/repo/.happy/lib',
-      happyToolsDir: '/repo/.happy/tools',
-    };
-
-    // Apply the handlers in order: the title is written exactly once, from
-    // the first prompt's first line.
-    let summaryWrites = 0;
-    const finalMetadata = metadataHandlers.reduce((meta, handler) => {
-      const next = handler(meta);
-      if (next !== meta && next.summary !== undefined && meta.summary === undefined) {
-        summaryWrites += 1;
-      }
-      return next;
-    }, baseMetadata as Record<string, unknown>);
-
-    expect(summaryWrites).toBe(1);
-    expect(finalMetadata.summary).toEqual({
-      text: 'Fix the login timeout bug',
-      updatedAt: expect.any(Number),
-    });
+    const baseMetadata = { path: '/repo', host: 'host' };
+    const applied = metadataHandlers.map((handler) => handler(baseMetadata));
+    expect(applied.every((metadata) => (metadata as { summary?: unknown }).summary === undefined)).toBe(true);
   });
 
-  it('keeps an already-titled session summary instead of overwriting it', async () => {
+  it('auto-approves the change_title tool locally so renaming never prompts', async () => {
     const runPromise = runAcp({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
       agentName: 'dsh',
@@ -1074,31 +1065,24 @@ describe('runAcp', () => {
     });
 
     await vi.waitFor(() => {
-      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+      expect(mocks.backendState.constructorArgs).toBeTruthy();
     });
 
-    mocks.getUserMessageHandler()!({
-      role: 'user',
-      content: { type: 'text', text: 'first prompt of the session' },
-    });
+    const permissionHandler = mocks.backendState.constructorArgs.permissionHandler;
 
-    await vi.waitFor(() => {
-      expect(mocks.backendState.prompts).toHaveLength(1);
-    });
+    // The agent-facing name is agent-specific; every spelling of the
+    // Happy change-title tool is approved without a prompt.
+    await expect(permissionHandler.handleToolCall('title-1', 'mcp__happy__change_title', { title: 'Fix login bug' }))
+      .resolves.toEqual({ decision: 'approved' });
+    await expect(permissionHandler.handleToolCall('title-2', 'happy__change_title', { title: 'Fix login bug' }))
+      .resolves.toEqual({ decision: 'approved' });
+
+    // Any other tool still goes through the app as a permission request.
+    const pending = permissionHandler.handleToolCall('tool-9', 'Bash', { command: 'ls' });
+    pending.catch(() => {});
+    await expect(Promise.race([pending, Promise.resolve('still-pending')])).resolves.toBe('still-pending');
 
     await mocks.getKillHandler()!();
     await runPromise;
-
-    const metadataHandlers = mocks.mockSession.updateMetadata.mock.calls.map((call) => call[0]);
-    const titleHandler = metadataHandlers.find((handler) => handler({}).summary !== undefined);
-    expect(titleHandler).toBeDefined();
-
-    // A session that already carries a summary keeps it untouched — the
-    // handler returns the same object rather than stamping a new title.
-    const titled = {
-      path: '/repo',
-      summary: { text: 'Existing title', updatedAt: 1 },
-    };
-    expect(titleHandler!(titled)).toBe(titled);
   });
 });

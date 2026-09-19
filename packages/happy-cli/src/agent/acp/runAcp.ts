@@ -21,7 +21,7 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { projectPath } from '@/projectPath';
 import { BasePermissionHandler, type PermissionResult } from '@/utils/BasePermissionHandler';
 import { connectionState } from '@/utils/serverConnectionErrors';
-import { extractSessionTitle } from '@/utils/extractSessionTitle';
+import { wrapHappySystem } from '@/utils/happySystemBlock';
 import {
   extractConfigOptionsFromPayload,
   extractCurrentModeIdFromPayload,
@@ -32,6 +32,20 @@ import {
 import type { SessionConfigOption, SessionModeState, SessionModelState } from '@agentclientprotocol/sdk';
 
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Instruction for the agent to title the session itself, the way Claude Code
+ * does: the model reads the conversation and calls the `change_title` tool
+ * exposed by Happy's injected MCP server (dsh's model-facing name for it is
+ * `mcp__happy__change_title`; the naming may differ per agent, so the
+ * instruction describes the tool rather than hard-coding one spelling).
+ * Codex and Gemini append the same instruction to their first prompt.
+ */
+const CHANGE_TITLE_INSTRUCTION = [
+  'Based on this conversation, call the change_title tool from the happy MCP server',
+  'to set a short chat session title that represents the current task.',
+  'If the chat idea changes dramatically, call this tool again to update the title.',
+].join(' ');
 
 /**
  * Rejection marker for turns ended by the user's stop action. The runner
@@ -449,6 +463,16 @@ class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPe
       logger.debug(`${this.logPrefix} Auto-approving tool (permission mode): ${toolName} (${toolCallId})`);
       return { decision: 'approved' };
     }
+    // Renaming a chat is housekeeping the agent was told to do (the
+    // change-title instruction rides the first prompt), so it is approved
+    // locally rather than surfacing a permission prompt mid-answer. The
+    // agent-facing tool name is agent-specific (dsh: mcp__happy__change_title,
+    // others: happy__change_title / change_title), so any of the spellings
+    // counts — same set as the agy engine's auto-approve list.
+    if (isChangeTitleTool(toolName)) {
+      logger.debug(`${this.logPrefix} Auto-approving title change: ${toolName} (${toolCallId})`);
+      return { decision: 'approved' };
+    }
     return new Promise<PermissionResult>((resolve, reject) => {
       this.pendingRequests.set(toolCallId, {
         resolve,
@@ -460,6 +484,18 @@ class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPe
       logger.debug(`${this.logPrefix} Permission request sent for tool: ${toolName} (${toolCallId})`);
     });
   }
+}
+
+/** The change_title tool as various agents spell it. */
+const CHANGE_TITLE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'change_title',
+  'happy__change_title',
+  'mcp__happy__change_title',
+]);
+
+function isChangeTitleTool(toolName: string): boolean {
+  return CHANGE_TITLE_TOOL_NAMES.has(toolName)
+    || toolName.toLowerCase().includes('change_title');
 }
 
 type PendingTurn = {
@@ -565,10 +601,9 @@ export async function runAcp(opts: {
   let sawSlashCommands = false;
   let sawModes = false;
   let sawModels = false;
-  // The first prompt titles the session (see the message loop); one write per
-  // runner lifetime, since a runner that cannot resume never sees a second
-  // first prompt.
-  let sessionTitleSet = false;
+  // The change-title instruction rides only the first prompt, so the agent
+  // names the session once and is never nagged about it again.
+  let changeTitleInstructionSent = false;
 
   const happyServer = await startHappyServer(session);
   const mcpServers = {
@@ -1021,22 +1056,16 @@ export async function runAcp(opts: {
       logAcp('incoming', `Incoming prompt: ${formatUnknownForConsole(batch.message, ACP_EVENT_PREVIEW_CHARS)}`);
       errorReportedForCurrentTurn = false;
 
-      // Auto-title, same policy as agy: ACP harnesses (dsh, OpenCode) have no
-      // title mechanism of their own, so the first prompt names the session
-      // and the app's list shows the topic instead of "New Chat". An existing
-      // summary (already-titled session) always wins, so the write is a
-      // no-op rather than an overwrite when metadata already carries one.
-      if (!sessionTitleSet) {
-        sessionTitleSet = true;
-        const title = extractSessionTitle(batch.message);
-        session.updateMetadata((currentMetadata) => (
-          currentMetadata.summary ? currentMetadata : {
-            ...currentMetadata,
-            summary: { text: title, updatedAt: Date.now() },
-          }
-        ));
-        logger.debug(`[${opts.agentName}] Generated session title: "${title}"`);
-      }
+      // Auto-title, same policy as Claude/Codex/Gemini: the model itself
+      // summarizes the conversation and calls the change_title MCP tool,
+      // which lands in metadata.summary through the Happy MCP server. The
+      // instruction is appended once (first prompt only) inside
+      // happy-system markers so transcript reconstruction can strip it back
+      // out; the user's own message text is what the app displays.
+      const promptToSend = changeTitleInstructionSent
+        ? batch.message
+        : `${batch.message}\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`;
+      changeTitleInstructionSent = true;
 
       sendEnvelopes(sessionManager.startTurn());
       const turnEnded = waitForTurnEnd();
@@ -1055,7 +1084,7 @@ export async function runAcp(opts: {
         if (Object.prototype.hasOwnProperty.call(batch.mode, 'effort')) {
           await switchThoughtLevelIfRequested(batch.mode.effort ?? null);
         }
-        await backend.sendPrompt(acpSessionId, batch.message);
+        await backend.sendPrompt(acpSessionId, promptToSend);
         await turnEnded;
         sendEnvelopes(sessionManager.endTurn('completed'));
         session.sendSessionEvent({ type: 'ready' });

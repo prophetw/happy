@@ -1,7 +1,7 @@
 # September 19 - DeepSeek model picker
 
 - **DeepSeek models** — the model picker now lists your DeepSeek harness models before a session starts, and Settings → Agents lets you set a default model. The list appears once your machine's Happy CLI is updated.
-- **Chat titles** — DeepSeek (and OpenCode) sessions now name themselves after your first message, instead of showing "New Chat" forever.
+- **Chat titles** — DeepSeek (and OpenCode) sessions now name themselves: the agent reads your conversation and picks a short title, Claude-style, instead of showing "New Chat" forever.
 
 # September 14 - Harness setup
 
