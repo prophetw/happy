@@ -109,6 +109,13 @@ export class DefaultTransport implements TransportHandler {
   }
 
   /**
+   * Default: turn end is inferred from output inactivity, not the prompt response
+   */
+  turnEndOnPromptResponse(): boolean {
+    return false;
+  }
+
+  /**
    * Default: no tool name extraction (return null)
    */
   extractToolNameFromId(_toolCallId: string): string | null {
