@@ -203,6 +203,7 @@ vi.mock('./AcpBackend', () => ({
 }));
 
 import { runAcp } from './runAcp';
+import { DefaultTransport } from '@/agent/transport/DefaultTransport';
 
 describe('runAcp', () => {
   const stripAnsi = (line: string) => line.replace(/\u001b\[[0-9;]*m/g, '');
@@ -1001,5 +1002,107 @@ describe('runAcp', () => {
 
     await mocks.getKillHandler()!();
     await runPromise;
+  });
+
+  it('times out hung turns for agents that infer turn end from output inactivity', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.backendState.hangPrompt = true;
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'opencode',
+        command: 'opencode',
+        args: ['acp'],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+      });
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text: 'stuck turn' },
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts).toHaveLength(1);
+      });
+
+      // Past the hard cap the turn is stale: the loop is still awaiting the
+      // prompt RPC, so the rejection surfaces only once the agent settles.
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1000);
+      mocks.backendState.hangPromptResolve?.();
+
+      await vi.waitFor(() => {
+        expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
+          type: 'message',
+          message: 'opencode error: Timed out waiting for opencode to finish the turn',
+        });
+      });
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never times out turns for agents that end turns on the prompt response (dsh)', async () => {
+    class PromptResponseTransport extends DefaultTransport {
+      turnEndOnPromptResponse(): boolean {
+        return true;
+      }
+    }
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.backendState.hangPrompt = true;
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'dsh',
+        command: 'dsh',
+        args: ['--profile', 'acp'],
+        transportHandler: new PromptResponseTransport('dsh'),
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+      });
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text: 'long running task' },
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts).toHaveLength(1);
+      });
+
+      // Real dsh turns run many minutes past the old 5-minute hard cap.
+      vi.advanceTimersByTime(10 * 60 * 1000);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      for (const call of mocks.mockSession.sendSessionEvent.mock.calls) {
+        expect(String(call[0]?.message ?? '')).not.toContain('error');
+      }
+
+      // The prompt response ends the turn no matter how late it lands; the
+      // real backend signals it as an idle status once the RPC settles.
+      mocks.backendState.hangPromptResolve?.();
+      for (const listener of mocks.backendState.listeners) {
+        listener({ type: 'status', status: 'idle' });
+      }
+
+      await vi.waitFor(() => {
+        expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+      });
+      const turnEndStatuses = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+        .map((call) => call[0]?.ev)
+        .filter((ev) => ev?.t === 'turn-end')
+        .map((ev) => ev.status);
+      expect(turnEndStatuses).toEqual(['completed']);
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

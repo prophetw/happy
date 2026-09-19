@@ -464,7 +464,8 @@ class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPe
 type PendingTurn = {
   resolve: () => void;
   reject: (err: Error) => void;
-  timeout: NodeJS.Timeout;
+  // null when the agent ends turns on the prompt response: no hard timeout.
+  timeout: NodeJS.Timeout | null;
 };
 
 function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'dsh' | 'acp' {
@@ -573,6 +574,7 @@ export async function runAcp(opts: {
     },
   };
 
+  const transport = opts.transportHandler ?? new DefaultTransport(opts.agentName);
   const backend = new AcpBackend({
     agentName: opts.agentName,
     cwd: process.cwd(),
@@ -580,7 +582,7 @@ export async function runAcp(opts: {
     args: opts.args,
     mcpServers,
     permissionHandler,
-    transportHandler: opts.transportHandler ?? new DefaultTransport(opts.agentName),
+    transportHandler: transport,
     verbose,
   });
 
@@ -595,7 +597,9 @@ export async function runAcp(opts: {
     if (!pendingTurn) {
       return;
     }
-    clearTimeout(pendingTurn.timeout);
+    if (pendingTurn.timeout) {
+      clearTimeout(pendingTurn.timeout);
+    }
     const current = pendingTurn;
     pendingTurn = null;
     if (error) {
@@ -606,10 +610,15 @@ export async function runAcp(opts: {
   };
 
   const waitForTurnEnd = () => new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingTurn = null;
-      reject(new Error(`Timed out waiting for ${opts.agentName} to finish the turn`));
-    }, TURN_TIMEOUT_MS);
+    // Agents that end turns on the prompt response (dsh) can legitimately run
+    // many minutes over the old hard cap on a real task — the response is the
+    // authoritative end signal, so a timeout here only fires false positives.
+    const timeout = transport.turnEndOnPromptResponse?.()
+      ? null
+      : setTimeout(() => {
+          pendingTurn = null;
+          reject(new Error(`Timed out waiting for ${opts.agentName} to finish the turn`));
+        }, TURN_TIMEOUT_MS);
     pendingTurn = { resolve, reject, timeout };
   });
 
