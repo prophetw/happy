@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Italian plural helper function
@@ -327,6 +327,13 @@ export const it: TranslationStructure = {
         forkErrorMissingMetadata: 'Mancano i metadati della sessione necessari per biforcare.',
         forkErrorGeneric: 'Impossibile biforcare la sessione.',
         forkClaudeOnly: 'La biforcazione è attualmente supportata solo per le sessioni Claude.',
+        resumeSheetTitle: 'Riprendi conversazione',
+        resumeSheetSubtitle: 'Conversazioni native di Claude su questa macchina, prima le più recenti',
+        resumeSheetConfirm: 'Riprendi',
+        resumeSheetEmpty: 'Nessuna conversazione nativa di Claude trovata su questa macchina',
+        resumeSheetNoPreview: 'Conversazione senza titolo',
+        resumeClaudeOnly: 'Da qui è possibile riprendere solo conversazioni di Claude.',
+        resumeErrorMissingMetadata: 'Mancano i metadati della sessione necessari per riprendere.',
     },
 
     commandPalette: {
@@ -334,6 +341,9 @@ export const it: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Configurazione server',
         enterServerUrl: 'Inserisci un URL del server',
@@ -372,6 +382,9 @@ export const it: TranslationStructure = {
         aiProvider: 'Provider IA',
         failedToCopyClaudeCodeSessionId: 'Impossibile copiare l\'ID sessione Claude Code',
         failedToCopyCodexThreadId: 'Impossibile copiare l\'ID thread Codex',
+        agyConversationId: 'ID conversazione Antigravity',
+        agyConversationIdCopied: 'ID conversazione Antigravity copiato negli appunti',
+        failedToCopyAgyConversationId: 'Impossibile copiare l\'ID conversazione Antigravity',
         metadataCopied: 'Metadati copiati negli appunti',
         failedToCopyMetadata: 'Impossibile copiare i metadati',
         failedToKillSession: 'Impossibile terminare la sessione',
@@ -427,6 +440,7 @@ export const it: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Pronto a programmare?',
             installCli: 'Installa la CLI Happy',
@@ -859,6 +873,10 @@ export const it: TranslationStructure = {
         friends: 'Amici',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Client mobile di Codex e Claude Code',
@@ -923,6 +941,9 @@ export const it: TranslationStructure = {
         unknownEvent: 'Evento sconosciuto',
         usageLimitUntil: ({ time }: { time: string }) => `Limite di utilizzo raggiunto fino a ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Non inviato: ${reason}`,
         unknownTime: 'ora sconosciuta',
     },
 

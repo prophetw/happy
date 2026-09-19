@@ -75,6 +75,18 @@ describe('AcpSessionManager turn lifecycle', () => {
     expect(second).toHaveLength(0);
   });
 
+  it('does not leak pending text across turns', () => {
+    const mapper = new AcpSessionManager();
+    mapper.startTurn();
+    // Simulate a crashed turn whose pending output never got flushed.
+    mapper.endTurn('failed');
+    mapper.startTurn();
+
+    const envelopes = mapper.endTurn('completed');
+    const textEnvelopes = envelopes.filter((e) => e.ev.t === 'text');
+    expect(textEnvelopes).toHaveLength(0);
+  });
+
   it('supports multiple complete turn cycles with distinct turn ids', () => {
     const mapper = new AcpSessionManager();
     const start1 = mapper.startTurn();

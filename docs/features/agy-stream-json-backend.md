@@ -14,12 +14,12 @@ recovery with full context preservation.
 
 | File | Role |
 |---|---|
-| `packages/happy-cli/src/agy/runAgy.ts` | Session loop: remote message intake, metadata updates, turn orchestration |
-| `packages/happy-cli/src/agy/AgyBackend.ts` | `AgentBackend` implementation owning the persistent agy child process |
-| `packages/happy-cli/src/agy/streamJson.ts` | NDJSON stream parser (text deltas, thinking, tool calls, results) |
-| `packages/happy-cli/src/agy/discoverModels.ts` | `agy models` discovery + slug/display-name resolution |
-| `packages/happy-cli/src/agy/skills.ts` | Skills discovery, standalone print invocation, and formatters (avoids stream-json `/skills` errors) |
-| `packages/happy-cli/src/agy/AgySdkBackend.ts` | Alternative Python SDK-bridge backend (model is passed per-turn, so it needs no restart-on-model-change) |
+| `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | Session loop: remote message intake, metadata updates, turn orchestration |
+| `packages/happy-cli/src/agyStream/AgyBackend.ts` | `AgentBackend` implementation owning the persistent agy child process |
+| `packages/happy-cli/src/agyStream/streamJson.ts` | NDJSON stream parser (text deltas, thinking, tool calls, results) |
+| `packages/happy-cli/src/agyStream/discoverModels.ts` | `agy models` discovery + slug/display-name resolution |
+| `packages/happy-cli/src/agyStream/skills.ts` | Skills discovery, standalone print invocation, and formatters (avoids stream-json `/skills` errors) |
+| `packages/happy-cli/src/agyStream/AgySdkBackend.ts` | Alternative Python SDK-bridge backend (model is passed per-turn, so it needs no restart-on-model-change) |
 
 ## Architecture
 
@@ -111,7 +111,7 @@ bridge request, so changes apply on the next turn with no restart.
 
 ## Testing
 
-`npx vitest run src/agy/AgyBackend.test.ts src/agy/streamJson.test.ts`
+`npx vitest run src/agyStream/AgyBackend.test.ts src/agyStream/streamJson.test.ts`
 
 Covers: persistent multi-turn in one process, startup retry, single error
 status on failed turns, mid-turn crash, and model switching (no-op on

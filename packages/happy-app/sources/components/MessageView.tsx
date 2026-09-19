@@ -5,14 +5,15 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { MarkdownView } from "./markdown/MarkdownView";
 import { t } from '@/text';
-import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/typesMessage";
+import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage, isOtherParticipantMessage } from "@/sync/typesMessage";
 import { Metadata } from "@/sync/storageTypes";
 import { ToolView } from "./tools/ToolView";
-import { AgentEvent } from "@/sync/typesRaw";
+import { AgentEvent, SessionAuthor } from "@/sync/typesRaw";
 import { sync } from '@/sync/sync';
 import { useSetting } from '@/sync/storage';
 import { Option } from './markdown/MarkdownView';
 import { layout } from "./layout";
+import { Typography } from '@/constants/Typography';
 import { parseLocalCommandMessage, isUserSlashCommandEcho } from './parseLocalCommandMessage';
 import { resolveUserMessageBubbleColor } from '@/utils/userMessageBubbleColor';
 import { LongPressCopyable } from './LongPressCopyable';
@@ -83,6 +84,90 @@ function RenderBlock(props: {
   }
 }
 
+/**
+ * The frame every user message sits in. While a message is pending the agent
+ * has not read it yet; the chat keeps it at the bottom until then, letting the
+ * turn it interrupted finish streaming above it. Busy sends are labelled at
+ * once; idle/new-chat sends stay quiet through a grace period and only show a
+ * status if acceptance is actually taking time.
+ *
+ * A message from another participant of a shared session sits on the left,
+ * the side that is not "you", with the sender's name above it, like desktop.
+ */
+function UserMessageFrame(props: {
+  pending?: boolean;
+  queuedWhileBusy?: boolean;
+  createdAt: number;
+  sendError?: string;
+  author?: SessionAuthor;
+  children: React.ReactNode;
+}) {
+  const fromOther = isOtherParticipantMessage(props);
+  const showPendingStatus = usePendingStatusVisible(props.pending, props.queuedWhileBusy, props.createdAt);
+  // The tree here must keep the same shape in both states. Settling flips
+  // `pending` while the row is on screen, and a structural change — a wrapper
+  // that exists in one state only, or a different component type — makes React
+  // remount the bubble and its markdown, which shows up as a relayout flash at
+  // the exact moment the message should simply stop looking dimmed. Only style
+  // values and the trailing status line may differ.
+  return (
+    <View style={[styles.userMessageContainer, fromOther && styles.userMessageContainerOther]}>
+      {fromOther ? <Text numberOfLines={1} style={styles.userMessageAuthorText}>{props.author!.name}</Text> : null}
+      {/* collapsable={false}: Fabric materialises a native view for opacity != 1
+          and may flatten it away at 1 — settling would then reparent the native
+          subtree even though the React tree is stable. Pin the view instead. */}
+      <View
+        collapsable={false}
+        style={[
+          styles.userMessageBody,
+          fromOther && styles.userMessageBodyOther,
+          showPendingStatus && styles.userMessageBodyPending,
+        ]}
+      >
+        {props.children}
+      </View>
+      {showPendingStatus ? (
+        <Text style={styles.pendingStatusText}>
+          {props.queuedWhileBusy === true ? t('message.sendsAfterThisTurn') : t('message.sending')}
+        </Text>
+      ) : null}
+      {props.sendError !== undefined ? (
+        <Text style={[styles.pendingStatusText, styles.sendErrorText]}>{t('message.sendFailed', { reason: props.sendError })}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+// Fast acknowledgements should feel instantaneous. If an idle/new-chat send is
+// genuinely taking time, surface that after a short grace period instead of
+// leaving a pending message with no explanation. Use createdAt so remounting an
+// already-stale row shows its state immediately rather than restarting the wait.
+const PENDING_STATUS_GRACE_MS = 1_000;
+
+function usePendingStatusVisible(pending: boolean | undefined, queuedWhileBusy: boolean | undefined, createdAt: number) {
+  const shouldDelay = pending === true && queuedWhileBusy !== true;
+  const [graceElapsed, setGraceElapsed] = React.useState(
+    () => shouldDelay && Date.now() - createdAt >= PENDING_STATUS_GRACE_MS,
+  );
+
+  React.useEffect(() => {
+    if (!shouldDelay) {
+      setGraceElapsed(false);
+      return;
+    }
+    const remaining = PENDING_STATUS_GRACE_MS - (Date.now() - createdAt);
+    if (remaining <= 0) {
+      setGraceElapsed(true);
+      return;
+    }
+    setGraceElapsed(false);
+    const timeout = setTimeout(() => setGraceElapsed(true), remaining);
+    return () => clearTimeout(timeout);
+  }, [createdAt, shouldDelay]);
+
+  return pending === true && (queuedWhileBusy === true || graceElapsed);
+}
+
 function UserTextBlock(props: {
   message: UserTextMessage;
   metadata: Metadata | null;
@@ -99,6 +184,9 @@ function UserTextBlock(props: {
     backgroundColor: bubblePalette.background,
     borderColor: bubblePalette.border,
   };
+  const copyTargetStyle = isOtherParticipantMessage(props.message)
+    ? styles.userCopyTargetOther
+    : styles.userCopyTarget;
   // Claude Agent SDK emits synthetic user messages wrapped in tags like
   // <local-command-caveat>…</local-command-caveat> and
   // <command-message>…</command-message><command-name>/foo</command-name>
@@ -125,8 +213,8 @@ function UserTextBlock(props: {
   }
   if (parsed.kind === 'goal-run') {
     return (
-      <View style={styles.userMessageContainer}>
-        <LongPressCopyable style={styles.userCopyTarget} text={parsed.goal}>
+      <UserMessageFrame pending={props.message.pending} queuedWhileBusy={props.message.meta?.queuedWhileBusy} createdAt={props.message.createdAt} sendError={props.message.sendError} author={props.message.author}>
+        <LongPressCopyable style={copyTargetStyle} text={parsed.goal}>
           <View style={[styles.userMessageBubble, styles.userMessageBubbleSolid, bubbleStyle, styles.goalMessageBubble]}>
             <MarkdownView externalCopyHandler markdown={parsed.goal} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
           </View>
@@ -135,14 +223,14 @@ function UserTextBlock(props: {
             <Text style={styles.goalSentText}>{t('message.sentAsGoal')}</Text>
           </View>
         </LongPressCopyable>
-      </View>
+      </UserMessageFrame>
     );
   }
   if (parsed.kind === 'command-run') {
     const commandText = parsed.args ? `/${parsed.commandName} ${parsed.args}` : `/${parsed.commandName}`;
     return (
-      <View style={styles.userMessageContainer}>
-        <LongPressCopyable style={styles.userCopyTarget} text={commandText}>
+      <UserMessageFrame pending={props.message.pending} queuedWhileBusy={props.message.meta?.queuedWhileBusy} createdAt={props.message.createdAt} sendError={props.message.sendError} author={props.message.author}>
+        <LongPressCopyable style={copyTargetStyle} text={commandText}>
           {parsed.args ? (
             <View style={[styles.userMessageBubble, styles.userMessageBubbleSolid, bubbleStyle, styles.commandMessageBubble]}>
               <MarkdownView externalCopyHandler markdown={parsed.args} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
@@ -152,20 +240,20 @@ function UserTextBlock(props: {
             <Text style={styles.commandChipText}>/{parsed.commandName}</Text>
           </View>
         </LongPressCopyable>
-      </View>
+      </UserMessageFrame>
     );
   }
 
   return (
-    <View style={styles.userMessageContainer}>
+    <UserMessageFrame pending={props.message.pending} queuedWhileBusy={props.message.meta?.queuedWhileBusy} createdAt={props.message.createdAt} sendError={props.message.sendError} author={props.message.author}>
       {/* Long-press copies the whole message through our own menu rather than the
           OS selection callout. Rewind remains in session actions. */}
-      <LongPressCopyable style={styles.userCopyTarget} text={parsed.text}>
+      <LongPressCopyable style={copyTargetStyle} text={parsed.text}>
         <View style={[styles.userMessageBubble, styles.userMessageBubbleSolid, bubbleStyle]}>
           <MarkdownView externalCopyHandler markdown={parsed.text} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
         </View>
       </LongPressCopyable>
-    </View>
+    </UserMessageFrame>
   );
 }
 
@@ -393,6 +481,48 @@ const styles = StyleSheet.create((theme) => ({
   userCopyTarget: {
     alignItems: 'flex-end',
     maxWidth: '100%',
+  },
+  userCopyTargetOther: {
+    alignItems: 'flex-start',
+    maxWidth: '100%',
+  },
+  userMessageBody: {
+    alignItems: 'flex-end',
+    maxWidth: '100%',
+  },
+  // Another participant's message: everything on the reader's side is on the
+  // right, so the other side of the chat is the left, like any messenger.
+  userMessageContainerOther: {
+    alignItems: 'flex-start',
+  },
+  userMessageBodyOther: {
+    alignItems: 'flex-start',
+  },
+  userMessageAuthorText: {
+    color: theme.colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 4,
+    paddingHorizontal: 12,
+    maxWidth: '100%',
+    ...Typography.default('semiBold'),
+  },
+  userMessageBodyPending: {
+    // Dimmed rather than greyed: the bubble keeps its own color, so the message
+    // reads as the user's own and merely not arrived yet.
+    opacity: 0.45,
+  },
+  pendingStatusText: {
+    color: theme.colors.agentEventText,
+    // Matches the status line above the composer, the app's other place for
+    // saying what the session is doing right now.
+    fontSize: 11,
+    marginBottom: 4,
+    marginTop: 2,
+    ...Typography.default(),
+  },
+  sendErrorText: {
+    color: theme.colors.textDestructive,
   },
   agentEventContainer: {
     marginHorizontal: 8,

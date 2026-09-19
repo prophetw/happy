@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Catalan plural helper function
@@ -329,6 +329,13 @@ export const ca: TranslationStructure = {
         forkErrorMissingMetadata: 'Falten metadades de la sessió necessàries per bifurcar.',
         forkErrorGeneric: 'No s\'ha pogut bifurcar la sessió.',
         forkClaudeOnly: 'La bifurcació només està disponible per a sessions de Claude.',
+        resumeSheetTitle: 'Reprèn la conversa',
+        resumeSheetSubtitle: 'Converses natives de Claude en aquesta màquina, primer les més recents',
+        resumeSheetConfirm: 'Reprèn',
+        resumeSheetEmpty: 'No s\'han trobat converses natives de Claude en aquesta màquina',
+        resumeSheetNoPreview: 'Conversa sense títol',
+        resumeClaudeOnly: 'Aquí només es poden reprendre converses de Claude.',
+        resumeErrorMissingMetadata: 'Falten metadades de la sessió necessàries per reprendre.',
     },
 
     commandPalette: {
@@ -336,6 +343,9 @@ export const ca: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Configuració del servidor',
         enterServerUrl: 'Introdueix una URL del servidor',
@@ -374,6 +384,9 @@ export const ca: TranslationStructure = {
         aiProvider: 'Proveïdor d\'IA',
         failedToCopyClaudeCodeSessionId: 'Ha fallat copiar l\'ID de la sessió de Claude Code',
         failedToCopyCodexThreadId: 'Ha fallat copiar l\'ID del fil de Codex',
+        agyConversationId: 'ID de conversa d\'Antigravity',
+        agyConversationIdCopied: 'ID de conversa d\'Antigravity copiat al porta-retalls',
+        failedToCopyAgyConversationId: 'Ha fallat copiar l\'ID de conversa d\'Antigravity',
         metadataCopied: 'Metadades copiades al porta-retalls',
         failedToCopyMetadata: 'Ha fallat copiar les metadades',
         failedToKillSession: 'Ha fallat finalitzar la sessió',
@@ -429,6 +442,7 @@ export const ca: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Llest per programar?',
             installCli: 'Instal·la el Happy CLI',
@@ -861,6 +875,10 @@ export const ca: TranslationStructure = {
         friends: 'Amics',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Client mòbil de Codex i Claude Code',
@@ -925,6 +943,9 @@ export const ca: TranslationStructure = {
         unknownEvent: 'Esdeveniment desconegut',
         usageLimitUntil: ({ time }: { time: string }) => `Límit d'ús assolit fins a ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `No enviat: ${reason}`,
         unknownTime: 'temps desconegut',
     },
 

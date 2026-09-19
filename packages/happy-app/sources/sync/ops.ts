@@ -18,6 +18,7 @@ import {
     rigHasRpcMethod,
 } from './rig';
 import type { HappyAgentSpawnTarget } from './happyAgentSpawn';
+import { encodeBase64 } from '@/encryption/base64';
 
 export type { SessionAgentModesPatch };
 
@@ -397,6 +398,80 @@ export async function claudeListRewindPoints(
     }
 }
 
+export type NativeClaudeSession = {
+    /** Claude session UUID — passed to `claude --resume <uuid>`. */
+    sessionId: string;
+    /** Working directory the conversation belongs to (from JSONL rows). */
+    cwd: string;
+    gitBranch: string | null;
+    firstUserMessage: string | null;
+    summary: string | null;
+    /** Last activity — JSONL file mtime. */
+    timestamp: number;
+};
+
+export type ClaudeListNativeSessionsResult =
+    | { type: 'success'; sessions: NativeClaudeSession[] }
+    | { type: 'error'; errorMessage: string };
+
+/**
+ * List the machine's native Claude conversations straight from the on-disk
+ * JSONL files — including ones that never went through Happy. Omit
+ * `directory` to list every project on the machine; pass one to scope the
+ * listing like Claude Code's own /resume does.
+ */
+export async function claudeListNativeSessions(
+    options: { machineId: string; directory?: string },
+): Promise<ClaudeListNativeSessionsResult> {
+    const { machineId, directory } = options;
+    try {
+        const result = await apiSocket.machineRPC<ClaudeListNativeSessionsResult, { directory?: string }>(
+            machineId,
+            'claude-list-native-sessions',
+            { directory },
+        );
+        return result;
+    } catch (error) {
+        return {
+            type: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Failed to list native sessions',
+        };
+    }
+}
+
+/**
+ * Spawn a fresh Happy session that mounts a native Claude conversation:
+ * `directory` must be the conversation's own cwd and `claudeSessionId` the
+ * UUID of its JSONL. The daemon replays the JSONL history into the new
+ * Happy session and starts claude with `--resume`, so the full
+ * conversation is visible and continuable from the app.
+ */
+export async function resumeNativeClaudeSession(options: {
+    machineId: string;
+    directory: string;
+    claudeSessionId: string;
+}): Promise<SpawnSessionResult> {
+    const { machineId, directory, claudeSessionId } = options;
+
+    const spawnResult = await machineSpawnNewSession({
+        machineId,
+        directory,
+        agent: 'claude',
+        approvedNewDirectoryCreation: false,
+        resumeClaudeSessionId: claudeSessionId,
+    });
+
+    if (spawnResult.type === 'success') {
+        try {
+            await sync.refreshSessions();
+        } catch {
+            // Refresh is best-effort; broadcast sync will still hydrate.
+        }
+    }
+
+    return spawnResult;
+}
+
 /**
  * Same as claudeForkSession, but truncates the copied JSONL right after the
  * line with `cutAfterUuid` (keeping the chosen message as the last entry,
@@ -493,15 +568,71 @@ export async function codexListRewindPoints(
     }
 }
 
+/**
+ * Everything the daemon needs to revive a session it has no memory of. The
+ * daemon cannot build this itself: reconnecting requires the per-session data
+ * key, and ~/.happy/access.key only holds the account *public* key, so a
+ * session the daemon did not create is undecryptable to it. The client is the
+ * only party holding the account secret, so it ships the key and the already
+ * decrypted metadata over the machine RPC — which is end-to-end encrypted with
+ * the machine key (apiSocket.machineRPC), the same key the daemon already has.
+ */
+type ResumeFallbackPayload = {
+    metadata: unknown;
+    metadataVersion: number;
+    agentStateVersion: number;
+    seq: number;
+    encryptionKey: string;
+    encryptionVariant: 'dataKey';
+};
+
+/**
+ * `fallback: undefined` disappears in JSON, so a client that cannot build one
+ * is indistinguishable on the wire from a client too old to know about it.
+ * The reason is always sent: the daemon puts it in the error message, which is
+ * the only place a user can see why an untracked session refused to resume.
+ */
+function buildResumeFallback(sessionId: string, machineId: string): { fallback?: ResumeFallbackPayload; reason: string } {
+    const session = storage.getState().sessions[sessionId];
+    if (!session || !session.metadata) {
+        return { reason: 'client-has-no-session-row' };
+    }
+    // Only the session's owning machine may receive its data key.
+    if (session.metadata.machineId !== machineId) {
+        return { reason: 'client-session-machine-mismatch' };
+    }
+    // Legacy sessions encrypt with the account master secret; that never
+    // leaves this device, so they stay resumable only while tracked.
+    const dataKey = sync.encryption.getSessionDataKey(sessionId);
+    if (!dataKey) {
+        return { reason: 'client-has-no-data-key' };
+    }
+    return {
+        reason: 'ok',
+        fallback: {
+            metadata: session.metadata,
+            metadataVersion: session.metadataVersion,
+            agentStateVersion: session.agentStateVersion,
+            seq: session.seq,
+            encryptionKey: encodeBase64(dataKey),
+            encryptionVariant: 'dataKey',
+        },
+    };
+}
+
 export async function machineResumeSession(options: ResumeSessionOptions & { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> {
     const { machineId, sessionId, model, permissionMode } = options;
 
     try {
-        const result = await apiSocket.machineRPC<SpawnSessionResult, { sessionId: string; model?: string; permissionMode?: string }>(
+        const { fallback, reason } = buildResumeFallback(sessionId, machineId);
+        const result = await apiSocket.machineRPC<SpawnSessionResult | { error: string }, { sessionId: string; model?: string; permissionMode?: string; fallback?: unknown; fallbackReason?: string }>(
             machineId,
             'resume-happy-session',
-            { sessionId, model, permissionMode },
+            { sessionId, model, permissionMode, fallback, fallbackReason: reason },
         );
+        if ('error' in result) {
+            return { type: 'error', errorMessage: result.error };
+        }
         return result;
     } catch (error) {
         return {

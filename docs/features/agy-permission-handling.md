@@ -7,9 +7,9 @@
 当底层代理准备执行需要确认的工具时，在客户端（如 Happy iOS）对话流中实时展示待审批工具卡片（`PermissionFooter`），支持用户点击“允许（Yes）”、“拒绝（No）”或“会话允许（Allow for session）”。
 
 ## 2. 核心入口
-- `packages/happy-cli/src/agy/permissionHandler.ts` (`AgyPermissionHandler`)：负责权限判定、自动审批规则、待决请求管理与 RPC 响应处理。
-- `packages/happy-cli/src/agy/runAgy.ts`：会话入口，初始化 `AgyPermissionHandler` 并挂载至 `session.rpcHandlerManager`，监听 `tool-call` / `tool-result` 事件并同步状态至 `agentState.requests`。
-- `packages/happy-cli/src/agy/AgyBackend.ts` & `AgySdkBackend.ts`：底层执行引擎，透传 `permissionHandler` 与当前权限模式配置。
+- `packages/happy-cli/src/agyStream/permissionHandler.ts` (`AgyPermissionHandler`)：负责权限判定、自动审批规则、待决请求管理与 RPC 响应处理。
+- `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts`：会话入口，初始化 `AgyPermissionHandler` 并挂载至 `session.rpcHandlerManager`，监听 `tool-call` / `tool-result` 事件并同步状态至 `agentState.requests`。
+- `packages/happy-cli/src/agyStream/AgyBackend.ts` & `AgySdkBackend.ts`：底层执行引擎，透传 `permissionHandler` 与当前权限模式配置。
 
 ## 3. 架构关系与数据流
 
@@ -76,7 +76,7 @@ sequenceDiagram
 - **掉线重连（Session Swap）**：通过 `updateSession(newSession)` 无缝重新绑定 RPC Handler 与 Session 句柄。
 
 ## 7. 测试验证方式
-- `packages/happy-cli/src/agy/permissionHandler.test.ts`：覆盖所有权限模式的自动审批规则、RPC 审批流程、`abortAll()` 与 `reset()` 容错行为。
+- `packages/happy-cli/src/agyStream/permissionHandler.test.ts`：覆盖所有权限模式的自动审批规则、RPC 审批流程、`abortAll()` 与 `reset()` 容错行为。
 - `pnpm --filter happy typecheck`：验证 TypeScript 类型完整性。
 
 ## 8. 变更记录

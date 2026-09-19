@@ -91,6 +91,11 @@ export default function RootLayout() {
                 name="session/[id]/message/[messageId]"
                 options={{
                     headerShown: true,
+                    // Use the shared plain title from the first frame, even
+                    // before the message has loaded. Never swap UIKit chrome
+                    // for a differently measured tool header after hydration.
+                    header: createPlainHeader,
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                     headerTitle: t('common.message')
                 }}
@@ -141,7 +146,9 @@ export default function RootLayout() {
                 name="session/[id]/changes"
                 options={{
                     headerShown: true,
+                    header: createPlainHeader,
                     headerTitle: t('sessionInfo.viewChanges'),
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -176,10 +183,20 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="onboarding/scan"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('onboarding.step', { step: 3, total: 3 }),
+                    headerTitleAlign: 'center',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="restore/index"
                 options={{
                     headerShown: true,
-                    headerTitle: t('navigation.linkNewDevice'),
+                    headerTitle: t('onboarding.restoreTitle'),
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -187,7 +204,8 @@ export default function RootLayout() {
                 name="restore/manual"
                 options={{
                     headerShown: true,
-                    headerTitle: t('navigation.restoreWithSecretKey'),
+                    headerTitle: t('onboarding.secretKeyTitle'),
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                 }}
             />

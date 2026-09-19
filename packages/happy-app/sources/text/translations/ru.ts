@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Russian plural helper function
@@ -291,6 +291,9 @@ export const ru: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Настройка сервера',
         enterServerUrl: 'Пожалуйста, введите URL сервера',
@@ -329,6 +332,9 @@ export const ru: TranslationStructure = {
         aiProvider: 'Поставщик ИИ',
         failedToCopyClaudeCodeSessionId: 'Не удалось скопировать ID сессии Claude Code',
         failedToCopyCodexThreadId: 'Не удалось скопировать ID треда Codex',
+        agyConversationId: 'ID диалога Antigravity',
+        agyConversationIdCopied: 'ID диалога Antigravity скопирован в буфер обмена',
+        failedToCopyAgyConversationId: 'Не удалось скопировать ID диалога Antigravity',
         metadataCopied: 'Метаданные скопированы в буфер обмена',
         failedToCopyMetadata: 'Не удалось скопировать метаданные',
         failedToKillSession: 'Не удалось завершить сессию',
@@ -383,6 +389,7 @@ export const ru: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Готовы к программированию?',
             installCli: 'Установите Happy CLI',
@@ -455,6 +462,13 @@ export const ru: TranslationStructure = {
         forkErrorMissingMetadata: 'Не хватает метаданных сессии для форка.',
         forkErrorGeneric: 'Не удалось форкнуть сессию.',
         forkClaudeOnly: 'Форк сейчас поддерживается только для Claude-сессий.',
+        resumeSheetTitle: 'Возобновить разговор',
+        resumeSheetSubtitle: 'Собственные разговоры Claude на этой машине, сначала новые',
+        resumeSheetConfirm: 'Возобновить',
+        resumeSheetEmpty: 'На этой машине не найдено собственных разговоров Claude',
+        resumeSheetNoPreview: 'Разговор без названия',
+        resumeClaudeOnly: 'Отсюда можно возобновлять только разговоры Claude.',
+        resumeErrorMissingMetadata: 'Не хватает метаданных сессии, необходимых для возобновления.',
     },
 
     commandPalette: {
@@ -867,6 +881,10 @@ export const ru: TranslationStructure = {
         friends: 'Друзья',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Мобильный клиент Codex и Claude Code',
@@ -931,6 +949,9 @@ export const ru: TranslationStructure = {
         unknownEvent: 'Неизвестное событие',
         usageLimitUntil: ({ time }: { time: string }) => `Лимит использования достигнут до ${time}`,
         sentAsGoal: 'Отправлено в качестве цели',
+        sendsAfterThisTurn: 'Будет отправлено после текущего ответа',
+        sending: 'Отправка…',
+        sendFailed: ({ reason }: { reason: string }) => `Не отправлено: ${reason}`,
         unknownTime: 'неизвестное время',
     },
 

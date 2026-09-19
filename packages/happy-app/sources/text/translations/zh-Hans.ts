@@ -5,7 +5,7 @@
  * - Functions with typed object parameters for dynamic text
  */
 
-import { TranslationStructure } from "../_default";
+import { en, type TranslationStructure } from "../_default";
 
 /**
  * Chinese plural helper function
@@ -330,6 +330,13 @@ export const zhHans: TranslationStructure = {
         forkErrorMissingMetadata: '缺少分叉所需的会话元数据。',
         forkErrorGeneric: '分叉会话失败。',
         forkClaudeOnly: '目前仅支持 Claude 会话的分叉。',
+        resumeSheetTitle: '恢复对话',
+        resumeSheetSubtitle: '这台机器上的原生 Claude 对话，按最近活动排序',
+        resumeSheetConfirm: '恢复',
+        resumeSheetEmpty: '这台机器上没有找到原生 Claude 对话',
+        resumeSheetNoPreview: '未命名对话',
+        resumeClaudeOnly: '这里只能恢复 Claude 对话。',
+        resumeErrorMissingMetadata: '缺少恢复会话所需的元数据。',
     },
 
     commandPalette: {
@@ -337,6 +344,9 @@ export const zhHans: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: '服务器配置',
         enterServerUrl: '请输入服务器 URL',
@@ -375,6 +385,9 @@ export const zhHans: TranslationStructure = {
         aiProvider: 'AI 提供商',
         failedToCopyClaudeCodeSessionId: '复制 Claude Code 会话 ID 失败',
         failedToCopyCodexThreadId: '复制 Codex 线程 ID 失败',
+        agyConversationId: 'Antigravity 会话 ID',
+        agyConversationIdCopied: 'Antigravity 会话 ID 已复制到剪贴板',
+        failedToCopyAgyConversationId: '复制 Antigravity 会话 ID 失败',
         metadataCopied: '元数据已复制到剪贴板',
         failedToCopyMetadata: '复制元数据失败',
         failedToKillSession: '终止会话失败',
@@ -430,6 +443,7 @@ export const zhHans: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: '准备开始编程？',
             installCli: '安装 Happy CLI',
@@ -862,6 +876,10 @@ export const zhHans: TranslationStructure = {
         friends: '好友',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Codex 和 Claude Code 移动客户端',
@@ -926,6 +944,9 @@ export const zhHans: TranslationStructure = {
         unknownEvent: '未知事件',
         usageLimitUntil: ({ time }: { time: string }) => `使用限制到 ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `未发送：${reason}`,
         unknownTime: '未知时间',
     },
 

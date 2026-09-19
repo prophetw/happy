@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Polish plural helper function
@@ -346,6 +346,13 @@ export const pl: TranslationStructure = {
         forkErrorMissingMetadata: 'Brak metadanych sesji wymaganych do rozwidlenia.',
         forkErrorGeneric: 'Nie udało się rozwidlić sesji.',
         forkClaudeOnly: 'Rozwidlenie jest obecnie obsługiwane tylko dla sesji Claude.',
+        resumeSheetTitle: 'Wznów rozmowę',
+        resumeSheetSubtitle: 'Natywne rozmowy Claude na tej maszynie, od najnowszych',
+        resumeSheetConfirm: 'Wznów',
+        resumeSheetEmpty: 'Nie znaleziono natywnych rozmów Claude na tej maszynie',
+        resumeSheetNoPreview: 'Rozmowa bez tytułu',
+        resumeClaudeOnly: 'Tutaj można wznawiać tylko rozmowy Claude.',
+        resumeErrorMissingMetadata: 'Brak metadanych sesji wymaganych do wznowienia.',
     },
 
     commandPalette: {
@@ -353,6 +360,9 @@ export const pl: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Konfiguracja serwera',
         enterServerUrl: 'Proszę wprowadzić URL serwera',
@@ -391,6 +401,9 @@ export const pl: TranslationStructure = {
         aiProvider: 'Dostawca AI',
         failedToCopyClaudeCodeSessionId: 'Nie udało się skopiować ID sesji Claude Code',
         failedToCopyCodexThreadId: 'Nie udało się skopiować ID wątku Codex',
+        agyConversationId: 'ID konwersacji Antigravity',
+        agyConversationIdCopied: 'ID konwersacji Antigravity skopiowane do schowka',
+        failedToCopyAgyConversationId: 'Nie udało się skopiować ID konwersacji Antigravity',
         metadataCopied: 'Metadane skopiowane do schowka',
         failedToCopyMetadata: 'Nie udało się skopiować metadanych',
         failedToKillSession: 'Nie udało się zakończyć sesji',
@@ -445,6 +458,7 @@ export const pl: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Gotowy do kodowania?',
             installCli: 'Zainstaluj Happy CLI',
@@ -877,6 +891,10 @@ export const pl: TranslationStructure = {
         friends: 'Przyjaciele',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Mobilny klient Codex i Claude Code',
@@ -941,6 +959,9 @@ export const pl: TranslationStructure = {
         unknownEvent: 'Nieznane zdarzenie',
         usageLimitUntil: ({ time }: { time: string }) => `Osiągnięto limit użycia do ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Nie wysłano: ${reason}`,
         unknownTime: 'nieznany czas',
     },
 

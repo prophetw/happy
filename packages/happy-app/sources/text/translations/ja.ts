@@ -5,7 +5,7 @@
  * - Functions with typed object parameters for dynamic text
  */
 
-import { TranslationStructure } from "../_default";
+import { en, type TranslationStructure } from "../_default";
 
 /**
  * Japanese plural helper function
@@ -330,6 +330,13 @@ export const ja: TranslationStructure = {
         forkErrorMissingMetadata: 'フォークに必要なセッションのメタデータがありません。',
         forkErrorGeneric: 'セッションのフォークに失敗しました。',
         forkClaudeOnly: 'フォークは現在 Claude セッションのみ対応しています。',
+        resumeSheetTitle: '会話を再開',
+        resumeSheetSubtitle: 'このマシンのネイティブな Claude の会話（新しい順）',
+        resumeSheetConfirm: '再開',
+        resumeSheetEmpty: 'このマシンにネイティブな Claude の会話が見つかりません',
+        resumeSheetNoPreview: '無題の会話',
+        resumeClaudeOnly: 'ここから再開できるのは Claude の会話のみです。',
+        resumeErrorMissingMetadata: 'セッションを再開するのに必要なメタデータがありません。',
     },
 
     commandPalette: {
@@ -337,6 +344,9 @@ export const ja: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'サーバー設定',
         enterServerUrl: 'サーバーURLを入力してください',
@@ -375,6 +385,9 @@ export const ja: TranslationStructure = {
         aiProvider: 'AIプロバイダー',
         failedToCopyClaudeCodeSessionId: 'Claude Code Session IDのコピーに失敗しました',
         failedToCopyCodexThreadId: 'Codex Thread IDのコピーに失敗しました',
+        agyConversationId: 'Antigravity Conversation ID',
+        agyConversationIdCopied: 'Antigravity Conversation IDがクリップボードにコピーされました',
+        failedToCopyAgyConversationId: 'Antigravity Conversation IDのコピーに失敗しました',
         metadataCopied: 'メタデータがクリップボードにコピーされました',
         failedToCopyMetadata: 'メタデータのコピーに失敗しました',
         failedToKillSession: 'セッションの終了に失敗しました',
@@ -430,6 +443,7 @@ export const ja: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'コーディングを始めますか？',
             installCli: 'Happy CLIをインストール',
@@ -862,6 +876,10 @@ export const ja: TranslationStructure = {
         friends: '友達',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'CodexとClaude Codeのモバイルクライアント',
@@ -926,6 +944,9 @@ export const ja: TranslationStructure = {
         unknownEvent: '不明なイベント',
         usageLimitUntil: ({ time }: { time: string }) => `${time}まで使用制限中`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `未送信: ${reason}`,
         unknownTime: '不明な時間',
     },
 

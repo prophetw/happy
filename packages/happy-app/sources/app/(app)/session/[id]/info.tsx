@@ -336,15 +336,15 @@ function SessionInfoContent({ session }: { session: Session }) {
                     )}
                     {session.metadata?.agyConversationId && (
                         <Item
-                            title="Antigravity Conversation ID"
+                            title={t('sessionInfo.agyConversationId')}
                             subtitle={`${session.metadata.agyConversationId.substring(0, 8)}...${session.metadata.agyConversationId.substring(session.metadata.agyConversationId.length - 8)}`}
                             icon={<Ionicons name="hardware-chip-outline" size={29} color="#4285F4" />}
                             onPress={async () => {
                                 try {
                                     await Clipboard.setStringAsync(session.metadata!.agyConversationId!);
-                                    Modal.alert(t('common.success'), 'Antigravity Conversation ID copied to clipboard');
+                                    Modal.alert(t('common.success'), t('sessionInfo.agyConversationIdCopied'));
                                 } catch (error) {
-                                    Modal.alert(t('common.error'), 'Failed to copy Antigravity Conversation ID');
+                                    Modal.alert(t('common.error'), t('sessionInfo.failedToCopyAgyConversationId'));
                                 }
                             }}
                         />
@@ -632,7 +632,7 @@ export default React.memo(() => {
         : isDataReady
             ? t('errors.sessionDeleted')
             : '';
-    const screenOptions = <Stack.Screen options={{ headerTitle: screenTitle, headerTitleAlign: 'left' }} />;
+    const screenOptions = <Stack.Screen options={{ headerTitle: screenTitle, headerTitleAlign: 'center' }} />;
 
     // Handle three states: loading, deleted, and exists
     if (!isDataReady) {

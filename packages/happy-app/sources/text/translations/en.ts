@@ -343,6 +343,13 @@ export const en: TranslationStructure = {
         forkErrorMissingMetadata: 'Missing session metadata required to fork.',
         forkErrorGeneric: 'Failed to fork the session.',
         forkClaudeOnly: 'Fork is currently only supported for Claude sessions.',
+        resumeSheetTitle: 'Resume a conversation',
+        resumeSheetSubtitle: 'Native Claude conversations on this machine, newest first',
+        resumeSheetConfirm: 'Resume',
+        resumeSheetEmpty: 'No native Claude conversations found on this machine',
+        resumeSheetNoPreview: 'Untitled conversation',
+        resumeClaudeOnly: 'Only Claude conversations can be resumed from here.',
+        resumeErrorMissingMetadata: 'Missing session metadata required to resume.',
     },
 
     commandPalette: {
@@ -352,6 +359,9 @@ export const en: TranslationStructure = {
     server: {
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Server Configuration',
+        title: 'Server',
+        serverUrlLabel: 'Server URL',
+        selfHostFooter: 'For self-hosted servers. Sign out and back in after changing it.',
         enterServerUrl: 'Please enter a server URL',
         notValidHappyServer: 'Not a valid Happy Server',
         changeServer: 'Change Server',
@@ -388,6 +398,9 @@ export const en: TranslationStructure = {
         aiProvider: 'AI Provider',
         failedToCopyClaudeCodeSessionId: 'Failed to copy Claude Code Session ID',
         failedToCopyCodexThreadId: 'Failed to copy Codex Thread ID',
+        agyConversationId: 'Antigravity Conversation ID',
+        agyConversationIdCopied: 'Antigravity Conversation ID copied to clipboard',
+        failedToCopyAgyConversationId: 'Failed to copy Antigravity Conversation ID',
         metadataCopied: 'Session metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy session metadata',
         failedToKillSession: 'Failed to kill session',
@@ -444,6 +457,11 @@ export const en: TranslationStructure = {
     components: {
         emptyMainScreen: {
             // Used by EmptyMainScreen component
+            connectComputer: 'Connect your computer',
+            desktopSetupInstructions: 'Install Happy Desktop from happy.engineering. In desktop setup, choose “I have the app open,” then scan the device-linking QR code here.',
+            harnessDescription: 'Use Claude Code or Codex, or try Happy Harness. Your account stays linked across your computer and phone.',
+            getDesktop: 'Get Happy Desktop',
+            terminalAlternative: 'Prefer the terminal? Set up Happy CLI',
             readyToCode: 'Ready to code?',
             installCli: 'Install the Happy CLI',
             runIt: 'Run it',
@@ -884,6 +902,37 @@ export const en: TranslationStructure = {
         loginWithMobileApp: 'Login with mobile app',
     },
 
+    onboarding: {
+        // Three-step first run on phones: welcome, install, scan.
+        step: ({ step, total }: { step: number; total: number }) => `Step ${step} of ${total}`,
+        headline: 'Run Claude Code and Codex from your phone',
+        tagline: 'End-to-end encrypted. No email, no password.',
+        getStarted: 'Get Started',
+        restoreExisting: 'Restore an existing account',
+        installTitle: 'Install Happy Desktop',
+        installBodyPrefix: 'On your computer, download it from ',
+        installBodyLink: 'happy.engineering',
+        installBodySuffix: '.',
+        installedDesktop: 'Desktop app installed',
+        useTerminal: 'Use the terminal instead',
+        useDesktop: 'Use the desktop app instead',
+        continue: 'Continue',
+        scanTitle: 'Scan the QR code',
+        scanBody: 'Point your camera at the code on your computer.',
+        scanButton: 'Scan QR Code',
+        pasteLink: 'Paste the link instead',
+        pasteLinkTitle: 'Paste Link',
+        pasteLinkMessage: 'Paste the link shown on your computer.',
+        connecting: 'Connecting…',
+        restoreTitle: 'Restore Account',
+        restoreScan: 'Scan this code with your other phone.',
+        restoreScanPath: 'Happy › Settings › Account › Link New Device',
+        restoreUseKey: 'Use a secret key instead',
+        secretKeyTitle: 'Secret Key',
+        secretKeyBody: 'Paste your secret key. It is in Happy › Settings › Account on your other device.',
+        restoreButton: 'Restore',
+    },
+
     review: {
         // Used by utils/requestReview.ts
         enjoyingApp: 'Enjoying the app?',
@@ -900,7 +949,7 @@ export const en: TranslationStructure = {
     machine: {
         launchNewSessionInDirectory: 'Launch New Session in Directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
-        offlineHelp: '• Make sure your computer is online\n• Run `happy daemon status` to diagnose\n• Are you running the latest CLI version? Upgrade with `npm install -g happy@latest`',
+        offlineHelp: '• Run `happy daemon start` on your computer\n• Make sure your computer is online\n• Run `happy daemon status` to diagnose\n• Are you running the latest CLI version? Upgrade with `npm install -g happy@latest`',
         daemon: 'Daemon',
         status: 'Status',
         stopDaemon: 'Stop Daemon',
@@ -939,6 +988,9 @@ export const en: TranslationStructure = {
         unknownEvent: 'Unknown event',
         usageLimitUntil: ({ time }: { time: string }) => `Usage limit reached until ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Not sent: ${reason}`,
         unknownTime: 'unknown time',
     },
 
