@@ -330,6 +330,13 @@ export const ja: TranslationStructure = {
         forkErrorMissingMetadata: 'フォークに必要なセッションのメタデータがありません。',
         forkErrorGeneric: 'セッションのフォークに失敗しました。',
         forkClaudeOnly: 'フォークは現在 Claude セッションのみ対応しています。',
+        resumeSheetTitle: '会話を再開',
+        resumeSheetSubtitle: 'このマシンのネイティブな Claude の会話（新しい順）',
+        resumeSheetConfirm: '再開',
+        resumeSheetEmpty: 'このマシンにネイティブな Claude の会話が見つかりません',
+        resumeSheetNoPreview: '無題の会話',
+        resumeClaudeOnly: 'ここから再開できるのは Claude の会話のみです。',
+        resumeErrorMissingMetadata: 'セッションを再開するのに必要なメタデータがありません。',
     },
 
     commandPalette: {

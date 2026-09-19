@@ -398,6 +398,80 @@ export async function claudeListRewindPoints(
     }
 }
 
+export type NativeClaudeSession = {
+    /** Claude session UUID — passed to `claude --resume <uuid>`. */
+    sessionId: string;
+    /** Working directory the conversation belongs to (from JSONL rows). */
+    cwd: string;
+    gitBranch: string | null;
+    firstUserMessage: string | null;
+    summary: string | null;
+    /** Last activity — JSONL file mtime. */
+    timestamp: number;
+};
+
+export type ClaudeListNativeSessionsResult =
+    | { type: 'success'; sessions: NativeClaudeSession[] }
+    | { type: 'error'; errorMessage: string };
+
+/**
+ * List the machine's native Claude conversations straight from the on-disk
+ * JSONL files — including ones that never went through Happy. Omit
+ * `directory` to list every project on the machine; pass one to scope the
+ * listing like Claude Code's own /resume does.
+ */
+export async function claudeListNativeSessions(
+    options: { machineId: string; directory?: string },
+): Promise<ClaudeListNativeSessionsResult> {
+    const { machineId, directory } = options;
+    try {
+        const result = await apiSocket.machineRPC<ClaudeListNativeSessionsResult, { directory?: string }>(
+            machineId,
+            'claude-list-native-sessions',
+            { directory },
+        );
+        return result;
+    } catch (error) {
+        return {
+            type: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Failed to list native sessions',
+        };
+    }
+}
+
+/**
+ * Spawn a fresh Happy session that mounts a native Claude conversation:
+ * `directory` must be the conversation's own cwd and `claudeSessionId` the
+ * UUID of its JSONL. The daemon replays the JSONL history into the new
+ * Happy session and starts claude with `--resume`, so the full
+ * conversation is visible and continuable from the app.
+ */
+export async function resumeNativeClaudeSession(options: {
+    machineId: string;
+    directory: string;
+    claudeSessionId: string;
+}): Promise<SpawnSessionResult> {
+    const { machineId, directory, claudeSessionId } = options;
+
+    const spawnResult = await machineSpawnNewSession({
+        machineId,
+        directory,
+        agent: 'claude',
+        approvedNewDirectoryCreation: false,
+        resumeClaudeSessionId: claudeSessionId,
+    });
+
+    if (spawnResult.type === 'success') {
+        try {
+            await sync.refreshSessions();
+        } catch {
+            // Refresh is best-effort; broadcast sync will still hydrate.
+        }
+    }
+
+    return spawnResult;
+}
+
 /**
  * Same as claudeForkSession, but truncates the copied JSONL right after the
  * line with `cutAfterUuid` (keeping the chosen message as the last entry,

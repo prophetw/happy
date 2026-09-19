@@ -330,6 +330,13 @@ export const zhHans: TranslationStructure = {
         forkErrorMissingMetadata: '缺少分叉所需的会话元数据。',
         forkErrorGeneric: '分叉会话失败。',
         forkClaudeOnly: '目前仅支持 Claude 会话的分叉。',
+        resumeSheetTitle: '恢复对话',
+        resumeSheetSubtitle: '这台机器上的原生 Claude 对话，按最近活动排序',
+        resumeSheetConfirm: '恢复',
+        resumeSheetEmpty: '这台机器上没有找到原生 Claude 对话',
+        resumeSheetNoPreview: '未命名对话',
+        resumeClaudeOnly: '这里只能恢复 Claude 对话。',
+        resumeErrorMissingMetadata: '缺少恢复会话所需的元数据。',
     },
 
     commandPalette: {

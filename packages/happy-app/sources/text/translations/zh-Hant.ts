@@ -329,6 +329,13 @@ export const zhHant: TranslationStructure = {
         forkErrorMissingMetadata: '缺少分叉所需的會話元資料。',
         forkErrorGeneric: '分叉會話失敗。',
         forkClaudeOnly: '目前僅支援 Claude 會話的分叉。',
+        resumeSheetTitle: '恢復對話',
+        resumeSheetSubtitle: '這台機器上的原生 Claude 對話，依最近活動排序',
+        resumeSheetConfirm: '恢復',
+        resumeSheetEmpty: '這台機器上沒有找到原生 Claude 對話',
+        resumeSheetNoPreview: '未命名對話',
+        resumeClaudeOnly: '這裡只能恢復 Claude 對話。',
+        resumeErrorMissingMetadata: '缺少恢復工作階段所需的元數據。',
     },
 
     commandPalette: {

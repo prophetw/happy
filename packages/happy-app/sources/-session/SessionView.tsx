@@ -17,6 +17,7 @@ import {
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/ChatHeaderView';
 import { ChatList } from '@/components/ChatList';
+import { ResumeNativeSessionSheet } from '@/components/ResumeNativeSessionSheet';
 import { Deferred } from '@/components/Deferred';
 import { EmptyMessages } from '@/components/EmptyMessages';
 import { Avatar } from '@/components/Avatar';
@@ -844,6 +845,16 @@ export function SessionViewLoaded({
         if (sendingSessionsRef.current.has(sessionId)) return;
         const composer = composerHandleRef.current;
         const liveMessage = composer?.getMessage() ?? '';
+        // Chat-local slash command: list the machine's native Claude
+        // conversations and mount the chosen one into a fresh Happy session.
+        if (liveMessage.trim() === '/resume' && flavor === 'claude') {
+            composer?.clearMessage();
+            Modal.show({
+                component: ResumeNativeSessionSheet,
+                props: { sessionId },
+            } as any);
+            return;
+        }
         if (liveMessage.trim() || selectedImages.length > 0) {
             const attachments = selectedImages.length > 0 ? selectedImages : undefined;
             const communicationsToDismiss = [...pendingCommunications];
@@ -884,7 +895,7 @@ export function SessionViewLoaded({
                 }
             })();
         }
-    }, [sessionId, selectedImages, removeImage, pendingCommunications]);
+    }, [sessionId, selectedImages, removeImage, pendingCommunications, flavor]);
 
     const handleAbort = React.useCallback(() => {
         // Stop cancels only the active turn. Permission, model, and effort are

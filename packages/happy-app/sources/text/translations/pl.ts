@@ -346,6 +346,13 @@ export const pl: TranslationStructure = {
         forkErrorMissingMetadata: 'Brak metadanych sesji wymaganych do rozwidlenia.',
         forkErrorGeneric: 'Nie udało się rozwidlić sesji.',
         forkClaudeOnly: 'Rozwidlenie jest obecnie obsługiwane tylko dla sesji Claude.',
+        resumeSheetTitle: 'Wznów rozmowę',
+        resumeSheetSubtitle: 'Natywne rozmowy Claude na tej maszynie, od najnowszych',
+        resumeSheetConfirm: 'Wznów',
+        resumeSheetEmpty: 'Nie znaleziono natywnych rozmów Claude na tej maszynie',
+        resumeSheetNoPreview: 'Rozmowa bez tytułu',
+        resumeClaudeOnly: 'Tutaj można wznawiać tylko rozmowy Claude.',
+        resumeErrorMissingMetadata: 'Brak metadanych sesji wymaganych do wznowienia.',
     },
 
     commandPalette: {

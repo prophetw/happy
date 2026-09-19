@@ -329,6 +329,13 @@ export const ca: TranslationStructure = {
         forkErrorMissingMetadata: 'Falten metadades de la sessió necessàries per bifurcar.',
         forkErrorGeneric: 'No s\'ha pogut bifurcar la sessió.',
         forkClaudeOnly: 'La bifurcació només està disponible per a sessions de Claude.',
+        resumeSheetTitle: 'Reprèn la conversa',
+        resumeSheetSubtitle: 'Converses natives de Claude en aquesta màquina, primer les més recents',
+        resumeSheetConfirm: 'Reprèn',
+        resumeSheetEmpty: 'No s\'han trobat converses natives de Claude en aquesta màquina',
+        resumeSheetNoPreview: 'Conversa sense títol',
+        resumeClaudeOnly: 'Aquí només es poden reprendre converses de Claude.',
+        resumeErrorMissingMetadata: 'Falten metadades de la sessió necessàries per reprendre.',
     },
 
     commandPalette: {
