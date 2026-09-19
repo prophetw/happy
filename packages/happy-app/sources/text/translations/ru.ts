@@ -474,6 +474,7 @@ export const ru: TranslationStructure = {
             auto: 'решает сам, спрашивает при сомнении',
             default: 'По умолчанию',
             agyDefault: 'песочница agy, без запросов',
+            dshDefault: 'спрашивает на телефоне',
             openclawInert: 'не применяется в openclaw',
             acceptEdits: 'Принимать правки',
             plan: 'Режим планирования',

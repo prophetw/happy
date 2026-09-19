@@ -17,18 +17,18 @@ export const EditViewFull = React.memo<EditViewFullProps>(({ tool, metadata }) =
     // Parse the input
     let oldString = '';
     let newString = '';
-    const parsed = knownTools.Edit.input.safeParse(input);
-    if (parsed.success) {
-        oldString = parsed.data.old_string || '';
-        newString = parsed.data.new_string || '';
+    const parsed = knownTools.Edit.input?.safeParse(input);
+    if (parsed?.success) {
+        oldString = (parsed.data as any).old_string || '';
+        newString = (parsed.data as any).new_string || '';
     }
 
     return (
         <View style={toolFullViewStyles.sectionFullWidth}>
-            <ToolDiffView 
-                oldText={oldString} 
-                newText={newString} 
-                fileName={parsed.success ? parsed.data.file_path : undefined}
+            <ToolDiffView
+                oldText={oldString}
+                newText={newString}
+                fileName={parsed?.success ? (parsed.data as any).file_path : undefined}
                 style={{ width: '100%' }}
                 showLineNumbers={true}
                 showPlusMinusSymbols={true}

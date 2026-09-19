@@ -34,9 +34,13 @@ const mocks = vi.hoisted(() => {
     setModelCalls: [] as string[],
     startSessionMessages: [] as any[],
     sendPromptError: null as Error | null,
+    sendPromptStatusErrorDetail: null as string | null,
     startSessionCalls: 0,
     cancelCalls: [] as string[],
     disposeCalls: 0,
+    hangPrompt: false,
+    hangPromptResolve: null as (() => void) | null,
+    hangPromptReject: null as ((error: Error) => void) | null,
     constructorArgs: null as any,
   };
 
@@ -120,6 +124,7 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 vi.mock('./AcpBackend', () => ({
+  USER_CANCELLED_DETAIL: 'Cancelled by user',
   AcpBackend: class MockAcpBackend {
     constructor(args: any) {
       mocks.backendState.constructorArgs = args;
@@ -148,6 +153,18 @@ vi.mock('./AcpBackend', () => ({
       if (mocks.backendState.sendPromptError) {
         throw mocks.backendState.sendPromptError;
       }
+      if (mocks.backendState.sendPromptStatusErrorDetail) {
+        for (const listener of mocks.backendState.listeners) {
+          listener({ type: 'status', status: 'error', detail: mocks.backendState.sendPromptStatusErrorDetail });
+        }
+        return;
+      }
+      if (mocks.backendState.hangPrompt) {
+        return new Promise<void>((resolve, reject) => {
+          mocks.backendState.hangPromptResolve = resolve;
+          mocks.backendState.hangPromptReject = reject;
+        });
+      }
       for (const listener of mocks.backendState.listeners) {
         listener({ type: 'status', status: 'running' });
         listener({ type: 'model-output', textDelta: 'hello' });
@@ -175,7 +192,7 @@ vi.mock('./AcpBackend', () => ({
     async cancel(sessionId: string) {
       mocks.backendState.cancelCalls.push(sessionId);
       for (const listener of mocks.backendState.listeners) {
-        listener({ type: 'status', status: 'stopped' });
+        listener({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
       }
     }
 
@@ -206,9 +223,13 @@ describe('runAcp', () => {
     mocks.backendState.setModelCalls = [];
     mocks.backendState.startSessionMessages = [];
     mocks.backendState.sendPromptError = null;
+    mocks.backendState.sendPromptStatusErrorDetail = null;
     mocks.backendState.startSessionCalls = 0;
     mocks.backendState.cancelCalls = [];
     mocks.backendState.disposeCalls = 0;
+    mocks.backendState.hangPrompt = false;
+    mocks.backendState.hangPromptResolve = null;
+    mocks.backendState.hangPromptReject = null;
     mocks.backendState.constructorArgs = null;
 
     mocks.mockApiCreate.mockResolvedValue({
@@ -452,7 +473,7 @@ describe('runAcp', () => {
     expect(mocks.backendState.disposeCalls).toBe(1);
   });
 
-  it('surfaces a prompt exception when no backend error status was emitted', async () => {
+  it('surfaces a prompt exception and keeps the runner alive for later turns', async () => {
     mocks.backendState.sendPromptError = new Error('model switch failed');
     const runPromise = runAcp({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
@@ -460,10 +481,6 @@ describe('runAcp', () => {
       command: 'opencode',
       args: ['acp'],
     });
-    const runOutcome = runPromise.then(
-      () => null,
-      (error: unknown) => error,
-    );
 
     await vi.waitFor(() => {
       expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
@@ -473,11 +490,198 @@ describe('runAcp', () => {
       content: { type: 'text', text: 'Use that model' },
     });
 
-    expect(await runOutcome).toMatchObject({ message: 'model switch failed' });
-    expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
-      type: 'message',
-      message: 'opencode error: model switch failed',
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
+        type: 'message',
+        message: 'opencode error: model switch failed',
+      });
     });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+
+    // A later turn succeeds: the runner must still be waiting for messages.
+    mocks.backendState.sendPromptError = null;
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Try again' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts.map((entry) => entry.prompt)).toContain('Try again');
+    });
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+    });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+    expect(mocks.backendState.disposeCalls).toBe(0);
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+  });
+
+  it('keeps the runner alive when the backend reports an error status mid-session', async () => {
+    mocks.backendState.sendPromptStatusErrorDetail = 'turn failed: effort not supported';
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'opencode',
+      command: 'opencode',
+      args: ['acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'hello' },
+    });
+
+    // The failure lands as a service envelope inside the failed turn.
+    await vi.waitFor(() => {
+      const serviceEnvelope = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+        .map((call) => call[0])
+        .find((envelope) => envelope?.ev?.t === 'service');
+      expect(serviceEnvelope?.ev?.text).toBe('Error: turn failed: effort not supported');
+    });
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+    });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+    expect(mocks.backendState.disposeCalls).toBe(0);
+
+    mocks.backendState.sendPromptStatusErrorDetail = null;
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'retry' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts.map((entry) => entry.prompt)).toContain('retry');
+    });
+    await vi.waitFor(() => {
+      expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+    });
+    expect(mocks.mockSession.close).not.toHaveBeenCalled();
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+  });
+
+  it('ends the turn as cancelled on user abort and keeps the session alive for the next message', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      mocks.backendState.hangPrompt = true;
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'dsh',
+        command: 'dsh',
+        args: ['--profile', 'acp'],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+      });
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text: 'long running task' },
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts).toHaveLength(1);
+      });
+
+      const abortHandler = mocks.sessionHandlers.get('abort');
+      await abortHandler!({});
+
+      // In production the cancel RPC round-trip means the agent's prompt
+      // response lands several event-loop turns after the stop signal; the
+      // rejection raised by the stop signal must not be left unhandled in
+      // between (that crash exits the runner right after the abort).
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+
+      // The agent settles the in-flight prompt RPC in response to the cancel
+      mocks.backendState.hangPromptResolve?.();
+
+      await vi.waitFor(() => {
+        const turnEndStatuses = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+          .map((call) => call[0]?.ev)
+          .filter((ev) => ev?.t === 'turn-end')
+          .map((ev) => ev.status);
+        expect(turnEndStatuses).toEqual(['cancelled']);
+      });
+      await vi.waitFor(() => {
+        expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+      });
+      // A user cancel is not an agent error and must not tear the runner down
+      for (const call of mocks.mockSession.sendSessionEvent.mock.calls) {
+        expect(String(call[0]?.message ?? '')).not.toContain('error');
+      }
+      expect(mocks.mockSession.close).not.toHaveBeenCalled();
+      expect(mocks.backendState.disposeCalls).toBe(0);
+
+      // The conversation continues: the next prompt runs to completion.
+      mocks.backendState.hangPrompt = false;
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text: 'keep going' },
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts.map((entry) => entry.prompt)).toContain('keep going');
+      });
+      await vi.waitFor(() => {
+        const turnEndStatuses = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+          .map((call) => call[0]?.ev)
+          .filter((ev) => ev?.t === 'turn-end')
+          .map((ev) => ev.status);
+        expect(turnEndStatuses).toEqual(['cancelled', 'completed']);
+      });
+      expect(mocks.mockSession.close).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('still tears the runner down when the agent process exits mid-session', async () => {
+    mocks.backendState.hangPrompt = true;
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'long running task' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    // Agent process death arrives as a stopped status without the user-cancel marker;
+    // the dying agent also settles the in-flight prompt RPC with a failure
+    for (const listener of mocks.backendState.listeners) {
+      listener({ type: 'status', status: 'stopped', detail: 'Exit code: 1' });
+    }
+    mocks.backendState.hangPromptReject?.(new Error('connection closed'));
+
+    await runPromise;
+
+    expect(mocks.mockSession.close).toHaveBeenCalled();
+    expect(mocks.backendState.disposeCalls).toBe(1);
   });
 
   it('updates session metadata with ACP config options (models and operating modes)', async () => {
@@ -690,5 +894,112 @@ describe('runAcp', () => {
     expect(mocks.backendState.setConfigOptionCalls).toEqual([]);
     expect(mocks.backendState.setModeCalls).toEqual([]);
     expect(mocks.backendState.setModelCalls).toEqual([]);
+  });
+
+  it('switches dsh thought level through its reasoning_effort config option and back to the provider default', async () => {
+    // dsh's ACP profile advertises reasoning as a thought_level-category
+    // select whose values are provider effort names; the provider default is
+    // the empty-string option.
+    mocks.backendState.startSessionMessages = [
+      {
+        type: 'event',
+        name: 'config_options_update',
+        payload: {
+          configOptions: [
+            {
+              type: 'select',
+              id: 'reasoning_effort',
+              name: 'Reasoning Effort',
+              category: 'thought_level',
+              currentValue: '',
+              options: [
+                { value: '', name: 'Provider default' },
+                { value: 'low', name: 'Low' },
+                { value: 'high', name: 'High' },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Reason harder' },
+      meta: { effort: 'high' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Back to default' },
+      meta: { effort: null },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(2);
+    });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+
+    expect(mocks.backendState.setConfigOptionCalls).toEqual([
+      { configId: 'reasoning_effort', value: 'high' },
+      { configId: 'reasoning_effort', value: '' },
+    ]);
+  });
+
+  it('auto-approves dsh tool permission requests locally once the app asks for bypassPermissions', async () => {
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.constructorArgs).toBeTruthy();
+    });
+
+    const permissionHandler = mocks.backendState.constructorArgs.permissionHandler;
+
+    // Default mode: the request is forwarded to the app and stays pending.
+    const pending = permissionHandler.handleToolCall('tool-0', 'Bash', { command: 'ls' });
+    pending.catch(() => {});
+    await expect(Promise.race([pending, Promise.resolve('still-pending')])).resolves.toBe('still-pending');
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Yolo mode' },
+      meta: { permissionMode: 'bypassPermissions' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    await expect(permissionHandler.handleToolCall('tool-1', 'Bash', { command: 'rm -rf build' }))
+      .resolves.toEqual({ decision: 'approved' });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
   });
 });

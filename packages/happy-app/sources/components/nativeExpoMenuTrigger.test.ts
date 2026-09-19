@@ -41,6 +41,7 @@ vi.mock('@expo/ui/swift-ui/modifiers', () => ({
     buttonStyle: (value: string) => ({ type: 'buttonStyle', value }),
     contentShape: (shape: unknown) => ({ type: 'contentShape', shape }),
     disabled: (value: boolean) => ({ type: 'disabled', value: { disabled: value } }),
+    environment: (value: unknown) => ({ type: 'environment', value }),
     font: (value: unknown) => ({ type: 'font', value }),
     frame: (value: unknown) => ({ type: 'frame', value }),
     foregroundColor: (value: string) => ({ type: 'foregroundColor', value }),
@@ -153,10 +154,11 @@ describe('iOS Expo-native menu triggers', () => {
         expect(icons[0].props.systemName).toBe('desktopcomputer');
     });
 
-    // The menu tint, not foregroundColor, is what paints a SwiftUI label. Once
-    // the label became the visible chip a fixed white turned every trigger
-    // invisible in light mode, so the tint has to track the theme.
-    it('paints both native triggers with the theme text color, not a fixed white', () => {
+    // The menu tint, not foregroundColor, is what paints a SwiftUI label.
+    // The focus backdrop behind NativeOptionsPicker follows the theme (light
+    // dim in light mode, dark dim in dark mode), so the picker tracks theme
+    // text color just like NativeSettingsMenu does over the composer chip.
+    it('paints native picker and settings triggers with theme text color', () => {
         const picker = render(React.createElement(NativeOptionsPicker, {
             title: 'Machine',
             triggerLabel: 'Mac',
@@ -167,6 +169,8 @@ describe('iOS Expo-native menu triggers', () => {
         }));
         expect(picker.root.findByType('ExpoMenu' as any).props.modifiers)
             .toContainEqual({ type: 'tint', value: THEME_TEXT_COLOR });
+        expect(picker.root.findByType('ExpoMenu' as any).props.modifiers)
+            .not.toContainEqual({ type: 'environment', value: { key: 'colorScheme', value: 'dark' } });
 
         const settings = render(React.createElement(NativeSettingsMenu, {
             accessibilityLabel: 'Model',

@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentMessage } from '@/agent/core';
-import { AcpBackend, type AcpPermissionHandler } from './AcpBackend';
-import { DefaultTransport } from '@/agent/transport';
+import { AcpBackend, USER_CANCELLED_DETAIL, type AcpPermissionHandler } from './AcpBackend';
+import { DefaultTransport, type TransportHandler } from '@/agent/transport';
 import { AcpSessionManager } from './AcpSessionManager';
 import type { SessionEnvelope } from '@slopus/happy-wire';
 import { logger } from '@/ui/logger';
@@ -31,6 +31,18 @@ import {
 import type { SessionConfigOption, SessionModeState, SessionModelState } from '@agentclientprotocol/sdk';
 
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Rejection marker for turns ended by the user's stop action. The runner
+ * reports the turn as cancelled (without an error message) and keeps waiting
+ * for the next user message.
+ */
+class TurnCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TurnCancelledError';
+  }
+}
 const ACP_EVENT_PREVIEW_CHARS = 240;
 const ACP_RAW_PREVIEW_CHARS = 2000;
 const ACP_COLOR_RESET = '\u001b[0m';
@@ -269,6 +281,7 @@ function formatEnvelopeForServerLog(agentName: string, envelope: SessionEnvelope
 type AcpSwitchMode = {
   permissionMode?: string;
   model?: string | null;
+  effort?: string | null;
 };
 
 type AcpSelectableOption = {
@@ -321,7 +334,7 @@ function flattenSelectOptions(options: unknown): AcpSelectableOption[] {
 
 function extractConfigSelector(
   configOptions: SessionConfigOption[],
-  category: 'mode' | 'model',
+  category: 'mode' | 'model' | 'thought_level',
 ): AcpConfigSelector | null {
   const optionMatchesCategory = (option: SessionConfigOption): boolean => {
     if (option.category === category) {
@@ -332,6 +345,10 @@ function extractConfigSelector(
     const name = normalizeComparable(option.name);
     if (category === 'model') {
       return id.includes('model') || name.includes('model');
+    }
+    if (category === 'thought_level') {
+      return id.includes('reasoning') || id.includes('effort') || id.includes('thought')
+        || name.includes('reasoning') || name.includes('effort') || name.includes('thought');
     }
     return id.includes('mode') || id.includes('permission') || name.includes('mode') || name.includes('permission');
   };
@@ -406,6 +423,12 @@ function resolveRequestedLegacyModelCode(models: SessionModelState, requested: s
 
 class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPermissionHandler {
   private readonly logPrefix: string;
+  /**
+   * Local auto-approval for permission modes like dsh's "allow all" that must
+   * not round-trip through the app on every tool call. dsh's ACP profile has
+   * no mode selector, so the mode the app sends can only be applied here.
+   */
+  private autoApprove = false;
 
   constructor(session: ApiSessionClient, agentName: string) {
     super(session);
@@ -416,7 +439,15 @@ class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPe
     return this.logPrefix;
   }
 
+  setAutoApprove(autoApprove: boolean): void {
+    this.autoApprove = autoApprove;
+  }
+
   async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+    if (this.autoApprove) {
+      logger.debug(`${this.logPrefix} Auto-approving tool (permission mode): ${toolName} (${toolCallId})`);
+      return { decision: 'approved' };
+    }
     return new Promise<PermissionResult>((resolve, reject) => {
       this.pendingRequests.set(toolCallId, {
         resolve,
@@ -436,12 +467,15 @@ type PendingTurn = {
   timeout: NodeJS.Timeout;
 };
 
-function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'acp' {
+function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'dsh' | 'acp' {
   if (agentName === 'gemini') {
     return 'gemini';
   }
   if (agentName === 'opencode') {
     return 'opencode';
+  }
+  if (agentName === 'dsh') {
+    return 'dsh';
   }
   return 'acp';
 }
@@ -453,6 +487,7 @@ export async function runAcp(opts: {
   args: string[];
   startedBy?: 'daemon' | 'terminal';
   verbose?: boolean;
+  transportHandler?: TransportHandler;
 }): Promise<void> {
   const verbose = opts.verbose === true;
   const sessionTag = randomUUID();
@@ -520,8 +555,10 @@ export async function runAcp(opts: {
   const messageQueue = new MessageQueue2<AcpSwitchMode>((mode) => hashObject(mode));
   let currentPermissionMode: string | undefined;
   let currentModel: string | null | undefined;
+  let currentEffort: string | null | undefined;
   let modeSelector: AcpConfigSelector | null = null;
   let modelSelector: AcpConfigSelector | null = null;
+  let thoughtLevelSelector: AcpConfigSelector | null = null;
   let legacyModes: SessionModeState | null = null;
   let legacyModels: SessionModelState | null = null;
   let sawSlashCommands = false;
@@ -543,7 +580,7 @@ export async function runAcp(opts: {
     args: opts.args,
     mcpServers,
     permissionHandler,
-    transportHandler: new DefaultTransport(opts.agentName),
+    transportHandler: opts.transportHandler ?? new DefaultTransport(opts.agentName),
     verbose,
   });
 
@@ -685,6 +722,31 @@ export async function runAcp(opts: {
     }
   };
 
+  const switchThoughtLevelIfRequested = async (requestedEffort: string | null): Promise<void> => {
+    if (!thoughtLevelSelector) {
+      return;
+    }
+
+    // null means "reset to default"; ACP providers that support a provider
+    // default expose it as an option (dsh uses the empty-string value).
+    const requested = requestedEffort ?? '';
+    const resolved = resolveRequestedCode(thoughtLevelSelector.options, requested);
+    if (resolved === null) {
+      if (requested !== '') {
+        logger.debug(`[${opts.agentName}] Ignoring unknown ACP thought level request: ${requestedEffort}`);
+      }
+      return;
+    }
+    if (resolved === thoughtLevelSelector.currentCode) {
+      return;
+    }
+
+    const switched = await backend.setSessionConfigOption(thoughtLevelSelector.configId, resolved);
+    if (switched) {
+      thoughtLevelSelector.currentCode = resolved;
+    }
+  };
+
   const onBackendMessage = (msg: AgentMessage) => {
     if (verbose) {
       logAcp('muted', `Outgoing raw backend message from ${opts.agentName}: ${formatUnknownForConsole(msg, ACP_RAW_PREVIEW_CHARS)}`);
@@ -723,6 +785,7 @@ export async function runAcp(opts: {
 
         modeSelector = extractConfigSelector(configOptions, 'mode');
         modelSelector = extractConfigSelector(configOptions, 'model');
+        thoughtLevelSelector = extractConfigSelector(configOptions, 'thought_level');
         if (verbose) {
           if (modeSelector) {
             sawModes = true;
@@ -816,8 +879,28 @@ export async function runAcp(opts: {
       if (msg.status === 'idle') {
         clearPendingTurn();
       }
-      if (msg.status === 'error' || msg.status === 'stopped') {
-        stopRunnerFromBackendStatus(msg.status, msg.detail);
+      if (msg.status === 'stopped') {
+        if (msg.detail === USER_CANCELLED_DETAIL) {
+          // User hit stop: end only the current turn. The ACP session and the
+          // runner stay alive so the conversation can continue.
+          clearPendingTurn(new TurnCancelledError(`${opts.agentName} cancelled by user`));
+        } else {
+          stopRunnerFromBackendStatus(msg.status, msg.detail);
+        }
+      } else if (msg.status === 'error') {
+        if (!acpSessionId) {
+          // Startup failure (e.g. the agent binary failed to spawn) leaves no
+          // usable ACP session, so the runner cannot continue.
+          stopRunnerFromBackendStatus(msg.status, msg.detail);
+        } else {
+          // Turn-scoped failure: reject the in-flight turn so the loop reports
+          // it, but keep the session alive — the backend process is still up
+          // and later turns may succeed.
+          const reason = msg.detail
+            ? `${opts.agentName} backend error: ${msg.detail}`
+            : `${opts.agentName} backend error`;
+          clearPendingTurn(new Error(reason));
+        }
       }
     }
 
@@ -848,6 +931,9 @@ export async function runAcp(opts: {
 
     if (typeof message.meta?.permissionMode === 'string') {
       currentPermissionMode = message.meta.permissionMode;
+      // dsh has no ACP mode selector; its "allow all" mode is enforced by
+      // locally auto-approving permission requests instead of switching modes.
+      permissionHandler.setAutoApprove(currentPermissionMode === 'bypassPermissions');
       logger.debug(`[${opts.agentName}] Requested ACP permission mode: ${currentPermissionMode}`);
     }
 
@@ -856,9 +942,15 @@ export async function runAcp(opts: {
       logger.debug(`[${opts.agentName}] Requested ACP model: ${currentModel ?? 'null'}`);
     }
 
+    if (message.meta && Object.prototype.hasOwnProperty.call(message.meta, 'effort')) {
+      currentEffort = message.meta.effort ?? null;
+      logger.debug(`[${opts.agentName}] Requested ACP thought level: ${currentEffort ?? 'default'}`);
+    }
+
     messageQueue.push(message.content.text, {
       permissionMode: currentPermissionMode,
       model: currentModel,
+      effort: currentEffort,
     });
   });
   session.keepAlive(thinking, 'remote');
@@ -925,12 +1017,20 @@ export async function runAcp(opts: {
       errorReportedForCurrentTurn = false;
       sendEnvelopes(sessionManager.startTurn());
       const turnEnded = waitForTurnEnd();
+      // The turn can be rejected (user cancel, backend error) while sendPrompt
+      // is still awaiting the agent's response; without an immediate handler
+      // that rejection is unhandled across RPC round-trips and crashes the
+      // process. The later `await turnEnded` still re-throws it.
+      turnEnded.catch(() => {});
       try {
         if (typeof batch.mode.permissionMode === 'string' && batch.mode.permissionMode.length > 0) {
           await switchPermissionModeIfRequested(batch.mode.permissionMode);
         }
         if (typeof batch.mode.model === 'string' && batch.mode.model.length > 0) {
           await switchModelIfRequested(batch.mode.model);
+        }
+        if (Object.prototype.hasOwnProperty.call(batch.mode, 'effort')) {
+          await switchThoughtLevelIfRequested(batch.mode.effort ?? null);
         }
         await backend.sendPrompt(acpSessionId, batch.message);
         await turnEnded;
@@ -940,6 +1040,12 @@ export async function runAcp(opts: {
           logAcp('muted', `Outgoing prompt completion from ${opts.agentName}`);
         }
       } catch (error) {
+        if (error instanceof TurnCancelledError) {
+          sendEnvelopes(sessionManager.endTurn('cancelled'));
+          session.sendSessionEvent({ type: 'ready' });
+          await turnEnded.catch(() => {});
+          continue;
+        }
         const detail = error instanceof Error ? error.message : String(error);
         if (!errorReportedForCurrentTurn) {
           session.sendSessionEvent({
@@ -953,7 +1059,7 @@ export async function runAcp(opts: {
         logAcp('error', `Prompt error from ${opts.agentName}: ${detail}`);
         clearPendingTurn(error instanceof Error ? error : new Error(String(error)));
         await turnEnded.catch(() => {});
-        throw error;
+        continue;
       }
     }
   } finally {

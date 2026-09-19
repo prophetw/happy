@@ -6,6 +6,7 @@ import { getShellControl, happyToolDisplay } from './happyToolDisplay';
 
 const TERMINAL_TOOL_NAMES = new Set([
     'Bash',
+    'bash',
     'CodexBash',
     'GeminiBash',
     'shell',
@@ -19,6 +20,7 @@ const EDIT_TOOL_NAMES = new Set([
     'Edit',
     'MultiEdit',
     'Write',
+    'write',
     'CodexPatch',
     'GeminiPatch',
     'edit',
@@ -32,6 +34,7 @@ const READ_TOOL_NAMES = new Set([
     'read',
     'NotebookRead',
     'LS',
+    'ls',
     'read_file',
     'read_agent_history',
     'view_image',
@@ -43,6 +46,7 @@ const READ_TOOL_NAMES = new Set([
 const SEARCH_TOOL_NAMES = new Set([
     'Grep',
     'Glob',
+    'glob',
     'grep',
     'search',
     'WebSearch',

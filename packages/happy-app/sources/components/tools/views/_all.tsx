@@ -38,6 +38,8 @@ export type ToolViewComponent = React.ComponentType<ToolViewProps>;
 export const toolViewRegistry: Record<string, ToolViewComponent> = {
     Edit: EditView,
     Bash: BashView,
+    // dsh and other lowercase-tool-name agents
+    bash: BashView,
     CodexBash: CodexBashView,
     CodexPatch: CodexPatchView,
     CodexDiff: CodexDiffView,

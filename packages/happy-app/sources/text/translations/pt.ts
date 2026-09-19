@@ -457,6 +457,7 @@ export const pt: TranslationStructure = {
             auto: 'decide sozinho, pergunta na dúvida',
             default: 'Padrão',
             agyDefault: 'sandbox do agy, sem perguntas',
+            dshDefault: 'pergunta no celular',
             openclawInert: 'não aplicado pelo openclaw',
             acceptEdits: 'Aceitar edições',
             plan: 'Modo de planejamento',

@@ -10,6 +10,7 @@ export const HARNESS_NAMES: Record<NewSessionAgentType, string> = {
     codex: 'Codex',
     rig: 'Happy',
     agy: 'Antigravity',
+    dsh: 'DeepSeek',
     gemini: 'Gemini',
     openclaw: 'OpenClaw',
 };
@@ -33,6 +34,7 @@ export const HARNESS_ORDER: readonly NewSessionAgentType[] = [
     'claude',
     'codex',
     'agy',
+    'dsh',
     'rig',
 ];
 
@@ -51,6 +53,16 @@ export function getHarnessName(key: NewSessionAgentType | string): string {
     return HARNESS_NAMES[key as NewSessionAgentType] ?? key;
 }
 
+/**
+ * Harnesses that are niche enough that an old or incomplete capability report
+ * must not advertise them speculatively — the daemon has to say the binary is
+ * installed before they show up.
+ */
+const EXPLICIT_REPORT_HARNESSES: ReadonlySet<NewSessionAgentType> = new Set([
+    'agy',
+    'dsh',
+]);
+
 /** Whether this machine has given the app enough evidence to offer a harness. */
 export function isHarnessAvailable({
     availability,
@@ -62,9 +74,7 @@ export function isHarnessAvailable({
     key: NewSessionAgentType;
 }): boolean {
     if (key === 'rig') return happyAgentAvailable;
-    // Antigravity is niche enough that an old or incomplete capability report
-    // must not advertise it speculatively. Its daemon has to say it is installed.
-    if (key === 'agy') return availability?.agy === true;
+    if (EXPLICIT_REPORT_HARNESSES.has(key)) return availability?.[key] === true;
     return !availability || availability[key] === true;
 }
 
@@ -76,9 +86,10 @@ export function isHarnessAvailable({
  * cannot. Two things keep the list from ever being empty — the current
  * selection is usually included, and a machine that reports no capabilities at
  * all (an older daemon, or none selected yet) falls back to the familiar
- * catalog. Antigravity is the exception to both fallbacks: it is only listed
- * after an explicit installation report. A retired harness is also exempt from
- * the first rule, because keeping it listed would strand someone on it.
+ * catalog. Antigravity and DeepSeek are the exception to both fallbacks: they
+ * are only listed after an explicit installation report. A retired harness is
+ * also exempt from the first rule, because keeping it listed would strand
+ * someone on it.
  */
 export function listAvailableHarnesses({
     availability,
@@ -90,10 +101,10 @@ export function listAvailableHarnesses({
     selected?: NewSessionAgentType | null;
 }): HarnessOption[] {
     const keys = HARNESS_ORDER.filter((key) => (
-        (key === selected && key !== 'agy')
+        (key === selected && !EXPLICIT_REPORT_HARNESSES.has(key))
         || isHarnessAvailable({ availability, happyAgentAvailable, key })
     ));
-    const fallback = HARNESS_ORDER.filter((key) => key !== 'agy');
+    const fallback = HARNESS_ORDER.filter((key) => !EXPLICIT_REPORT_HARNESSES.has(key));
     return (keys.length > 0 ? keys : fallback).map((key) => ({
         key,
         name: HARNESS_NAMES[key],

@@ -98,7 +98,22 @@ const taskLikeTool = {
     }).partial().passthrough()
 };
 
-export const knownTools = {
+type KnownToolEntry = {
+    title?: string | ((opts: { metadata: Metadata | null, tool: ToolCall }) => string);
+    icon: (size: number, color: string) => React.ReactNode;
+    noStatus?: boolean;
+    hideDefaultError?: boolean;
+    hidden?: boolean;
+    isMutable?: boolean;
+    input?: z.ZodObject<any>;
+    result?: z.ZodObject<any>;
+    minimal?: boolean | ((opts: { metadata: Metadata | null, tool: ToolCall, messages?: Message[] }) => boolean);
+    extractDescription?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string;
+    extractSubtitle?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string | null;
+    extractStatus?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string | null;
+};
+
+const canonicalTools = {
     'Task': taskLikeTool,
     'Agent': taskLikeTool,
     'Bash': {
@@ -991,20 +1006,19 @@ export const knownTools = {
         icon: ICON_SEARCH,
         hidden: true,
     }
-} satisfies Record<string, {
-    title?: string | ((opts: { metadata: Metadata | null, tool: ToolCall }) => string);
-    icon: (size: number, color: string) => React.ReactNode;
-    noStatus?: boolean;
-    hideDefaultError?: boolean;
-    hidden?: boolean;
-    isMutable?: boolean;
-    input?: z.ZodObject<any>;
-    result?: z.ZodObject<any>;
-    minimal?: boolean | ((opts: { metadata: Metadata | null, tool: ToolCall, messages?: Message[] }) => boolean);
-    extractDescription?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string;
-    extractSubtitle?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string | null;
-    extractStatus?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string | null;
-}>;
+} satisfies Record<string, KnownToolEntry>;
+
+// Lowercase aliases for agents whose ACP adapter reports the tool id in the
+// title field (e.g. dsh sends tool_call title "bash"/"glob"). Aliased names
+// share the canonical PascalCase entries above so they render the same cards.
+export const knownTools: Record<string, KnownToolEntry> = {
+    ...canonicalTools,
+    bash: canonicalTools.Bash,
+    glob: canonicalTools.Glob,
+    grep: canonicalTools.Grep,
+    ls: canonicalTools.LS,
+    write: canonicalTools.Write,
+};
 
 /**
  * Check if a tool is mutable (can potentially modify files)

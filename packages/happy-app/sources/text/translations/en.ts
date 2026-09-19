@@ -476,6 +476,7 @@ export const en: TranslationStructure = {
             auto: 'asks when unsure',
             default: 'harness setting',
             agyDefault: 'agy sandbox',
+            dshDefault: 'asks on phone',
             openclawInert: 'not applied',
             acceptEdits: 'edits, no asking',
             plan: 'plan first',

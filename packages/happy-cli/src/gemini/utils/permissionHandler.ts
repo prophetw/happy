@@ -120,22 +120,6 @@ export class GeminiPermissionHandler extends BasePermissionHandler {
         if (this.shouldAutoApprove(toolName, toolCallId, input)) {
             logger.debug(`${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
 
-            // Update agent state with auto-approved request
-            this.session.updateAgentState((currentState) => ({
-                ...currentState,
-                completedRequests: {
-                    ...currentState.completedRequests,
-                    [toolCallId]: {
-                        tool: toolName,
-                        arguments: input,
-                        createdAt: Date.now(),
-                        completedAt: Date.now(),
-                        status: 'approved',
-                        decision: this.currentPermissionMode === 'yolo' ? 'approved_for_session' : 'approved'
-                    }
-                }
-            }));
-
             return {
                 decision: this.currentPermissionMode === 'yolo' ? 'approved_for_session' : 'approved'
             };

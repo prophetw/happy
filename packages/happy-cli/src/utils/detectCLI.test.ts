@@ -4,6 +4,7 @@ import os from 'os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { findAgyBin } from '@/agy/constants';
+import { findDshBin } from '@/dsh/constants';
 import { detectCLIAvailability } from './detectCLI';
 
 vi.mock('child_process', () => ({ execSync: vi.fn() }));
@@ -15,10 +16,12 @@ vi.mock('os', () => ({
   },
 }));
 vi.mock('@/agy/constants', () => ({ findAgyBin: vi.fn() }));
+vi.mock('@/dsh/constants', () => ({ findDshBin: vi.fn() }));
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
 const mockedFindAgyBin = vi.mocked(findAgyBin);
+const mockedFindDshBin = vi.mocked(findDshBin);
 const mockedPlatform = vi.mocked(os.platform);
 
 describe('CLI availability detection', () => {
@@ -31,6 +34,8 @@ describe('CLI availability detection', () => {
     mockedExistsSync.mockReturnValue(false);
     mockedFindAgyBin.mockReset();
     mockedFindAgyBin.mockReturnValue(undefined);
+    mockedFindDshBin.mockReset();
+    mockedFindDshBin.mockReturnValue(undefined);
     mockedPlatform.mockReturnValue('darwin');
   });
 
@@ -40,5 +45,13 @@ describe('CLI availability detection', () => {
     mockedFindAgyBin.mockReturnValue('/home/person/.local/bin/agy');
 
     expect(detectCLIAvailability().agy).toBe(true);
+  });
+
+  it('reports DeepSeek only when its executable resolver finds an installation', () => {
+    expect(detectCLIAvailability().dsh).toBe(false);
+
+    mockedFindDshBin.mockReturnValue('/home/person/.local/bin/dsh');
+
+    expect(detectCLIAvailability().dsh).toBe(true);
   });
 });

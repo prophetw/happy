@@ -8,9 +8,9 @@ import { knownTools } from '../../tools/knownTools';
 export const MultiEditView = React.memo<ToolViewProps>(({ tool }) => {
     let edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> = [];
 
-    const parsed = knownTools.MultiEdit.input.safeParse(tool.input);
-    if (parsed.success && parsed.data.edits) {
-        edits = parsed.data.edits;
+    const parsed = knownTools.MultiEdit.input?.safeParse(tool.input);
+    if (parsed?.success && parsed.data.edits) {
+        edits = parsed.data.edits as Array<{ old_string: string; new_string: string; replace_all?: boolean }>;
     }
 
     if (edits.length === 0) {
@@ -24,7 +24,7 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool }) => {
                 const newString = edit.new_string || '';
                 return (
                     <View key={index}>
-                        <ToolDiffView oldText={oldString} newText={newString} fileName={parsed.success ? parsed.data.file_path : undefined} />
+                        <ToolDiffView oldText={oldString} newText={newString} fileName={parsed?.success ? (parsed.data as any).file_path : undefined} />
                         {index < edits.length - 1 && <View style={styles.separator} />}
                     </View>
                 );

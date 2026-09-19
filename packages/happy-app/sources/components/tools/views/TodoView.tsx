@@ -13,17 +13,17 @@ export interface Todo {
 
 export const TodoView = React.memo<ToolViewProps>(({ tool }) => {
     let todosList: Todo[] = [];
-    
+
     // Try to get todos from input first
-    let parsedArguments = knownTools.TodoWrite.input.safeParse(tool.input);
-    if (parsedArguments.success && parsedArguments.data.todos) {
-        todosList = parsedArguments.data.todos;
+    let parsedArguments = knownTools.TodoWrite.input?.safeParse(tool.input);
+    if (parsedArguments?.success && parsedArguments.data.todos) {
+        todosList = parsedArguments.data.todos as Todo[];
     }
-    
+
     // If we have a properly structured result, use newTodos from there
-    let parsed = knownTools.TodoWrite.result.safeParse(tool.result);
-    if (parsed.success && parsed.data.newTodos) {
-        todosList = parsed.data.newTodos;
+    let parsed = knownTools.TodoWrite.result?.safeParse(tool.result);
+    if (parsed?.success && parsed.data.newTodos) {
+        todosList = parsed.data.newTodos as Todo[];
     }
     
     // If we have todos to display, show them

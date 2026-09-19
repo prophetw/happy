@@ -5,6 +5,8 @@ import {
     permissionModeSupportedByCli,
     getAgyModelModes,
     getAgyPermissionModes,
+    getDshModelModes,
+    getDshPermissionModes,
     getAvailableModels,
     getAvailablePermissionModes,
     getCodexModelModes,
@@ -111,6 +113,25 @@ describe('modelModeOptions', () => {
         expect(getDefaultPermissionModeKey('agy')).toBe('default');
     });
 
+    it('leads dsh with Default, whose ACP profile forwards every tool call to the app', () => {
+        expect(getDshPermissionModes(translate).map((mode) => mode.key)).toEqual([
+            'default',
+            'bypassPermissions',
+        ]);
+        expect(getDshPermissionModes(translate)[0].description).toBe('tr:agentInput.permissionMode.dshDefault');
+        expect(getDefaultPermissionModeKey('dsh')).toBe('default');
+    });
+
+    it('offers dsh only the ambient default model before its ACP catalog arrives', () => {
+        // dsh's option values are opaque provider/model routes, so the
+        // pre-spawn hardcoded list cannot name them — the real picker fills in
+        // from metadata.models once the session reports its config options.
+        expect(getDshModelModes()).toEqual([
+            { key: 'default', name: 'Default model', description: null },
+        ]);
+        expect(getDefaultModelKey('dsh')).toBe('default');
+    });
+
     it('only offers gemini modes runGemini actually honours', () => {
         // auto_edit is absent from MessageMetaSchema and would drop the whole
         // message; plan passes the schema but runGemini ignores it.
@@ -199,7 +220,7 @@ describe('modelModeOptions', () => {
 
     it('uses code defaults for agent defaults', () => {
         expect(getDefaultPermissionModeKey('claude')).toBe('auto');
-        expect(getDefaultModelKey('claude')).toBe('claude-opus-5');
+        expect(getDefaultModelKey('claude')).toBe('claude-sonnet-5');
         expect(getDefaultEffortKey('claude')).toBe('medium');
         expect(getDefaultPermissionModeKey('codex')).toBe('auto');
         expect(getDefaultModelKey('codex')).toBe('gpt-5.6-sol');

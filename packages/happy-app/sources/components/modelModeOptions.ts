@@ -240,6 +240,18 @@ export function getAgyPermissionModes(translate: Translate): PermissionMode[] {
     ];
 }
 
+// dsh's ACP profile has no mode selector: under its workspace-write preset
+// every sensitive tool call is a permission request Happy forwards to the app,
+// and "yolo" is enforced client side by runAcp answering those requests
+// itself. Like agy, Default sorts first because it is the safe baseline, not
+// the escape hatch.
+export function getDshPermissionModes(translate: Translate): PermissionMode[] {
+    return [
+        { key: 'default', name: 'Default', description: translate('agentInput.permissionMode.dshDefault') },
+        { key: 'bypassPermissions', name: 'Yolo', description: translate('agentInput.permissionMode.bypassPermissions') },
+    ];
+}
+
 // Before the release tagged above the CLI's MessageMetaSchema rejected `auto`,
 // and a rejected mode dropped the whole prompt — the same failure mode
 // `dontAsk` had.
@@ -319,10 +331,23 @@ export function getHardcodedPermissionModes(flavor: AgentFlavor, translate: Tran
     if (flavor === 'agy') {
         return getAgyPermissionModes(translate);
     }
+    if (flavor === 'dsh') {
+        return getDshPermissionModes(translate);
+    }
     return getClaudePermissionModes(translate);
 }
 
 export function getOpenClawModelModes(): ModelMode[] {
+    return [
+        { key: 'default', name: 'Default model', description: null },
+    ];
+}
+
+// Pre-spawn fallback only: dsh's real model catalog arrives over ACP as session
+// config options (metadata.models) once the session starts. dsh's option values
+// are opaque provider/model routes, so no hardcoded list can match them — only
+// the ambient "no override" row belongs here.
+export function getDshModelModes(): ModelMode[] {
     return [
         { key: 'default', name: 'Default model', description: null },
     ];
@@ -352,6 +377,9 @@ export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translat
     }
     if (flavor === 'agy') {
         return getAgyModelModes();
+    }
+    if (flavor === 'dsh') {
+        return getDshModelModes();
     }
     return getClaudeModelModes();
 }
@@ -453,7 +481,7 @@ export function getAvailablePermissionModes(
         }
         return modes;
     }
-    if (flavor === 'claude' || flavor === 'codex' || flavor === 'openclaw' || flavor === 'agy') {
+    if (flavor === 'claude' || flavor === 'codex' || flavor === 'openclaw' || flavor === 'agy' || flavor === 'dsh') {
         // metadata.version is the happy-cli version running this session
         // (createSessionMetadata.ts), which is what has to parse the mode.
         return hackModes(filterPermissionModesForCli(

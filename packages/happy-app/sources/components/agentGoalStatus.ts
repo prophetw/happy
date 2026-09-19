@@ -11,6 +11,9 @@ function expectedSourceSessionId(session: GoalSession, source: AgentGoalStatus['
     if (source === 'codex') {
         return session.metadata?.codexThreadId ?? null;
     }
+    if (source === 'agy') {
+        return session.metadata?.agyConversationId ?? null;
+    }
     return null;
 }
 

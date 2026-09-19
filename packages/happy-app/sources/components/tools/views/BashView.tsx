@@ -18,9 +18,9 @@ export const BashView = React.memo((props: { tool: ToolCall, metadata: Metadata 
             unparsedOutput = result;
         } else {
             // Try to parse as structured result
-            const parsed = knownTools.Bash.result.safeParse(result);
-            if (parsed.success) {
-                parsedResult = parsed.data;
+            const parsed = knownTools.Bash.result?.safeParse(result);
+            if (parsed?.success) {
+                parsedResult = parsed.data as { stdout?: string; stderr?: string } | null;
             } else {
                 // If parsing fails but it's not a string, stringify it
                 unparsedOutput = JSON.stringify(result);

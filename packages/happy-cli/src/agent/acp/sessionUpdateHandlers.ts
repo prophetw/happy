@@ -31,6 +31,10 @@ export interface SessionUpdate {
   toolCallId?: string;
   status?: string;
   kind?: string | unknown;
+  /** Human-readable tool title; some agents (e.g. dsh) put the real tool name here */
+  title?: string | unknown;
+  /** dsh passes the tool input as rawInput instead of content */
+  rawInput?: unknown;
   content?: {
     text?: string;
     error?: string | { message?: string };
@@ -71,6 +75,8 @@ export interface HandlerContext {
   clearIdleTimeout: () => void;
   /** Set idle timeout helper */
   setIdleTimeout: (callback: () => void, ms: number) => void;
+  /** Whether an idle countdown is currently scheduled */
+  hasIdleTimeout: () => boolean;
 }
 
 /**
@@ -145,6 +151,66 @@ export function formatDurationMinutes(startTime: number | undefined): string {
   if (!startTime) return 'unknown';
   const duration = Date.now() - startTime;
   return (duration / 1000 / 60).toFixed(2);
+}
+
+/**
+ * Schedule an idle status after a quiet period with no active tool calls.
+ *
+ * Agentic turns are a chain of tool calls: the agent finishes one tool, thinks
+ * briefly, and immediately issues the next one. Emitting idle the moment the
+ * active set empties makes the runner end the turn mid-chain and the UI flip
+ * between running/idle, so the idle status is deferred by a short timeout that
+ * any subsequent activity cancels.
+ */
+export function scheduleIdleWhenQuiet(ctx: HandlerContext): void {
+  if (ctx.activeToolCalls.size > 0) {
+    return;
+  }
+  ctx.clearIdleTimeout();
+  const idleTimeoutMs = ctx.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+  ctx.setIdleTimeout(() => {
+    if (ctx.activeToolCalls.size === 0) {
+      logger.debug('[AcpBackend] Tool calls settled and quiet period elapsed, emitting idle status');
+      ctx.emitIdleStatus();
+    }
+  }, idleTimeoutMs);
+}
+
+/**
+ * Resolve the display name for a tool call.
+ *
+ * ACP `kind` is a coarse category. Some agents (e.g. dsh) report `kind:
+ * "other"` and put the real tool name in `title` ("bash", "glob", ...), so a
+ * generic kind falls back to the title. The transport hook still wins when
+ * implemented.
+ */
+export function resolveToolCallName(
+  toolKind: string | unknown,
+  title: string | unknown,
+  extractedName: string | null | undefined,
+): string {
+  const toolKindStr = typeof toolKind === 'string' && toolKind.trim().length > 0 ? toolKind.trim() : undefined;
+  const titleStr = typeof title === 'string' && title.trim().length > 0 ? title.trim() : undefined;
+  const isGenericKind = !toolKindStr || toolKindStr === 'other' || toolKindStr === 'unknown';
+  return extractedName
+    ?? (isGenericKind ? titleStr : toolKindStr)
+    ?? toolKindStr
+    ?? titleStr
+    ?? 'unknown';
+}
+
+/**
+ * Whether an inactivity-based 'idle' status should be suppressed.
+ *
+ * Transports whose agent resolves the ACP prompt request only at the true end
+ * of the turn (turnEndOnPromptResponse) must not emit idle mid-turn: quiet
+ * stretches between tool calls are server-side thinking, not turn end.
+ */
+export function shouldSuppressIdleStatus(
+  waitingForResponse: boolean,
+  transport: Pick<TransportHandler, 'turnEndOnPromptResponse'>,
+): boolean {
+  return waitingForResponse && transport.turnEndOnPromptResponse?.() === true;
 }
 
 /**
@@ -223,6 +289,21 @@ export function handleAgentThoughtChunk(
     logger.debug(`[AcpBackend] 💭 Thinking chunk received (${text.length} chars) during active tool calls: ${activeToolCallsList.join(', ')}`);
   }
 
+  // Defer an idle countdown that is already running (e.g. scheduled when the
+  // last tool call completed) — continued thinking means the turn is still
+  // in progress. Never start a countdown here: an idle emitted while the
+  // model is mid-thought would end the turn prematurely.
+  if (ctx.hasIdleTimeout()) {
+    ctx.clearIdleTimeout();
+    const idleTimeoutMs = ctx.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+    ctx.setIdleTimeout(() => {
+      if (ctx.activeToolCalls.size === 0) {
+        logger.debug('[AcpBackend] No more chunks received, emitting idle status');
+        ctx.emitIdleStatus();
+      }
+    }, idleTimeoutMs);
+  }
+
   ctx.emit({
     type: 'event',
     name: 'thinking',
@@ -246,11 +327,12 @@ export function startToolCall(
   const toolKindStr = typeof toolKind === 'string' ? toolKind : undefined;
   const isInvestigation = ctx.transport.isInvestigationTool?.(toolCallId, toolKindStr) ?? false;
 
-  // Extract real tool name from toolCallId
+  // Extract real tool name from toolCallId, title, or kind
   const extractedName = ctx.transport.extractToolNameFromId?.(toolCallId);
-  const realToolName = extractedName ?? (toolKindStr || 'unknown');
+  const realToolName = resolveToolCallName(toolKind, update.title, extractedName);
 
-  // Store mapping for permission requests
+  // Store mapping for permission requests and later updates (tool_call_update
+  // often carries no kind/title, only the toolCallId)
   ctx.toolCallIdToNameMap.set(toolCallId, realToolName);
 
   ctx.activeToolCalls.add(toolCallId);
@@ -294,7 +376,14 @@ export function startToolCall(
   ctx.emit({ type: 'status', status: 'running' });
 
   // Parse args and emit tool-call event
-  const args = parseArgsFromContent(update.content);
+  let args = parseArgsFromContent(update.content);
+  if (Object.keys(args).length === 0) {
+    // Some agents (e.g. dsh) send the tool input as rawInput rather than content
+    const rawInput = update.rawInput;
+    if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+      args = rawInput as Record<string, unknown>;
+    }
+  }
 
   // Extract locations if present
   if (update.locations && Array.isArray(update.locations)) {
@@ -308,7 +397,7 @@ export function startToolCall(
 
   ctx.emit({
     type: 'tool-call',
-    toolName: toolKindStr || 'unknown',
+    toolName: realToolName,
     args,
     callId: toolCallId,
   });
@@ -326,6 +415,9 @@ export function completeToolCall(
   const startTime = ctx.toolCallStartTimes.get(toolCallId);
   const duration = formatDuration(startTime);
   const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
+  // tool_call_update often carries no kind/title — fall back to the name
+  // recorded when the call started
+  const toolName = ctx.toolCallIdToNameMap.get(toolCallId) ?? toolKindStr;
 
   ctx.activeToolCalls.delete(toolCallId);
   ctx.toolCallStartTimes.delete(toolCallId);
@@ -336,20 +428,19 @@ export function completeToolCall(
     ctx.toolCallTimeouts.delete(toolCallId);
   }
 
-  logger.debug(`[AcpBackend] ✅ Tool call COMPLETED: ${toolCallId} (${toolKindStr}) - Duration: ${duration}. Active tool calls: ${ctx.activeToolCalls.size}`);
+  logger.debug(`[AcpBackend] ✅ Tool call COMPLETED: ${toolCallId} (${toolName}) - Duration: ${duration}. Active tool calls: ${ctx.activeToolCalls.size}`);
 
   ctx.emit({
     type: 'tool-result',
-    toolName: toolKindStr,
+    toolName,
     result: content,
     callId: toolCallId,
   });
 
-  // If no more active tool calls, emit idle
+  // If no more active tool calls, schedule idle after a quiet period — the
+  // agent may immediately issue the next tool call or stream more output
   if (ctx.activeToolCalls.size === 0) {
-    ctx.clearIdleTimeout();
-    logger.debug('[AcpBackend] All tool calls completed, emitting idle status');
-    ctx.emitIdleStatus();
+    scheduleIdleWhenQuiet(ctx);
   }
 }
 
@@ -366,6 +457,9 @@ export function failToolCall(
   const startTime = ctx.toolCallStartTimes.get(toolCallId);
   const duration = startTime ? Date.now() - startTime : null;
   const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
+  // tool_call_update often carries no kind/title — fall back to the name
+  // recorded when the call started
+  const toolName = ctx.toolCallIdToNameMap.get(toolCallId) ?? toolKindStr;
   const isInvestigation = ctx.transport.isInvestigationTool?.(toolCallId, toolKindStr) ?? false;
   const hadTimeout = ctx.toolCallTimeouts.has(toolCallId);
 
@@ -403,7 +497,7 @@ export function failToolCall(
   }
 
   const durationStr = formatDuration(startTime);
-  logger.debug(`[AcpBackend] ❌ Tool call ${status.toUpperCase()}: ${toolCallId} (${toolKindStr}) - Duration: ${durationStr}. Active tool calls: ${ctx.activeToolCalls.size}`);
+  logger.debug(`[AcpBackend] ❌ Tool call ${status.toUpperCase()}: ${toolCallId} (${toolName}) - Duration: ${durationStr}. Active tool calls: ${ctx.activeToolCalls.size}`);
 
   // Extract error detail
   const errorDetail = extractErrorDetail(content);
@@ -416,18 +510,16 @@ export function failToolCall(
   // Emit tool-result with error
   ctx.emit({
     type: 'tool-result',
-    toolName: toolKindStr,
+    toolName,
     result: errorDetail
       ? { error: errorDetail, status }
       : { error: `Tool call ${status}`, status },
     callId: toolCallId,
   });
 
-  // If no more active tool calls, emit idle
+  // If no more active tool calls, schedule idle after a quiet period
   if (ctx.activeToolCalls.size === 0) {
-    ctx.clearIdleTimeout();
-    logger.debug('[AcpBackend] All tool calls completed/failed, emitting idle status');
-    ctx.emitIdleStatus();
+    scheduleIdleWhenQuiet(ctx);
   }
 }
 

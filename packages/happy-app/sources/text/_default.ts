@@ -482,6 +482,7 @@ export const en = {
             // a guess about someone else's config.
             default: 'harness setting',
             agyDefault: 'agy sandbox',
+            dshDefault: 'asks on phone',
             openclawInert: 'not applied',
             acceptEdits: 'edits, no asking',
             plan: 'plan first',

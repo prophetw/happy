@@ -456,6 +456,7 @@ export const it: TranslationStructure = {
             auto: 'decide da sé, chiede in caso di dubbio',
             default: 'Predefinito',
             agyDefault: 'sandbox di agy, nessuna richiesta',
+            dshDefault: 'chiede sul telefono',
             openclawInert: 'non applicato da openclaw',
             acceptEdits: 'Accetta modifiche',
             plan: 'Modalità piano',

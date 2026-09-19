@@ -6,10 +6,11 @@ const name = {
     preview: "Happy (preview)",
     production: "Happy"
 }[variant];
+// Custom bundle ID configuration for personal builds (override via EXPO_IOS_BUNDLE_ID_* or edit directly)
 const bundleId = {
-    development: "com.slopus.happy.dev",
-    preview: "com.slopus.happy.preview",
-    production: "com.ex3ndr.happy"
+    development: process.env.EXPO_IOS_BUNDLE_ID_DEV || "com.slopus.happy.dev",
+    preview: process.env.EXPO_IOS_BUNDLE_ID_PREVIEW || "com.slopus.happy.preview",
+    production: process.env.EXPO_IOS_BUNDLE_ID || "com.ex3ndr.happy"
 }[variant];
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
 const productionElevenLabsAgentId = 'agent_6701k211syvvegba4kt7m68nxjmw';
@@ -208,7 +209,7 @@ export default {
             ]
         ],
         updates: {
-            url: "https://u.expo.dev/4558dd3d-cd5a-47cd-bad9-e591a241cc06",
+            url: process.env.EXPO_UPDATES_URL || "https://u.expo.dev/4558dd3d-cd5a-47cd-bad9-e591a241cc06",
             requestHeaders: {
                 "expo-channel-name": "production"
             }
@@ -221,7 +222,7 @@ export default {
                 root: "./sources/app"
             },
             eas: {
-                projectId: "4558dd3d-cd5a-47cd-bad9-e591a241cc06"
+                projectId: process.env.EAS_PROJECT_ID || "4558dd3d-cd5a-47cd-bad9-e591a241cc06"
             },
             app: {
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
@@ -234,6 +235,6 @@ export default {
                 buildCommitTimestamp: buildMetadata.commitTimestamp,
             }
         },
-        owner: "bulkacorp"
+        owner: process.env.EXPO_OWNER || "bulkacorp"
     }
 };

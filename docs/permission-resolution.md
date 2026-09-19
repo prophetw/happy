@@ -5,7 +5,8 @@ This document explains how permission mode is resolved for session messages, dep
 ## Scope
 - App-side state resolution (session defaults, persisted values, outbound message metadata)
 - Claude CLI resolution (startup mode, per-message updates, sandbox policy)
-- Final mode sent to Claude SDK
+- Antigravity (`agy`) CLI resolution (`AgyPermissionHandler`, stream-json tool gating)
+- Final mode sent to Claude SDK / Antigravity
 
 ## Permission Modes
 - Shared mode type: `default | acceptEdits | bypassPermissions | plan | read-only | safe-yolo | yolo`
@@ -14,6 +15,11 @@ This document explains how permission mode is resolved for session messages, dep
   - `yolo -> bypassPermissions`
   - `safe-yolo -> default`
   - `read-only -> default`
+- Mapping to Antigravity (`agy`) happens in `packages/happy-cli/src/agy/permissionHandler.ts` & `AgyBackend.ts`:
+  - `yolo` / `bypassPermissions` -> `--dangerously-skip-permissions` + auto-approve all tools
+  - `safe-yolo` / `read-only` -> auto-approve read tools, gate dangerous/exec tools via `agentState.requests`
+  - `acceptEdits` -> auto-approve file edits, gate command execution
+  - `default` -> gate all non-metadata tools via `agentState.requests`
 
 ## App-Side Resolution
 
