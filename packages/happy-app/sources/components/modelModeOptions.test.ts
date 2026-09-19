@@ -125,11 +125,44 @@ describe('modelModeOptions', () => {
     it('offers dsh only the ambient default model before its ACP catalog arrives', () => {
         // dsh's option values are opaque provider/model routes, so the
         // pre-spawn hardcoded list cannot name them — the real picker fills in
-        // from metadata.models once the session reports its config options.
+        // from metadata.models once the session reports its config options,
+        // and from the machine's probed dshModels catalog before that.
         expect(getDshModelModes()).toEqual([
             { key: 'default', name: 'Default model', description: null },
         ]);
+        expect(getDshModelModes(null)).toEqual(getDshModelModes());
+        expect(getDshModelModes({ options: [], currentCode: null })).toEqual([
+            { key: 'default', name: 'Default model', description: null },
+        ]);
         expect(getDefaultModelKey('dsh')).toBe('default');
+    });
+
+    it('prefixes the dsh machine catalog with the ambient default row', () => {
+        const catalog = {
+            options: [
+                { code: '["deepseek-official","deepseek-v4-flash"]', value: 'deepseek-v4-flash' },
+                { code: '["deepseek-official","deepseek-v4-pro"]', value: 'DeepSeek-V4-Pro', description: 'Stronger agentic coding' },
+            ],
+            currentCode: '["deepseek-official","deepseek-v4-flash"]',
+        };
+
+        const models = getDshModelModes(catalog);
+
+        expect(models).toEqual([
+            // The ambient row names the model dsh runs without an override.
+            { key: 'default', name: 'Default model', description: 'dsh default (deepseek-v4-flash)' },
+            { key: '["deepseek-official","deepseek-v4-flash"]', name: 'deepseek-v4-flash', description: null },
+            { key: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', description: 'Stronger agentic coding' },
+        ]);
+    });
+
+    it('labels the dsh ambient default row plainly when the catalog names no current model', () => {
+        const models = getDshModelModes({
+            options: [{ code: '["p","m"]', value: 'Model One' }],
+            currentCode: null,
+        });
+
+        expect(models[0]).toEqual({ key: 'default', name: 'Default model', description: null });
     });
 
     it('only offers gemini modes runGemini actually honours', () => {

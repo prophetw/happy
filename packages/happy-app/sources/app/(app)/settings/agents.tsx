@@ -11,6 +11,7 @@ import {
     includeConfiguredModel,
     type ModeOption,
 } from '@/components/modelModeOptions';
+import { collectDshModelCatalog, getDshModelCatalogDefaultName } from '@/sync/dshModelCatalog';
 import { useAllMachines, useSettingMutable } from '@/sync/storage';
 import {
     agentKeys,
@@ -40,6 +41,12 @@ type FieldConfig = {
     icon: keyof typeof Ionicons.glyphMap;
     options: ModeOption[];
     codeDefaultKey: string | null;
+    /**
+     * Label for a saved key that has no row — dsh's ambient 'default' is the
+     * one that needs it, because its name (the model dsh runs without an
+     * override) lives in the machine catalog rather than in the option rows.
+     */
+    unknownKeyLabel?: string;
 };
 
 const agentLabels: Record<AgentKey, string> = {
@@ -56,9 +63,9 @@ const agentLabels: Record<AgentKey, string> = {
 // agent you can no longer start a session with.
 const configurableAgentKeys = agentKeys.filter((agent) => !isRetiredHarness(agent));
 
-function optionName(options: ModeOption[], key: string | null | undefined): string {
+function optionName(options: ModeOption[], key: string | null | undefined, unknownKeyLabel?: string): string {
     if (!key) return 'none';
-    return options.find((option) => option.key === key)?.name ?? key;
+    return options.find((option) => option.key === key)?.name ?? unknownKeyLabel ?? key;
 }
 
 export default function AgentsSettingsScreen() {
@@ -72,6 +79,11 @@ export default function AgentsSettingsScreen() {
             Number(right.online) - Number(left.online)
             || right.activeAt - left.activeAt
         ))
+    ), [machines]);
+    // The catalog behind dsh's Model rows: whichever connected machine probed
+    // one, preferring online (its daemon is the one that can spawn sessions).
+    const dshModelCatalog = React.useMemo(() => (
+        collectDshModelCatalog(machines)
     ), [machines]);
 
     const updateOverride = React.useCallback((
@@ -124,10 +136,11 @@ export default function AgentsSettingsScreen() {
         const overrideValue = getAgentDefaultOverrideValue(agentDefaultOverrides, agent, config.field);
         const hasOverride = hasAgentDefaultOverride(agentDefaultOverrides, agent, config.field);
         const isExpanded = expanded?.agent === agent && expanded.field === config.field;
+        const labelFor = (key: string | null | undefined) => optionName(config.options, key, config.unknownKeyLabel);
         const detail = hasOverride
-            ? optionName(config.options, overrideValue)
-            : `Default (${optionName(config.options, effectiveValue)})`;
-        const codeDefaultLabel = optionName(config.options, config.codeDefaultKey);
+            ? labelFor(overrideValue)
+            : `Default (${labelFor(effectiveValue)})`;
+        const codeDefaultLabel = labelFor(config.codeDefaultKey);
         const isCustomCodexModel = agent === 'codex'
             && config.field === 'modelMode'
             && Boolean(overrideValue)
@@ -237,11 +250,21 @@ export default function AgentsSettingsScreen() {
                 const codeDefaults = getCodeAgentDefaults(agent);
                 const effectiveDefaults = resolveAgentDefaultConfig(agentDefaultOverrides, agent);
                 const permissionOptions = getHardcodedPermissionModes(agent, t);
-                const modelOptions = includeConfiguredModel(
-                    agent,
-                    getHardcodedModelModes(agent, t),
-                    effectiveDefaults.modelMode,
-                ).filter((option) => option.key !== 'default');
+                // dsh's models come from the machine catalog the daemon probes
+                // (dshModelCatalog.ts), not from a hardcoded table; the field
+                // stays hidden until some machine publishes a catalog.
+                const dshCatalog = agent === 'dsh' ? dshModelCatalog : null;
+                const modelOptions = agent === 'dsh'
+                    ? (dshCatalog?.options ?? []).map((option) => ({
+                        key: option.code,
+                        name: option.value,
+                        description: option.description ?? null,
+                    }))
+                    : includeConfiguredModel(
+                        agent,
+                        getHardcodedModelModes(agent, t),
+                        effectiveDefaults.modelMode,
+                    ).filter((option) => option.key !== 'default');
                 const effortOptions = getEffortLevelsForModel(agent, effectiveDefaults.modelMode);
                 const fields: FieldConfig[] = [
                     {
@@ -257,6 +280,11 @@ export default function AgentsSettingsScreen() {
                         icon: 'hardware-chip-outline' as const,
                         options: modelOptions,
                         codeDefaultKey: codeDefaults.modelMode,
+                        // dsh's ambient default is whatever dsh runs without
+                        // an override — name it instead of showing the raw key.
+                        unknownKeyLabel: agent === 'dsh'
+                            ? getDshModelCatalogDefaultName(dshCatalog)
+                            : undefined,
                     }] : []),
                     ...(effortOptions.length > 0 ? [{
                         field: 'effortLevel' as const,

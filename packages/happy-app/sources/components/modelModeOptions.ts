@@ -343,13 +343,33 @@ export function getOpenClawModelModes(): ModelMode[] {
     ];
 }
 
-// Pre-spawn fallback only: dsh's real model catalog arrives over ACP as session
-// config options (metadata.models) once the session starts. dsh's option values
-// are opaque provider/model routes, so no hardcoded list can match them — only
-// the ambient "no override" row belongs here.
-export function getDshModelModes(): ModelMode[] {
+// Pre-spawn fallback when no catalog is known: dsh's real model list arrives
+// over ACP as session config options (metadata.models) once the session
+// starts, and as machine metadata (dshModels) before that — the daemon probes
+// a throwaway session at startup (dsh/discoverModels.ts). dsh's option values
+// are opaque provider/model routes, so no hardcoded list can match them. Only
+// the ambient "no override" row belongs here, ahead of the probed catalog rows.
+export function getDshModelModes(
+    catalog?: { options: MetadataOption[]; currentCode?: string | null } | null,
+): ModelMode[] {
+    const rows = (catalog?.options ?? []).map((option) => ({
+        key: option.code,
+        name: option.value,
+        description: option.description ?? null,
+    }));
+    if (rows.length === 0) {
+        return [{ key: 'default', name: 'Default model', description: null }];
+    }
+    const currentName = catalog?.currentCode
+        ? rows.find((row) => row.key === catalog.currentCode)?.name
+        : undefined;
     return [
-        { key: 'default', name: 'Default model', description: null },
+        {
+            key: 'default',
+            name: 'Default model',
+            description: currentName ? `dsh default (${currentName})` : null,
+        },
+        ...rows,
     ];
 }
 

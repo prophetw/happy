@@ -117,6 +117,13 @@ export class ApiMachineClient {
     private keepAliveInterval: NodeJS.Timeout | null = null;
     private lastKnownCLIAvailability: CLIAvailability | null = null;
     private lastKnownResumeSupport: ResumeSupport | null = null;
+    /**
+     * dsh model catalog probe lifecycle: 'pending' means a probe should run at
+     * the next keep-alive that sees dsh installed, 'in-flight' suppresses
+     * concurrent probes, 'done' means this daemon already tried (success or
+     * not) and will not retry until dsh availability drops and comes back.
+     */
+    private dshModelsProbe: 'pending' | 'in-flight' | 'done' = 'pending';
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: { model?: string; permissionMode?: string }) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -556,6 +563,54 @@ export class ApiMachineClient {
                 logger.debug('[API MACHINE] Failed to update machine capabilities:', err);
             });
         }
+
+        // dsh's model catalog cannot be hardcoded (opaque provider routes),
+        // so the daemon probes it over a throwaway ACP session and publishes
+        // the result for the app's pre-spawn pickers. One attempt per daemon
+        // lifetime; a dsh reinstall (availability drop) re-arms the probe.
+        if (newAvailability.dsh) {
+            this.maybeProbeDshModels();
+        } else {
+            this.dshModelsProbe = 'pending';
+        }
+    }
+
+    /**
+     * Probe the dsh model catalog once per daemon lifetime, when installed.
+     * Fire-and-forget: the keep-alive that triggered it never waits on the
+     * spawned dsh process, and a failed probe just leaves the app on its
+     * ambient "Default model" fallback (the catalog re-probes on the next
+     * daemon start or dsh availability flip).
+     */
+    private maybeProbeDshModels(): void {
+        if (this.dshModelsProbe !== 'pending') {
+            return;
+        }
+        this.dshModelsProbe = 'in-flight';
+        logger.debug('[API MACHINE] Probing dsh model catalog');
+
+        import('@/dsh/discoverModels')
+            .then(async ({ discoverDshModels }) => {
+                this.dshModelsProbe = 'done';
+                const catalog = await discoverDshModels();
+                if (!catalog) {
+                    logger.debug('[API MACHINE] dsh model catalog unavailable');
+                    return;
+                }
+                await this.updateMachineMetadata((metadata) => ({
+                    ...(metadata || {} as any),
+                    dshModels: {
+                        options: catalog.options,
+                        currentCode: catalog.currentCode,
+                        detectedAt: Date.now(),
+                    },
+                }));
+                logger.debug(`[API MACHINE] Published dsh model catalog (${catalog.options.length} models)`);
+            })
+            .catch((err) => {
+                this.dshModelsProbe = 'done';
+                logger.debug('[API MACHINE] dsh model catalog probe failed:', err);
+            });
     }
 
     private startKeepAlive() {

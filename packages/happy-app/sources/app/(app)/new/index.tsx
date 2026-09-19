@@ -61,6 +61,7 @@ import {
     filterPermissionModesForCli,
     getHardcodedPermissionModes,
     getHardcodedModelModes,
+    getDshModelModes,
     getEffortLevelsForModel,
     getSupportsWorktree,
     includeConfiguredModel,
@@ -68,6 +69,7 @@ import {
     type ModelMode,
     type EffortLevel,
 } from '@/components/modelModeOptions';
+import { getMachineDshModelCatalog } from '@/sync/dshModelCatalog';
 import { isRunningOnMac } from '@/utils/platform';
 import { getNewSessionSidebarLayout } from '@/utils/newSessionSidebarLayout';
 import { getAgentPickerItems, getModePickerItems } from '@/utils/newSessionPickerItems';
@@ -1040,13 +1042,24 @@ function NewSessionScreen() {
             effortLevel: rigCreation.defaultEffortForModel(rigCreation.defaultModelKey),
         }
         : resolveAgentDefaultConfig(agentDefaultOverrides, selectedAgent, happyCliVersion), [agentDefaultOverrides, happyCliVersion, selectedAgent, rigCreation]);
+    // dsh's model list lives in machine metadata (probed by the daemon), not
+    // in a hardcoded table — the catalog follows the machine that will spawn
+    // the session, so switching computers switches the offered models.
+    const dshModelCatalog = React.useMemo(
+        () => getMachineDshModelCatalog(selectedChoice?.happyMachine?.metadata),
+        [selectedChoice],
+    );
     const modelModes = React.useMemo<ModelMode[]>(
-        () => rigCreation?.models ?? includeConfiguredModel(
-            selectedAgent,
-            getHardcodedModelModes(selectedAgent, t),
-            effectiveAgentDefaults.modelMode,
+        () => rigCreation?.models ?? (
+            selectedAgent === 'dsh'
+                ? getDshModelModes(dshModelCatalog)
+                : includeConfiguredModel(
+                    selectedAgent,
+                    getHardcodedModelModes(selectedAgent, t),
+                    effectiveAgentDefaults.modelMode,
+                )
         ),
-        [selectedAgent, effectiveAgentDefaults.modelMode, rigCreation],
+        [selectedAgent, dshModelCatalog, effectiveAgentDefaults.modelMode, rigCreation],
     );
 
     const currentModel = resolveSelectedOption(modelModes, modelIndex);

@@ -6,7 +6,8 @@ const {
     mockIo,
     mockShouldReconnect,
     mockDetectCLIAvailability,
-    mockDetectResumeSupport
+    mockDetectResumeSupport,
+    mockDiscoverDshModels
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     mockShouldReconnect: vi.fn(() => true),
@@ -23,7 +24,8 @@ const {
         requiresSameMachine: false,
         requiresHappyAgentAuth: false,
         happyAgentAuthenticated: false
-    }))
+    })),
+    mockDiscoverDshModels: vi.fn()
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -61,6 +63,10 @@ vi.mock('@/api/rpc/RpcHandlerManager', () => ({
 
 vi.mock('@/utils/detectCLI', () => ({
     detectCLIAvailability: mockDetectCLIAvailability
+}));
+
+vi.mock('@/dsh/discoverModels', () => ({
+    discoverDshModels: mockDiscoverDshModels
 }));
 
 vi.mock('@/resume/localHappyAgentAuth', () => ({
@@ -105,6 +111,7 @@ describe('ApiMachineClient socket reconnection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockShouldReconnect.mockReturnValue(true);
+        mockDiscoverDshModels.mockResolvedValue(null);
         socketHandlers = {};
         mockSocket = {
             connected: false,
@@ -232,6 +239,7 @@ describe('ApiMachineClient keepalive availability republish', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockDiscoverDshModels.mockResolvedValue(null);
         socketHandlers = {};
         mockSocket = {
             connected: false,
@@ -280,6 +288,74 @@ describe('ApiMachineClient keepalive availability republish', () => {
         updateSpy.mockClear();
         await vi.advanceTimersByTimeAsync(20000);
         expect(updateSpy).not.toHaveBeenCalled();
+
+        client.shutdown();
+    });
+
+    it('probes and publishes the dsh model catalog once per daemon lifetime', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ dsh: true }));
+        mockDiscoverDshModels.mockResolvedValue({
+            options: [
+                { code: '["deepseek-official","deepseek-v4-flash"]', value: 'deepseek-v4-flash' },
+                { code: '["deepseek-official","deepseek-v4-pro"]', value: 'DeepSeek-V4-Pro' },
+            ],
+            currentCode: '["deepseek-official","deepseek-v4-flash"]',
+        });
+
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        const updateSpy = vi.spyOn(client as any, 'updateMachineMetadata').mockResolvedValue(undefined);
+        client.connect();
+        emitSocketEvent('connect');
+
+        // First keepalive: capabilities update, then the probe's catalog update.
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(mockDiscoverDshModels).toHaveBeenCalledTimes(1);
+        expect(updateSpy).toHaveBeenCalledTimes(2);
+        const catalogHandler = updateSpy.mock.calls[1][0] as (metadata: unknown) => Record<string, unknown>;
+        expect(catalogHandler(null)).toEqual(expect.objectContaining({
+            dshModels: {
+                options: [
+                    { code: '["deepseek-official","deepseek-v4-flash"]', value: 'deepseek-v4-flash' },
+                    { code: '["deepseek-official","deepseek-v4-pro"]', value: 'DeepSeek-V4-Pro' },
+                ],
+                currentCode: '["deepseek-official","deepseek-v4-flash"]',
+                detectedAt: expect.any(Number),
+            },
+        }));
+
+        // Later keepalives re-detect dsh but never re-probe.
+        updateSpy.mockClear();
+        await vi.advanceTimersByTimeAsync(40000);
+        expect(mockDiscoverDshModels).toHaveBeenCalledTimes(1);
+        expect(updateSpy).not.toHaveBeenCalled();
+
+        client.shutdown();
+    });
+
+    it('re-arms the dsh model probe when dsh availability drops and returns', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ dsh: true }));
+        mockDiscoverDshModels.mockResolvedValue(null);
+
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        const updateSpy = vi.spyOn(client as any, 'updateMachineMetadata').mockResolvedValue(undefined);
+        client.connect();
+        emitSocketEvent('connect');
+
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(mockDiscoverDshModels).toHaveBeenCalledTimes(1);
+
+        // dsh disappears: the probe re-arms (a reinstall should re-probe).
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({}));
+        await vi.advanceTimersByTimeAsync(20000);
+
+        // And it is back: probe again.
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ dsh: true }));
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(mockDiscoverDshModels).toHaveBeenCalledTimes(2);
 
         client.shutdown();
     });

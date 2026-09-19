@@ -16,12 +16,14 @@ import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { createWorktree } from '@/utils/worktree';
 import {
     getEffortLevelsForModel,
+    getDshModelModes,
     getHardcodedModelModes,
     getHardcodedPermissionModes,
     filterPermissionModesForCli,
     getSupportsWorktree,
     includeConfiguredModel,
 } from '@/components/modelModeOptions';
+import { getMachineDshModelCatalog } from '@/sync/dshModelCatalog';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import {
@@ -199,10 +201,17 @@ export function useStartSessionFromDraft() {
                 : [draft.permissionMode, defaults.permissionMode, rigCreation ? null : getCodeAgentDefaults(agentType, machine.metadata?.happyCliVersion).permissionMode],
         );
         const model = resolveOption<{ key: string }>(
-            rigCreation?.models ?? includeConfiguredModel(
-                agentType,
-                getHardcodedModelModes(agentType, t),
-                defaults.modelMode,
+            rigCreation?.models ?? (
+                // dsh models come from this machine's probed catalog, so a
+                // saved pick that this computer does not offer falls back to
+                // the ambient default row instead of failing the launch.
+                agentType === 'dsh'
+                    ? getDshModelModes(getMachineDshModelCatalog(machine.metadata))
+                    : includeConfiguredModel(
+                        agentType,
+                        getHardcodedModelModes(agentType, t),
+                        defaults.modelMode,
+                    )
             ),
             agentChanged
                 ? [defaults.modelMode]

@@ -44,6 +44,7 @@ import {
 import type { Session } from '@/sync/storageTypes';
 import {
     getEffortLevelsForModel,
+    getDshModelModes,
     getHardcodedModelModes,
     getHardcodedPermissionModes,
     filterPermissionModesForCli,
@@ -52,6 +53,7 @@ import {
     includeConfiguredModel,
     type ModeOption,
 } from './modelModeOptions';
+import { getMachineDshModelCatalog } from '@/sync/dshModelCatalog';
 import type { NewSessionAgentType } from '@/sync/persistence';
 import { useImagePicker } from '@/hooks/useImagePicker';
 import { Modal } from '@/modal';
@@ -898,13 +900,23 @@ export const HomeDock = React.memo(({
         ),
         [agentType, happyCliVersion, rigCreation],
     );
+    // dsh's model list is the probed machine catalog, so the picker follows
+    // the computer that will spawn the session.
+    const dshModelCatalog = React.useMemo(
+        () => getMachineDshModelCatalog(selectedChoice?.happyMachine?.metadata),
+        [selectedChoice],
+    );
     const modelOptions = React.useMemo(
-        () => rigCreation?.models ?? includeConfiguredModel(
-            agentType,
-            getHardcodedModelModes(agentType, t),
-            defaults.modelMode,
+        () => rigCreation?.models ?? (
+            agentType === 'dsh'
+                ? getDshModelModes(dshModelCatalog)
+                : includeConfiguredModel(
+                    agentType,
+                    getHardcodedModelModes(agentType, t),
+                    defaults.modelMode,
+                )
         ),
-        [agentType, defaults.modelMode, rigCreation],
+        [agentType, dshModelCatalog, defaults.modelMode, rigCreation],
     );
     // The code default last: when the saved and configured modes were both
     // filtered out for an old CLI, land there rather than on whichever mode

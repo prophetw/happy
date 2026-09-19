@@ -124,6 +124,27 @@ function applyConfigCategory(
   metadata.currentThoughtLevelCode = currentCode;
 }
 
+/**
+ * Flatten the `model`-category select option into the wire shape the app's
+ * model picker consumes (`metadata.models` options). Shared by the live
+ * session path and the daemon's pre-spawn dsh catalog probe, so the two can
+ * never disagree about how grouped options flatten.
+ *
+ * Returns null when the config options carry no model selector.
+ */
+export function extractModelCatalogFromConfigOptions(
+  configOptions: SessionConfigOption[],
+): { options: MetadataOption[]; currentCode: string | null } | null {
+  const modelOption = findConfigOptionByCategory(configOptions, 'model');
+  if (!modelOption) {
+    return null;
+  }
+  return {
+    options: flattenConfigSelectOptions(modelOption.options),
+    currentCode: modelOption.currentValue ?? null,
+  };
+}
+
 export function extractConfigOptionsFromPayload(payload: unknown): SessionConfigOption[] | null {
   if (Array.isArray(payload)) {
     return payload as SessionConfigOption[];
