@@ -18,8 +18,10 @@ needed.
 |---|---|
 | `packages/happy-cli/src/dsh/constants.ts` | `DSH_BIN`, `DSH_ACP_ARGS`, `findDshBin()` (env override + PATH probe), `resolveDshBin()` |
 | `packages/happy-cli/src/dsh/runDsh.ts` | Thin wrapper: `runAcp({ agentName: 'dsh', command: resolveDshBin(), args: DSH_ACP_ARGS })` |
+| `packages/happy-cli/src/dsh/discoverModels.ts` | Pre-spawn catalog probe: throwaway ACP session → flattened `model` config option |
 | `packages/happy-cli/src/agent/acp/runAcp.ts` | Generic ACP runner; owns the dsh-specific behaviors (flavor mapping, local auto-approve, thought-level switching) |
 | `packages/happy-cli/src/agent/acp/acpAgentConfig.ts` | `KNOWN_ACP_AGENTS.dsh` mapping for `happy acp dsh` |
+| `packages/happy-app/sources/sync/dshModelCatalog.ts` | Reads the published `dshModels` catalog from machine metadata (per machine, or the liveliest one) |
 
 ## Architecture
 
@@ -66,13 +68,30 @@ runner fills:
 
 dsh reports its model list as ACP session config options in the `model`
 category; the option values are opaque provider/model route strings (JSON
-arrays), so they cannot be hardcoded. Consequences:
+arrays), so they cannot be hardcoded. The catalog reaches the app twice:
 
-- Pre-spawn, the app's model picker shows only the ambient "Default model"
-  row (`getDshModelModes`).
-- Once the session starts, `config_options_update` fills `metadata.models`
-  from the ACP options and the picker switches to the live catalog
-  (`sessionConfigMetadata.ts`), same as Gemini/OpenCode.
+1. **Pre-spawn (machine metadata).** The daemon probes the catalog once per
+   lifetime — when dsh availability is first seen, re-armed if dsh goes away
+   and comes back — by spawning `dsh --profile acp`, running `initialize` +
+   `session/new` with no prompt, and reading the response's `configOptions`
+   (`dsh/discoverModels.ts`). The flattened catalog is published as machine
+   metadata `dshModels` (`{ options: [{code, value, description}],
+   currentCode, detectedAt }`) next to `cliAvailability`, via the keep-alive
+   path in `apiMachine.ts`. The app reads it (`sync/dshModelCatalog.ts`) so
+   the new-session picker, the Home dock composer, and Settings → Agents →
+   DeepSeek offer the real list before any session starts, with the ambient
+   "Default model" row first (`getDshModelModes`). The default-model setting
+   (`agentDefaultOverrides.dsh.modelMode`) carries the option's `code`.
+2. **Live (session metadata).** Once the session starts,
+   `config_options_update` fills `metadata.models` from the ACP options and
+   the picker switches to the live catalog (`sessionConfigMetadata.ts`), same
+   as Gemini/OpenCode.
+
+Consequences:
+
+- A catalog published by one machine is only offered for sessions that
+  machine spawns; Settings falls back to the liveliest machine that probed
+  one, and hides the dsh Model field until some machine publishes a catalog.
 - Switching models mid-session goes through `setSessionConfigOption('model',
   value)` only when the requested value matches an advertised option.
 
@@ -102,6 +121,11 @@ it available (`EXPLICIT_REPORT_HARNESSES` in `harnessCatalog.ts`,
   `reasoning_effort`) is implemented and tested, but the app has no UI that
   reads `metadata.thoughtLevels` yet; reasoning stays at the dsh provider
   default.
+- **Catalog staleness.** The probed catalog refreshes only when the daemon
+  restarts or dsh availability flips (install/uninstall). Providers added
+  while the daemon runs appear once the session starts reporting its own
+  config options, but the pre-spawn list keeps the older probe until then.
+  A failed probe is not retried within the same daemon run.
 - **Binary discovery.** dsh is resolved from `HAPPY_DSH_PATH` or PATH; a
   source checkout run via `pnpm dsh` needs `HAPPY_DSH_PATH` pointing at a
   wrapper script.
