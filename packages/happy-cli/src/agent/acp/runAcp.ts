@@ -21,6 +21,7 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { projectPath } from '@/projectPath';
 import { BasePermissionHandler, type PermissionResult } from '@/utils/BasePermissionHandler';
 import { connectionState } from '@/utils/serverConnectionErrors';
+import { extractSessionTitle } from '@/utils/extractSessionTitle';
 import {
   extractConfigOptionsFromPayload,
   extractCurrentModeIdFromPayload,
@@ -564,6 +565,10 @@ export async function runAcp(opts: {
   let sawSlashCommands = false;
   let sawModes = false;
   let sawModels = false;
+  // The first prompt titles the session (see the message loop); one write per
+  // runner lifetime, since a runner that cannot resume never sees a second
+  // first prompt.
+  let sessionTitleSet = false;
 
   const happyServer = await startHappyServer(session);
   const mcpServers = {
@@ -1015,6 +1020,24 @@ export async function runAcp(opts: {
 
       logAcp('incoming', `Incoming prompt: ${formatUnknownForConsole(batch.message, ACP_EVENT_PREVIEW_CHARS)}`);
       errorReportedForCurrentTurn = false;
+
+      // Auto-title, same policy as agy: ACP harnesses (dsh, OpenCode) have no
+      // title mechanism of their own, so the first prompt names the session
+      // and the app's list shows the topic instead of "New Chat". An existing
+      // summary (already-titled session) always wins, so the write is a
+      // no-op rather than an overwrite when metadata already carries one.
+      if (!sessionTitleSet) {
+        sessionTitleSet = true;
+        const title = extractSessionTitle(batch.message);
+        session.updateMetadata((currentMetadata) => (
+          currentMetadata.summary ? currentMetadata : {
+            ...currentMetadata,
+            summary: { text: title, updatedAt: Date.now() },
+          }
+        ));
+        logger.debug(`[${opts.agentName}] Generated session title: "${title}"`);
+      }
+
       sendEnvelopes(sessionManager.startTurn());
       const turnEnded = waitForTurnEnd();
       // The turn can be rejected (user cancel, backend error) while sendPrompt

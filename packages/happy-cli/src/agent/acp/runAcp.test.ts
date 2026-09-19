@@ -1002,4 +1002,103 @@ describe('runAcp', () => {
     await mocks.getKillHandler()!();
     await runPromise;
   });
+
+  it('titles the session from the first prompt and never re-titles later prompts', async () => {
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Fix the login timeout bug\nit reproduces after 30s idle' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    // A second turn must not rename the session.
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'unrelated second topic entirely' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(2);
+    });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+
+    const metadataHandlers = mocks.mockSession.updateMetadata.mock.calls.map((call) => call[0]);
+    const baseMetadata = {
+      path: '/repo',
+      host: 'host',
+      homeDir: '/home/user',
+      happyHomeDir: '/home/user/.happy',
+      happyLibDir: '/repo/.happy/lib',
+      happyToolsDir: '/repo/.happy/tools',
+    };
+
+    // Apply the handlers in order: the title is written exactly once, from
+    // the first prompt's first line.
+    let summaryWrites = 0;
+    const finalMetadata = metadataHandlers.reduce((meta, handler) => {
+      const next = handler(meta);
+      if (next !== meta && next.summary !== undefined && meta.summary === undefined) {
+        summaryWrites += 1;
+      }
+      return next;
+    }, baseMetadata as Record<string, unknown>);
+
+    expect(summaryWrites).toBe(1);
+    expect(finalMetadata.summary).toEqual({
+      text: 'Fix the login timeout bug',
+      updatedAt: expect.any(Number),
+    });
+  });
+
+  it('keeps an already-titled session summary instead of overwriting it', async () => {
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'first prompt of the session' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+
+    const metadataHandlers = mocks.mockSession.updateMetadata.mock.calls.map((call) => call[0]);
+    const titleHandler = metadataHandlers.find((handler) => handler({}).summary !== undefined);
+    expect(titleHandler).toBeDefined();
+
+    // A session that already carries a summary keeps it untouched — the
+    // handler returns the same object rather than stamping a new title.
+    const titled = {
+      path: '/repo',
+      summary: { text: 'Existing title', updatedAt: 1 },
+    };
+    expect(titleHandler!(titled)).toBe(titled);
+  });
 });
