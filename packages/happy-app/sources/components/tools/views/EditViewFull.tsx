@@ -18,10 +18,10 @@ export const EditViewFull = React.memo<EditViewFullProps>(({ tool, metadata }) =
     // Parse the input
     let oldString = '';
     let newString = '';
-    const parsed = knownTools.Edit.input.safeParse(input);
-    if (parsed.success) {
-        oldString = trimIdent(parsed.data.old_string || '');
-        newString = trimIdent(parsed.data.new_string || '');
+    const parsed = knownTools.Edit.input?.safeParse(input);
+    if (parsed?.success) {
+        oldString = trimIdent((parsed.data as any).old_string || '');
+        newString = trimIdent((parsed.data as any).new_string || '');
     }
 
     return (

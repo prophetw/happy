@@ -9,9 +9,9 @@ import { trimIdent } from '@/utils/trimIdent';
 export const MultiEditView = React.memo<ToolViewProps>(({ tool }) => {
     let edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> = [];
 
-    const parsed = knownTools.MultiEdit.input.safeParse(tool.input);
-    if (parsed.success && parsed.data.edits) {
-        edits = parsed.data.edits;
+    const parsed = knownTools.MultiEdit.input?.safeParse(tool.input);
+    if (parsed?.success && parsed.data.edits) {
+        edits = parsed.data.edits as Array<{ old_string: string; new_string: string; replace_all?: boolean }>;
     }
 
     if (edits.length === 0) {

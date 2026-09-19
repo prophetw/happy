@@ -12,10 +12,10 @@ export const EditView = React.memo<ToolViewProps>(({ tool }) => {
     
     let oldString = '';
     let newString = '';
-    const parsed = knownTools.Edit.input.safeParse(tool.input);
-    if (parsed.success) {
-        oldString = trimIdent(parsed.data.old_string || '');
-        newString = trimIdent(parsed.data.new_string || '');
+    const parsed = knownTools.Edit.input?.safeParse(tool.input);
+    if (parsed?.success) {
+        oldString = trimIdent((parsed.data as any).old_string || '');;
+        newString = trimIdent((parsed.data as any).new_string || '');
     }
 
     return (

@@ -7,9 +7,9 @@ import { View } from 'react-native';
 
 export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
     let plan = '<empty>'
-    const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
-    if (parsed.success) {
-        plan = parsed.data.plan ?? '<empty>';
+    const parsed = knownTools.ExitPlanMode.input?.safeParse(tool.input);
+    if (parsed?.success) {
+        plan = (parsed.data as any).plan ?? '<empty>';
     }
     return (
         <ToolSectionView>

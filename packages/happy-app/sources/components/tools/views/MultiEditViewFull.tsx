@@ -18,9 +18,9 @@ export const MultiEditViewFull = React.memo<MultiEditViewFullProps>(({ tool, met
 
     let edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> = [];
 
-    const parsed = knownTools.MultiEdit.input.safeParse(input);
-    if (parsed.success && parsed.data.edits) {
-        edits = parsed.data.edits;
+    const parsed = knownTools.MultiEdit.input?.safeParse(input);
+    if (parsed?.success && parsed.data.edits) {
+        edits = parsed.data.edits as Array<{ old_string: string; new_string: string; replace_all?: boolean }>;
     }
 
     if (edits.length === 0) {
