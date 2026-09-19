@@ -12,7 +12,21 @@
 
 import type { Credentials } from '@/persistence';
 import { runAcp } from '@/agent/acp';
+import { DefaultTransport } from '@/agent/transport';
 import { resolveDshBin, DSH_ACP_ARGS } from './constants';
+
+/**
+ * dsh resolves the ACP session/prompt request only when the turn is fully
+ * finished, so turn end is driven by the prompt response instead of output
+ * inactivity. Server-side thinking between tool calls can pause for many
+ * seconds — far beyond any quiet-period heuristic — and an inactivity-based
+ * 'idle' would end the turn mid-chain.
+ */
+class DshTransport extends DefaultTransport {
+  turnEndOnPromptResponse(): boolean {
+    return true;
+  }
+}
 
 export async function runDsh(opts: {
   credentials: Credentials;
@@ -26,5 +40,6 @@ export async function runDsh(opts: {
     agentName: 'dsh',
     command: resolveDshBin(),
     args: [...DSH_ACP_ARGS],
+    transportHandler: new DshTransport('dsh'),
   });
 }

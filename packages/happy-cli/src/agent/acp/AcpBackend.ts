@@ -49,6 +49,14 @@ const RETRY_CONFIG = {
 const ACP_MUTED_COLOR = '\u001b[90m';
 const ACP_COLOR_RESET = '\u001b[0m';
 
+/**
+ * Detail marker attached to the `stopped` status emitted when the user aborts
+ * the in-flight turn. The ACP runner treats this specific status as turn-scoped
+ * (end the turn, keep the session alive); any other `stopped` status, e.g. the
+ * agent process exiting, still tears the runner down.
+ */
+export const USER_CANCELLED_DETAIL = 'Cancelled by user';
+
 function formatAcpTime(date: Date = new Date()): string {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
@@ -106,6 +114,7 @@ import {
   handleLegacyMessageChunk,
   handlePlanUpdate,
   handleThinkingUpdate,
+  shouldSuppressIdleStatus,
 } from './sessionUpdateHandlers';
 
 /**
@@ -892,6 +901,7 @@ export class AcpBackend implements AgentBackend {
           this.idleTimeout = null;
         }, ms);
       },
+      hasIdleTimeout: () => this.idleTimeout !== null,
     };
   }
 
@@ -1076,9 +1086,17 @@ export class AcpBackend implements AgentBackend {
       logger.debug(`[AcpBackend] Prompt request:`, JSON.stringify(promptRequest, null, 2));
       await this.connection.prompt(promptRequest);
       logger.debug('[AcpBackend] Prompt request sent to ACP connection');
-      
-      // Don't emit 'idle' here - it will be emitted after all message chunks are received
-      // The idle timeout in handleSessionUpdate will emit 'idle' after the last chunk
+
+      if (this.transport.turnEndOnPromptResponse?.()) {
+        // The prompt response is the authoritative end-of-turn signal for
+        // this agent: emit idle now. Inactivity-based idle statuses were
+        // suppressed while the prompt was in flight (see emitIdleStatus).
+        this.waitingForResponse = false;
+        this.emitIdleStatus();
+      } else {
+        // Don't emit 'idle' here - it will be emitted after all message chunks are received
+        // The idle timeout in handleSessionUpdate will emit 'idle' after the last chunk
+      }
 
     } catch (error) {
       logger.debug('[AcpBackend] Error sending prompt:', error);
@@ -1229,6 +1247,15 @@ export class AcpBackend implements AgentBackend {
    * Helper to emit idle status and resolve any waiting promises
    */
   private emitIdleStatus(): void {
+    // Any pending inactivity countdown is moot once idle is emitted
+    if (this.idleTimeout) {
+      clearTimeout(this.idleTimeout);
+      this.idleTimeout = null;
+    }
+    if (shouldSuppressIdleStatus(this.waitingForResponse, this.transport)) {
+      logger.debug('[AcpBackend] Suppressing inactivity-based idle status mid-turn; turn end is driven by the prompt response');
+      return;
+    }
     this.emit({ type: 'status', status: 'idle' });
     // Resolve any waiting promises
     if (this.idleResolver) {
@@ -1242,9 +1269,12 @@ export class AcpBackend implements AgentBackend {
       return;
     }
 
+    // Signal the turn end locally first: the in-flight turn resolves
+    // immediately and the runner stays alive for later prompts. The ACP
+    // session itself is not torn down — the agent process keeps running.
+    this.emit({ type: 'status', status: 'stopped', detail: USER_CANCELLED_DETAIL });
     try {
       await this.connection.cancel({ sessionId: this.acpSessionId });
-      this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
     } catch (error) {
       // Log to file only, not console
       logger.debug('[AcpBackend] Error cancelling:', error);

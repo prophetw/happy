@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentMessage } from '@/agent/core';
-import { AcpBackend, type AcpPermissionHandler } from './AcpBackend';
-import { DefaultTransport } from '@/agent/transport';
+import { AcpBackend, USER_CANCELLED_DETAIL, type AcpPermissionHandler } from './AcpBackend';
+import { DefaultTransport, type TransportHandler } from '@/agent/transport';
 import { AcpSessionManager } from './AcpSessionManager';
 import type { SessionEnvelope } from '@slopus/happy-wire';
 import { logger } from '@/ui/logger';
@@ -31,6 +31,18 @@ import {
 import type { SessionConfigOption, SessionModeState, SessionModelState } from '@agentclientprotocol/sdk';
 
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Rejection marker for turns ended by the user's stop action. The runner
+ * reports the turn as cancelled (without an error message) and keeps waiting
+ * for the next user message.
+ */
+class TurnCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TurnCancelledError';
+  }
+}
 const ACP_EVENT_PREVIEW_CHARS = 240;
 const ACP_RAW_PREVIEW_CHARS = 2000;
 const ACP_COLOR_RESET = '\u001b[0m';
@@ -475,6 +487,7 @@ export async function runAcp(opts: {
   args: string[];
   startedBy?: 'daemon' | 'terminal';
   verbose?: boolean;
+  transportHandler?: TransportHandler;
 }): Promise<void> {
   const verbose = opts.verbose === true;
   const sessionTag = randomUUID();
@@ -567,7 +580,7 @@ export async function runAcp(opts: {
     args: opts.args,
     mcpServers,
     permissionHandler,
-    transportHandler: new DefaultTransport(opts.agentName),
+    transportHandler: opts.transportHandler ?? new DefaultTransport(opts.agentName),
     verbose,
   });
 
@@ -867,7 +880,13 @@ export async function runAcp(opts: {
         clearPendingTurn();
       }
       if (msg.status === 'stopped') {
-        stopRunnerFromBackendStatus(msg.status, msg.detail);
+        if (msg.detail === USER_CANCELLED_DETAIL) {
+          // User hit stop: end only the current turn. The ACP session and the
+          // runner stay alive so the conversation can continue.
+          clearPendingTurn(new TurnCancelledError(`${opts.agentName} cancelled by user`));
+        } else {
+          stopRunnerFromBackendStatus(msg.status, msg.detail);
+        }
       } else if (msg.status === 'error') {
         if (!acpSessionId) {
           // Startup failure (e.g. the agent binary failed to spawn) leaves no
@@ -998,6 +1017,11 @@ export async function runAcp(opts: {
       errorReportedForCurrentTurn = false;
       sendEnvelopes(sessionManager.startTurn());
       const turnEnded = waitForTurnEnd();
+      // The turn can be rejected (user cancel, backend error) while sendPrompt
+      // is still awaiting the agent's response; without an immediate handler
+      // that rejection is unhandled across RPC round-trips and crashes the
+      // process. The later `await turnEnded` still re-throws it.
+      turnEnded.catch(() => {});
       try {
         if (typeof batch.mode.permissionMode === 'string' && batch.mode.permissionMode.length > 0) {
           await switchPermissionModeIfRequested(batch.mode.permissionMode);
@@ -1016,6 +1040,12 @@ export async function runAcp(opts: {
           logAcp('muted', `Outgoing prompt completion from ${opts.agentName}`);
         }
       } catch (error) {
+        if (error instanceof TurnCancelledError) {
+          sendEnvelopes(sessionManager.endTurn('cancelled'));
+          session.sendSessionEvent({ type: 'ready' });
+          await turnEnded.catch(() => {});
+          continue;
+        }
         const detail = error instanceof Error ? error.message : String(error);
         if (!errorReportedForCurrentTurn) {
           session.sendSessionEvent({

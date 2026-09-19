@@ -38,6 +38,9 @@ const mocks = vi.hoisted(() => {
     startSessionCalls: 0,
     cancelCalls: [] as string[],
     disposeCalls: 0,
+    hangPrompt: false,
+    hangPromptResolve: null as (() => void) | null,
+    hangPromptReject: null as ((error: Error) => void) | null,
     constructorArgs: null as any,
   };
 
@@ -121,6 +124,7 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 vi.mock('./AcpBackend', () => ({
+  USER_CANCELLED_DETAIL: 'Cancelled by user',
   AcpBackend: class MockAcpBackend {
     constructor(args: any) {
       mocks.backendState.constructorArgs = args;
@@ -155,6 +159,12 @@ vi.mock('./AcpBackend', () => ({
         }
         return;
       }
+      if (mocks.backendState.hangPrompt) {
+        return new Promise<void>((resolve, reject) => {
+          mocks.backendState.hangPromptResolve = resolve;
+          mocks.backendState.hangPromptReject = reject;
+        });
+      }
       for (const listener of mocks.backendState.listeners) {
         listener({ type: 'status', status: 'running' });
         listener({ type: 'model-output', textDelta: 'hello' });
@@ -182,7 +192,7 @@ vi.mock('./AcpBackend', () => ({
     async cancel(sessionId: string) {
       mocks.backendState.cancelCalls.push(sessionId);
       for (const listener of mocks.backendState.listeners) {
-        listener({ type: 'status', status: 'stopped' });
+        listener({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
       }
     }
 
@@ -217,6 +227,9 @@ describe('runAcp', () => {
     mocks.backendState.startSessionCalls = 0;
     mocks.backendState.cancelCalls = [];
     mocks.backendState.disposeCalls = 0;
+    mocks.backendState.hangPrompt = false;
+    mocks.backendState.hangPromptResolve = null;
+    mocks.backendState.hangPromptReject = null;
     mocks.backendState.constructorArgs = null;
 
     mocks.mockApiCreate.mockResolvedValue({
@@ -551,6 +564,124 @@ describe('runAcp', () => {
 
     await mocks.getKillHandler()!();
     await runPromise;
+  });
+
+  it('ends the turn as cancelled on user abort and keeps the session alive for the next message', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      mocks.backendState.hangPrompt = true;
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'dsh',
+        command: 'dsh',
+        args: ['--profile', 'acp'],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+      });
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text: 'long running task' },
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts).toHaveLength(1);
+      });
+
+      const abortHandler = mocks.sessionHandlers.get('abort');
+      await abortHandler!({});
+
+      // In production the cancel RPC round-trip means the agent's prompt
+      // response lands several event-loop turns after the stop signal; the
+      // rejection raised by the stop signal must not be left unhandled in
+      // between (that crash exits the runner right after the abort).
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+
+      // The agent settles the in-flight prompt RPC in response to the cancel
+      mocks.backendState.hangPromptResolve?.();
+
+      await vi.waitFor(() => {
+        const turnEndStatuses = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+          .map((call) => call[0]?.ev)
+          .filter((ev) => ev?.t === 'turn-end')
+          .map((ev) => ev.status);
+        expect(turnEndStatuses).toEqual(['cancelled']);
+      });
+      await vi.waitFor(() => {
+        expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+      });
+      // A user cancel is not an agent error and must not tear the runner down
+      for (const call of mocks.mockSession.sendSessionEvent.mock.calls) {
+        expect(String(call[0]?.message ?? '')).not.toContain('error');
+      }
+      expect(mocks.mockSession.close).not.toHaveBeenCalled();
+      expect(mocks.backendState.disposeCalls).toBe(0);
+
+      // The conversation continues: the next prompt runs to completion.
+      mocks.backendState.hangPrompt = false;
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text: 'keep going' },
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts.map((entry) => entry.prompt)).toContain('keep going');
+      });
+      await vi.waitFor(() => {
+        const turnEndStatuses = mocks.mockSession.sendSessionProtocolMessage.mock.calls
+          .map((call) => call[0]?.ev)
+          .filter((ev) => ev?.t === 'turn-end')
+          .map((ev) => ev.status);
+        expect(turnEndStatuses).toEqual(['cancelled', 'completed']);
+      });
+      expect(mocks.mockSession.close).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('still tears the runner down when the agent process exits mid-session', async () => {
+    mocks.backendState.hangPrompt = true;
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'dsh',
+      command: 'dsh',
+      args: ['--profile', 'acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'long running task' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    // Agent process death arrives as a stopped status without the user-cancel marker;
+    // the dying agent also settles the in-flight prompt RPC with a failure
+    for (const listener of mocks.backendState.listeners) {
+      listener({ type: 'status', status: 'stopped', detail: 'Exit code: 1' });
+    }
+    mocks.backendState.hangPromptReject?.(new Error('connection closed'));
+
+    await runPromise;
+
+    expect(mocks.mockSession.close).toHaveBeenCalled();
+    expect(mocks.backendState.disposeCalls).toBe(1);
   });
 
   it('updates session metadata with ACP config options (models and operating modes)', async () => {

@@ -173,4 +173,18 @@ export interface TransportHandler {
    * @returns Timeout in milliseconds (default: 500)
    */
   getIdleTimeout?(): number;
+
+  /**
+   * Whether the agent's ACP prompt response is the authoritative end-of-turn
+   * signal. Compliant agents only resolve the session/prompt request once the
+   * turn is fully done, so the backend suppresses inactivity-based 'idle'
+   * statuses while a prompt is in flight and emits 'idle' exactly when the
+   * prompt response arrives. This keeps the runner from ending the turn during
+   * server-side thinking gaps between tool calls (which can last many seconds
+   * and defeat any quiet-period timeout).
+   *
+   * @returns true to drive turn end from the prompt response (default: false,
+   *          'idle' is inferred from output inactivity)
+   */
+  turnEndOnPromptResponse?(): boolean;
 }
