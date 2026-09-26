@@ -67,6 +67,7 @@ export const zhHans: TranslationStructure = {
         fileViewer: '文件查看器',
         loading: '加载中...',
         retry: '重试',
+        loadMore: '加载更多',
         delete: '删除',
         optional: '可选的',
     },
@@ -217,6 +218,7 @@ export const zhHans: TranslationStructure = {
         flatList: '平铺列表',
         groupByProject: '按项目分组',
         appearanceSettings: '外观设置',
+        worktreeTabs: ({ count }: { count: number }) => `${count} 个标签页`,
     },
 
     settingsFeatures: {
@@ -337,6 +339,9 @@ export const zhHans: TranslationStructure = {
         resumeSheetNoPreview: '未命名对话',
         resumeClaudeOnly: '这里只能恢复 Claude 对话。',
         resumeErrorMissingMetadata: '缺少恢复会话所需的元数据。',
+        archiveAction: '归档',
+        startingChat: '正在启动新对话…',
+        actionsTitle: '会话',
     },
 
     commandPalette: {
@@ -568,6 +573,9 @@ export const zhHans: TranslationStructure = {
         hideArchived: '隐藏已归档',
         newSession: '新建会话',
         projects: "项目",
+        bots: '机器人',
+        showAllWorkspaces: ({ count }: { count: number }) => `显示全部 ${count} 个工作区`,
+        showFewerWorkspaces: '收起',
     },
 
     zen: {
@@ -880,6 +888,10 @@ export const zhHans: TranslationStructure = {
         ...en.onboarding,
     },
 
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Codex 和 Claude Code 移动客户端',
@@ -1091,6 +1103,11 @@ export const zhHans: TranslationStructure = {
             : `${count} 张图片上传失败，未发送。`,
         notSupportedTitle: '不支持图片',
         notSupportedMessage: '此代理不支持图片附件。图片未发送。',
+        attachTitle: '添加图片',
+        pasteFromClipboard: '从剪贴板粘贴',
+        chooseFromLibrary: '照片图库',
+        nothingToPasteTitle: '没有可粘贴的内容',
+        nothingToPasteMessage: '请先复制一张图片，然后重试。',
     },
 
     feed: {

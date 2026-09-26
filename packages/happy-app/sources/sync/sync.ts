@@ -9,6 +9,7 @@ import { storage } from './storage';
 // Circular at module level (ops.ts imports sync) but safe: both sides only
 // touch each other's exports at runtime, never during module initialization.
 import { sessionSetAgentModes } from './ops';
+import { rigComposerClear } from './rigComposer';
 import { getImageAttachmentSendPlan, isAttachmentAllowedByPolicy } from './attachmentSupport';
 import {
     errorMessageFromUnknown,
@@ -695,6 +696,22 @@ class Sync {
         return { uploaded, failed };
     }
 
+    /**
+     * Puts one in-memory blob in a session's attachment store, encrypted with the
+     * session's blob key, and returns the ref the agent can download it by. This is
+     * the message-attachment path without the file read: a bot face painted on the
+     * phone travels the same way as a picture attached to a message.
+     */
+    async uploadSessionBlob(sessionId: string, name: string, bytes: Uint8Array): Promise<{ ref: string; size: number }> {
+        if (!this.credentials) throw new Error('Not signed in.');
+        const blobKey = this.encryption.getSessionBlobKey(sessionId);
+        if (!blobKey) throw new Error(`No blob key for session ${sessionId}`);
+        const encrypted = encryptBlob(bytes, blobKey);
+        const upload = await requestAttachmentUpload(this.credentials, sessionId, name, encrypted.length);
+        await uploadEncryptedBlob(upload, encrypted, this.credentials);
+        return { ref: upload.ref, size: bytes.length };
+    }
+
     /** A visible row alone is not enough to place a message safely. */
     async ensureSessionReady(sessionId: string): Promise<void> {
         const isReady = () => !!(storage.getState().sessions[sessionId]?.metadata
@@ -876,6 +893,7 @@ class Sync {
                 ...(modeMeta.model !== undefined ? { model: modeMeta.model } : {}),
                 ...(modeMeta.modelProviderId !== undefined ? { modelProviderId: modeMeta.modelProviderId } : {}),
                 ...(modeMeta.effort !== undefined ? { effort: modeMeta.effort } : {}),
+                ...(modeMeta.serviceTier !== undefined ? { serviceTier: modeMeta.serviceTier } : {}),
                 ...(displayText && { displayText }) // Add displayText if provided
             }
         };
@@ -909,6 +927,15 @@ class Sync {
             content: encryptedRawRecord
         });
         releaseSpawnedSession(sessionId);
+        // The synced Happy Agent draft is spent once its text is accepted. The
+        // mode was captured above, before the clear. Text typed since (a newer
+        // local edit) stays; the composer clears itself only when unchanged.
+        const latestSession = storage.getState().sessions[sessionId];
+        if (isRigMetadataV1(latestSession?.metadata) && source !== 'voice'
+            && latestSession.draftUpdatedAt === session.draftUpdatedAt
+            && (!latestSession.draft || latestSession.draft === text)) {
+            rigComposerClear(sessionId);
+        }
         options?.onAccepted?.();
         trackMessageSent(source, session.metadata);
 
@@ -2361,6 +2388,8 @@ class Sync {
         if (messages.length > 0) {
             this.sessionOldestSeq.set(sessionId, minSeq);
         }
+        // Even a valid page can contain only non-rendering protocol records.
+        storage.getState().applyMessagesLoaded(sessionId);
         storage.getState().applyOlderMessagesPagination(sessionId, {
             hasMore: !!data.hasMore && messages.length > 0
         });
@@ -2436,31 +2465,36 @@ class Sync {
      * the currently loaded history. No-op when we have already fetched the
      * earliest message, when no initial fetch has happened yet, or when an
      * older-fetch is already in flight for this session.
+     * Resolves true only when the cursor moved back: callers that page
+     * automatically continue on true and rest on false.
      */
-    loadOlderMessages = async (sessionId: string) => {
+    loadOlderMessages = async (sessionId: string): Promise<boolean> => {
         const oldestSeq = this.sessionOldestSeq.get(sessionId);
         if (oldestSeq === undefined || oldestSeq <= 1) {
-            return;
+            return false;
         }
         const sessionMessages = storage.getState().sessionMessages[sessionId];
         if (!sessionMessages || sessionMessages.isLoadingOlder || !sessionMessages.hasMoreOlder) {
-            return;
+            return false;
         }
 
         storage.getState().applyOlderMessagesLoading(sessionId, true);
         const lock = this.getSessionMessageLock(sessionId);
         try {
-            await lock.inLock(async () => {
+            return await lock.inLock(async () => {
                 const encryption = this.encryption.getSessionEncryption(sessionId);
                 if (!encryption) {
+                    // Thrown, as fetchMessages does: a silent no-op leaves
+                    // hasMoreOlder set with nothing changed, and automatic
+                    // paging would ask again at once.
                     log.log(`💬 loadOlderMessages: encryption not ready for ${sessionId}`);
-                    return;
+                    throw new Error(`Session encryption not ready for ${sessionId}`);
                 }
                 // Re-read the cursor inside the lock. A concurrent
                 // socket-pushed update or reload could have changed it.
                 const beforeSeq = this.sessionOldestSeq.get(sessionId);
                 if (beforeSeq === undefined || beforeSeq <= 1) {
-                    return;
+                    return false;
                 }
                 const response = await apiSocket.request(
                     `/v3/sessions/${sessionId}/messages?before_seq=${beforeSeq}&limit=100`
@@ -2477,12 +2511,16 @@ class Sync {
                 for (const message of messages) {
                     if (message.seq < minSeq) minSeq = message.seq;
                 }
-                if (messages.length > 0) {
+                // A page that does not move the cursor back would be refetched
+                // forever; treat it as the end of history.
+                const advanced = minSeq < beforeSeq;
+                if (advanced) {
                     this.sessionOldestSeq.set(sessionId, minSeq);
                 }
                 storage.getState().applyOlderMessagesPagination(sessionId, {
-                    hasMore: !!data.hasMore && messages.length > 0
+                    hasMore: !!data.hasMore && advanced
                 });
+                return advanced;
             });
         } finally {
             storage.getState().applyOlderMessagesLoading(sessionId, false);

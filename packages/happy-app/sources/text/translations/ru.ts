@@ -76,6 +76,7 @@ export const ru: TranslationStructure = {
         fileViewer: 'Просмотр файла',
         loading: 'Загрузка...',
         retry: 'Повторить',
+        loadMore: 'Загрузить ещё',
         delete: 'Удалить',
         optional: 'необязательно',
     },
@@ -201,6 +202,7 @@ export const ru: TranslationStructure = {
         flatList: 'Общий список',
         groupByProject: 'Группировать по проектам',
         appearanceSettings: 'Настройки внешнего вида',
+        worktreeTabs: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'вкладка', few: 'вкладки', many: 'вкладок' })}`,
     },
 
     settingsFeatures: {
@@ -469,6 +471,9 @@ export const ru: TranslationStructure = {
         resumeSheetNoPreview: 'Разговор без названия',
         resumeClaudeOnly: 'Отсюда можно возобновлять только разговоры Claude.',
         resumeErrorMissingMetadata: 'Не хватает метаданных сессии, необходимых для возобновления.',
+        archiveAction: 'Архивировать',
+        startingChat: 'Запускаем новый чат…',
+        actionsTitle: 'Сессия',
     },
 
     commandPalette: {
@@ -583,6 +588,9 @@ export const ru: TranslationStructure = {
         hideArchived: 'Скрыть архив',
         newSession: 'Новая сессия',
         projects: "Проекты",
+        bots: 'Боты',
+        showAllWorkspaces: ({ count }: { count: number }) => `Показать все пространства (${count})`,
+        showFewerWorkspaces: 'Показать меньше',
     },
 
     zen: {
@@ -885,6 +893,10 @@ export const ru: TranslationStructure = {
         ...en.onboarding,
     },
 
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Мобильный клиент Codex и Claude Code',
@@ -1121,6 +1133,11 @@ export const ru: TranslationStructure = {
             : `${count} изображений не удалось загрузить — они не были отправлены.`,
         notSupportedTitle: 'Изображения не поддерживаются',
         notSupportedMessage: 'Этот агент не поддерживает вложения изображений. Изображения не были отправлены.',
+        attachTitle: 'Добавить изображение',
+        pasteFromClipboard: 'Вставить из буфера обмена',
+        chooseFromLibrary: 'Библиотека фото',
+        nothingToPasteTitle: 'Нечего вставить',
+        nothingToPasteMessage: 'Сначала скопируйте изображение, затем попробуйте снова.',
     },
 
     feed: {

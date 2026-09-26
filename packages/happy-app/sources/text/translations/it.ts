@@ -64,6 +64,7 @@ export const it: TranslationStructure = {
         fileViewer: 'Visualizzatore file',
         loading: 'Caricamento...',
         retry: 'Riprova',
+        loadMore: 'Carica altro',
         delete: 'Elimina',
         optional: 'opzionale',
         saveAs: 'Salva con nome',
@@ -214,6 +215,7 @@ export const it: TranslationStructure = {
         flatList: 'Elenco semplice',
         groupByProject: 'Raggruppa per progetto',
         appearanceSettings: 'Impostazioni aspetto',
+        worktreeTabs: ({ count }: { count: number }) => count === 1 ? '1 scheda' : `${count} schede`,
     },
 
     settingsFeatures: {
@@ -334,6 +336,9 @@ export const it: TranslationStructure = {
         resumeSheetNoPreview: 'Conversazione senza titolo',
         resumeClaudeOnly: 'Da qui è possibile riprendere solo conversazioni di Claude.',
         resumeErrorMissingMetadata: 'Mancano i metadati della sessione necessari per riprendere.',
+        archiveAction: 'Archivia',
+        startingChat: 'Avvio di una nuova chat…',
+        actionsTitle: 'Sessione',
     },
 
     commandPalette: {
@@ -565,6 +570,9 @@ export const it: TranslationStructure = {
         hideArchived: 'Nascondi archiviate',
         newSession: 'Nuova sessione',
         projects: "Progetti",
+        bots: 'Bot',
+        showAllWorkspaces: ({ count }: { count: number }) => `Mostra tutti i ${count} spazi di lavoro`,
+        showFewerWorkspaces: 'Mostra meno',
     },
 
     zen: {
@@ -877,6 +885,10 @@ export const it: TranslationStructure = {
         ...en.onboarding,
     },
 
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Client mobile di Codex e Claude Code',
@@ -1089,6 +1101,11 @@ export const it: TranslationStructure = {
             : `Non è stato possibile caricare ${count} immagini e non sono state inviate.`,
         notSupportedTitle: 'Immagini non supportate',
         notSupportedMessage: 'Questo agente non supporta gli allegati immagine. Le immagini non sono state inviate.',
+        attachTitle: 'Aggiungi immagine',
+        pasteFromClipboard: 'Incolla dagli appunti',
+        chooseFromLibrary: 'Libreria foto',
+        nothingToPasteTitle: 'Niente da incollare',
+        nothingToPasteMessage: 'Copia prima un\'immagine, poi riprova.',
     },
 
     feed: {
