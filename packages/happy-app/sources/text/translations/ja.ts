@@ -67,6 +67,7 @@ export const ja: TranslationStructure = {
         fileViewer: 'ファイルビューアー',
         loading: '読み込み中...',
         retry: '再試行',
+        loadMore: 'さらに読み込む',
         delete: '削除',
         optional: '任意',
         saveAs: '名前を付けて保存',
@@ -217,6 +218,7 @@ export const ja: TranslationStructure = {
         flatList: 'フラットリスト',
         groupByProject: 'プロジェクト別にグループ化',
         appearanceSettings: '外観設定',
+        worktreeTabs: ({ count }: { count: number }) => `${count} 個のタブ`,
     },
 
     settingsFeatures: {
@@ -337,6 +339,9 @@ export const ja: TranslationStructure = {
         resumeSheetNoPreview: '無題の会話',
         resumeClaudeOnly: 'ここから再開できるのは Claude の会話のみです。',
         resumeErrorMissingMetadata: 'セッションを再開するのに必要なメタデータがありません。',
+        archiveAction: 'アーカイブ',
+        startingChat: '新しいチャットを開始しています…',
+        actionsTitle: 'セッション',
     },
 
     commandPalette: {
@@ -568,6 +573,9 @@ export const ja: TranslationStructure = {
         hideArchived: 'アーカイブを非表示',
         newSession: '新しいセッション',
         projects: "プロジェクト",
+        bots: 'ボット',
+        showAllWorkspaces: ({ count }: { count: number }) => `${count}件のワークスペースをすべて表示`,
+        showFewerWorkspaces: '表示を減らす',
     },
 
     zen: {
@@ -880,6 +888,10 @@ export const ja: TranslationStructure = {
         ...en.onboarding,
     },
 
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'CodexとClaude Codeのモバイルクライアント',
@@ -1092,6 +1104,11 @@ export const ja: TranslationStructure = {
             : `${count}枚の画像をアップロードできず、送信されませんでした。`,
         notSupportedTitle: '画像はサポートされていません',
         notSupportedMessage: 'このエージェントは画像の添付に対応していません。画像は送信されませんでした。',
+        attachTitle: '画像を追加',
+        pasteFromClipboard: 'クリップボードから貼り付け',
+        chooseFromLibrary: 'フォトライブラリ',
+        nothingToPasteTitle: '貼り付けるものがありません',
+        nothingToPasteMessage: '先に画像をコピーしてから、もう一度お試しください。',
     },
 
     feed: {
