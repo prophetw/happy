@@ -111,10 +111,25 @@ export interface AgyQuotaGroup {
   weekly?: AgyQuotaWindow;
 }
 
+export interface AgyContextWindowInfo {
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  contextWindowSize?: number;
+  usedPercentage?: number;
+  remainingPercentage?: number;
+  currentUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+  };
+}
+
 export interface AgyStatusLineQuota {
   gemini?: AgyQuotaGroup;
   claude?: AgyQuotaGroup;
   models?: ModelQuotaInfo[];
+  contextWindow?: AgyContextWindowInfo;
   accountName?: string;
   email?: string;
   planTier?: string;
@@ -384,16 +399,70 @@ export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): 
   const email = rawQuotaOrPayload.email || rawQuota.email;
   const planTier = rawQuotaOrPayload.plan_tier || rawQuotaOrPayload.planTier || rawQuota.plan_tier || rawQuota.planTier;
 
+  // 3. Context window usage (e.g. from agy statusline payload)
+  let contextWindow: AgyContextWindowInfo | undefined;
+  const rawCw = rawQuotaOrPayload.context_window || rawQuota.context_window;
+  if (rawCw && typeof rawCw === 'object') {
+    const pickCount = (keys: string[]) => {
+      for (const k of keys) {
+        const v = rawCw[k];
+        if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+          return Math.trunc(v);
+        }
+      }
+      return undefined;
+    };
+    const totalInput = pickCount(['total_input_tokens', 'totalInputTokens', 'input_tokens', 'inputTokens']);
+    const totalOutput = pickCount(['total_output_tokens', 'totalOutputTokens', 'output_tokens', 'outputTokens']);
+    const windowSize = pickCount(['context_window_size', 'contextWindowSize', 'max_tokens', 'maxTokens', 'total_tokens']);
+    const usedPct = typeof rawCw.used_percentage === 'number'
+      ? rawCw.used_percentage
+      : (typeof rawCw.usedPercentage === 'number' ? rawCw.usedPercentage : undefined);
+    const remPct = typeof rawCw.remaining_percentage === 'number'
+      ? rawCw.remaining_percentage
+      : (typeof rawCw.remainingPercentage === 'number' ? rawCw.remainingPercentage : undefined);
+
+    let currentUsage: AgyContextWindowInfo['currentUsage'] = undefined;
+    if (rawCw.current_usage && typeof rawCw.current_usage === 'object') {
+      const cu = rawCw.current_usage as Record<string, unknown>;
+      const pickCu = (keys: string[]) => {
+        for (const k of keys) {
+          const v = cu[k];
+          if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.trunc(v);
+        }
+        return undefined;
+      };
+      currentUsage = {
+        inputTokens: pickCu(['input_tokens', 'inputTokens']),
+        outputTokens: pickCu(['output_tokens', 'outputTokens']),
+        cacheCreationInputTokens: pickCu(['cache_creation_input_tokens', 'cacheCreationInputTokens']),
+        cacheReadInputTokens: pickCu(['cache_read_input_tokens', 'cacheReadInputTokens']),
+      };
+    }
+
+    if (totalInput !== undefined || totalOutput !== undefined || windowSize !== undefined || usedPct !== undefined) {
+      contextWindow = {
+        totalInputTokens: totalInput,
+        totalOutputTokens: totalOutput,
+        contextWindowSize: windowSize,
+        usedPercentage: usedPct,
+        remainingPercentage: remPct,
+        currentUsage,
+      };
+    }
+  }
+
   if (!gemini && !claude && models.length === 0) {
     const topFiveHour = parseQuotaWindow(rawQuota.five_hour ?? rawQuota['5h'] ?? rawQuota.fiveHour, now);
     const topWeekly = parseQuotaWindow(rawQuota.weekly ?? rawQuota['7d'] ?? rawQuota.weeklyWindow, now);
-    if (topFiveHour || topWeekly) {
+    if (topFiveHour || topWeekly || contextWindow) {
       return {
-        gemini: {
+        gemini: topFiveHour || topWeekly ? {
           name: 'Gemini',
           fiveHour: topFiveHour,
           weekly: topWeekly,
-        },
+        } : undefined,
+        contextWindow,
         email,
         planTier,
         raw: rawQuotaOrPayload,
@@ -407,6 +476,7 @@ export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): 
     gemini,
     claude,
     models: models.length > 0 ? models : undefined,
+    contextWindow,
     email,
     planTier,
     raw: rawQuotaOrPayload,
@@ -517,13 +587,23 @@ export class AgyQuotaStore {
       if (fs.existsSync(filePath)) {
         try {
           const stats = fs.statSync(filePath);
-          // Only load if updated within last 24 hours
-          if (now - stats.mtimeMs < 24 * 3600 * 1000) {
+          // Load if updated within last 7 days
+          if (now - stats.mtimeMs < 7 * 24 * 3600 * 1000) {
             const raw = fs.readFileSync(filePath, 'utf8').trim();
             if (raw.startsWith('{')) {
               const parsed = parseStatusLinePayload(raw, now);
               if (parsed?.quota) {
+                const isChanged = JSON.stringify(this.currentQuota) !== JSON.stringify(parsed.quota);
                 this.currentQuota = parsed.quota;
+                if (isChanged) {
+                  for (const listener of this.listeners) {
+                    try {
+                      listener(parsed.quota);
+                    } catch {
+                      // ignore listener errors
+                    }
+                  }
+                }
                 return true;
               }
             }

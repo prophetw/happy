@@ -158,6 +158,31 @@ describe('parseStatusLinePayload', () => {
     expect(parsed?.quota?.gemini?.fiveHour?.percentage).toBe(95);
     expect(parsed?.quota?.claude?.fiveHour?.percentage).toBe(70);
   });
+
+  it('parses context_window tokens and size from statusline payload', () => {
+    const jsonStr = JSON.stringify({
+      context_window: {
+        total_input_tokens: 94926,
+        total_output_tokens: 29652,
+        context_window_size: 1048576,
+        used_percentage: 9.05,
+        remaining_percentage: 90.95,
+      },
+      quota: {
+        'gemini-5h': {
+          remaining_fraction: 0.8,
+        },
+      },
+    });
+
+    const parsed = parseStatusLinePayload(jsonStr);
+    expect(parsed?.quota?.contextWindow).toMatchObject({
+      totalInputTokens: 94926,
+      totalOutputTokens: 29652,
+      contextWindowSize: 1048576,
+      usedPercentage: 9.05,
+    });
+  });
 });
 
 describe('AgyQuotaStore', () => {
