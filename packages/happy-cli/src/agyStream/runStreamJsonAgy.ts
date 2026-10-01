@@ -13,6 +13,9 @@
  * stays alive across turns, and dynamically binds to the agy conversation ID.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import React from 'react';
 import { render, type Instance as InkInstance } from 'ink';
@@ -49,6 +52,12 @@ import {
   getAgySkillCommandNames,
 } from './skills';
 import { AgyPermissionHandler } from './permissionHandler';
+import { AgyQuotaStore, type AgyStatusLineQuota } from './statusLine';
+import {
+  buildAgyUsageEnvelope,
+  buildUsageEnvelopeFromContextWindow,
+  buildAgyUsageLimits,
+} from './usageBridge';
 
 export interface RunStreamJsonAgyOptions {
   credentials: Credentials;
@@ -238,7 +247,12 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
       log(`Backend message: ${JSON.stringify(msg).slice(0, 200)}`);
     }
 
-    if (msg.type === 'model-output' && msg.textDelta) {
+    if (msg.type === 'token-count') {
+      const usageEnv = buildAgyUsageEnvelope(msg as Record<string, unknown>, displayedModel);
+      if (usageEnv) {
+        sendEnvelopes([usageEnv]);
+      }
+    } else if (msg.type === 'model-output' && msg.textDelta) {
       messageBuffer.addMessage(msg.textDelta, 'assistant');
     } else if (msg.type === 'tool-call') {
       messageBuffer.addMessage(`🔧 ${msg.toolName}`, 'status');
@@ -271,6 +285,51 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   };
 
   backend.onMessage(onBackendMessage);
+
+  const syncUsageState = (quota?: AgyStatusLineQuota | null) => {
+    const store = AgyQuotaStore.getInstance();
+    const effectiveQuota = quota ?? store.getQuota();
+    if (effectiveQuota?.contextWindow) {
+      const usageEnv = buildUsageEnvelopeFromContextWindow(effectiveQuota.contextWindow, displayedModel);
+      if (usageEnv) {
+        sendEnvelopes([usageEnv]);
+      }
+    }
+    const limits = buildAgyUsageLimits(effectiveQuota, displayedModel);
+    if (limits && limits.windows.length > 0) {
+      session.updateAgentState((current) => ({
+        ...current,
+        usageLimits: limits,
+      }));
+    }
+  };
+
+  const quotaStore = AgyQuotaStore.getInstance();
+  quotaStore.loadFromFile();
+  syncUsageState();
+
+  const unsubscribeQuota = quotaStore.subscribe((quota) => {
+    syncUsageState(quota);
+  });
+
+  const watchedPaths: string[] = [];
+  const candidateStatusFiles = [
+    path.join(os.homedir(), '.gemini/antigravity-cli/statusline-state.json'),
+    path.join(os.homedir(), '.config/gemini/statusline-state.json'),
+    path.join(os.homedir(), '.happy/agy-statusline.json'),
+  ];
+  for (const p of candidateStatusFiles) {
+    if (fs.existsSync(p)) {
+      watchedPaths.push(p);
+      try {
+        fs.watchFile(p, { interval: 2000 }, () => {
+          quotaStore.loadFromFile(p);
+        });
+      } catch {
+        // ignore watch errors
+      }
+    }
+  }
 
   if (hasTTY) {
     const DisplayComponent = () =>
@@ -388,6 +447,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
           ...currentMetadata,
           currentModelCode: displayedModel,
         }));
+        syncUsageState();
         if (hasTTY) {
           messageBuffer.addMessage(`[MODEL:${displayedModel}]`, 'system');
         }
@@ -537,6 +597,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         log(`Turn ended: ${msg}`);
         sendEnvelopes(sessionManager.endTurn('failed'));
       }
+      quotaStore.loadFromFile();
       thinking = false;
       session.keepAlive(false, 'remote');
       session.sendSessionEvent({ type: 'ready' });
@@ -544,6 +605,15 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   } finally {
     clearInterval(keepAliveInterval);
     reconnectionHandle?.cancel();
+
+    for (const p of watchedPaths) {
+      try {
+        fs.unwatchFile(p);
+      } catch {
+        // ignore
+      }
+    }
+    unsubscribeQuota();
 
     backend.offMessage(onBackendMessage);
     await backend.dispose();
