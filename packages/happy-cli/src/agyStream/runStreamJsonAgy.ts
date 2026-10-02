@@ -290,7 +290,12 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     const store = AgyQuotaStore.getInstance();
     const effectiveQuota = quota ?? store.getQuota();
     if (effectiveQuota?.contextWindow) {
-      const usageEnv = buildUsageEnvelopeFromContextWindow(effectiveQuota.contextWindow, displayedModel);
+      const activeConversationId = metadata.agyConversationId || initialConversationId;
+      const usageEnv = buildUsageEnvelopeFromContextWindow(
+        effectiveQuota.contextWindow,
+        displayedModel,
+        activeConversationId,
+      );
       if (usageEnv) {
         sendEnvelopes([usageEnv]);
       }
