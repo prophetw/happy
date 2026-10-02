@@ -253,4 +253,22 @@ describe('AgyQuotaStore', () => {
     expect(quota?.email).toBe('testuser@example.com');
     expect(quota?.planTier).toBe('Google AI Pro');
   });
+
+  it('parses conversation_id and session_id into contextWindow', () => {
+    const rawState = {
+      session_id: 'sess-abc-123',
+      conversation_id: 'conv-xyz-789',
+      context_window: {
+        total_input_tokens: 1200,
+        total_output_tokens: 350,
+        context_window_size: 1048576,
+      },
+    };
+
+    const quota = parseStatusLineQuota(rawState);
+    expect(quota?.contextWindow).toBeDefined();
+    expect(quota?.contextWindow?.conversationId).toBe('conv-xyz-789');
+    expect(quota?.contextWindow?.sessionId).toBe('sess-abc-123');
+    expect(quota?.contextWindow?.totalInputTokens).toBe(1200);
+  });
 });

@@ -83,14 +83,16 @@ describe('buildAgyUsageEnvelope', () => {
 });
 
 describe('buildUsageEnvelopeFromContextWindow', () => {
-  it('builds a service envelope from statusline contextWindow', () => {
+  it('builds a service envelope from statusline contextWindow when conversationId matches', () => {
     const envelope = buildUsageEnvelopeFromContextWindow(
       {
+        conversationId: '55f39843-57a6-4bc1-ad20-31ae77fffddf',
         totalInputTokens: 94926,
         totalOutputTokens: 29652,
         contextWindowSize: 1048576,
       },
       'Gemini 3.8 Flash (High)',
+      '55f39843-57a6-4bc1-ad20-31ae77fffddf',
     );
 
     expect(envelope).toBeDefined();
@@ -101,8 +103,38 @@ describe('buildUsageEnvelopeFromContextWindow', () => {
     });
   });
 
+  it('returns null if conversationId does not match current conversation (prevents 9% stale token pollution)', () => {
+    const envelope = buildUsageEnvelopeFromContextWindow(
+      {
+        conversationId: '55f39843-57a6-4bc1-ad20-31ae77fffddf',
+        totalInputTokens: 94926,
+        totalOutputTokens: 29652,
+        contextWindowSize: 1048576,
+      },
+      'Gemini 3.8 Flash (High)',
+      'new-session-c1b7a2e3',
+    );
+
+    expect(envelope).toBeNull();
+  });
+
+  it('returns null if currentConversationId is undefined (session not initialized or anonymous)', () => {
+    const envelope = buildUsageEnvelopeFromContextWindow(
+      {
+        conversationId: '55f39843-57a6-4bc1-ad20-31ae77fffddf',
+        totalInputTokens: 94926,
+        totalOutputTokens: 29652,
+        contextWindowSize: 1048576,
+      },
+      'Gemini 3.8 Flash (High)',
+      undefined,
+    );
+
+    expect(envelope).toBeNull();
+  });
+
   it('returns null if no tokens or context window size available', () => {
-    expect(buildUsageEnvelopeFromContextWindow({})).toBeNull();
+    expect(buildUsageEnvelopeFromContextWindow({}, 'Gemini 3.8 Flash (High)', 'any-id')).toBeNull();
   });
 });
 

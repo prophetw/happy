@@ -112,6 +112,8 @@ export interface AgyQuotaGroup {
 }
 
 export interface AgyContextWindowInfo {
+  conversationId?: string;
+  sessionId?: string;
   totalInputTokens?: number;
   totalOutputTokens?: number;
   contextWindowSize?: number;
@@ -440,8 +442,21 @@ export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): 
       };
     }
 
+    const conversationId =
+      (typeof rawCw.conversation_id === 'string' ? rawCw.conversation_id : undefined) ||
+      (typeof rawCw.conversationId === 'string' ? rawCw.conversationId : undefined) ||
+      (typeof rawQuotaOrPayload.conversation_id === 'string' ? rawQuotaOrPayload.conversation_id : undefined) ||
+      (typeof rawQuotaOrPayload.conversationId === 'string' ? rawQuotaOrPayload.conversationId : undefined);
+    const sessionId =
+      (typeof rawCw.session_id === 'string' ? rawCw.session_id : undefined) ||
+      (typeof rawCw.sessionId === 'string' ? rawCw.sessionId : undefined) ||
+      (typeof rawQuotaOrPayload.session_id === 'string' ? rawQuotaOrPayload.session_id : undefined) ||
+      (typeof rawQuotaOrPayload.sessionId === 'string' ? rawQuotaOrPayload.sessionId : undefined);
+
     if (totalInput !== undefined || totalOutput !== undefined || windowSize !== undefined || usedPct !== undefined) {
       contextWindow = {
+        conversationId,
+        sessionId,
         totalInputTokens: totalInput,
         totalOutputTokens: totalOutput,
         contextWindowSize: windowSize,

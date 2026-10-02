@@ -137,11 +137,27 @@ export function buildAgyUsageEnvelope(
 
 /**
  * Builds a usage-only SessionEnvelope directly from AgyContextWindowInfo (from statusLine).
+ * Requires the contextWindow's conversationId/sessionId to match the active conversation ID
+ * to prevent leaking stale context window metrics from older sessions into new sessions.
  */
 export function buildUsageEnvelopeFromContextWindow(
   contextWindow: AgyContextWindowInfo,
   currentModel?: string,
+  currentConversationId?: string,
 ): SessionEnvelope | null {
+  // If the context window is tied to a specific conversation or session, verify it matches
+  // the current conversation to avoid cross-session token contamination.
+  if (contextWindow.conversationId || contextWindow.sessionId) {
+    const targetId = contextWindow.conversationId || contextWindow.sessionId;
+    if (!currentConversationId || targetId !== currentConversationId) {
+      return null;
+    }
+  } else if (!currentConversationId) {
+    // If the context window has no conversation metadata and no active conversation is known,
+    // do not guess or inject arbitrary usage into uninitialized sessions.
+    return null;
+  }
+
   const inputTokens = contextWindow.totalInputTokens;
   const outputTokens = contextWindow.totalOutputTokens ?? 0;
   if (inputTokens === undefined && contextWindow.contextWindowSize === undefined) {
