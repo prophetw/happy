@@ -195,7 +195,7 @@ describe('fetchAgyUsage', () => {
       },
     });
 
-    const status = await fetchAgyUsage();
+    const status = await fetchAgyUsage({ tokenPath: '/non-existent/path' });
     expect(status.source).toBe('statusline-hook');
     expect(status.groups?.gemini?.fiveHour?.percentage).toBe(95);
     expect(status.groups?.claude?.fiveHour?.percentage).toBe(50);
