@@ -209,21 +209,10 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
     rawWindow.reset_time ||
     rawWindow.resetTime;
 
-  let resetInSeconds: number | undefined =
-    typeof rawWindow.reset_in_seconds === 'number'
-      ? rawWindow.reset_in_seconds
-      : typeof rawWindow.resetInSeconds === 'number'
-      ? rawWindow.resetInSeconds
-      : undefined;
-
   // Handle resets_at unix timestamp (seconds or ms)
   const resetsAtRaw = rawWindow.resets_at || rawWindow.resetsAt;
   if (typeof resetsAtRaw === 'number' && resetsAtRaw > 0) {
     const epochMs = resetsAtRaw < 1e11 ? resetsAtRaw * 1000 : resetsAtRaw;
-    const diffMs = epochMs - now;
-    if (resetInSeconds === undefined) {
-      resetInSeconds = Math.max(0, Math.round(diffMs / 1000));
-    }
     if (!resetTime) {
       try {
         resetTime = new Date(epochMs).toISOString();
@@ -233,22 +222,58 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
     }
   }
 
-  let resetsInMinutes: number | undefined =
-    typeof rawWindow.resets_in_minutes === 'number'
-      ? rawWindow.resets_in_minutes
-      : typeof rawWindow.resetsInMinutes === 'number'
-      ? rawWindow.resetsInMinutes
-      : undefined;
+  let resetInSeconds: number | undefined = undefined;
+  let resetsInMinutes: number | undefined = undefined;
 
-  if (resetsInMinutes === undefined && resetInSeconds !== undefined) {
-    resetsInMinutes = Math.max(0, Math.round(resetInSeconds / 60));
-  } else if (resetsInMinutes === undefined && resetTime) {
-    resetsInMinutes = getMinutesUntil(resetTime, now);
+  // 1. 优先使用绝对时间戳（resetTime 或 resets_at），结合当前 now 动态计算真实剩余时间
+  if (resetTime) {
+    try {
+      const target = new Date(resetTime).getTime();
+      if (!isNaN(target)) {
+        const diffMs = target - now;
+        if (diffMs <= 0) {
+          resetInSeconds = 0;
+          resetsInMinutes = 0;
+        } else {
+          resetInSeconds = Math.round(diffMs / 1000);
+          resetsInMinutes = Math.max(0, Math.round(diffMs / 60000));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. 若无绝对时间戳或解析失败，降级使用相对秒数/分钟数
+  if (resetsInMinutes === undefined) {
+    if (typeof rawWindow.resets_in_minutes === 'number') {
+      resetsInMinutes = Math.max(0, rawWindow.resets_in_minutes);
+      resetInSeconds = resetsInMinutes * 60;
+    } else if (typeof rawWindow.resetsInMinutes === 'number') {
+      resetsInMinutes = Math.max(0, rawWindow.resets_inMinutes);
+      resetInSeconds = resetsInMinutes * 60;
+    } else {
+      const rawSec =
+        typeof rawWindow.reset_in_seconds === 'number'
+          ? rawWindow.reset_in_seconds
+          : typeof rawWindow.resetInSeconds === 'number'
+          ? rawWindow.resetInSeconds
+          : undefined;
+      if (rawSec !== undefined) {
+        resetInSeconds = Math.max(0, rawSec);
+        resetsInMinutes = Math.max(0, Math.round(resetInSeconds / 60));
+      }
+    }
   }
 
   let resetsInFormatted: string | undefined = rawWindow.resets_in_formatted || rawWindow.resetsInFormatted;
-  if (!resetsInFormatted && resetsInMinutes !== undefined) {
-    resetsInFormatted = formatCountdown(resetsInMinutes);
+  if (resetsInMinutes !== undefined) {
+    if (resetsInMinutes <= 0) {
+      resetsInFormatted = 'Now';
+    } else if (!resetsInFormatted || resetTime) {
+      // 当存在 resetTime 时，必须以动态计算的倒计时为准，防止静态快照的旧格式化字符串（如 1h 06m）污染
+      resetsInFormatted = formatCountdown(resetsInMinutes);
+    }
   }
 
   if (percentage === undefined && remainingFraction === undefined && usedPercentage === undefined) {
@@ -553,16 +578,36 @@ export class AgyQuotaStore {
       AgyQuotaStore.instance = null;
     }
   }
+  /**
+   * Check whether current quota is fresh (updated within maxAgeMs, default 5 minutes).
+   */
+  isFresh(maxAgeMs = 5 * 60 * 1000, now = Date.now()): boolean {
+    if (!this.currentQuota) return false;
+    return now - this.currentQuota.updatedAt < maxAgeMs;
+  }
 
-  getQuota(loadFromDisk = true): AgyStatusLineQuota | null {
-    if (!this.currentQuota && loadFromDisk) {
-      this.loadFromFile();
+  getQuota(loadFromDisk = true, maxAgeMs?: number, now = Date.now()): AgyStatusLineQuota | null {
+    if (this.currentQuota) {
+      if (maxAgeMs !== undefined && !this.isFresh(maxAgeMs, now)) {
+        if (loadFromDisk) {
+          this.loadFromFile(undefined, now, maxAgeMs);
+          if (this.currentQuota && this.isFresh(maxAgeMs, now)) {
+            return this.currentQuota;
+          }
+        }
+        return null;
+      }
+      return this.currentQuota;
+    }
+
+    if (loadFromDisk) {
+      this.loadFromFile(undefined, now, maxAgeMs ?? 24 * 3600 * 1000);
     }
     return this.currentQuota;
   }
 
-  hasQuota(loadFromDisk = true): boolean {
-    return this.getQuota(loadFromDisk) !== null;
+  hasQuota(loadFromDisk = true, maxAgeMs?: number): boolean {
+    return this.getQuota(loadFromDisk, maxAgeMs) !== null;
   }
 
   clear(): void {
@@ -588,8 +633,9 @@ export class AgyQuotaStore {
 
   /**
    * Attempts to load quota state from local statusline files.
+   * By default maxAgeMs is 5 minutes to avoid stale cache hijacking fresh RPCs.
    */
-  loadFromFile(customPath?: string, now = Date.now()): boolean {
+  loadFromFile(customPath?: string, now = Date.now(), maxAgeMs = 5 * 60 * 1000): boolean {
     const candidatePaths = customPath !== undefined
       ? (customPath ? [customPath] : [])
       : [
@@ -602,12 +648,13 @@ export class AgyQuotaStore {
       if (fs.existsSync(filePath)) {
         try {
           const stats = fs.statSync(filePath);
-          // Load if updated within last 7 days
-          if (now - stats.mtimeMs < 7 * 24 * 3600 * 1000) {
+          // Only load if updated within maxAgeMs
+          if (now - stats.mtimeMs < maxAgeMs) {
             const raw = fs.readFileSync(filePath, 'utf8').trim();
             if (raw.startsWith('{')) {
               const parsed = parseStatusLinePayload(raw, now);
               if (parsed?.quota) {
+                parsed.quota.updatedAt = stats.mtimeMs;
                 const isChanged = JSON.stringify(this.currentQuota) !== JSON.stringify(parsed.quota);
                 this.currentQuota = parsed.quota;
                 if (isChanged) {
@@ -648,8 +695,8 @@ export class AgyQuotaStore {
   /**
    * Converts the current statusLine quota to standard AgyUsageStatus.
    */
-  toUsageStatus(loadFromDisk = true): AgyUsageStatus | null {
-    const quota = this.getQuota(loadFromDisk);
+  toUsageStatus(loadFromDisk = true, maxAgeMs?: number, now = Date.now()): AgyUsageStatus | null {
+    const quota = this.getQuota(loadFromDisk, maxAgeMs, now);
     if (!quota) {
       return null;
     }

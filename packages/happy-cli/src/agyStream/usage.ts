@@ -337,9 +337,68 @@ export function fetchFromCloudCodeApi(
       }
     }
 
+    const groups: Record<string, AgyQuotaGroup> = {};
+
+    const mainGemini =
+      models.find((m) => m.label.toLowerCase().includes('gemini') && m.label.toLowerCase().includes('high')) ||
+      models.find((m) => m.label.toLowerCase().includes('gemini') && typeof m.remainingFraction === 'number') ||
+      models.find((m) => m.label.toLowerCase().includes('gemini'));
+
+    if (mainGemini) {
+      groups.gemini = {
+        name: 'Gemini',
+        fiveHour: {
+          remainingFraction: mainGemini.remainingFraction,
+          percentage:
+            typeof mainGemini.remainingFraction === 'number'
+              ? Math.round(mainGemini.remainingFraction * 100)
+              : undefined,
+          usedPercentage: mainGemini.usedPercentage,
+          resetTime: mainGemini.resetTime,
+          resetsInMinutes: mainGemini.resetsInMinutes,
+          resetsInFormatted: mainGemini.resetsInFormatted,
+        },
+      };
+    }
+
+    const mainClaude =
+      models.find(
+        (m) =>
+          (m.label.toLowerCase().includes('claude') ||
+            m.label.toLowerCase().includes('sonnet') ||
+            m.label.toLowerCase().includes('opus') ||
+            m.label.toLowerCase().includes('gpt')) &&
+          typeof m.remainingFraction === 'number',
+      ) ||
+      models.find(
+        (m) =>
+          m.label.toLowerCase().includes('claude') ||
+          m.label.toLowerCase().includes('sonnet') ||
+          m.label.toLowerCase().includes('opus') ||
+          m.label.toLowerCase().includes('gpt'),
+      );
+
+    if (mainClaude) {
+      groups.claude = {
+        name: 'Claude / GPT (3P)',
+        fiveHour: {
+          remainingFraction: mainClaude.remainingFraction,
+          percentage:
+            typeof mainClaude.remainingFraction === 'number'
+              ? Math.round(mainClaude.remainingFraction * 100)
+              : undefined,
+          usedPercentage: mainClaude.usedPercentage,
+          resetTime: mainClaude.resetTime,
+          resetsInMinutes: mainClaude.resetsInMinutes,
+          resetsInFormatted: mainClaude.resetsInFormatted,
+        },
+      };
+    }
+
     return {
       planName: 'Google AI Pro',
       models,
+      groups: Object.keys(groups).length > 0 ? groups : undefined,
       source: 'cloudcode-api',
     };
   } catch (error) {
@@ -352,39 +411,54 @@ export function fetchFromCloudCodeApi(
  * Fetch Antigravity (agy) quota and usage status.
  *
  * Priorities:
- * 1. Primary (P0): Live AgyQuotaStore populated by statusLine hook JSON
+ * 1. Primary (P0): Live AgyQuotaStore (fresh <= 5min from hook or disk)
  * 2. Next (P1): Probes local Language Server RPC (GetUserStatus)
  * 3. Fallback (P2): Google Cloud Code API (fetchAvailableModels)
+ * 4. Fallback (P3): Stale disk cache (up to 24h, for offline use)
  */
 export async function fetchAgyUsage(opts: FetchAgyUsageOptions = {}): Promise<AgyUsageStatus> {
   const log = opts.log ?? (() => {});
 
-  // 0. Primary: Check live statusLine hook quota store
+  // 0. Primary (P0): Check fresh live statusLine hook quota store (<= 5min)
   const loadFromDisk = opts.statusLineStatePath !== false;
   if (typeof opts.statusLineStatePath === 'string') {
-    AgyQuotaStore.getInstance().loadFromFile(opts.statusLineStatePath);
+    AgyQuotaStore.getInstance().loadFromFile(opts.statusLineStatePath, Date.now(), 5 * 60 * 1000);
   }
-  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus(loadFromDisk);
+  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus(loadFromDisk, 5 * 60 * 1000);
   if (
     liveStatus &&
     (liveStatus.models.length > 0 || (liveStatus.groups && Object.keys(liveStatus.groups).length > 0))
   ) {
-    log('Retrieved agy usage from live statusLine hook store');
+    log('Retrieved agy usage from fresh live statusLine hook store');
     return liveStatus;
   }
 
-  // 1. Next: Try local language server
+  // 1. Next (P1): Try local language server
   const lsStatus = fetchFromLanguageServer(opts);
   if (lsStatus && lsStatus.models.length > 0) {
     return lsStatus;
   }
 
-  // 2. Next: Try Google Cloud Code API with stored token
+  // 2. Next (P2): Try Google Cloud Code API with stored token
   const token = getStoredAgyOAuthToken(opts.tokenPath);
   if (token) {
     const apiStatus = fetchFromCloudCodeApi(token, opts);
     if (apiStatus && apiStatus.models.length > 0) {
       return apiStatus;
+    }
+  }
+
+  // 3. Fallback (P3): Older disk cache (up to 24h, offline fallback)
+  if (loadFromDisk) {
+    const fallbackPath = typeof opts.statusLineStatePath === 'string' ? opts.statusLineStatePath : undefined;
+    AgyQuotaStore.getInstance().loadFromFile(fallbackPath, Date.now(), 24 * 3600 * 1000);
+    const staleStatus = AgyQuotaStore.getInstance().toUsageStatus(true, 24 * 3600 * 1000);
+    if (
+      staleStatus &&
+      (staleStatus.models.length > 0 || (staleStatus.groups && Object.keys(staleStatus.groups).length > 0))
+    ) {
+      log('Retrieved agy usage from fallback statusLine cache file');
+      return staleStatus;
     }
   }
 

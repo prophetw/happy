@@ -47,6 +47,34 @@ describe('parseQuotaWindow', () => {
     expect(windowPct?.remainingFraction).toBe(0.45);
     expect(windowPct?.usedPercentage).toBe(55);
   });
+
+  it('dynamically computes countdown from reset_time instead of relying on stale reset_in_seconds', () => {
+    // 假设当前时间 12:00:00，reset_time 是 12:45:00（剩余 45 分钟）
+    // 但静态快照里记录的旧 reset_in_seconds 是 3985（66分钟）
+    const now = new Date('2026-10-02T12:00:00Z').getTime();
+    const window = parseQuotaWindow({
+      remaining_fraction: 0.5,
+      reset_time: '2026-10-02T12:45:00Z',
+      reset_in_seconds: 3985,
+    }, now);
+
+    expect(window).toBeDefined();
+    expect(window?.resetsInMinutes).toBe(45);
+    expect(window?.resetsInFormatted).toBe('45m');
+  });
+
+  it('sets countdown to Now when reset_time is in the past', () => {
+    const now = new Date('2026-10-02T12:00:00Z').getTime();
+    const window = parseQuotaWindow({
+      remaining_fraction: 0.1,
+      reset_time: '2026-10-02T11:00:00Z',
+      reset_in_seconds: 3985,
+    }, now);
+
+    expect(window).toBeDefined();
+    expect(window?.resetsInMinutes).toBe(0);
+    expect(window?.resetsInFormatted).toBe('Now');
+  });
 });
 
 describe('parseQuotaGroup', () => {
@@ -270,5 +298,19 @@ describe('AgyQuotaStore', () => {
     expect(quota?.contextWindow?.conversationId).toBe('conv-xyz-789');
     expect(quota?.contextWindow?.sessionId).toBe('sess-abc-123');
     expect(quota?.contextWindow?.totalInputTokens).toBe(1200);
+  });
+
+  it('accurately verifies isFresh against maxAgeMs', () => {
+    const store = AgyQuotaStore.getInstance();
+    const now = 1_000_000;
+    store.update({
+      quota: {
+        gemini: { '5h': 0.8 },
+      },
+    }, now);
+
+    expect(store.isFresh(5 * 60 * 1000, now)).toBe(true);
+    expect(store.isFresh(5 * 60 * 1000, now + 4 * 60 * 1000)).toBe(true);
+    expect(store.isFresh(5 * 60 * 1000, now + 6 * 60 * 1000)).toBe(false);
   });
 });

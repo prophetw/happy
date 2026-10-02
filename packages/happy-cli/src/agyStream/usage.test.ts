@@ -213,6 +213,46 @@ describe('fetchAgyUsage', () => {
     expect(status.source).toBe('none');
     expect(status.models).toEqual([]);
   });
+
+  it('bypasses stale statusline disk cache (>5m) in favor of CloudCode API or language server', async () => {
+    // 假设 statusline 是 10 分钟前的陈旧数据（gemini 5%）
+    const store = AgyQuotaStore.getInstance();
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    store.update({
+      quota: {
+        gemini: { '5h': { percentage: 5 } },
+      },
+    }, tenMinutesAgo);
+
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const tmpTokenFile = path.join(os.tmpdir(), `test-token-${Date.now()}.json`);
+    fs.writeFileSync(tmpTokenFile, JSON.stringify({ token: { access_token: 'fake-access-token' } }), 'utf8');
+
+    try {
+      // 模拟 CloudCode API 返回实时的 75%
+      const mockExecFileSync = vi.fn().mockReturnValue(JSON.stringify({
+        models: {
+          'gemini-3.7-flash-high': {
+            quotaInfo: { remainingFraction: 0.75, resetTime: new Date(Date.now() + 3600000).toISOString() },
+          },
+        },
+      }));
+
+      const status = await fetchAgyUsage({
+        tokenPath: tmpTokenFile,
+        execFileSyncFn: mockExecFileSync as any,
+        execSyncFn: () => { throw new Error('No LS'); },
+        statusLineStatePath: false, // 依赖 store 内存中的状态
+      });
+
+      expect(status.source).toBe('cloudcode-api');
+      expect(status.groups?.gemini?.fiveHour?.percentage).toBe(75);
+    } finally {
+      try { fs.unlinkSync(tmpTokenFile); } catch {}
+    }
+  });
 });
 
 describe('formatAgyUsageMarkdown with statusLine groups', () => {
