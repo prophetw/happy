@@ -17,6 +17,7 @@ import { Typography } from '@/constants/Typography';
 import { parseLocalCommandMessage, isUserSlashCommandEcho } from './parseLocalCommandMessage';
 import { resolveUserMessageBubbleColor } from '@/utils/userMessageBubbleColor';
 import { LongPressCopyable } from './LongPressCopyable';
+import { formatMessageTimestamp, formatTurnDuration } from '@/utils/messageTimestamp';
 
 
 export const MessageView = React.memo((props: {
@@ -25,6 +26,7 @@ export const MessageView = React.memo((props: {
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
   copyText?: string;
+  durationMs?: number;
 }) => {
   return (
     <View
@@ -38,6 +40,7 @@ export const MessageView = React.memo((props: {
           sessionId={props.sessionId}
           getMessageById={props.getMessageById}
           copyText={props.copyText}
+          durationMs={props.durationMs}
         />
       </View>
     </View>
@@ -51,6 +54,7 @@ function RenderBlock(props: {
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
   copyText?: string;
+  durationMs?: number;
 }): React.ReactElement {
   switch (props.message.kind) {
     case 'user-text':
@@ -63,7 +67,7 @@ function RenderBlock(props: {
       );
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} sessionId={props.sessionId} copyText={props.copyText} />;
+      return <AgentTextBlock message={props.message} sessionId={props.sessionId} copyText={props.copyText} durationMs={props.durationMs} />;
 
     case 'tool-call':
       return <ToolCallBlock
@@ -134,6 +138,7 @@ function UserMessageFrame(props: {
       {props.sendError !== undefined ? (
         <Text style={[styles.pendingStatusText, styles.sendErrorText]}>{t('message.sendFailed', { reason: props.sendError })}</Text>
       ) : null}
+      <Text style={styles.userTimestampText}>{formatMessageTimestamp(props.createdAt)}</Text>
     </View>
   );
 }
@@ -261,20 +266,38 @@ function AgentTextBlock(props: {
   message: AgentTextMessage;
   sessionId: string;
   copyText?: string;
+  durationMs?: number;
 }) {
   const handleOptionPress = React.useCallback((option: Option) => {
     sync.sendMessage(props.sessionId, option.title, { source: 'option' });
   }, [props.sessionId]);
+  const { theme } = useUnistyles();
 
   // Hide thinking messages
   if (props.message.isThinking) {
     return null;
   }
 
+  const durationText = props.durationMs !== undefined ? formatTurnDuration(props.durationMs) : '';
+  const timestampText = formatMessageTimestamp(props.message.createdAt);
+  const metaText = [durationText, timestampText].filter(Boolean).join(' · ');
+
   return (
     <View style={styles.agentMessageContainer}>
       <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
-      {props.copyText ? <MessageCopyButton text={props.copyText} /> : null}
+      {props.copyText || metaText ? (
+        <View style={styles.agentFooterRow}>
+          {props.copyText ? <MessageCopyButton text={props.copyText} /> : null}
+          {metaText ? (
+            <View style={styles.agentMetaRow}>
+              {durationText ? (
+                <Ionicons name="time-outline" size={12} color={theme.colors.textSecondary} />
+              ) : null}
+              <Text style={styles.agentMetaText}>{metaText}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -468,7 +491,6 @@ const styles = StyleSheet.create((theme) => ({
   copyAction: {
     // No width, so the box shrink-wraps the glyph and its left edge lands on the
     // same x as the markdown text above it. hitSlop carries the touch target.
-    alignSelf: 'flex-start',
     height: 20,
     justifyContent: 'center',
     // Sits fully below the last markdown block's trailing margin, clear of the
@@ -477,6 +499,28 @@ const styles = StyleSheet.create((theme) => ({
   },
   copyActionPressed: {
     opacity: 0.5,
+  },
+  agentFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  agentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  agentMetaText: {
+    color: theme.colors.textSecondary,
+    fontSize: 11,
+    ...Typography.default(),
+  },
+  userTimestampText: {
+    color: theme.colors.textSecondary,
+    fontSize: 11,
+    marginTop: 2,
+    marginBottom: 4,
+    ...Typography.default(),
   },
   userCopyTarget: {
     alignItems: 'flex-end',
