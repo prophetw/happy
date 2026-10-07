@@ -27,6 +27,7 @@ export const MessageView = React.memo((props: {
   getMessageById?: (id: string) => Message | null;
   copyText?: string;
   durationMs?: number;
+  turnCompletedAt?: number;
 }) => {
   return (
     <View
@@ -41,6 +42,7 @@ export const MessageView = React.memo((props: {
           getMessageById={props.getMessageById}
           copyText={props.copyText}
           durationMs={props.durationMs}
+          turnCompletedAt={props.turnCompletedAt}
         />
       </View>
     </View>
@@ -55,6 +57,7 @@ function RenderBlock(props: {
   getMessageById?: (id: string) => Message | null;
   copyText?: string;
   durationMs?: number;
+  turnCompletedAt?: number;
 }): React.ReactElement {
   switch (props.message.kind) {
     case 'user-text':
@@ -67,7 +70,7 @@ function RenderBlock(props: {
       );
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} sessionId={props.sessionId} copyText={props.copyText} durationMs={props.durationMs} />;
+      return <AgentTextBlock message={props.message} sessionId={props.sessionId} copyText={props.copyText} durationMs={props.durationMs} turnCompletedAt={props.turnCompletedAt} />;
 
     case 'tool-call':
       return <ToolCallBlock
@@ -267,6 +270,7 @@ function AgentTextBlock(props: {
   sessionId: string;
   copyText?: string;
   durationMs?: number;
+  turnCompletedAt?: number;
 }) {
   const handleOptionPress = React.useCallback((option: Option) => {
     sync.sendMessage(props.sessionId, option.title, { source: 'option' });
@@ -279,7 +283,8 @@ function AgentTextBlock(props: {
   }
 
   const durationText = props.durationMs !== undefined ? formatTurnDuration(props.durationMs) : '';
-  const timestampText = formatMessageTimestamp(props.message.createdAt);
+  // Same instant the duration measurement stops at, so the two never disagree.
+  const timestampText = formatMessageTimestamp(props.turnCompletedAt ?? props.message.createdAt);
   const metaText = [durationText, timestampText].filter(Boolean).join(' · ');
 
   return (

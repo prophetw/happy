@@ -4,6 +4,18 @@ export type TurnDurationMessage = {
     createdAt: number;
     text?: string;
     isThinking?: boolean;
+    pending?: boolean;
+};
+
+export type AgentTurnDuration = {
+    durationMs: number;
+    /**
+     * The turn's wall-clock completion time. The session protocol's turn-end
+     * marker never becomes a chat row (the reducer drops it), so the newest
+     * row the turn produced is the best available end time — a turn can end
+     * with tool work after its final visible text.
+     */
+    completedAt: number;
 };
 
 /**
@@ -12,12 +24,14 @@ export type TurnDurationMessage = {
  *
  * Messages array is newest-first.
  * Turn start time is the initiating user message's createdAt (or the oldest message in the turn).
- * Turn completion time is the final agent-text message's createdAt.
+ * Turn completion time is the newest row in the turn by createdAt, not just the final
+ * visible text: turns often end with tool calls after the last text block, and stopping
+ * at the text would measure "prompt → last text" instead of the whole turn.
  */
 export function buildAgentTurnDurationByMessageId(
     messages: readonly TurnDurationMessage[],
     options: { currentTurnComplete: boolean },
-): Map<string, number> {
+): Map<string, AgentTurnDuration> {
     const messagesByTurn = new Map<number, TurnDurationMessage[]>();
     let turn = 0;
 
@@ -31,14 +45,16 @@ export function buildAgentTurnDurationByMessageId(
         }
     }
 
-    const result = new Map<string, number>();
+    const result = new Map<string, AgentTurnDuration>();
     for (const [turnNumber, turnMessagesNewestFirst] of messagesByTurn) {
         if (turnNumber === 0 && !options.currentTurnComplete) {
             continue;
         }
 
-        // Find the user message in this turn
-        const userMessage = turnMessagesNewestFirst.find((m) => m.kind === 'user-text');
+        // Find the user message in this turn. A pending send has not started a
+        // turn yet (the agent may never accept it), so it neither starts the
+        // clock nor marks the turn's end.
+        const userMessage = turnMessagesNewestFirst.find((m) => m.kind === 'user-text' && m.pending !== true);
 
         // Find visible agent-text messages in this turn (newest first)
         const agentTextMessages = turnMessagesNewestFirst.filter(
@@ -54,7 +70,11 @@ export function buildAgentTurnDurationByMessageId(
         // Turn start time is the user message's createdAt, or the oldest message in the turn
         const oldestMessageInTurn = turnMessagesNewestFirst[turnMessagesNewestFirst.length - 1];
         const startedAt = userMessage ? userMessage.createdAt : oldestMessageInTurn.createdAt;
-        const completedAt = finalAgentMessage.createdAt;
+        const completedAt = Math.max(
+            ...turnMessagesNewestFirst
+                .filter((m) => !(m.kind === 'user-text' && m.pending === true))
+                .map((m) => m.createdAt),
+        );
 
         // If there is no user message and completedAt === startedAt, we don't display duration
         if (!userMessage && completedAt <= startedAt) {
@@ -62,7 +82,7 @@ export function buildAgentTurnDurationByMessageId(
         }
 
         const durationMs = Math.max(0, completedAt - startedAt);
-        result.set(finalAgentMessage.id, durationMs);
+        result.set(finalAgentMessage.id, { durationMs, completedAt });
     }
 
     return result;
