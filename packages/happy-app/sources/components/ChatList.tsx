@@ -17,6 +17,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { resolveControlMode } from '@/sync/controlHandoff';
 import { usesControlledSessionUi } from '@/sync/rig';
 import { buildAgentTurnCopyTextByMessageId } from '@/utils/agentTurnCopy';
+import { buildAgentTurnDurationByMessageId } from '@/utils/agentTurnDuration';
 import { perfSince, useCommitPerf } from '@/utils/perfLog';
 import { handleInvertedChatWheel } from '@/utils/invertedChatWheel';
 import { DiffSyntaxCell, SyntaxViewport, SYNTAX_VIEWABILITY } from './diff/syntax/viewport';
@@ -337,6 +338,10 @@ const ChatListInternal = React.memo((props: {
         () => buildAgentTurnCopyTextByMessageId(windowedMessages, { currentTurnComplete }),
         [currentTurnComplete, windowedMessages],
     );
+    const agentTurnDurationByMessageId = React.useMemo(
+        () => buildAgentTurnDurationByMessageId(windowedMessages, { currentTurnComplete }),
+        [currentTurnComplete, windowedMessages],
+    );
 
     const currentTurnUserMessageId = React.useMemo(() => {
         for (const message of windowedMessages) {
@@ -587,10 +592,11 @@ const ChatListInternal = React.memo((props: {
                     metadata={props.metadata}
                     sessionId={props.sessionId}
                     copyText={agentCopyTextByMessageId.get(item.message.id)}
+                    durationMs={agentTurnDurationByMessageId.get(item.message.id)}
                 />
             </DiffSyntaxCell>
         );
-    }, [agentCopyTextByMessageId, props.metadata, props.sessionId, syntaxViewport, isGroupExpanded, handleToggleGroup]);
+    }, [agentCopyTextByMessageId, agentTurnDurationByMessageId, props.metadata, props.sessionId, syntaxViewport, isGroupExpanded, handleToggleGroup]);
 
     // The list is inverted, so offset 0 is the newest message and growing
     // offsets walk back through history.

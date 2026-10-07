@@ -98,6 +98,9 @@ type TurnDurationMap = Map<string, number>;
 
 ## 变更记录
 
+- **2026-10-05**:
+  - 将 `durationMs` 接入 `ChatList`（与 `agentCopyTextByMessageId` 同一 `useMemo` 模式注入 `MessageView`）。
+  - `MessageView` 的 `UserMessageFrame` 底部右对齐渲染用户消息时间戳；`AgentTextBlock` 底部 `agentFooterRow` 在 Copy 按钮同行渲染 `⏱ 耗时 · 完成时间`。
 - **2026-08-29**:
   - 新增 `formatMessageTimestamp` 与 `formatTurnDuration` 工具函数。
   - 新增 `buildAgentTurnDurationByMessageId` 轮次耗时计算函数与单元测试。

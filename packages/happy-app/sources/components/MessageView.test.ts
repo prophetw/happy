@@ -2,7 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { UserTextMessage } from '@/sync/typesMessage';
+import type { AgentTextMessage, Message, UserTextMessage } from '@/sync/typesMessage';
 
 vi.hoisted(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true));
 vi.mock('react-native', async () => {
@@ -14,8 +14,8 @@ vi.mock('react-native', async () => {
     };
 });
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { dark: false } }),
-    StyleSheet: { create: (factory: (theme: any) => unknown) => factory({ colors: { input: {} } }) },
+    useUnistyles: () => ({ theme: { dark: false, colors: { textSecondary: 'secondary' } } }),
+    StyleSheet: { create: (factory: (theme: any) => unknown) => factory({ colors: { input: {}, textSecondary: 'secondary' } }) },
 }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
@@ -23,6 +23,10 @@ vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/sync/sync', () => ({ sync: { sendMessage: vi.fn() } }));
 vi.mock('@/sync/storage', () => ({ useSetting: () => 'default' }));
 vi.mock('@/utils/userMessageBubbleColor', () => ({ resolveUserMessageBubbleColor: () => ({}) }));
+vi.mock('@/utils/messageTimestamp', () => ({
+    formatMessageTimestamp: () => 'message.timestamp',
+    formatTurnDuration: () => 'message.duration',
+}));
 vi.mock('./layout', () => ({ layout: { maxWidth: 800 } }));
 vi.mock('./markdown/MarkdownView', () => ({ MarkdownView: 'MarkdownView' }));
 vi.mock('./tools/ToolView', () => ({ ToolView: 'ToolView' }));
@@ -38,8 +42,8 @@ const base: UserTextMessage = {
     kind: 'user-text', id: 'message', localId: 'local', createdAt: Date.now(), text: 'hello',
 };
 
-function render(message: UserTextMessage, renderer?: ReturnType<typeof create>) {
-    const element = React.createElement(MessageView, { message, sessionId: 'session', metadata: null });
+function render(message: Message, renderer?: ReturnType<typeof create>, extraProps?: Record<string, unknown>) {
+    const element = React.createElement(MessageView, { message, sessionId: 'session', metadata: null, ...extraProps });
     if (renderer) {
         act(() => renderer.update(element));
         return renderer;
@@ -51,7 +55,11 @@ function render(message: UserTextMessage, renderer?: ReturnType<typeof create>) 
 }
 
 function labels(renderer: ReturnType<typeof create>) {
-    return renderer.root.findAllByType('Text').map((node: any) => node.props.children);
+    // The send timestamp is a permanent fixture of the frame; these assertions
+    // are about status/author labels, so it is filtered out.
+    return renderer.root.findAllByType('Text')
+        .map((node: any) => node.props.children)
+        .filter((children: any) => children !== 'message.timestamp');
 }
 
 afterEach(() => {
@@ -107,8 +115,9 @@ describe('user message frame', () => {
 
     it('puts the other participant’s name above their message', () => {
         const renderer = render({ ...base, author: { id: 'other', name: 'Alex', owner: false } });
-        const author = renderer.root.findByType('Text');
-        expect(author.props.children).toBe('Alex');
+        const author = renderer.root.findAllByType('Text')
+            .find((node: any) => node.props.children === 'Alex')!;
+        expect(author).toBeDefined();
         const container = author.parent.parent;
         expect(container.children[0]).toBe(author.parent);
         expect(container.children[1].findByType('MarkdownView').props.markdown).toBe('hello');
@@ -121,5 +130,35 @@ describe('user message frame', () => {
     it('still shows send failures for an idle send', () => {
         expect(labels(render({ ...base, sendError: 'Unavailable', meta: { queuedWhileBusy: false } })))
             .toContain('message.sendFailed');
+    });
+
+    it('shows the send timestamp below the user bubble', () => {
+        const renderer = render(base);
+        const all = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
+        expect(all).toContain('message.timestamp');
+    });
+});
+
+describe('agent text block', () => {
+    const agentBase: AgentTextMessage = {
+        kind: 'agent-text', id: 'reply', localId: null, createdAt: Date.now(), text: 'done',
+    };
+
+    it('shows turn duration and completion time on the final reply', () => {
+        const renderer = render(agentBase, undefined, { durationMs: 4800 });
+        const all = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
+        expect(all).toContain('message.duration · message.timestamp');
+    });
+
+    it('shows only the completion time when no duration is attached', () => {
+        const renderer = render(agentBase);
+        const all = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
+        expect(all).toContain('message.timestamp');
+        expect(all.join('')).not.toContain('message.duration');
+    });
+
+    it('renders nothing for thinking messages', () => {
+        const renderer = render({ ...agentBase, isThinking: true });
+        expect(renderer.root.findAllByType('Text')).toEqual([]);
     });
 });
