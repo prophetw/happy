@@ -24,8 +24,8 @@ vi.mock('@/sync/sync', () => ({ sync: { sendMessage: vi.fn() } }));
 vi.mock('@/sync/storage', () => ({ useSetting: () => 'default' }));
 vi.mock('@/utils/userMessageBubbleColor', () => ({ resolveUserMessageBubbleColor: () => ({}) }));
 vi.mock('@/utils/messageTimestamp', () => ({
-    formatMessageTimestamp: () => 'message.timestamp',
-    formatTurnDuration: () => 'message.duration',
+    formatMessageTimestamp: vi.fn(() => 'message.timestamp'),
+    formatTurnDuration: vi.fn(() => 'message.duration'),
 }));
 vi.mock('./layout', () => ({ layout: { maxWidth: 800 } }));
 vi.mock('./markdown/MarkdownView', () => ({ MarkdownView: 'MarkdownView' }));
@@ -36,6 +36,7 @@ vi.mock('./LongPressCopyable', async () => {
 });
 
 import { MessageView } from './MessageView';
+import { formatMessageTimestamp } from '@/utils/messageTimestamp';
 
 const renderers: ReturnType<typeof create>[] = [];
 const base: UserTextMessage = {
@@ -155,6 +156,15 @@ describe('agent text block', () => {
         const all = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
         expect(all).toContain('message.timestamp');
         expect(all.join('')).not.toContain('message.duration');
+    });
+
+    it('timestamps the reply with the turn completion time, not the text block time', () => {
+        const timestampSpy = vi.mocked(formatMessageTimestamp);
+        timestampSpy.mockClear();
+        const renderer = render(agentBase, undefined, { durationMs: 4800, turnCompletedAt: 4242 });
+        const all = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
+        expect(all).toContain('message.duration · message.timestamp');
+        expect(timestampSpy).toHaveBeenCalledWith(4242);
     });
 
     it('renders nothing for thinking messages', () => {

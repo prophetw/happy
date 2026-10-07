@@ -14,7 +14,7 @@
   - `formatWorkDuration(durationMs)`：基础工作时长格式化器。
 
 - **`packages/happy-app/sources/utils/agentTurnDuration.ts`**
-  - `buildAgentTurnDurationByMessageId(messages, options)`：按 Turn 轮次分析消息列表（newest-first），计算用户输入到 Agent 最终回复完成的端到端耗时，映射至该轮次 final agent message ID。
+  - `buildAgentTurnDurationByMessageId(messages, options)`：按 Turn 轮次分析消息列表（newest-first），计算用户输入到该轮次最后一行消息（含收尾工具执行）的端到端耗时，映射至该轮次 final agent message ID。
 
 - **`packages/happy-app/sources/components/MessageView.tsx`**
   - `UserTextBlock`：渲染用户气泡并在右下方附带时间戳。
@@ -48,13 +48,13 @@
 
 1. `ChatList` 接收来自会话存储的 `messages: Message[]`（倒序排列，最新消息在最前）。
 2. `useMemo` 调用 `buildAgentTurnDurationByMessageId(messages, { currentTurnComplete })`：
-   - 划分轮次（以 `user-text` 作为分界点）。
+   - 划分轮次（以 `user-text` 作为分界点；pending 用户消息既不计入轮次起点也不计入终点——它尚未开启新轮次）。
    - 取该轮次初始用户消息（或轮次最早消息）的 `createdAt` 作为 `startedAt`。
-   - 取该轮次最新 visible `agent-text` 消息的 `createdAt` 作为 `completedAt`。
-   - 得到 `durationMs = completedAt - startedAt`，关联到该 final message 的 `id`。
+   - 取该轮次所有消息行 `createdAt` 的最大值作为 `completedAt`。会话协议的 turn-end 标记被 reducer 过滤、不会成为聊天行，而很多轮次在最后一条可见文本之后还有工具执行，因此"最新一行消息"才是可见数据里最接近真实轮次结束的近似；只取最新 agent-text 的 `createdAt` 会把耗时测成"提示 → 末条文本"，看起来就像相邻两条消息的间隔。
+   - 得到 `durationMs = completedAt - startedAt`，连同 `completedAt` 一起关联到该 final message 的 `id`。
    - 若当前轮次仍在运行中（`currentTurnComplete === false`），跳过第 0 轮，避免流式过程中闪烁或产生不准确耗时。
-3. `ChatList.renderItem` 渲染 `MessageView` 时，将 `durationMs` 传递给子组件。
-4. `MessageView` 格式化时间与耗时，优雅渲染在用户气泡外侧和 Agent 消息底部。
+3. `ChatList.renderItem` 渲染 `MessageView` 时，将 `durationMs` 与 `turnCompletedAt` 传递给子组件。
+4. `MessageView` 用 `turnCompletedAt`（缺省回落到消息自身 `createdAt`）格式化完成时间戳，保证元信息栏中"耗时"与"完成时间"指向同一时刻，并渲染在用户气泡外侧和 Agent 消息底部。
 
 ## 关键数据结构
 
@@ -65,10 +65,12 @@ export type TurnDurationMessage = {
     createdAt: number;
     text?: string;
     isThinking?: boolean;
+    pending?: boolean;
 };
 
-// 轮次耗时映射表: MessageId -> duration (ms)
-type TurnDurationMap = Map<string, number>;
+// 轮次耗时映射表: MessageId -> { durationMs, completedAt }
+type AgentTurnDuration = { durationMs: number; completedAt: number };
+type TurnDurationMap = Map<string, AgentTurnDuration>;
 ```
 
 ## 外部依赖或 API
@@ -98,6 +100,8 @@ type TurnDurationMap = Map<string, number>;
 
 ## 变更记录
 
+- **2026-10-07**:
+  - 修复耗时算法：`completedAt` 从"最新可见 agent-text 的 `createdAt`"改为"轮次内所有消息行 `createdAt` 的最大值"。此前以工具执行收尾的轮次（如回复"好的"后跑 3 分钟工具）显示耗时≈相邻消息间隔，明显偏小。映射值形状从 `number` 改为 `{ durationMs, completedAt }`；`MessageView` 新增 `turnCompletedAt` 属性，元信息栏完成时间与耗时的停止时刻保持一致。pending 用户消息排除在轮次起止之外。
 - **2026-10-05**:
   - 将 `durationMs` 接入 `ChatList`（与 `agentCopyTextByMessageId` 同一 `useMemo` 模式注入 `MessageView`）。
   - `MessageView` 的 `UserMessageFrame` 底部右对齐渲染用户消息时间戳；`AgentTextBlock` 底部 `agentFooterRow` 在 Copy 按钮同行渲染 `⏱ 耗时 · 完成时间`。

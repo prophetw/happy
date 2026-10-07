@@ -592,7 +592,8 @@ const ChatListInternal = React.memo((props: {
                     metadata={props.metadata}
                     sessionId={props.sessionId}
                     copyText={agentCopyTextByMessageId.get(item.message.id)}
-                    durationMs={agentTurnDurationByMessageId.get(item.message.id)}
+                    durationMs={agentTurnDurationByMessageId.get(item.message.id)?.durationMs}
+                    turnCompletedAt={agentTurnDurationByMessageId.get(item.message.id)?.completedAt}
                 />
             </DiffSyntaxCell>
         );
