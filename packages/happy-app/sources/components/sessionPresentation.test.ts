@@ -97,6 +97,7 @@ vi.mock('@/sync/storage', () => ({
     useSessionGitStatusFiles: () => null,
 }));
 vi.mock('@/sync/sync', () => ({ sync: { onSessionVisible: state.sessionVisible } }));
+vi.mock('@/track', () => ({ trackSessionSwitched: vi.fn() }));
 vi.mock('@/components/Deferred', async () => {
     const ReactModule = await import('react');
     return { Deferred: (props: any) => ReactModule.createElement('Deferred', props, props.children) };
