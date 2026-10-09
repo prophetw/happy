@@ -144,6 +144,31 @@ curl --fail http://127.0.0.1:8193/health
 采用预构建镜像时，在目标服务器加载镜像并将 `RELAY_IMAGE` 设置为对应标签，
 启动命令改为 `up -d --no-build`；部署目录只需要 Compose 文件和 `.env.relay`。
 
+### 一键部署到 SSH 服务器
+
+开发机上执行以下命令，会自动准备最新 upstream `main`、复用或构建对应镜像、
+比较服务器镜像 ID、在需要时传输/导入，并启动 relay 和验证健康响应：
+
+```sh
+node scripts/deploy-relay.mjs
+```
+
+默认目标为 `root@192.168.99.55:/data/code/happy-relay`。开发机需要 Node.js、
+Git、Docker、SSH/SCP，服务器需要 Docker Compose 和首次生成密钥用的 OpenSSL。
+源代码使用独立的缓存 clone，必须处于干净 `main` 并等于刚 fetch 的 `origin/main`；
+不会切换当前工作分支。可用 `--source <path>` 指定已有的合规 main clone。
+
+已经准备好本地镜像时，直接指定标签可跳过源码更新和构建：
+
+```sh
+node scripts/deploy-relay.mjs --image happy-relay:main-fba320e4
+```
+
+服务器已有相同镜像 ID 时，跳过打包、传输和导入。既有 `.env.relay` 中的主密钥、
+公网地址和端口会保留，数据卷不会删除；首次部署才生成主密钥。需要改目标或配置时
+使用 `--host`、`--dir`、`--public-url`、`--port`，可通过 `--help` 查看参数。
+源码或依赖发生变化的新版本仍需要实际构建，自动化并不消除这部分耗时。
+
 `.env.relay` 已被 Git 忽略，Docker 构建也排除环境文件及本地验证产物。
 模板中没有实际密钥。配置关系及客户端行为另见
 [自定义 Relay 地址](features/custom-relay-url.md)。
