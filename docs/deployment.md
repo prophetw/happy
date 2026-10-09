@@ -123,6 +123,27 @@ RELAY_BASE_PATH=/relay
 Upgrade；Compose 中的网关负责剥离此前缀。TLS 证书由外层网关配置。
 公网 HTTPS 和实际手机访问需在目标服务器上验收。
 
+### 仅部署 relay 服务
+
+已有网关或只需直接访问 API 时，使用 `docker-compose.relay-only.yml`。
+它只运行一个 relay 容器，将宿主机 `8193` 直接映射到容器 `3005`：
+
+```sh
+cp .env.relay-only.example .env.relay
+chmod 600 .env.relay
+# 填写 RELAY_PUBLIC_URL 和首次生成的 HANDY_MASTER_SECRET。
+docker compose -f docker-compose.relay-only.yml --env-file .env.relay up -d --build
+curl --fail http://127.0.0.1:8193/health
+```
+
+直连时 `RELAY_PUBLIC_URL` 使用 `http://<服务器地址>:8193`，不加 `/relay`。
+如果由已有外部网关提供带前缀的 URL，则网关负责剥离前缀，并将
+`RELAY_PUBLIC_URL` 改为客户端最终访问的公网基址。该模式使用相同的
+`relay-data` 数据卷和主密钥配置。
+
+采用预构建镜像时，在目标服务器加载镜像并将 `RELAY_IMAGE` 设置为对应标签，
+启动命令改为 `up -d --no-build`；部署目录只需要 Compose 文件和 `.env.relay`。
+
 `.env.relay` 已被 Git 忽略，Docker 构建也排除环境文件及本地验证产物。
 模板中没有实际密钥。配置关系及客户端行为另见
 [自定义 Relay 地址](features/custom-relay-url.md)。

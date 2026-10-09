@@ -1,0 +1,39 @@
+name: happy-relay
+
+services:
+  relay:
+    image: ${RELAY_IMAGE:-happy-relay:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      DB_PROVIDER: pglite
+      DATA_DIR: /data
+      PGLITE_DIR: /data/pglite
+      HOST: 0.0.0.0
+      PORT: "3005"
+      HANDY_MASTER_SECRET: ${HANDY_MASTER_SECRET:?Set HANDY_MASTER_SECRET in .env.relay}
+      PUBLIC_URL: ${RELAY_PUBLIC_URL:?Set RELAY_PUBLIC_URL in .env.relay}
+      METRICS_ENABLED: "false"
+    ports:
+      - "${RELAY_BIND_ADDRESS:-0.0.0.0}:${RELAY_PORT:-8193}:3005"
+    volumes:
+      - relay-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "5", "--output", "/dev/null", "http://127.0.0.1:3005/health"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  relay-data:

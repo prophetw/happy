@@ -5,6 +5,8 @@
 自建 Relay 的独立服务器测试：使用仓库根目录 `docker-compose.yml`，具体配置、
 启动和持久化步骤见 [Docker Compose 测试部署](docs/deployment.md#自建-relaydocker-compose-测试部署)。
 此入口只部署 relay API 与路径网关；客户端需使用包含自定义地址支持的版本。
+仅运行 relay API 的场景使用 `docker-compose.relay-only.yml`，直接发布 HTTP
+`8193`，操作见同一部署文档的“仅部署 relay 服务”小节。
 
 分工：服务端/后端 k8s 部署见仓库内 `docs/deployment.md`（上游，英文）。**本文只讲 fork 特有的操作**：worktree 布局、合并到 fork/main、个人 EAS OTA、daemon 替换、冒烟验证、已知坑。
 
