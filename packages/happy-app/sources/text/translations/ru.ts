@@ -562,6 +562,14 @@ export const ru: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Выбрать папку',
+        selectDirectory: 'Использовать эту папку',
+        parentDirectory: 'Родительская папка',
+        subdirectories: 'Вложенные папки',
+        parentDirectories: 'Папки в родительской папке',
+        recentDirectories: 'Недавние проекты',
+        noSubdirectories: 'Нет вложенных папок',
+        directoryUnavailable: 'Просмотр папки недоступен',
         showLess: 'Показать меньше',
         showAll: ({ count }: { count: number }) => `Показать все (${count} ${plural({ count, one: 'путь', few: 'пути', many: 'путей' })})`,
         enterCustomPath: 'Ввести свой путь',

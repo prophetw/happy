@@ -545,6 +545,14 @@ export const pt: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Selecionar pasta',
+        selectDirectory: 'Usar esta pasta',
+        parentDirectory: 'Pasta superior',
+        subdirectories: 'Subpastas',
+        parentDirectories: 'Pastas na pasta superior',
+        recentDirectories: 'Projetos recentes',
+        noSubdirectories: 'Não há subpastas',
+        directoryUnavailable: 'Não é possível explorar esta pasta',
         showLess: 'Mostrar menos',
         showAll: ({ count }: { count: number }) => `Mostrar todos (${count} caminhos)`,
         enterCustomPath: 'Inserir caminho personalizado',

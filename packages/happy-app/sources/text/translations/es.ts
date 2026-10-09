@@ -546,6 +546,14 @@ export const es: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Seleccionar carpeta',
+        selectDirectory: 'Usar esta carpeta',
+        parentDirectory: 'Carpeta superior',
+        subdirectories: 'Subcarpetas',
+        parentDirectories: 'Carpetas en el directorio superior',
+        recentDirectories: 'Proyectos recientes',
+        noSubdirectories: 'No hay subcarpetas',
+        directoryUnavailable: 'No se puede explorar esta carpeta',
         showLess: 'Mostrar menos',
         showAll: ({ count }: { count: number }) => `Mostrar todos (${count} rutas)`,
         enterCustomPath: 'Ingresar ruta personalizada',
