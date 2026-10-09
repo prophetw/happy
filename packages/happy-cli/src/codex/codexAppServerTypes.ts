@@ -109,6 +109,29 @@ export type Thread = {
     [key: string]: unknown;
 };
 
+export type ListThreadsParams = {
+    cursor?: string;
+    limit?: number;
+    sortKey?: 'created_at' | 'updated_at';
+    sourceKinds?: Array<'cli' | 'vscode' | 'appServer'>;
+    archived?: boolean;
+    cwd?: string;
+};
+
+export type ListedThread = Thread & {
+    preview: string;
+    name?: string | null;
+    createdAt: number;
+    updatedAt: number;
+    ephemeral?: boolean;
+    gitInfo?: { branch?: string | null } | null;
+};
+
+export type ListThreadsResponse = {
+    data: ListedThread[];
+    nextCursor: string | null;
+};
+
 export type ThreadGoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
 
 export type ThreadGoal = {

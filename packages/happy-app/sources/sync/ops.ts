@@ -419,20 +419,27 @@ export async function claudeListRewindPoints(
     }
 }
 
-export type NativeClaudeSession = {
-    /** Claude session UUID — passed to `claude --resume <uuid>`. */
+export type NativeSession = {
+    /** Native Claude session UUID or Codex thread ID. */
     sessionId: string;
     /** Working directory the conversation belongs to (from JSONL rows). */
     cwd: string;
     gitBranch: string | null;
     firstUserMessage: string | null;
     summary: string | null;
-    /** Last activity — JSONL file mtime. */
+    /** Last activity in milliseconds. */
     timestamp: number;
 };
 
+export type NativeClaudeSession = NativeSession;
+export type NativeCodexSession = NativeSession;
+
 export type ClaudeListNativeSessionsResult =
     | { type: 'success'; sessions: NativeClaudeSession[] }
+    | { type: 'error'; errorMessage: string };
+
+export type CodexListNativeSessionsResult =
+    | { type: 'success'; sessions: NativeCodexSession[] }
     | { type: 'error'; errorMessage: string };
 
 /**
@@ -480,6 +487,49 @@ export async function resumeNativeClaudeSession(options: {
         agent: 'claude',
         approvedNewDirectoryCreation: false,
         resumeClaudeSessionId: claudeSessionId,
+    });
+
+    if (spawnResult.type === 'success') {
+        try {
+            await sync.refreshSessions();
+        } catch {
+            // Refresh is best-effort; broadcast sync will still hydrate.
+        }
+    }
+
+    return spawnResult;
+}
+
+export async function codexListNativeSessions(
+    options: { machineId: string; directory?: string },
+): Promise<CodexListNativeSessionsResult> {
+    try {
+        const result = await apiSocket.machineRPC<CodexListNativeSessionsResult | { error: string }, { directory?: string }>(
+            options.machineId,
+            'codex-list-native-sessions',
+            { directory: options.directory },
+        );
+        return 'error' in result ? { type: 'error', errorMessage: result.error } : result;
+    } catch (error) {
+        return {
+            type: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Failed to list native Codex sessions',
+        };
+    }
+}
+
+/** Attach a fresh Happy session to the stored Codex thread and backfill its history. */
+export async function resumeNativeCodexSession(options: {
+    machineId: string;
+    directory: string;
+    codexThreadId: string;
+}): Promise<SpawnSessionResult> {
+    const spawnResult = await machineSpawnNewSession({
+        machineId: options.machineId,
+        directory: options.directory,
+        agent: 'codex',
+        approvedNewDirectoryCreation: false,
+        resumeCodexThreadId: options.codexThreadId,
     });
 
     if (spawnResult.type === 'success') {

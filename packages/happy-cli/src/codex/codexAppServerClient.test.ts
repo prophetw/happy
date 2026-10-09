@@ -693,6 +693,31 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
+    it('lists stored Codex threads through app-server without starting a conversation', async () => {
+        const requests: MockRpcMessage[] = [];
+        const response = {
+            data: [{ id: 'native-thread', cwd: '/repo', preview: 'hello', createdAt: 1, updatedAt: 2 }],
+            nextCursor: 'next-page',
+        };
+        const proc = createMockProcess({
+            onRequest: (msg, stdout) => {
+                requests.push(msg);
+                if (msg.method === 'thread/list' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: response });
+                }
+            },
+        });
+        mockSpawn.mockImplementation(() => proc);
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        await client.connect();
+        const params = { limit: 100, sortKey: 'updated_at' as const, sourceKinds: ['cli', 'vscode', 'appServer'] as Array<'cli' | 'vscode' | 'appServer'>, archived: false, cwd: '/repo' };
+        expect(await client.listThreads(params)).toEqual(response);
+        expect(requests.find((msg) => msg.method === 'thread/list')?.params).toEqual(params);
+        expect(requests.some((msg) => msg.method === 'thread/start' || msg.method === 'thread/resume')).toBe(false);
+        await client.disconnect();
+    });
+
     it('clears active thread state so the next prompt starts a fresh thread', async () => {
         const requests: MockRpcMessage[] = [];
         let nextThreadNumber = 1;
