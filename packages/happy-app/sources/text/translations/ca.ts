@@ -546,6 +546,14 @@ export const ca: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Selecciona una carpeta',
+        selectDirectory: 'Utilitza aquesta carpeta',
+        parentDirectory: 'Carpeta superior',
+        subdirectories: 'Subcarpetes',
+        parentDirectories: 'Carpetes del directori superior',
+        recentDirectories: 'Projectes recents',
+        noSubdirectories: 'No hi ha subcarpetes',
+        directoryUnavailable: 'No es pot explorar aquesta carpeta',
         showLess: 'Mostra menys',
         showAll: ({ count }: { count: number }) => `Mostra tots (${count} camins)`,
         enterCustomPath: 'Introdueix un camí personalitzat',

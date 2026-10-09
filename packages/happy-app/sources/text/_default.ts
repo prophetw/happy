@@ -579,6 +579,14 @@ export const en = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Select directory',
+        selectDirectory: 'Use this directory',
+        parentDirectory: 'Parent directory',
+        subdirectories: 'Subdirectories',
+        parentDirectories: 'Folders in parent directory',
+        recentDirectories: 'Recent projects',
+        noSubdirectories: 'No subdirectories',
+        directoryUnavailable: 'Directory browsing is unavailable',
         showLess: 'Show less',
         showAll: ({ count }: { count: number }) => `Show all (${count} paths)`,
         enterCustomPath: 'Enter custom path',

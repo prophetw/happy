@@ -23,6 +23,7 @@ import { BubblePressable } from './BubblePressable';
 import { NativeOptionsPicker, type NativeOptionsPickerOption, type NativeOptionsPickerSection } from './NativeOptionsPicker';
 import { NativeSettingsMenu, type NativeSettingsMenuGroup, type NativeSettingsMenuProps } from './NativeSettingsMenu';
 import { PickerSheetOption, PickerSheetPanel, PickerSheetSection } from './PickerSheet';
+import { DirectoryBrowser } from './DirectoryBrowser';
 import { ProviderIcon } from './ProviderIcon';
 import { NativeSegmentedControl } from './NativeSegmentedControl';
 import { BotFacePicker } from './BotFacePicker';
@@ -112,7 +113,6 @@ type EnvironmentSetting = 'machine' | 'project' | 'worktree';
 type AgentSetting = 'agent' | 'model' | 'permission' | 'effort';
 type PickerPage = EnvironmentSetting | AgentSetting;
 
-const CUSTOM_PROJECT_PATH_KEY = '__custom_project_path__';
 // What the composer makes: a session in a place, or a bot of its own.
 const COMPOSER_KINDS = [
     { key: 'session', label: 'Session' },
@@ -1403,26 +1403,10 @@ export const HomeDock = React.memo(({
         }
         if (setting === 'project') {
             return {
-                title: 'Project',
-                // The projects under their heading, then the one row that is an
-                // action rather than a place, past the system's line.
-                sections: [
-                    { key: 'projects', title: 'Projects', options: projectOptions },
-                    {
-                        key: 'custom',
-                        options: [{
-                            key: CUSTOM_PROJECT_PATH_KEY,
-                            name: t('machineLauncher.enterCustomPath'),
-                            action: true,
-                        }],
-                    },
-                ],
+                title: t('machineLauncher.directoryPickerTitle'),
+                sections: [{ key: 'projects', options: projectOptions }],
                 selectedKey: currentProject?.key,
                 onSelect: (key) => {
-                    if (key === CUSTOM_PROJECT_PATH_KEY) {
-                        requestCustomProjectPath();
-                        return;
-                    }
                     const projectId = readProjectPlaceKey(key);
                     if (projectId) {
                         // Nothing here knows this project's folder, so it is named by identity and
@@ -1522,7 +1506,7 @@ export const HomeDock = React.memo(({
             ? getEnvironmentPickerConfig(page)
             : getAgentPickerConfig(page)
     );
-    const sheetVisible = !useNativeMenus && sheetPage !== null;
+    const sheetVisible = sheetPage !== null && (!useNativeMenus || sheetPage === 'project');
     const markNativeMenuOpen = React.useCallback(() => {
         nativeMenuOpenRef.current = true;
     }, []);
@@ -1577,12 +1561,16 @@ export const HomeDock = React.memo(({
                 </Pressable>
             );
         }
-        if (!useNativeMenus) {
+        if (!useNativeMenus || row.page === 'project') {
             return (
                 <Pressable
                     key={row.page}
                     onPress={() => {
                         if (row.page === 'worktree') refreshWorktrees();
+                        if (row.page === 'project') {
+                            nativeMenuOpenRef.current = false;
+                            Keyboard.dismiss();
+                        }
                         setSheetPage(row.page);
                     }}
                     accessibilityRole="button"
@@ -1716,16 +1704,36 @@ export const HomeDock = React.memo(({
     // Only reached with a page selected: `sheetVisible` gates the whole sheet.
     const renderSettingsSheet = (page: PickerPage) => {
         const config = getPickerConfig(page);
-        // Android only (`sheetVisible`). Drawn inline rather than as a second
-        // modal so the focused composer keeps its keyboard; the panel shrinks
-        // with the keyboard so its list always scrolls inside the space left.
+        // Keep the directory browser inside the focused composer's modal on
+        // every platform. Other in-app settings pickers are Android only.
         return (
             <PickerSheetPanel
                 title={config.title}
                 onClose={closePicker}
                 style={[styles.settingsStack, settingsSheetHeightStyle]}
             >
-                {config.sections.map((section, sectionIndex) => (
+                {page === 'project' ? (
+                    <DirectoryBrowser
+                        key={selectedChoice?.id ?? 'no-machine'}
+                        machineId={happyMachineOnline ? happyMachineId : null}
+                        homeDir={selectedHomeDir}
+                        initialPath={selectedPath}
+                        recentPaths={projectOptions}
+                        selectedKey={config.selectedKey}
+                        onSelectDirectory={(path) => {
+                            setPath(path);
+                            closePicker();
+                        }}
+                        onSelectRecent={(key) => {
+                            config.onSelect(key);
+                            closePicker();
+                        }}
+                        onRequestCustomPath={() => {
+                            closePicker();
+                            requestCustomProjectPath();
+                        }}
+                    />
+                ) : config.sections.map((section, sectionIndex) => (
                     <React.Fragment key={section.key}>
                         {/* The sheet already names the choice in its header,
                             so a group named the same is left bare; providers

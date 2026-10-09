@@ -544,6 +544,14 @@ export const it: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Seleziona cartella',
+        selectDirectory: 'Usa questa cartella',
+        parentDirectory: 'Cartella superiore',
+        subdirectories: 'Sottocartelle',
+        parentDirectories: 'Cartelle nella cartella superiore',
+        recentDirectories: 'Progetti recenti',
+        noSubdirectories: 'Nessuna sottocartella',
+        directoryUnavailable: 'Impossibile esplorare questa cartella',
         showLess: 'Mostra meno',
         showAll: ({ count }: { count: number }) => `Mostra tutto (${count} percorsi)`,
         enterCustomPath: 'Inserisci percorso personalizzato',
