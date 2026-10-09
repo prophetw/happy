@@ -12,3 +12,8 @@ node_modules
 **/ios/Pods
 **/src-tauri/target
 **/target
+
+# Deployment credentials and local validation artifacts are not image inputs.
+.env*
+**/.env*
+.e2e-artifacts

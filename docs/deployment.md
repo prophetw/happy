@@ -55,6 +55,78 @@ Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.
 
+## 自建 Relay：Docker Compose 测试部署
+
+仓库根目录的 `docker-compose.yml` 复用 standalone `Dockerfile`：一个 Happy
+relay 实例使用 PGlite 和本地文件存储，另一个 Nginx 网关负责路径前缀及
+WebSocket 转发。默认对外提供 HTTP `8193` 端口和 `/relay` 前缀；数据库和附件
+共同保存在 `relay-data` 命名卷中。此方式适用于单实例服务器测试。
+
+在服务器上，进入包含本次改动的仓库根目录，准备环境配置：
+
+```sh
+cp .env.relay.example .env.relay
+chmod 600 .env.relay
+relay_master_secret="$(openssl rand -hex 32)"
+sed -i "s/^HANDY_MASTER_SECRET=$/HANDY_MASTER_SECRET=$relay_master_secret/" .env.relay
+unset relay_master_secret
+```
+
+编辑 `.env.relay`，将 `YOUR_SERVER` 换成服务器域名或 IP。例如：
+
+```dotenv
+RELAY_PUBLIC_URL=http://xxx.xxx.com:8193/relay
+RELAY_BIND_ADDRESS=0.0.0.0
+RELAY_PORT=8193
+RELAY_BASE_PATH=/relay
+```
+
+`RELAY_PUBLIC_URL` 是客户端访问的完整 API 基址，也是服务器生成附件及头像
+地址的 `PUBLIC_URL`。它不带尾斜杠；路径部分应与 `RELAY_BASE_PATH` 一致。
+前缀可以换成 `/team/relay` 等多级路径，需以 `/` 开头且不带尾斜杠。
+`RELAY_PORT` 是宿主机发布端口，容器内 API 始终使用 `3005`，仅供网关访问。
+
+启动、检查和查看必要日志：
+
+```sh
+docker compose --env-file .env.relay config --quiet
+docker compose --env-file .env.relay up -d --build
+docker compose --env-file .env.relay ps
+curl --fail http://127.0.0.1:8193/relay/health
+docker compose --env-file .env.relay logs --tail 50 relay gateway
+```
+
+`/health` 应返回 `service: "happy-server"` 和 `status: "ok"`。
+宿主机及云服务的入站规则需要允许实际使用的对外端口。App 中填写
+`RELAY_PUBLIC_URL`；CLI 和 happy-agent 使用相同的 `HAPPY_SERVER_URL`。
+带前缀地址需要本次分支中已更新的客户端。
+
+后续更新使用相同的 `.env.relay` 和项目名执行 `up -d --build`。网关会随 relay
+的 Compose 更新重新启动，以刷新上游连接。停止服务使用
+`docker compose --env-file .env.relay down`，该命令保留数据卷；`down -v` 会删除
+数据库和附件。`HANDY_MASTER_SECRET` 也需要保持原值，以保留已有认证和服务端密钥。
+多个独立测试实例可通过 `docker compose -p <name>` 区分，并分别配置端口及密钥。
+
+### HTTPS 入口
+
+默认 Compose 提供 HTTP，HTTPS 可由已有的宿主机网关终止。例如外部 HTTPS
+监听 `8193`，Compose 的内部 HTTP 入口使用 `18193`：
+
+```dotenv
+RELAY_PUBLIC_URL=https://xxx.xxx.com:8193/relay
+RELAY_BIND_ADDRESS=127.0.0.1
+RELAY_PORT=18193
+RELAY_BASE_PATH=/relay
+```
+
+外层网关将 `/relay/...` 原样转发到 `http://127.0.0.1:18193`，并支持 WebSocket
+Upgrade；Compose 中的网关负责剥离此前缀。TLS 证书由外层网关配置。
+公网 HTTPS 和实际手机访问需在目标服务器上验收。
+
+`.env.relay` 已被 Git 忽略，Docker 构建也排除环境文件及本地验证产物。
+模板中没有实际密钥。配置关系及客户端行为另见
+[自定义 Relay 地址](features/custom-relay-url.md)。
+
 ## Kubernetes manifests
 Example manifests live in `packages/happy-server/deploy`:
 - `handy.yaml`: Deployment + Service + ExternalSecrets for the server.

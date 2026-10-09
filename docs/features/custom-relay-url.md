@@ -36,6 +36,10 @@ App 优先检查 `{baseUrl}/health`，要求 `service: 'happy-server'` 和 `stat
 
 ## 服务端与独立 Web 配置
 
+服务器测试可直接使用根目录 `docker-compose.yml` 和 `.env.relay.example`。
+它复用 standalone 后端，由 Nginx 剥离可配置的前缀并转发 WebSocket，数据保存
+在命名卷中；完整操作见 [部署文档](../deployment.md#自建-relaydocker-compose-测试部署)。
+
 使用本地附件和头像存储时，将服务器 `PUBLIC_URL` 设为完整公网基址，不带尾斜杠：
 
 ```sh

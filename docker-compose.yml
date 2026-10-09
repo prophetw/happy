@@ -1,0 +1,64 @@
+name: happy-relay
+
+services:
+  relay:
+    image: ${RELAY_IMAGE:-happy-relay:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      DB_PROVIDER: pglite
+      DATA_DIR: /data
+      PGLITE_DIR: /data/pglite
+      HOST: 0.0.0.0
+      PORT: "3005"
+      HANDY_MASTER_SECRET: ${HANDY_MASTER_SECRET:?Set HANDY_MASTER_SECRET in .env.relay}
+      PUBLIC_URL: ${RELAY_PUBLIC_URL:?Set RELAY_PUBLIC_URL in .env.relay}
+      METRICS_ENABLED: "false"
+    volumes:
+      - relay-data:/data
+    expose:
+      - "3005"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "5", "--output", "/dev/null", "http://127.0.0.1:3005/health"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  gateway:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+        restart: true
+    ports:
+      - "${RELAY_BIND_ADDRESS:-0.0.0.0}:${RELAY_PORT:-8193}:80"
+    environment:
+      RELAY_BASE_PATH: ${RELAY_BASE_PATH:-/relay}
+      NGINX_ENVSUBST_FILTER: ^RELAY_BASE_PATH$
+    volumes:
+      - ./deploy/relay/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --output-document=/dev/null http://127.0.0.1$${RELAY_BASE_PATH}/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  relay-data:

@@ -2,6 +2,10 @@
 
 本文档是 fork（prophetw/happy）日常部署的唯一入口，面向“功能分支开发完，合入个人聚合线并发布到真机”的完整闭环。
 
+自建 Relay 的独立服务器测试：使用仓库根目录 `docker-compose.yml`，具体配置、
+启动和持久化步骤见 [Docker Compose 测试部署](docs/deployment.md#自建-relaydocker-compose-测试部署)。
+此入口只部署 relay API 与路径网关；客户端需使用包含自定义地址支持的版本。
+
 分工：服务端/后端 k8s 部署见仓库内 `docs/deployment.md`（上游，英文）。**本文只讲 fork 特有的操作**：worktree 布局、合并到 fork/main、个人 EAS OTA、daemon 替换、冒烟验证、已知坑。
 
 > 最近实操验证：2026-09-19（合并 847bc6c0 → OTA 30ae3c5d → daemon 1.2.4 → 4/4 冒烟通过）。
