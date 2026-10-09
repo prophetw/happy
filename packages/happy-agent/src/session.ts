@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { io, Socket } from 'socket.io-client';
+import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from './encryption';
 import type { EncryptionVariant } from './api';
 
@@ -108,13 +109,14 @@ export class SessionClient extends EventEmitter {
         // Prevent unhandled 'error' event from crashing the process
         this.on('error', () => {});
 
-        this.socket = io(opts.serverUrl, {
+        const endpoint = getServerSocketEndpoint(opts.serverUrl);
+        this.socket = io(endpoint.origin, {
             auth: {
                 token: opts.token,
                 clientType: 'session-scoped' as const,
                 sessionId: opts.sessionId,
             },
-            path: '/v1/updates',
+            path: endpoint.path,
             reconnection: true,
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,

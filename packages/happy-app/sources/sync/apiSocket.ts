@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
 import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { TokenStorage } from '@/auth/tokenStorage';
@@ -107,8 +108,9 @@ class ApiSocket {
 
         this.updateStatus('connecting');
 
-        this.socket = io(this.config.endpoint, {
-            path: '/v1/updates',
+        const endpoint = getServerSocketEndpoint(this.config.endpoint);
+        this.socket = io(endpoint.origin, {
+            path: endpoint.path,
             // A callback, not an object literal: socket.io re-invokes it for
             // every connect AND reconnect, so appState is read fresh each time.
             // With a literal, a socket that first connected while foregrounded

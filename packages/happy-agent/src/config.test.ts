@@ -39,6 +39,11 @@ describe('config', () => {
             expect(config.serverUrl).toBe('https://custom-server.example.com');
         });
 
+        it('preserves a custom path and port while normalizing trailing slashes', () => {
+            process.env.HAPPY_SERVER_URL = ' https://example.com:8193/team/relay/// ';
+            expect(loadConfig().serverUrl).toBe('https://example.com:8193/team/relay');
+        });
+
         it('overrides home directory with HAPPY_HOME_DIR', () => {
             process.env.HAPPY_HOME_DIR = '/tmp/custom-happy';
             const config = loadConfig();

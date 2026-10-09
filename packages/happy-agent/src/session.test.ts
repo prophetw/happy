@@ -190,6 +190,15 @@ describe('SessionClient', () => {
             client.close();
         });
 
+        it('connects to the root namespace through a proxy prefix', async () => {
+            const { io: mockIo } = vi.mocked(await import('socket.io-client'));
+            const client = new SessionClient(makeOptions({ serverUrl: 'https://custom-server.example.com:8193/relay/' }));
+            expect(mockIo).toHaveBeenCalledWith('https://custom-server.example.com:8193', expect.objectContaining({
+                path: '/relay/v1/updates', transports: ['websocket'],
+            }));
+            client.close();
+        });
+
         it('emits connected event when socket connects', async () => {
             const opts = makeOptions();
             const client = new SessionClient(opts);

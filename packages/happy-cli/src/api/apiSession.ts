@@ -1,6 +1,7 @@
 import { logger } from '@/ui/logger'
 import { EventEmitter } from 'node:events'
 import { io, Socket } from 'socket.io-client'
+import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl'
 import { AgentState, ClientToServerEvents, FileEventMessage, FileEventMessageSchema, Metadata, ServerToClientEvents, Session, Update, UserMessage, UserMessageSchema, Usage } from './types'
 import { decodeBase64, decryptBlob, decrypt, encodeBase64, encrypt, encryptBlob } from './encryption';
 import { backoff, delay } from '@/utils/time';
@@ -273,14 +274,15 @@ export class ApiSessionClient extends EventEmitter {
         // Create socket
         //
 
-        this.socket = io(configuration.serverUrl, {
+        const endpoint = getServerSocketEndpoint(configuration.serverUrl);
+        this.socket = io(endpoint.origin, {
             auth: {
                 token: this.token,
                 clientType: 'session-scoped' as const,
                 sessionId: this.sessionId,
                 happyClient: `cli-coding-session/${configuration.currentCliVersion}`
             },
-            path: '/v1/updates',
+            path: endpoint.path,
             reconnection: false,
             transports: ['websocket'],
             withCredentials: true,

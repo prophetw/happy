@@ -1,4 +1,5 @@
 import { MMKV } from 'react-native-mmkv';
+import { normalizeServerUrl } from '@slopus/happy-wire/serverUrl';
 
 // Separate MMKV instance for server config that persists across logouts
 const serverConfigStorage = new MMKV({ id: 'server-config' });
@@ -21,21 +22,25 @@ export function getServerUrl(): string {
         }
         return parsed.origin;
     }
-    return serverConfigStorage.getString(SERVER_KEY) ||
+    return normalizeServerUrl(serverConfigStorage.getString(SERVER_KEY) ||
            (globalThis as any).__HAPPY_CONFIG__?.serverUrl ||
            process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ||
-           DEFAULT_SERVER_URL;
+           DEFAULT_SERVER_URL);
 }
 
 export function rewriteLoopbackHost(url: string): string {
     try {
         const target = new URL(url);
-        if (target.hostname !== 'localhost' && target.hostname !== '127.0.0.1' && target.hostname !== '::1') {
+        if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(target.hostname)) {
             return url;
         }
         const reachable = new URL(getServerUrl());
         target.protocol = reachable.protocol;
         target.host = reachable.host;
+        const basePath = reachable.pathname.replace(/\/+$/, '');
+        if (basePath && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) {
+            target.pathname = `${basePath}${target.pathname}`;
+        }
         return target.toString();
     } catch {
         return url;
@@ -44,7 +49,7 @@ export function rewriteLoopbackHost(url: string): string {
 
 export function setServerUrl(url: string | null): void {
     if (url && url.trim()) {
-        serverConfigStorage.set(SERVER_KEY, url.trim());
+        serverConfigStorage.set(SERVER_KEY, normalizeServerUrl(url));
     } else {
         serverConfigStorage.delete(SERVER_KEY);
     }
@@ -112,12 +117,9 @@ export function validateServerUrl(url: string): { valid: boolean; error?: string
     }
     
     try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-            return { valid: false, error: 'Server URL must use HTTP or HTTPS protocol' };
-        }
+        normalizeServerUrl(url);
         return { valid: true };
-    } catch {
-        return { valid: false, error: 'Invalid URL format' };
+    } catch (error) {
+        return { valid: false, error: error instanceof TypeError ? 'Invalid URL format' : (error as Error).message };
     }
 }

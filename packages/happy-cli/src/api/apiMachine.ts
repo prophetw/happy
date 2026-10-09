@@ -4,6 +4,7 @@
  */
 
 import { io, Socket } from 'socket.io-client';
+import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
 import { z } from 'zod';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
@@ -519,7 +520,8 @@ export class ApiMachineClient {
             this.reconnectCapabilityHeld = true;
         }
 
-        const serverUrl = configuration.serverUrl.replace(/^http/, 'ws');
+        const endpoint = getServerSocketEndpoint(configuration.serverUrl);
+        const serverUrl = endpoint.origin.replace(/^http/, 'ws');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
         this.socket = io(serverUrl, {
@@ -530,7 +532,7 @@ export class ApiMachineClient {
                 machineId: this.machine.id,
                 happyClient: `cli-daemon/${configuration.currentCliVersion}`
             },
-            path: '/v1/updates',
+            path: endpoint.path,
             reconnection: false,
         });
 

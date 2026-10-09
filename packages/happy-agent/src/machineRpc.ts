@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
 import type { Config } from './config';
 import type { DecryptedMachine } from './api';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from './encryption';
@@ -67,11 +68,12 @@ export async function spawnSessionOnMachine(
         providerToken?: string;
     },
 ): Promise<SpawnMachineSessionResult> {
-    const socket = io(config.serverUrl, {
+    const endpoint = getServerSocketEndpoint(config.serverUrl);
+    const socket = io(endpoint.origin, {
         auth: {
             token,
         },
-        path: '/v1/updates',
+        path: endpoint.path,
         transports: ['websocket'],
         autoConnect: false,
         reconnection: false,
@@ -141,11 +143,12 @@ export async function resumeSessionOnMachine(
     token: string,
     sessionId: string,
 ): Promise<SpawnMachineSessionResult> {
-    const socket = io(config.serverUrl, {
+    const endpoint = getServerSocketEndpoint(config.serverUrl);
+    const socket = io(endpoint.origin, {
         auth: {
             token,
         },
-        path: '/v1/updates',
+        path: endpoint.path,
         transports: ['websocket'],
         autoConnect: false,
         reconnection: false,
