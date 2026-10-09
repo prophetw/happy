@@ -815,6 +815,19 @@ export async function machineBash(
     }
 }
 
+/** Browse the selected computer before a session has been created. */
+export async function machineListDirectory(machineId: string, path: string): Promise<SessionListDirectoryResponse> {
+    try {
+        return await apiSocket.machineRPC<SessionListDirectoryResponse, SessionListDirectoryRequest>(
+            machineId,
+            'listDirectory',
+            { path },
+        );
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list directory' };
+    }
+}
+
 /**
  * Update machine metadata with optimistic concurrency control and automatic retry
  */

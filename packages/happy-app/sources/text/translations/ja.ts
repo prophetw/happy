@@ -547,6 +547,14 @@ export const ja: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'ディレクトリを選択',
+        selectDirectory: 'このディレクトリを使用',
+        parentDirectory: '親ディレクトリへ',
+        subdirectories: 'サブディレクトリ',
+        parentDirectories: '親ディレクトリ内のフォルダー',
+        recentDirectories: '最近のプロジェクト',
+        noSubdirectories: 'サブディレクトリはありません',
+        directoryUnavailable: 'ディレクトリを参照できません',
         showLess: '折りたたむ',
         showAll: ({ count }: { count: number }) => `すべて表示 (${count}パス)`,
         enterCustomPath: 'カスタムパスを入力',

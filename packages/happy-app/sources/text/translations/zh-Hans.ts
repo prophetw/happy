@@ -547,6 +547,14 @@ export const zhHans: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: '选择目录',
+        selectDirectory: '使用此目录',
+        parentDirectory: '返回上级目录',
+        subdirectories: '当前目录中的文件夹',
+        parentDirectories: '上级目录中的文件夹',
+        recentDirectories: '最近使用的项目',
+        noSubdirectories: '没有子目录',
+        directoryUnavailable: '暂时无法浏览此目录',
         showLess: '显示更少',
         showAll: ({ count }: { count: number }) => `显示全部 (${count} 个路径)`,
         enterCustomPath: '输入自定义路径',

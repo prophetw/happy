@@ -546,6 +546,14 @@ export const zhHant: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: '選擇目錄',
+        selectDirectory: '使用此目錄',
+        parentDirectory: '返回上層目錄',
+        subdirectories: '目前目錄中的資料夾',
+        parentDirectories: '上層目錄中的資料夾',
+        recentDirectories: '最近使用的專案',
+        noSubdirectories: '沒有子目錄',
+        directoryUnavailable: '暫時無法瀏覽此目錄',
         showLess: '顯示更少',
         showAll: ({ count }: { count: number }) => `顯示全部 (${count} 個路徑)`,
         enterCustomPath: '輸入自訂路徑',

@@ -562,6 +562,14 @@ export const pl: TranslationStructure = {
     },
 
     machineLauncher: {
+        directoryPickerTitle: 'Wybierz katalog',
+        selectDirectory: 'Użyj tego katalogu',
+        parentDirectory: 'Katalog nadrzędny',
+        subdirectories: 'Podkatalogi',
+        parentDirectories: 'Foldery w katalogu nadrzędnym',
+        recentDirectories: 'Ostatnie projekty',
+        noSubdirectories: 'Brak podkatalogów',
+        directoryUnavailable: 'Przeglądanie katalogu jest niedostępne',
         showLess: 'Pokaż mniej',
         showAll: ({ count }: { count: number }) => `Pokaż wszystkie (${count} ${plural({ count, one: 'ścieżka', few: 'ścieżki', many: 'ścieżek' })})`,
         enterCustomPath: 'Wprowadź niestandardową ścieżkę',
