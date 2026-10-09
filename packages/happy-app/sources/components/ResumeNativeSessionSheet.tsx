@@ -9,8 +9,10 @@ import { useHappyAction } from '@/hooks/useHappyAction';
 import { getDuplicateSheetFrame } from '@/utils/duplicateSheetLayout';
 import {
     claudeListNativeSessions,
+    codexListNativeSessions,
     resumeNativeClaudeSession,
-    type NativeClaudeSession,
+    resumeNativeCodexSession,
+    type NativeSession,
 } from '@/sync/ops';
 import { MobileGlassSurface } from './MobileGlass';
 
@@ -22,9 +24,8 @@ export interface ResumeNativeSessionSheetProps {
 
 /**
  * Picker behind the chat-local `/resume` command. Lists the machine's
- * native Claude conversations (straight from the on-disk JSONL, including
- * ones that never went through Happy) and, on confirm, spawns a fresh
- * Happy session that mounts the chosen conversation via `claude --resume`.
+ * native conversations for the current agent, including ones created outside
+ * Happy, and spawns a fresh Happy session attached to the chosen conversation.
  */
 export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionSheet(props: ResumeNativeSessionSheetProps) {
     const { sessionId, onClose } = props;
@@ -38,18 +39,22 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
     );
 
     const machineId = session?.metadata?.machineId ?? null;
-    const isClaude = session?.metadata?.flavor === 'claude';
+    const flavor = session?.metadata?.flavor;
+    const agentName = flavor === 'codex' ? 'Codex' : 'Claude';
 
-    const [sessions, setSessions] = React.useState<NativeClaudeSession[] | null>(null);
+    const [sessions, setSessions] = React.useState<NativeSession[] | null>(null);
     const [sessionsError, setSessionsError] = React.useState<string | null>(null);
     const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
     React.useEffect(() => {
         let cancelled = false;
+        setSessions(null);
+        setSessionsError(null);
+        setSelectedId(null);
         async function load() {
-            if (!isClaude) {
+            if (flavor !== 'claude' && flavor !== 'codex') {
                 if (!cancelled) {
-                    setSessionsError(t('session.resumeClaudeOnly'));
+                    setSessionsError(t('session.resumeUnsupportedAgent'));
                     setSessions([]);
                 }
                 return;
@@ -61,7 +66,9 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
                 }
                 return;
             }
-            const result = await claudeListNativeSessions({ machineId });
+            const result = flavor === 'codex'
+                ? await codexListNativeSessions({ machineId })
+                : await claudeListNativeSessions({ machineId });
             if (cancelled) return;
             if (result.type === 'success') {
                 setSessions(result.sessions);
@@ -73,7 +80,7 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
         }
         void load();
         return () => { cancelled = true; };
-    }, [isClaude, machineId]);
+    }, [flavor, machineId]);
 
     const selected = (sessions && selectedId)
         ? sessions.find((s) => s.sessionId === selectedId) ?? null
@@ -88,11 +95,17 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
             return;
         }
 
-        const result = await resumeNativeClaudeSession({
-            machineId,
-            directory: selected.cwd,
-            claudeSessionId: selected.sessionId,
-        });
+        const result = flavor === 'codex'
+            ? await resumeNativeCodexSession({
+                machineId,
+                directory: selected.cwd,
+                codexThreadId: selected.sessionId,
+            })
+            : await resumeNativeClaudeSession({
+                machineId,
+                directory: selected.cwd,
+                claudeSessionId: selected.sessionId,
+            });
 
         if (result.type === 'success') {
             onClose?.();
@@ -115,7 +128,7 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
         >
             <View style={styles.header}>
                 <Text style={styles.title}>{t('session.resumeSheetTitle')}</Text>
-                <Text style={styles.subtitle}>{t('session.resumeSheetSubtitle')}</Text>
+                <Text style={styles.subtitle}>{agentName} · {t('session.resumeSheetSubtitle')}</Text>
             </View>
 
             <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>

@@ -27,6 +27,8 @@ import type {
     ForkConversationResponse,
     ReadConversationParams,
     ReadConversationResponse,
+    ListThreadsParams,
+    ListThreadsResponse,
     RollbackConversationParams,
     RollbackConversationResponse,
     InjectItemsParams,
@@ -895,6 +897,10 @@ export class CodexAppServerClient {
         });
         logger.debug('[CodexAppServer] Thread forked:', opts.threadId, '->', this._threadId);
         return { threadId: result.thread.id, model: result.model, thread: result.thread };
+    }
+
+    async listThreads(opts: ListThreadsParams = {}): Promise<ListThreadsResponse> {
+        return await this.request('thread/list', opts) as ListThreadsResponse;
     }
 
     async readThread(opts: {

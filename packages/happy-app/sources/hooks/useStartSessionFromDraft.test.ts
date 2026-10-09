@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAttachmentDiagnosticError } from '@/sync/attachmentDiagnostics';
 
 const mocks = vi.hoisted(() => ({
     machines: [] as Array<{
@@ -196,6 +197,7 @@ function createDraft(overrides: Record<string, unknown> = {}) {
         selectedMachineId: 'machine-1',
         selectedPath: '~/project',
         agentType: 'codex',
+        agentPicked: false,
         permissionMode: null,
         modelMode: null,
         effortLevel: null,
@@ -210,6 +212,7 @@ function createDraft(overrides: Record<string, unknown> = {}) {
         setBotName: vi.fn(),
         setCreatesBot: vi.fn(),
         rollBotFaces: vi.fn(),
+        clearAgentPick: vi.fn(),
         ...overrides,
     };
 }
@@ -422,6 +425,7 @@ describe('useStartSessionFromDraft', () => {
         mocks.draft = createDraft({
             selectedMachineId: 'machine-cli',
             agentType: 'codex',
+            agentPicked: true,
         });
 
         const { startSession } = useStartSessionFromDraft();
@@ -433,6 +437,86 @@ describe('useStartSessionFromDraft', () => {
             'Happy CLI is offline on your computer. Run `happy daemon start` on your computer, then try again.',
         );
         expect(mocks.machineSpawnNewSession).not.toHaveBeenCalled();
+    });
+
+    describe('a computer that runs both Happy CLI and Happy Agent', () => {
+        function pairedMachines(options: { rigOnline?: boolean } = {}) {
+            return [
+                {
+                    id: 'machine-cli',
+                    online: true,
+                    metadata: {
+                        homeDir: '/Users/dev',
+                        cliAvailability: { claude: true, codex: true },
+                    },
+                },
+                {
+                    ...createRigMachine({ siblingMachineId: 'machine-cli' }),
+                    id: 'machine-rig',
+                    online: options.rigOnline ?? true,
+                },
+            ];
+        }
+
+        it('starts Happy even when the saved draft says Claude Code', async () => {
+            mocks.machines = pairedMachines();
+            mocks.draft = createDraft({ selectedMachineId: 'machine-cli', agentType: 'claude' });
+
+            const { startSession } = useStartSessionFromDraft();
+
+            await expect(startSession()).resolves.toBe(true);
+
+            expect(mocks.machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+                machineId: 'machine-rig',
+                agent: 'rig',
+            }));
+        });
+
+        it('stays on Happy while Happy Agent is offline, and says so rather than starting Claude Code', async () => {
+            mocks.machines = pairedMachines({ rigOnline: false });
+            mocks.draft = createDraft({ selectedMachineId: 'machine-cli', agentType: 'claude' });
+
+            const { startSession } = useStartSessionFromDraft();
+
+            await expect(startSession()).resolves.toBe(false);
+
+            expect(mocks.alert).toHaveBeenCalledWith('common.error', 'Machine is offline');
+            expect(mocks.machineSpawnNewSession).not.toHaveBeenCalled();
+        });
+
+        it('starts the harness tapped in the composer, then lets the next composer offer Happy again', async () => {
+            mocks.machines = pairedMachines();
+            mocks.draft = createDraft({ selectedMachineId: 'machine-cli', agentType: 'claude', agentPicked: true });
+
+            const { startSession } = useStartSessionFromDraft();
+
+            await expect(startSession()).resolves.toBe(true);
+
+            expect(mocks.machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+                machineId: 'machine-cli',
+                agent: 'claude',
+            }));
+            expect(mocks.draft.clearAgentPick).toHaveBeenCalled();
+        });
+
+        it('keeps the harness of the chat a new chat is made like, and the composer pick with it', async () => {
+            mocks.machines = pairedMachines();
+            mocks.draft = createDraft({ selectedMachineId: 'machine-cli', agentType: 'rig' });
+
+            const { startSession } = useStartSessionFromDraft();
+
+            await expect(startSession({
+                selectedMachineId: 'machine-cli',
+                agentType: 'codex',
+                input: '',
+            })).resolves.toBe(true);
+
+            expect(mocks.machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+                machineId: 'machine-cli',
+                agent: 'codex',
+            }));
+            expect(mocks.draft.clearAgentPick).not.toHaveBeenCalled();
+        });
     });
 
     it('uses an online Happy Agent when the selected computer has no legacy daemon', async () => {
@@ -651,11 +735,75 @@ describe('useStartSessionFromDraft', () => {
         await expect(startSession()).resolves.toBe(true);
 
         expect(mocks.alert).toHaveBeenCalledWith(
-            'Bot created without a face',
-            expect.stringContaining('Happy Agent could not read that picture.'),
+            'Picture not set',
+            'Release Captain is ready, but its picture couldn\'t be set. Try again.',
+            expect.any(Array),
         );
         expect(mocks.navigateToSession).toHaveBeenCalledWith('session-1');
         expect(mocks.machineStopSession).not.toHaveBeenCalled();
+    });
+
+    it('keeps transport errors out of the alert and retries the picture on the same bot', async () => {
+        mocks.machines = [createRigMachine({
+            capabilities: { newSession: true, resume: false, worktrees: false, bots: true },
+        })];
+        mocks.draft = createBotDraft();
+        mocks.uploadSessionBlob.mockRejectedValueOnce(createAttachmentDiagnosticError(
+            'Blob upload (POST) network error: Network request failed',
+            {
+                leg: 'blob-upload', method: 'POST',
+                url: 'https://files.cluster-fluster.com/happy?policy=secret-policy',
+                serverUrl: 'https://api.cluster-fluster.com',
+                message: 'Network request failed',
+            },
+        ));
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            const { startSession } = useStartSessionFromDraft();
+            await expect(startSession()).resolves.toBe(true);
+
+            const [title, message, buttons] = mocks.alert.mock.calls.at(-1)!;
+            expect(title).toBe('Picture not set');
+            expect(message).toBe('Release Captain is ready, but its picture couldn’t be uploaded. You can try again without creating another bot.');
+            expect(consoleError).toHaveBeenCalledWith(
+                '[bot] The face could not be put on the bot:',
+                'uploading the face: Blob upload (POST) network error: Network request failed',
+                {
+                    leg: 'blob-upload', method: 'POST', host: 'files.cluster-fluster.com',
+                    target: 'external-storage', message: 'Network request failed',
+                },
+            );
+            expect(JSON.stringify(consoleError.mock.calls)).not.toContain('secret-policy');
+
+            buttons.find((button: { text: string }) => button.text === 'Try again').onPress();
+            await vi.waitFor(() => expect(mocks.sessionSetAvatar).toHaveBeenCalledWith('session-1', expect.anything()));
+            expect(mocks.uploadSessionBlob).toHaveBeenCalledTimes(2);
+            expect(mocks.paintBotFace).toHaveBeenNthCalledWith(2, 'seed2222');
+            expect(mocks.machineSpawnNewSession).toHaveBeenCalledTimes(1);
+            expect(mocks.machineStopSession).not.toHaveBeenCalled();
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
+    it('offers another picture retry if storage is still unavailable, without recreating the bot', async () => {
+        mocks.machines = [createRigMachine({
+            capabilities: { newSession: true, resume: false, worktrees: false, bots: true },
+        })];
+        mocks.draft = createBotDraft();
+        mocks.uploadSessionBlob.mockRejectedValue(new Error('Network request failed'));
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            await expect(useStartSessionFromDraft().startSession()).resolves.toBe(true);
+            const buttons = mocks.alert.mock.calls.at(-1)![2];
+            buttons.find((button: { text: string }) => button.text === 'Try again').onPress();
+            await vi.waitFor(() => expect(mocks.alert).toHaveBeenCalledTimes(2));
+            expect(mocks.sessionSetAvatar).not.toHaveBeenCalled();
+            expect(mocks.machineSpawnNewSession).toHaveBeenCalledTimes(1);
+        } finally {
+            consoleError.mockRestore();
+        }
     });
 
     it('refuses to make a bot on a Happy Agent that does not offer bots', async () => {

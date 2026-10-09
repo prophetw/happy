@@ -1,3 +1,8 @@
+# October 9 - Resume Codex chats
+
+- **Resume Codex chats** — type `/resume` in a Codex chat to continue a conversation from your computer, with its history. Requires the updated Happy CLI.
+- Community Credits: [@prophetw](https://github.com/prophetw), [@chphch](https://github.com/chphch).
+
 # September 20 - Closer to Happy Desktop
 
 - **Bots** — make one from your phone: pick a face, name it, start talking.

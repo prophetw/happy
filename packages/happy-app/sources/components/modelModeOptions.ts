@@ -170,8 +170,12 @@ export function getClaudeModelModes(): ModelMode[] {
     return [
         { key: 'claude-fable-5-1', name: 'Fable 5.1', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
         { key: 'claude-fable-5', name: 'Fable 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-opus-5-5', name: 'Opus 5.5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-opus-5-5[1m]', name: 'Opus 5.5 [1M]', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
         { key: 'claude-opus-5', name: 'Opus 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
         { key: 'claude-opus-5[1m]', name: 'Opus 5 [1M]', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-sonnet-5-5', name: 'Sonnet 5.5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-sonnet-5-5[1m]', name: 'Sonnet 5.5 [1M]', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
         { key: 'claude-sonnet-5', name: 'Sonnet 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
     ];
 }
@@ -180,8 +184,8 @@ export function getCodexModelModes(): ModelMode[] {
     return [
         { key: 'gpt-6-astra', name: 'GPT-6 Astra', description: 'most capable', providerId: 'openai', providerName: 'OpenAI' },
         { key: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', description: null, providerId: 'openai', providerName: 'OpenAI' },
-        { key: 'gpt-6-sol', name: 'GPT-6 Sol', description: 'coding and everyday work', providerId: 'openai', providerName: 'OpenAI' },
-        { key: 'gpt-6-luna', name: 'GPT-6 Luna', description: 'fast and affordable', providerId: 'openai', providerName: 'OpenAI' },
+        { key: 'gpt-6-sol', name: 'GPT-6 Sol', description: null, providerId: 'openai', providerName: 'OpenAI' },
+        { key: 'gpt-6-luna', name: 'GPT-6 Luna', description: null, providerId: 'openai', providerName: 'OpenAI' },
         { key: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', description: null, providerId: 'openai', providerName: 'OpenAI' },
         { key: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', description: null, providerId: 'openai', providerName: 'OpenAI' },
         { key: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', description: null, providerId: 'openai', providerName: 'OpenAI' },

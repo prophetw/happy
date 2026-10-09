@@ -58,7 +58,7 @@ const DEFAULT_COMMANDS: CommandItem[] = [
     { command: 'goal', description: 'Set a session goal' },
     { command: 'mcp', description: 'Show connected MCP servers' },
     { command: 'skills', description: 'Show available skills' },
-    { command: 'resume', description: 'Resume a native Claude conversation from this machine' },
+    { command: 'resume', description: 'Resume a native Claude or Codex conversation from this machine' },
 ];
 
 // Command descriptions for known tools/commands

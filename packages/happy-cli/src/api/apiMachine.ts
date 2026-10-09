@@ -29,6 +29,7 @@ import {
     ForkSourceMissingError,
 } from '@/claude/utils/claudeSessionFork';
 import { CodexAppServerClient } from '@/codex/codexAppServerClient';
+import { listNativeCodexSessions } from '@/codex/codexListNativeSessions';
 import {
     CodexForkRewindPointNotFoundError,
     forkCodexThread,
@@ -324,6 +325,17 @@ export class ApiMachineClient {
                 }
                 throw error;
             }
+        });
+
+        this.rpcHandlerManager.registerHandler('codex-list-native-sessions', async (params: any) => {
+            const { directory } = params || {};
+            if (directory !== undefined && (typeof directory !== 'string' || directory.trim().length === 0)) {
+                throw new Error('directory must be a non-empty string when provided');
+            }
+            return withCodexAppServerClient(async (client) => ({
+                type: 'success',
+                sessions: await listNativeCodexSessions(client, directory),
+            }));
         });
 
         this.rpcHandlerManager.registerHandler('codex-fork-thread', async (params: any) => {

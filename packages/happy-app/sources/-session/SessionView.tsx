@@ -963,9 +963,9 @@ export function SessionViewLoaded({
         }
         if (sendingSessionsRef.current.has(sessionId)) return;
         const liveMessage = composer?.getMessage() ?? '';
-        // Chat-local slash command: list the machine's native Claude
+        // Chat-local slash command: list the machine's native agent
         // conversations and mount the chosen one into a fresh Happy session.
-        if (liveMessage.trim() === '/resume' && flavor === 'claude') {
+        if (liveMessage.trim() === '/resume' && (flavor === 'claude' || flavor === 'codex')) {
             composer?.clearMessage();
             Modal.show({
                 component: ResumeNativeSessionSheet,
