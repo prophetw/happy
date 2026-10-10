@@ -578,7 +578,8 @@ export class CodexAppServerClient {
                 });
             }
 
-            if (item.phase === 'final_answer' && this.pendingTurnCompletion) {
+            // Async questions also use final_answer, but the turn keeps running.
+            if (item.phase === 'final_answer' && item.delivery !== 'async' && this.pendingTurnCompletion) {
                 this.emitRawTurnCompletion(
                     this.extractTurnId(params),
                     'completed',
