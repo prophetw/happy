@@ -80,3 +80,6 @@ happy-workspaces/
 
 .context/
 .happy-tmp/
+
+# Local E2E logs, reports, and screenshots
+.e2e-artifacts/
