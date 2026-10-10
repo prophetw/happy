@@ -1,3 +1,8 @@
+# October 10 - Find the right conversation
+
+- **Resume picker** — `/resume` now lists Claude and Codex conversations from your current directory first.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 9 - Resume Codex chats
 
 - **Resume Codex chats** — type `/resume` in a Codex chat to continue a conversation from your computer, with its history. Requires the updated Happy CLI.

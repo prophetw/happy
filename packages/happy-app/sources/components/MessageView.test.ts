@@ -2,6 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as Clipboard from 'expo-clipboard';
 import type { AgentTextMessage, Message, UserTextMessage } from '@/sync/typesMessage';
 
 vi.hoisted(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true));
@@ -14,7 +15,7 @@ vi.mock('react-native', async () => {
     };
 });
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { dark: false, colors: { textSecondary: 'secondary' } } }),
+    useUnistyles: () => ({ theme: { dark: false, colors: { text: '#000', textSecondary: 'secondary' } } }),
     StyleSheet: { create: (factory: (theme: any) => unknown) => factory({ colors: { input: {}, textSecondary: 'secondary' } }) },
 }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -73,11 +74,11 @@ describe('user message frame', () => {
         const message = { ...base, pending: true, meta: { queuedWhileBusy } };
         const renderer = render(message);
         const body = renderer.root.findByType('LongPressCopyable').parent.parent;
-        expect(labels(renderer)).toEqual([]);
+        expect(labels(renderer)).toEqual(['']);
         expect(body.props.style).not.toContainEqual({ opacity: 0.45 });
 
         render({ ...message, pending: false }, renderer);
-        expect(labels(renderer)).toEqual([]);
+        expect(labels(renderer)).toEqual(['']);
         expect(renderer.root.findByType('LongPressCopyable').parent.parent).toBe(body);
     });
 
@@ -86,16 +87,16 @@ describe('user message frame', () => {
         const message = { ...base, createdAt: Date.now(), pending: true, meta: { queuedWhileBusy } };
         const renderer = render(message);
         const body = renderer.root.findByType('LongPressCopyable').parent.parent;
-        expect(labels(renderer)).toEqual([]);
+        expect(labels(renderer)).toEqual(['']);
 
-        act(() => vi.advanceTimersByTime(999));
-        expect(labels(renderer)).toEqual([]);
+        act(() => vi.advanceTimersByTime(1_999));
+        expect(labels(renderer)).toEqual(['']);
         act(() => vi.advanceTimersByTime(1));
         expect(labels(renderer)).toContain('message.sending');
         expect(renderer.root.findByType('LongPressCopyable').parent.parent).toBe(body);
 
         render({ ...message, pending: false }, renderer);
-        expect(labels(renderer)).toEqual([]);
+        expect(labels(renderer)).toEqual(['']);
     });
 
     it.each([
@@ -125,7 +126,7 @@ describe('user message frame', () => {
     });
 
     it.each([undefined, { id: 'owner', name: 'You', owner: true }])('does not label the reader’s own messages (%j)', (author) => {
-        expect(labels(render({ ...base, author }))).toEqual([]);
+        expect(labels(render({ ...base, author }))).toEqual(['']);
     });
 
     it('still shows send failures for an idle send', () => {
@@ -170,5 +171,27 @@ describe('agent text block', () => {
     it('renders nothing for thinking messages', () => {
         const renderer = render({ ...agentBase, isThinking: true });
         expect(renderer.root.findAllByType('Text')).toEqual([]);
+    });
+});
+
+describe('agent message copy button', () => {
+    const agent: AgentTextMessage = { kind: 'agent-text', id: 'agent', localId: null, createdAt: Date.now(), text: 'first part' };
+
+    it('shows on every agent text row and copies that row’s own text', async () => {
+        const renderer = render(agent);
+        const button = renderer.root.findByType('Pressable');
+        await act(async () => { await button.props.onPress(); });
+        expect(Clipboard.setStringAsync).toHaveBeenCalledWith('first part');
+    });
+
+    it('stays mounted as the text streams in', () => {
+        const renderer = render(agent);
+        const button = renderer.root.findByType('Pressable');
+        render({ ...agent, text: 'first part, then more' }, renderer);
+        expect(renderer.root.findByType('Pressable')).toBe(button);
+    });
+
+    it('does not show on thinking rows', () => {
+        expect(render({ ...agent, isThinking: true }).root.findAllByType('Pressable')).toHaveLength(0);
     });
 });
