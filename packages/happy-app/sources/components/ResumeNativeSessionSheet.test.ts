@@ -74,6 +74,40 @@ function confirmButton(renderer: ReturnType<typeof create>) {
 }
 
 describe('native resume picker user flow', () => {
+    it.each(['codex', 'claude'])('prioritizes the current directory for %s while preserving activity order within each group', async (flavor) => {
+        state.metadata = { flavor, machineId: 'machine-1', path: '/native/repo' };
+        machineRPC.mockResolvedValue({
+            type: 'success',
+            sessions: [
+                { sessionId: 'other-newest', cwd: '/native/other', summary: 'Other newest', timestamp: 500 },
+                { sessionId: 'current-newest', cwd: '/native/repo', summary: 'Current newest', timestamp: 400 },
+                { sessionId: 'nested', cwd: '/native/repo/subdir', summary: 'Nested directory', timestamp: 300 },
+                { sessionId: 'similar', cwd: '/native/repo-other', summary: 'Similar directory', timestamp: 200 },
+                { sessionId: 'current-older', cwd: '/native/repo', summary: 'Current older', timestamp: 100 },
+            ],
+        });
+        const { renderer } = await renderSheet();
+        expect(machineRPC).toHaveBeenCalledWith('machine-1', `${flavor}-list-native-sessions`, { directory: undefined });
+        const rows = renderer.root.findByType('ScrollView').findAllByType('Pressable');
+        expect(rows.map((row: any) => row.findAllByType('Text')[0].props.children)).toEqual([
+            'Current newest', 'Current older', 'Other newest', 'Nested directory', 'Similar directory',
+        ]);
+    });
+
+    it.each([undefined, '/native/missing'])('preserves activity order when the current directory is %s', async (directory) => {
+        if (directory) state.metadata.path = directory;
+        machineRPC.mockResolvedValue({
+            type: 'success',
+            sessions: [
+                { sessionId: 'newest', cwd: '/native/other', summary: 'Newest', timestamp: 200 },
+                { sessionId: 'older', cwd: '/native/repo', summary: 'Older', timestamp: 100 },
+            ],
+        });
+        const { renderer } = await renderSheet();
+        const rows = renderer.root.findByType('ScrollView').findAllByType('Pressable');
+        expect(rows.map((row: any) => row.findAllByType('Text')[0].props.children)).toEqual(['Newest', 'Older']);
+    });
+
     it.each(['codex', 'claude'])('lists and resumes the selected native %s conversation', async (flavor) => {
         state.metadata.flavor = flavor;
         machineRPC.mockImplementation(async (_machineId: string, method: string) => (
@@ -114,16 +148,19 @@ describe('native resume picker user flow', () => {
         expect(confirmButton(renderer).props.disabled).toBe(true);
     });
 
-    it('keeps the picker open and surfaces failed resume launches', async () => {
+    it.each([
+        'Thread no longer exists',
+        'Failed to resume Codex thread native-1: already has an active writer. Close the other Codex conversation first.',
+    ])('keeps the picker open and surfaces failed resume launches: %s', async (errorMessage) => {
         machineRPC.mockImplementation(async (_machineId: string, method: string) => (
             method === 'spawn-happy-session'
-                ? { type: 'error', errorMessage: 'Thread no longer exists' }
+                ? { type: 'error', errorMessage }
                 : { type: 'success', sessions: [{ sessionId: 'native-1', cwd: '/native/repo', summary: 'Native conversation', timestamp: Date.now() }] }
         ));
         const { renderer, onClose } = await renderSheet();
         await act(async () => { renderer.root.findAllByType('Pressable')[0].props.onPress(); });
         await act(async () => { confirmButton(renderer).props.onPress(); });
-        expect(alert).toHaveBeenCalledWith('common.error', 'Thread no longer exists');
+        expect(alert).toHaveBeenCalledWith('common.error', errorMessage);
         expect(onClose).not.toHaveBeenCalled();
         expect(replace).not.toHaveBeenCalled();
     });

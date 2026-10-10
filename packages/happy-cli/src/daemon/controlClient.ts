@@ -95,6 +95,11 @@ export async function listDaemonSessions(): Promise<any[]> {
   return result.children || [];
 }
 
+/** Report a provider startup failure before the session becomes ready. */
+export async function notifyDaemonSessionStartupFailed(pid: number, errorMessage: string): Promise<{ error?: string } | any> {
+  return daemonPost('/session-startup-failed', { pid, errorMessage });
+}
+
 /** Cloud/RPC readiness, distinct from the local control server's health. */
 export type DaemonConnectionStatus = { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
 

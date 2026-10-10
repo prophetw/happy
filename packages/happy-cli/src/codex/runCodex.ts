@@ -21,7 +21,7 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
 import { CodexDisplay } from "@/ui/ink/CodexDisplay";
 import { trimIdent } from "@/utils/trimIdent";
-import { notifyDaemonSessionStarted } from "@/daemon/controlClient";
+import { notifyDaemonSessionStarted, notifyDaemonSessionStartupFailed } from "@/daemon/controlClient";
 import { encodeBase64, decodeBase64 } from '@/api/encryption';
 import type { Session as ApiSession, UserMessage } from '@/api/types';
 import { registerKillSessionHandler } from "@/claude/registerKillSessionHandler";
@@ -238,11 +238,11 @@ export async function runCodex(opts: {
         }));
     }
 
-    // Always report to daemon if it exists (skip if offline)
-    if (response) {
+    const reportSessionStarted = async (readyMetadata = metadata) => {
+        if (!response) return;
         try {
             logger.debug(`[START] Reporting session ${response.id} to daemon`);
-            const result = await notifyDaemonSessionStarted(response.id, metadata, {
+            const result = await notifyDaemonSessionStarted(response.id, readyMetadata, {
                 encryptionKey: encodeBase64(response.encryptionKey),
                 encryptionVariant: response.encryptionVariant,
                 seq: response.seq,
@@ -257,7 +257,9 @@ export async function runCodex(opts: {
         } catch (error) {
             logger.debug('[START] Failed to report to daemon (may not be running):', error);
         }
-    }
+    };
+    // Resumes become ready only after Codex has accepted the native thread.
+    if (!opts.resumeThreadId) await reportSessionStarted();
 
     const messageQueue = new MessageQueue2<EnhancedMode>(hashCodexEnhancedMode);
 
@@ -822,6 +824,7 @@ export async function runCodex(opts: {
     } as const;
     let first = true;
     let appendSystemPromptInjected = false;
+    let resumeReady = false;
 
     try {
         logger.debug('[codex]: client.connect begin');
@@ -829,7 +832,7 @@ export async function runCodex(opts: {
         logger.debug('[codex]: client.connect done');
 
         if (opts.resumeThreadId) {
-            await resumeExistingThread({
+            const resumed = await resumeExistingThread({
                 client,
                 session,
                 messageBuffer,
@@ -839,6 +842,8 @@ export async function runCodex(opts: {
                 // Side chats start empty — keep the resume notice out of the UI.
                 announce: !isSideChat,
             });
+            resumeReady = true;
+            await reportSessionStarted({ ...metadata, codexThreadId: resumed.threadId });
             first = false;
             appendSystemPromptInjected = true;
         }
@@ -1038,6 +1043,21 @@ export async function runCodex(opts: {
             }
         }
 
+    } catch (error) {
+        if (opts.resumeThreadId && !resumeReady) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.debug('[codex]: Resume startup failed', { threadId: opts.resumeThreadId, errorMessage });
+            session.sendSessionEvent({ type: 'message', message: errorMessage });
+            if (opts.startedBy === 'daemon') {
+                try {
+                    const result = await notifyDaemonSessionStartupFailed(process.pid, errorMessage);
+                    if (result?.error) logger.debug('[codex]: Failed to report resume startup error to daemon', result.error);
+                } catch (reportError) {
+                    logger.debug('[codex]: Failed to report resume startup error to daemon', reportError);
+                }
+            }
+        }
+        throw error;
     } finally {
         // Clean up resources when main loop exits
         logger.debug('[codex]: Final cleanup start');

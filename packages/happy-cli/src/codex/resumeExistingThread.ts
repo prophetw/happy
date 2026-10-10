@@ -53,6 +53,9 @@ export async function resumeExistingThread(opts: {
         return resumedThread;
     } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to resume Codex thread ${opts.threadId}: ${reason}`);
+        const hint = reason.includes('already has an active writer')
+            ? ' Close this conversation in the other Codex terminal or app, then try resuming again.'
+            : '';
+        throw new Error(`Failed to resume Codex thread ${opts.threadId}: ${reason}${hint}`);
     }
 }
