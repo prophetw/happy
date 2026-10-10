@@ -4,6 +4,7 @@ import * as privacyKit from "privacy-kit";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { log } from "@/utils/log";
+import { getAccountAccessPolicy } from '@/app/auth/accountAccess';
 
 export function authRoutes(app: Fastify) {
     app.post('/v1/auth', {
@@ -26,7 +27,18 @@ export function authRoutes(app: Fastify) {
 
         // Create or update user in database
         const publicKeyHex = privacyKit.encodeHex(publicKey);
-        const user = await db.account.upsert({
+        const access = getAccountAccessPolicy();
+        const existing = access.restricted ? await db.account.findUnique({
+            where: { publicKey: publicKeyHex },
+            select: { id: true }
+        }) : null;
+        if (access.restricted && (!existing || !access.allows(existing.id))) {
+            return reply.code(403).send({ error: 'Account is not allowed on this relay' });
+        }
+        const user = existing ? await db.account.update({
+            where: { id: existing.id },
+            data: { updatedAt: new Date() }
+        }) : await db.account.upsert({
             where: { publicKey: publicKeyHex },
             update: { updatedAt: new Date() },
             create: { publicKey: publicKeyHex }
@@ -54,6 +66,9 @@ export function authRoutes(app: Fastify) {
                 })]),
                 401: z.object({
                     error: z.literal('Invalid public key')
+                }),
+                403: z.object({
+                    error: z.string()
                 })
             }
         }
@@ -75,6 +90,9 @@ export function authRoutes(app: Fastify) {
         });
 
         if (answer.response && answer.responseAccountId) {
+            if (!getAccountAccessPolicy().allows(answer.responseAccountId)) {
+                return reply.code(403).send({ error: 'Account is not allowed on this relay' });
+            }
             const token = await auth.createToken(answer.responseAccountId!, { session: answer.id });
             return reply.send({
                 state: 'authorized',
@@ -181,6 +199,9 @@ export function authRoutes(app: Fastify) {
                 })]),
                 401: z.object({
                     error: z.literal('Invalid public key')
+                }),
+                403: z.object({
+                    error: z.string()
                 })
             }
         }
@@ -199,6 +220,9 @@ export function authRoutes(app: Fastify) {
         });
 
         if (answer.response && answer.responseAccountId) {
+            if (!getAccountAccessPolicy().allows(answer.responseAccountId)) {
+                return reply.code(403).send({ error: 'Account is not allowed on this relay' });
+            }
             const token = await auth.createToken(answer.responseAccountId!);
             return reply.send({
                 state: 'authorized',

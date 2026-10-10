@@ -14,7 +14,7 @@ const options = {
     host: 'root@192.168.99.55', dir: '/data/code/happy-relay',
     source: path.join(homedir(), '.cache', 'happy-relay', 'release-source'),
 };
-const flags = { '--host': 'host', '--dir': 'dir', '--source': 'source', '--image': 'image', '--public-url': 'publicUrl', '--port': 'port' };
+const flags = { '--host': 'host', '--dir': 'dir', '--source': 'source', '--image': 'image', '--public-url': 'publicUrl', '--port': 'port', '--allowed-accounts': 'allowedAccounts' };
 for (let i = 2; i < process.argv.length; i++) {
     const flag = process.argv[i];
     if (flag === '--help' || flag === '-h') {
@@ -24,7 +24,8 @@ for (let i = 2; i < process.argv.length; i++) {
   --source <path>       Clean main checkout to build; default is a cached upstream clone
   --image <tag>         Deploy a prebuilt local image instead of fetching/building main
   --public-url <url>    Set client-facing API URL; otherwise retain existing value
-  --port <n>            Set published HTTP port; otherwise retain existing value`);
+  --port <n>            Set published HTTP port; otherwise retain existing value
+  --allowed-accounts <ids>  Comma-separated Happy account IDs; new deployments deny all by default`);
         process.exit(0);
     }
     if (!flags[flag] || !process.argv[i + 1]) throw new Error(`Unknown or incomplete option: ${flag}`);
@@ -39,6 +40,10 @@ if (options.publicUrl) {
     options.publicUrl = url.toString().replace(/\/+$/, '');
 }
 if (options.image && !/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(options.image)) throw new Error('Invalid image reference.');
+if (options.allowedAccounts !== undefined && !/^[A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*$/.test(options.allowedAccounts)) {
+    throw new Error('Use comma-separated Happy account IDs for --allowed-accounts.');
+}
+if (options.allowedAccounts !== undefined) options.allowedAccounts = options.allowedAccounts.split(',').map(id => id.trim()).join(',');
 
 function run(command, args, { cwd = root, input, capture = true, allowFailure = false } = {}) {
     return new Promise((resolve, reject) => {
@@ -120,7 +125,7 @@ cd ${quote(options.dir)}
 umask 077
 if [ ! -e .env.relay ]; then
     master_secret="$(openssl rand -hex 32)"
-    printf '%s\\n' ${quote(`RELAY_PUBLIC_URL=${publicUrl}`)} 'RELAY_BIND_ADDRESS=0.0.0.0' ${quote(`RELAY_PORT=${port}`)} "HANDY_MASTER_SECRET=$master_secret" > .env.relay
+    printf '%s\\n' ${quote(`RELAY_PUBLIC_URL=${publicUrl}`)} 'RELAY_BIND_ADDRESS=0.0.0.0' ${quote(`RELAY_PORT=${port}`)} "HANDY_MASTER_SECRET=$master_secret" 'HAPPY_ALLOWED_ACCOUNT_IDS=' > .env.relay
     unset master_secret
 fi
 set_value() {
@@ -131,17 +136,25 @@ set_value() {
 set_value RELAY_IMAGE ${quote(image)}
 ${setOption('RELAY_PUBLIC_URL', options.publicUrl)}
 ${setOption('RELAY_PORT', options.port)}
+${setOption('HAPPY_ALLOWED_ACCOUNT_IDS', options.allowedAccounts)}
 chmod 600 .env.relay
 docker compose -f docker-compose.relay-only.yml --env-file .env.relay config --quiet
 docker compose -f docker-compose.relay-only.yml --env-file .env.relay up -d --no-build --wait --wait-timeout 120
 printf '\\nRELAY_HEALTH:'
 docker compose -f docker-compose.relay-only.yml --env-file .env.relay exec -T relay curl --fail --silent --max-time 5 http://127.0.0.1:3005/health
 printf '\\n'
+printf 'RELAY_ACCESS:'
+docker compose -f docker-compose.relay-only.yml --env-file .env.relay exec -T relay node -e 'const value = (process.env.HAPPY_ALLOWED_ACCOUNT_IDS ?? "").trim(); console.log(value === "" ? "deny-all" : value === "*" ? "public" : "allowlist")'
 `);
     const response = deployed.output.match(/^RELAY_HEALTH:(.*)$/m);
     const health = response ? JSON.parse(response[1]) : null;
     if (health?.service !== 'happy-server' || health?.status !== 'ok') throw new Error('Relay health response is invalid.');
+    const accessMode = deployed.output.match(/^RELAY_ACCESS:(.*)$/m)?.[1];
+    if (!['deny-all', 'public', 'allowlist'].includes(accessMode)) throw new Error('Relay account access configuration response is invalid.');
     console.log('Relay is healthy; existing credentials and data volume retained.');
+    if (accessMode === 'deny-all') console.log('Account access is disabled. Set HAPPY_ALLOWED_ACCOUNT_IDS before clients can sign in.');
+    else if (accessMode === 'public') console.log('Account access is public (*). Restrict HAPPY_ALLOWED_ACCOUNT_IDS before exposing this private relay.');
+    else console.log('Account access is configured with an allowlist.');
     console.log(`\nDeployment verified in ${((Date.now() - started) / 1000).toFixed(1)}s; image ${reused ? 'reused' : 'transferred'}.`);
 } catch (error) {
     console.error(error.message);

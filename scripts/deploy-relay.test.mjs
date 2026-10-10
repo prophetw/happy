@@ -36,6 +36,12 @@ if(args[0]==='image'){
 else if(args[0]==='load'){fs.writeFileSync(process.env.TEST_IMPORTED,'yes');}
 else if(args[0]==='compose'){
   if(args.includes('exec')){
+    if(args.includes('node')){
+      if(process.env.TEST_BAD_ACCESS==='1'){console.log('unknown');process.exit(0);}
+      const contents=fs.readFileSync('.env.relay','utf8');
+      const value=(contents.match(/^HAPPY_ALLOWED_ACCOUNT_IDS=(.*)$/m)?.[1]||'').trim().replace(/^['"]|['"]$/g,'');
+      console.log(value===''?'deny-all':value==='*'?'public':'allowlist');process.exit(0);
+    }
     if(process.env.TEST_HEALTH_FAILURE==='1'){console.error('fixture health failure');process.exit(22);}
     console.log(JSON.stringify({service:process.env.TEST_WRONG_SERVICE==='1'?'other':'happy-server',status:'ok'}));
   }
@@ -123,4 +129,47 @@ test('rejects command-like options before running deployment commands', t => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Invalid image reference/);
     assert.equal(existsSync(f.env.TEST_EVENTS), false);
+});
+
+test('configures allowed accounts and retains them on a later deployment', t => {
+    const f = fixture(t);
+    let result = f.run(['--image', 'happy-relay:ready', '--allowed-accounts', 'account-one,account-two']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(path.join(f.remote, '.env.relay'), 'utf8'), /^HAPPY_ALLOWED_ACCOUNT_IDS=account-one,account-two$/m);
+    assert.match(result.stdout, /configured with an allowlist/);
+    result = f.run(['--image', 'happy-relay:ready']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(path.join(f.remote, '.env.relay'), 'utf8'), /^HAPPY_ALLOWED_ACCOUNT_IDS=account-one,account-two$/m);
+});
+
+test('reports deny-all access when no account IDs were configured', t => {
+    const f = fixture(t);
+    const result = f.run(['--image', 'happy-relay:ready']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Account access is disabled/);
+});
+
+test('rejects a public wildcard in the private deployment account option', t => {
+    const f = fixture(t);
+    const result = f.run(['--image', 'happy-relay:ready', '--allowed-accounts', '*']);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /comma-separated Happy account IDs/);
+    assert.equal(existsSync(f.env.TEST_EVENTS), false);
+});
+
+test('reports explicitly public access even when the env value is quoted', t => {
+    const f = fixture(t);
+    const envPath = path.join(f.remote, '.env.relay');
+    writeFileSync(envPath, readFileSync(envPath, 'utf8') + 'HAPPY_ALLOWED_ACCOUNT_IDS="*"\n');
+    const result = f.run(['--image', 'happy-relay:ready']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Account access is public/);
+});
+
+test('does not report successful deployment when the account access response is invalid', t => {
+    const f = fixture(t);
+    const result = f.run(['--image', 'happy-relay:ready'], { TEST_BAD_ACCESS: '1' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /access configuration response is invalid/);
+    assert.doesNotMatch(result.stdout, /Deployment verified/);
 });

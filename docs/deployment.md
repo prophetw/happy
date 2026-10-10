@@ -79,6 +79,7 @@ RELAY_PUBLIC_URL=http://xxx.xxx.com:8193/relay
 RELAY_BIND_ADDRESS=0.0.0.0
 RELAY_PORT=8193
 RELAY_BASE_PATH=/relay
+HAPPY_ALLOWED_ACCOUNT_IDS=your-existing-account-id
 ```
 
 `RELAY_PUBLIC_URL` 是客户端访问的完整 API 基址，也是服务器生成附件及头像
@@ -107,6 +108,59 @@ docker compose --env-file .env.relay logs --tail 50 relay gateway
 数据库和附件。`HANDY_MASTER_SECRET` 也需要保持原值，以保留已有认证和服务端密钥。
 多个独立测试实例可通过 `docker compose -p <name>` 区分，并分别配置端口及密钥。
 
+### 私有 Relay：仅允许指定 Happy 账号
+
+两个 Compose 入口都传入 `HAPPY_ALLOWED_ACCOUNT_IDS`，默认空值会拒绝所有账号。
+填入这台 relay 上已有的 Happy 账号 ID，多个 ID 用逗号分隔：
+
+```dotenv
+HAPPY_ALLOWED_ACCOUNT_IDS=account-id-1,account-id-2
+```
+
+限制在服务端执行，App、CLI 和 happy-agent 不需要额外的访问密码：
+
+- 名单内账号可以登录，并继续通过扫码批准其他设备加入同一个账号。
+- 名单外账号和新账号的签名登录返回 `403`；不会自动创建新账号。
+- 名单外账号以前签发的 Bearer Token 也会被拒绝，包含 REST 和 Socket.IO。
+- 设备配对不能为名单外账号签发新 Token。
+- `/files/...` 不再公开提供 `sessions/` 和 `projects/` 下的私人文件；附件和头像
+  继续通过原有的鉴权接口下载。
+
+已有 relay 应在内网完成登录并获取账号 ID，再启用限制。在已经登录**这台 relay**
+的 CLI 开发机运行下面的命令，只打印当前账号 ID，不打印 Token 或密钥：
+
+```sh
+HAPPY_SERVER_URL=http://192.168.99.55:8193 node --input-type=module <<'NODE'
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+const homeDir = (process.env.HAPPY_HOME_DIR || join(homedir(), '.happy')).replace(/^~/, homedir());
+const { token } = JSON.parse(await readFile(join(homeDir, 'access.key'), 'utf8'));
+const baseUrl = process.env.HAPPY_SERVER_URL.replace(/\/+$/, '');
+const response = await fetch(`${baseUrl}/v1/account/profile`, {
+  headers: { Authorization: `Bearer ${token}` }
+});
+if (!response.ok) throw new Error(`Account lookup failed: HTTP ${response.status}`);
+console.log((await response.json()).id);
+NODE
+```
+
+将 `HAPPY_SERVER_URL` 换成实际 API 基址，包含实际路径前缀。账号 ID 属于当前
+relay 的数据库，其他 relay 上同一个人的账号 ID 不能直接套用。
+
+首次部署的空数据库还没有账号。先保持入口仅在本机或受控内网可访问，并明确设置
+`HAPPY_ALLOWED_ACCOUNT_IDS=*` 进行初始登录、设备配对和 ID 获取。随后改为具体
+账号 ID，重新创建 relay 容器，再开放公网 HTTPS 入口。`*` 表示允许所有账号，
+不能留在私人公网部署中。直接运行上游服务器而完全不设置该变量，仍保留原有的
+公开注册行为；显式空值始终拒绝所有账号。格式错误会阻止服务启动。
+
+修改名单后，用对应 Compose 命令执行 `up -d`，让新容器配置生效并断开旧连接。
+只执行 `docker compose restart` 不会更新容器的环境变量。
+`/health` 成功只表示服务运行正常，不代表你的账号已获准使用。
+
+公网仍能访问健康检查、登录和配对申请等必要入口，白名单限制的是可使用 relay
+的账号。Nginx 可为这些公开入口配置请求限流；白名单本身不是流量攻击防护。
+
 ### HTTPS 入口
 
 默认 Compose 提供 HTTP，HTTPS 可由已有的宿主机网关终止。例如外部 HTTPS
@@ -122,6 +176,9 @@ RELAY_BASE_PATH=/relay
 外层网关将 `/relay/...` 原样转发到 `http://127.0.0.1:18193`，并支持 WebSocket
 Upgrade；Compose 中的网关负责剥离此前缀。TLS 证书由外层网关配置。
 公网 HTTPS 和实际手机访问需在目标服务器上验收。
+公网 HTTPS 入口只转发到内部 HTTP 端口；同机部署时保持
+`RELAY_BIND_ADDRESS=127.0.0.1`，避免通过 `8193` 等后端端口绕过外层网关。
+如果 Nginx 与 relay 不在同一服务器，后端端口的防火墙只允许 Nginx 服务器连接。
 
 ### 仅部署 relay 服务
 
@@ -131,7 +188,7 @@ Upgrade；Compose 中的网关负责剥离此前缀。TLS 证书由外层网关�
 ```sh
 cp .env.relay-only.example .env.relay
 chmod 600 .env.relay
-# 填写 RELAY_PUBLIC_URL 和首次生成的 HANDY_MASTER_SECRET。
+# 填写 RELAY_PUBLIC_URL、HANDY_MASTER_SECRET 和 HAPPY_ALLOWED_ACCOUNT_IDS。
 docker compose -f docker-compose.relay-only.yml --env-file .env.relay up -d --build
 curl --fail http://127.0.0.1:8193/health
 ```
@@ -167,6 +224,16 @@ node scripts/deploy-relay.mjs --image happy-relay:main-fba320e4
 服务器已有相同镜像 ID 时，跳过打包、传输和导入。既有 `.env.relay` 中的主密钥、
 公网地址和端口会保留，数据卷不会删除；首次部署才生成主密钥。需要改目标或配置时
 使用 `--host`、`--dir`、`--public-url`、`--port`，可通过 `--help` 查看参数。
+`--allowed-accounts <账号ID1,账号ID2>` 设置允许使用 relay 的账号；省略时保留已有
+名单，首次部署默认拒绝所有账号。例如：
+
+```sh
+node scripts/deploy-relay.mjs --allowed-accounts your-existing-account-id
+```
+
+首次部署需要先按“私有 Relay”小节在受控内网完成账号初始化。该选项不接受 `*`，
+避免一键私人部署意外开启公开注册。镜像必须包含本次账号访问控制实现；旧镜像
+不会因为新增环境变量就自动获得白名单能力。
 源码或依赖发生变化的新版本仍需要实际构建，自动化并不消除这部分耗时。
 
 `.env.relay` 已被 Git 忽略，Docker 构建也排除环境文件及本地验证产物。

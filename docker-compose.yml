@@ -19,6 +19,7 @@ services:
       HANDY_MASTER_SECRET: ${HANDY_MASTER_SECRET:?Set HANDY_MASTER_SECRET in .env.relay}
       PUBLIC_URL: ${RELAY_PUBLIC_URL:?Set RELAY_PUBLIC_URL in .env.relay}
       METRICS_ENABLED: "false"
+      HAPPY_ALLOWED_ACCOUNT_IDS: ${HAPPY_ALLOWED_ACCOUNT_IDS:-}
     volumes:
       - relay-data:/data
     expose:
