@@ -1725,6 +1725,78 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
+    it('keeps an async final-answer question pending while the same turn continues executing tools', async () => {
+        const proc = createMockProcess({
+            pid: 3008,
+            onRequest: (msg, stdout) => {
+                if (msg.method === 'thread/start' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: {
+                        thread: { id: 'thread-async', path: '/tmp/thread-async' },
+                        model: 'gpt-test', modelProvider: 'openai', cwd: '/tmp/project',
+                        approvalPolicy: 'never', sandbox: { type: 'dangerFullAccess' }, reasoningEffort: null,
+                    } });
+                }
+                if (msg.method === 'turn/start' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: {
+                        turn: { id: 'turn-async', items: [], status: 'inProgress', error: null },
+                    } });
+                    pushJsonLine(stdout, { method: 'turn/started', params: {
+                        threadId: 'thread-async',
+                        turn: { id: 'turn-async', items: [], status: 'inProgress', error: null },
+                    } });
+                    pushJsonLine(stdout, { method: 'item/completed', params: {
+                        threadId: 'thread-async', turnId: 'turn-async',
+                        item: {
+                            type: 'agentMessage', id: 'question-async', text: 'Which model should I use?',
+                            phase: 'final_answer', delivery: 'async',
+                            questions: [{ title: 'Which model should I use?', options: ['Current model'] }],
+                        },
+                    } });
+                    pushJsonLine(stdout, { method: 'item/started', params: {
+                        threadId: 'thread-async', turnId: 'turn-async',
+                        item: { type: 'commandExecution', id: 'command-async', command: 'pwd', cwd: '/tmp/project' },
+                    } });
+                }
+            },
+        });
+        mockSpawn.mockImplementation(() => proc);
+
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        const events: Array<Record<string, unknown>> = [];
+        client.setEventHandler((msg) => events.push(msg as Record<string, unknown>));
+
+        await client.connect();
+        try {
+            await client.startThread({
+                model: 'gpt-test', cwd: '/tmp/project', approvalPolicy: 'never', sandbox: 'danger-full-access',
+            });
+            const onSettled = vi.fn();
+            const turn = client.sendTurnAndWait('Investigate the task');
+            void turn.then(onSettled);
+            await waitFor(() => events.some((event) => event.type === 'exec_command_begin'));
+
+            expect(events).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: 'task_started', turn_id: 'turn-async' }),
+                expect.objectContaining({ type: 'agent_message', message: 'Which model should I use?' }),
+                expect.objectContaining({ type: 'exec_command_begin', callId: 'thread-async:command-async' }),
+            ]));
+            expect(events.filter((event) => event.type === 'task_complete')).toHaveLength(0);
+            expect(onSettled).not.toHaveBeenCalled();
+            expect(client.turnId).toBe('turn-async');
+
+            pushJsonLine(proc.stdout, { method: 'turn/completed', params: {
+                threadId: 'thread-async', turn: { id: 'turn-async', status: 'completed' },
+            } });
+            await expect(turn).resolves.toEqual({ aborted: false });
+            expect(onSettled).toHaveBeenCalledExactlyOnceWith({ aborted: false });
+            expect(events.filter((event) => event.type === 'task_complete')).toHaveLength(1);
+            expect(client.turnId).toBeNull();
+        } finally {
+            await client.disconnect();
+        }
+    });
+
     it('falls back to final answer completion when raw turn/completed is missing', async () => {
         const proc = createMockProcess({
             pid: 3002,
