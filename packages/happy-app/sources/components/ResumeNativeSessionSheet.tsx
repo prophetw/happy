@@ -40,6 +40,7 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
 
     const machineId = session?.metadata?.machineId ?? null;
     const flavor = session?.metadata?.flavor;
+    const currentDirectory = session?.metadata?.path;
     const agentName = flavor === 'codex' ? 'Codex' : 'Claude';
 
     const [sessions, setSessions] = React.useState<NativeSession[] | null>(null);
@@ -81,6 +82,14 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
         void load();
         return () => { cancelled = true; };
     }, [flavor, machineId]);
+
+    const orderedSessions = React.useMemo(() => {
+        if (!sessions || !currentDirectory) return sessions;
+        // Keep the daemon's activity order within each directory group.
+        return [...sessions].sort((a, b) => (
+            Number(b.cwd === currentDirectory) - Number(a.cwd === currentDirectory)
+        ));
+    }, [sessions, currentDirectory]);
 
     const selected = (sessions && selectedId)
         ? sessions.find((s) => s.sessionId === selectedId) ?? null
@@ -132,16 +141,16 @@ export const ResumeNativeSessionSheet = React.memo(function ResumeNativeSessionS
             </View>
 
             <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-                {sessions === null ? (
+                {orderedSessions === null ? (
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator />
                     </View>
                 ) : sessionsError ? (
                     <Text style={styles.emptyText}>{sessionsError}</Text>
-                ) : sessions.length === 0 ? (
+                ) : orderedSessions.length === 0 ? (
                     <Text style={styles.emptyText}>{t('session.resumeSheetEmpty')}</Text>
                 ) : (
-                    sessions.map((s) => {
+                    orderedSessions.map((s) => {
                         const isSelected = s.sessionId === selectedId;
                         const title = s.summary ?? s.firstUserMessage ?? t('session.resumeSheetNoPreview');
                         const preview = title.trim().replace(/\s+/g, ' ');

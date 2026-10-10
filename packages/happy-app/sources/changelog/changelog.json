@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "October 10 - Find the right conversation",
+      "summary": "",
+      "markdown": "- **Resume picker** — `/resume` now lists Claude and Codex conversations from your current directory first.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "October 9 - Resume Codex chats",
       "summary": "",
       "markdown": "- **Resume Codex chats** — type `/resume` in a Codex chat to continue a conversation from your computer, with its history. Requires the updated Happy CLI.\n- Community Credits: [@prophetw](https://github.com/prophetw), [@chphch](https://github.com/chphch)."
@@ -116,5 +121,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "October 9 - Resume Codex chats"
+  "latestTitle": "October 10 - Find the right conversation"
 }
