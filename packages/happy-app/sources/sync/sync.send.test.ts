@@ -132,6 +132,60 @@ describe('first message session hydration', () => {
         expect(mocks.request).toHaveBeenCalledOnce();
     });
 
+    it.each(['key', 'metadata'])('sends the first message while an unrelated session is still decrypting its %s', async (phase) => {
+        const target = await sessionRecord('new-session');
+        const unrelated = await sessionRecord('old-session');
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sessions: [unrelated, target] }) });
+        // Keep the real crypto path, but hold an unrelated record beyond the
+        // readiness budget to model a slow account-wide sync on a phone.
+        let release!: () => void;
+        const blocked = new Promise<void>(resolve => { release = resolve; });
+        let entered!: () => void;
+        const decrypting = new Promise<void>(resolve => { entered = resolve; });
+        if (phase === 'key') {
+            const decryptKey = engine.encryption.decryptEncryptionKey.bind(engine.encryption);
+            vi.spyOn(engine.encryption, 'decryptEncryptionKey').mockImplementation(async (key: any) => {
+                if (key === unrelated.dataEncryptionKey) {
+                    entered();
+                    await blocked;
+                }
+                return decryptKey(key);
+            });
+        } else {
+            await engine.encryption.initializeSessions(new Map([['old-session', new Uint8Array(32).fill(9)]]));
+            const encryption = engine.encryption.getSessionEncryption('old-session');
+            const decryptMetadata = encryption.decryptMetadata.bind(encryption);
+            vi.spyOn(encryption, 'decryptMetadata').mockImplementation(async (...args: any[]) => {
+                entered();
+                await blocked;
+                return decryptMetadata(...args);
+            });
+        }
+
+        vi.useFakeTimers();
+        engine.sessionsSync.invalidate();
+        await decrypting;
+        let accepted: boolean | undefined;
+        const sending = engine.sendMessage('new-session', 'first prompt', { awaitDelivery: true })
+            .then((result: boolean) => { accepted = result; });
+        try {
+            // Advance in small steps so the real WebCrypto callbacks can run
+            // before their fake-time request deadline.
+            await vi.waitFor(() => expect(accepted).toBe(true), { timeout: 13_000, interval: 100 });
+            expect(mocks.alert).not.toHaveBeenCalled();
+            expect(mocks.request).toHaveBeenCalledOnce();
+            const [path, request] = mocks.request.mock.calls[0];
+            expect(path).toBe('/v3/sessions/new-session/messages');
+            const batch = JSON.parse(request.body).messages;
+            expect(await writer.getSessionEncryption('new-session')!.decryptRaw(batch[0].content))
+                .toMatchObject({ role: 'user', content: { type: 'text', text: 'first prompt' } });
+        } finally {
+            release();
+            await engine.sessionsSync.awaitQueue();
+            await sending;
+        }
+    });
+
     it.each(['missing', 'foreign-key', 'bad-metadata', 'bad-state', 'network'])('preserves a real failure without sending under another key: %s', async (failure) => {
         const target = await sessionRecord('new-session');
         if (failure === 'foreign-key') {
@@ -155,6 +209,54 @@ describe('first message session hydration', () => {
         expect(engine.pendingOutbox.size).toBe(0);
         expect(mocks.alert).toHaveBeenCalledWith('common.error', expect.stringContaining('has not finished syncing'));
         expect(mocks.state.sessions['other-session']).toBeDefined();
+    });
+
+    it('retries a transient refresh failure before accepting the first message', async () => {
+        const target = await sessionRecord('new-session');
+        fetchMock.mockRejectedValueOnce(new Error('temporary disconnect'))
+            .mockResolvedValue({ ok: true, json: async () => ({ sessions: [target] }) });
+
+        await expect(engine.sendMessage('new-session', 'retry me', { awaitDelivery: true })).resolves.toBe(true);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(mocks.request).toHaveBeenCalledOnce();
+        expect(mocks.alert).not.toHaveBeenCalled();
+    });
+
+    it('aborts timed-out refreshes and ignores their late snapshots', async () => {
+        const target = await sessionRecord('new-session');
+        const requests: { signal: AbortSignal; finish: (response: unknown) => void }[] = [];
+        fetchMock.mockImplementation((_url, options) => new Promise(resolve => {
+            requests.push({ signal: options.signal, finish: resolve });
+        }));
+        vi.useFakeTimers();
+        const sending = engine.sendMessage('new-session', 'keep this draft');
+        await vi.advanceTimersByTimeAsync(13_000);
+        await expect(sending).resolves.toBe(false);
+        expect(requests).toHaveLength(3);
+        expect(requests.every(request => request.signal.aborted)).toBe(true);
+        expect(mocks.alert).toHaveBeenCalledOnce();
+        expect(mocks.request).not.toHaveBeenCalled();
+
+        for (const request of requests) {
+            request.finish({ ok: true, json: async () => ({ sessions: [target] }) });
+        }
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mocks.state.sessions['new-session']).toBeUndefined();
+        expect(engine.encryption.getSessionEncryption('new-session')).toBeNull();
+        expect(engine.pendingOutbox.size).toBe(0);
+    });
+
+    it('does not hydrate an old account snapshot after the account changes', async () => {
+        const target = await sessionRecord('new-session');
+        const nextAccount = await Encryption.create(new Uint8Array(32).fill(42));
+        let finish!: (response: unknown) => void;
+        fetchMock.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+        const fetching = engine.fetchSessions('new-session');
+        engine.encryption = nextAccount;
+        finish({ ok: true, json: async () => ({ sessions: [target] }) });
+        await fetching;
+        expect(mocks.state.sessions['new-session']).toBeUndefined();
+        expect(nextAccount.getSessionEncryption('new-session')).toBeNull();
     });
 
     it.each(['cancel', 'delete', 'account-change', 'target-change'])('does not accept a message if %s happens during encryption', async (change) => {
