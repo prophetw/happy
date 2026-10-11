@@ -719,9 +719,26 @@ class Sync {
             && this.encryption.getSessionBlobKey(sessionId));
         for (let attempt = 0; !isReady() && attempt < 3; attempt++) {
             if (attempt > 0) await delay(300 * attempt);
-            // The shared sync retries network failures indefinitely. Keep the
-            // existing send budget, and require both the row and its own key.
-            await Promise.race([this.sessionsSync.invalidateAndAwait(), delay(4000)]);
+            // A first send must not wait for unrelated records or the shared
+            // account sync's retry queue. Hydrate only its own row and keys.
+            const controller = new AbortController();
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+                await Promise.race([
+                    this.fetchSessions(sessionId, controller.signal),
+                    new Promise<void>(resolve => {
+                        timeout = setTimeout(() => {
+                            controller.abort();
+                            resolve();
+                        }, 4000);
+                    }),
+                ]);
+            } catch (error) {
+                console.warn(`Failed to refresh session ${sessionId} before sending:`, error);
+            } finally {
+                clearTimeout(timeout);
+                controller.abort();
+            }
         }
         if (!isReady()) {
             throw new Error('The message was not sent: this session has not finished syncing. Please try again.');
@@ -1258,12 +1275,14 @@ class Sync {
         await Promise.all(decryptedRecords.map((record) => this.hydrateProjectAvatar(record)));
     };
 
-    private fetchSessions = async () => {
+    private fetchSessions = async (sessionId?: string, signal?: AbortSignal) => {
         if (!this.credentials) return;
+        const encryption = this.encryption;
         const avatarsBeforeFetch = storage.getState().sessions;
 
         const API_ENDPOINT = getServerUrl();
         const response = await fetch(`${API_ENDPOINT}/v1/sessions`, {
+            signal,
             headers: {
                 'Authorization': `Bearer ${this.credentials.token}`,
                 'Content-Type': 'application/json',
@@ -1276,6 +1295,7 @@ class Sync {
         }
 
         const data = await response.json();
+        if (signal?.aborted || this.encryption !== encryption) return;
         const sessions = data.sessions as Array<{
             id: string;
             tag: string;
@@ -1294,12 +1314,17 @@ class Sync {
             updatedAt: number;
             lastMessage: ApiMessage | null;
         }>;
+        // Reuse the existing list endpoint, but a send only needs its target.
+        // Filtering before any crypto keeps old sessions out of its budget.
+        const sessionsToHydrate = sessionId === undefined
+            ? sessions
+            : sessions.filter(session => session.id === sessionId);
 
         // Initialize all session encryptions first
         const sessionKeys = new Map<string, Uint8Array | null>();
-        for (const session of sessions) {
+        for (const session of sessionsToHydrate) {
             if (session.dataEncryptionKey) {
-                let decrypted = await this.encryption.decryptEncryptionKey(session.dataEncryptionKey);
+                let decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
                 if (!decrypted) {
                     console.error(`Failed to decrypt data encryption key for session ${session.id}`);
                     continue;
@@ -1309,13 +1334,13 @@ class Sync {
                 sessionKeys.set(session.id, null);
             }
         }
-        await this.encryption.initializeSessions(sessionKeys);
+        await encryption.initializeSessions(sessionKeys);
 
         // Decrypt sessions
         let decryptedSessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[] = [];
-        for (const session of sessions) {
+        for (const session of sessionsToHydrate) {
             // Get session encryption (should always exist after initialization)
-            const sessionEncryption = this.encryption.getSessionEncryption(session.id);
+            const sessionEncryption = encryption.getSessionEncryption(session.id);
             if (!sessionEncryption) {
                 console.error(`Session encryption not found for ${session.id} - this should never happen`);
                 continue;
@@ -1348,6 +1373,9 @@ class Sync {
             };
             decryptedSessions.push(processedSession);
         }
+
+        // Timed-out requests and old accounts must not publish a late snapshot.
+        if (signal?.aborted || this.encryption !== encryption) return;
 
         // Thinking state exists only in activity ephemerals — the server
         // session record has no such field, so preserve whatever we already
