@@ -1,3 +1,8 @@
+# October 11 - Start conversations reliably
+
+- **New chats** — first messages no longer wait for older chats to finish syncing.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 10 - Find the right conversation
 
 - **Resume picker** — `/resume` now lists Claude and Codex conversations from your current directory first.
