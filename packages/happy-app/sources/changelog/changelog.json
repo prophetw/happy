@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "October 11 - Start conversations reliably",
+      "summary": "",
+      "markdown": "- **New chats** — first messages no longer wait for older chats to finish syncing.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "October 10 - Find the right conversation",
       "summary": "",
       "markdown": "- **Resume picker** — `/resume` now lists Claude and Codex conversations from your current directory first.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -121,5 +126,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "October 10 - Find the right conversation"
+  "latestTitle": "October 11 - Start conversations reliably"
 }
