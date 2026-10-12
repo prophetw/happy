@@ -18,6 +18,7 @@ export function startDaemonControlServer({
   spawnSession,
   requestShutdown,
   onHappySessionWebhook,
+  onHappySessionStartupFailed,
   getConnectionStatus,
 }: {
   getChildren: () => TrackedSession[];
@@ -25,6 +26,7 @@ export function startDaemonControlServer({
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
+  onHappySessionStartupFailed?: (pid: number, errorMessage: string) => void;
   getConnectionStatus?: () => { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
@@ -38,6 +40,20 @@ export function startDaemonControlServer({
     const typed = app.withTypeProvider<ZodTypeProvider>();
 
     typed.post('/status', async () => getConnectionStatus?.() ?? { machineId: null, connected: false });
+
+    typed.post('/session-startup-failed', {
+      schema: {
+        body: z.object({
+          pid: z.number().int().positive(),
+          errorMessage: z.string().min(1),
+        }),
+        response: { 200: z.object({ status: z.literal('ok') }) },
+      },
+    }, async (request) => {
+      const { pid, errorMessage } = request.body;
+      onHappySessionStartupFailed?.(pid, errorMessage);
+      return { status: 'ok' as const };
+    });
 
     // Session reports itself after creation
     typed.post('/session-started', {

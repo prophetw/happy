@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 const mocks = vi.hoisted(() => ({
   handlers: null as any,
   webhook: null as any,
+  startupFailed: null as any,
   children: null as any,
+  tmuxAvailable: false,
+  tmuxSpawn: vi.fn(),
   persisted: {} as Record<string, any>,
   get: vi.fn(),
   spawn: vi.fn(),
@@ -29,7 +32,10 @@ vi.mock('@/ui/doctor', () => ({ getEnvironmentInfo: () => ({}) }));
 vi.mock('@/utils/caffeinate', () => ({ startCaffeinate: () => false, stopCaffeinate: vi.fn() }));
 vi.mock('@/utils/detectCLI', () => ({ detectCLIAvailability: () => ({}) }));
 vi.mock('@/utils/spawnHappyCLI', () => ({ spawnHappyCLI: mocks.spawn }));
-vi.mock('@/utils/tmux', () => ({ isTmuxAvailable: async () => false }));
+vi.mock('@/utils/tmux', () => ({
+  isTmuxAvailable: async () => mocks.tmuxAvailable,
+  getTmuxUtilities: () => ({ spawnInTmux: mocks.tmuxSpawn }),
+}));
 vi.mock('@/resume/localHappyAgentAuth', () => ({ detectResumeSupport: () => ({}), hasLocalHappyAgentAuth: () => false }));
 vi.mock('./happyTerminalBoot', () => ({ startHappyTerminalDaemon: vi.fn() }));
 vi.mock('@/persistence', () => ({
@@ -43,6 +49,7 @@ vi.mock('./controlClient', () => ({
 }));
 vi.mock('./controlServer', () => ({ startDaemonControlServer: async (options: any) => {
   mocks.webhook = options.onHappySessionWebhook;
+  mocks.startupFailed = options.onHappySessionStartupFailed;
   mocks.children = options.getChildren;
   return { port: 0, stop: vi.fn() };
 } }));
@@ -73,6 +80,8 @@ describe('daemon resume fallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.persisted = {};
+    mocks.tmuxAvailable = false;
+    mocks.tmuxSpawn.mockResolvedValue({ success: true, pid: 12345, sessionId: 'test-window' });
     mocks.persistSession.mockReset();
     mocks.access.mockResolvedValue(undefined);
     // Never register real process handlers, stop daemons, bind ports, or spawn providers.
@@ -89,6 +98,38 @@ describe('daemon resume fallback', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it.each(['regular', 'tmux'])('returns a native Codex startup failure to the caller in %s mode', async (mode) => {
+    await boot();
+    mocks.tmuxAvailable = mode === 'tmux';
+    mocks.spawn.mockReturnValue({ pid: 12345, on: vi.fn() });
+    const spawning = mocks.handlers.spawnSession({
+      directory: '/project', agent: 'codex', resumeCodexThreadId: 'native-thread',
+      environmentVariables: { TMUX_SESSION_NAME: 'test-session' },
+    });
+    await vi.waitFor(() => expect(mocks.children().some((child: any) => child.pid === 12345)).toBe(true));
+    const errorMessage = 'Failed to resume Codex thread native-thread: already has an active writer. Close the other Codex conversation first.';
+    mocks.startupFailed(12345, errorMessage);
+    expect(await spawning).toEqual({ type: 'error', errorMessage });
+    expect(mocks.persistSession).not.toHaveBeenCalled();
+    if (mode === 'tmux') expect(mocks.tmuxSpawn).toHaveBeenCalledOnce();
+  });
+
+  it.each(['regular', 'tmux'])('allows a slow native Codex resume to become ready in %s mode', async (mode) => {
+    vi.useFakeTimers();
+    await boot();
+    mocks.tmuxAvailable = mode === 'tmux';
+    mocks.spawn.mockReturnValue({ pid: 12345, on: vi.fn() });
+    let completed = false;
+    const spawning = mocks.handlers.spawnSession({
+      directory: '/project', agent: 'codex', resumeCodexThreadId: 'native-thread',
+      environmentVariables: { TMUX_SESSION_NAME: 'test-session' },
+    }).then((result: unknown) => { completed = true; return result; });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(completed).toBe(false);
+    mocks.webhook('happy-resumed', { ...metadata, flavor: 'codex', codexThreadId: 'native-thread', hostPid: 12345 });
+    expect(await spawning).toEqual({ type: 'success', sessionId: 'happy-resumed' });
   });
 
   it('resumes an untracked old session across fresh daemon boots without listing sessions', async () => {
