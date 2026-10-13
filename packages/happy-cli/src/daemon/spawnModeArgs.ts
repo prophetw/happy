@@ -34,3 +34,25 @@ export function appendDaemonSpawnModeArgs(
     args.push('--effort', options.effortLevel);
   }
 }
+
+/**
+ * How long the daemon waits for a spawned child's `session-started` webhook
+ * before answering the spawn RPC, per harness.
+ */
+export const DEFAULT_SPAWN_STARTUP_TIMEOUT_MS = 15_000;
+/**
+ * Slow-harness window: covers the harness's own backend round-trips plus CLI
+ * startup, staying inside the app's 50s RPC timeout.
+ */
+export const SLOW_SPAWN_STARTUP_TIMEOUT_MS = 45_000;
+
+export function spawnWebhookTimeoutMs(agent: string, resuming: boolean): number {
+  // Antigravity's startup — machine registration plus session creation
+  // round-trips — has overrun the default 15s window in the wild. The child
+  // keeps starting either way, so an early timeout answers the app with a
+  // failure for a session that shows up moments later.
+  if (agent === 'agy') return SLOW_SPAWN_STARTUP_TIMEOUT_MS;
+  // Cover Codex's 30s thread/resume request plus CLI startup.
+  if (agent === 'codex' && resuming) return SLOW_SPAWN_STARTUP_TIMEOUT_MS;
+  return DEFAULT_SPAWN_STARTUP_TIMEOUT_MS;
+}
