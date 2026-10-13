@@ -4,6 +4,8 @@
  */
 
 import { apiSocket } from './apiSocket';
+import { normalizeSpawnSessionResult } from './spawnSessionResult';
+import type { SpawnSessionResult } from './spawnSessionResult';
 import { sync } from './sync';
 import { storage } from './storage';
 import type { AgentQuestionAnswer, MachineMetadata, SessionAgentModesPatch } from './storageTypes';
@@ -163,11 +165,8 @@ interface SessionKillResponse {
 }
 
 // Response types for spawn session
-export type SpawnSessionResult =
-    | { type: 'success'; sessionId: string }
-    | { type: 'pending'; clientRequestId: string; retryAfterMs: number }
-    | { type: 'requestToApproveDirectoryCreation'; directory: string }
-    | { type: 'error'; errorMessage: string };
+export type { SpawnSessionResult };
+export { normalizeSpawnSessionResult };
 
 // Options for spawning a session
 export interface SpawnSessionOptions {
@@ -343,25 +342,6 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             errorMessage: error instanceof Error ? error.message : 'Failed to spawn session'
         };
     }
-}
-
-/**
- * The machine RPC answer, with its refusal always under `errorMessage`.
- *
- * Earlier Happy Agent daemons answered a refused catalog spawn with `message`
- * instead, which this read as an alert with nothing in it. Nothing here parses
- * the payload otherwise, so the one field the flow reads is settled here.
- */
-export function normalizeSpawnSessionResult(result: unknown): SpawnSessionResult {
-    if (typeof result !== 'object' || result === null || typeof (result as { type?: unknown }).type !== 'string') {
-        return { type: 'error', errorMessage: 'The machine answered with something Happy could not read.' };
-    }
-    const answer = result as Record<string, unknown> & { type: string };
-    if (answer.type !== 'error') return answer as SpawnSessionResult;
-    const errorMessage = [answer.errorMessage, answer.message].find(
-        (value): value is string => typeof value === 'string' && value.length > 0,
-    );
-    return { type: 'error', errorMessage: errorMessage ?? 'Failed to spawn session' };
 }
 
 /**

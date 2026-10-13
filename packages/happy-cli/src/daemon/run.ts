@@ -35,11 +35,8 @@ import {
   wrapTmuxCommandWithSessionEnvironmentSanitizer,
 } from './sessionEnvironment';
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
-import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
+import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode, spawnWebhookTimeoutMs } from './spawnModeArgs';
 import { hasPersistedProcessConflict, isPidAlive, machineBootTimeMs } from './sessionLiveness';
-
-// Cover Codex's 30s thread/resume request plus CLI startup, within the app's 50s RPC timeout.
-const CODEX_RESUME_STARTUP_TIMEOUT_MS = 45_000;
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -504,8 +501,7 @@ export async function startDaemon(): Promise<void> {
             logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${tmuxResult.pid} (tmux)`);
 
             return new Promise((resolve) => {
-              const startupTimeoutMs = agent === 'codex' && options.resumeCodexThreadId
-                ? CODEX_RESUME_STARTUP_TIMEOUT_MS : 15_000;
+              const startupTimeoutMs = spawnWebhookTimeoutMs(agent, Boolean(options.resumeCodexThreadId));
               const timeout = setTimeout(() => {
                 pidToAwaiter.delete(tmuxResult.pid!);
                 pidToSpawnFailure.delete(tmuxResult.pid!);
@@ -688,8 +684,7 @@ export async function startDaemon(): Promise<void> {
       logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${happyProcess.pid}`);
 
       return new Promise((resolve) => {
-        const startupTimeoutMs = args[0] === 'codex' && args.includes('--resume')
-          ? CODEX_RESUME_STARTUP_TIMEOUT_MS : 15_000;
+        const startupTimeoutMs = spawnWebhookTimeoutMs(args[0], args.includes('--resume'));
         const timeout = setTimeout(() => {
           pidToAwaiter.delete(happyProcess.pid!);
           pidToSpawnFailure.delete(happyProcess.pid!);

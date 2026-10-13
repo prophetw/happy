@@ -51,6 +51,8 @@ import {
   formatAgySkillsTerminal,
   getAgySkillCommandNames,
 } from './skills';
+import { downloadAgyFileEventAttachment } from './attachmentEvents';
+import { formatAgyPromptWithAttachments, prepareAgyImageAttachments } from './imageInput';
 import { AgyPermissionHandler } from './permissionHandler';
 import { AgyQuotaStore, type AgyStatusLineQuota } from './statusLine';
 import {
@@ -362,8 +364,19 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     process.stdin.setEncoding('utf8');
   }
 
-  session.onUserMessage((message) => {
-    if (!message.content.text) return;
+  session.onFileEvent((fileEvent) => {
+    const ev = fileEvent.content.data?.ev;
+    if (ev) {
+      log(`File event received: ${ev.name} (${ev.size} bytes, ref: ${ev.ref})`);
+      session.trackAttachmentDownload(downloadAgyFileEventAttachment(session, fileEvent));
+    }
+  });
+
+  session.onUserMessage(async (message) => {
+    const attachmentsForThisMessage = await session.drainAttachmentsForUserMessage();
+    const hasText = Boolean(message.content.text && message.content.text.trim().length > 0);
+    const hasAttachments = Boolean(attachmentsForThisMessage && attachmentsForThisMessage.length > 0);
+    if (!hasText && !hasAttachments) return;
 
     if (message.meta?.model) {
       selectedModel = message.meta.model;
@@ -380,25 +393,33 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         : undefined,
     };
 
-    const specialCommand = parseSpecialCommand(message.content.text);
-    if (specialCommand.type === 'clear') {
-      log('Detected /clear command');
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-      return;
-    }
-    if (specialCommand.type === 'usage') {
-      log('Detected /usage command');
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-      return;
-    }
-    if (specialCommand.type === 'skills') {
-      log('Detected /skills command');
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-      return;
+    const promptText = message.content.text ?? '';
+    if (hasText) {
+      const specialCommand = parseSpecialCommand(promptText);
+      if (specialCommand.type === 'clear') {
+        log('Detected /clear command');
+        messageQueue.pushIsolateAndClear(promptText, mode, attachmentsForThisMessage);
+        return;
+      }
+      if (specialCommand.type === 'usage') {
+        log('Detected /usage command');
+        messageQueue.pushIsolateAndClear(promptText, mode, attachmentsForThisMessage);
+        return;
+      }
+      if (specialCommand.type === 'skills') {
+        log('Detected /skills command');
+        messageQueue.pushIsolateAndClear(promptText, mode, attachmentsForThisMessage);
+        return;
+      }
+
+      messageBuffer.addMessage(promptText, 'user');
     }
 
-    messageBuffer.addMessage(message.content.text, 'user');
-    messageQueue.push(message.content.text, mode);
+    if (hasAttachments) {
+      messageBuffer.addMessage(`📎 [${attachmentsForThisMessage.length} image attachment(s)]`, 'user');
+    }
+
+    messageQueue.push(promptText, mode, attachmentsForThisMessage);
   });
   session.keepAlive(thinking, 'remote');
 
@@ -579,9 +600,21 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         continue;
       }
 
-      log(`Incoming prompt: ${batch.message.slice(0, 200)}`);
+      let promptToSend = batch.message;
+      if (batch.attachments && batch.attachments.length > 0) {
+        const { savedFiles } = await prepareAgyImageAttachments(batch.attachments, {
+          sessionId: session.sessionId,
+        });
+        if (savedFiles.length > 0) {
+          promptToSend = formatAgyPromptWithAttachments(batch.message, savedFiles);
+          log(`Prepared ${savedFiles.length} image attachment(s) for agy prompt`);
+        }
+      }
+
+      log(`Incoming prompt: ${promptToSend.slice(0, 200)}`);
       if (!metadata.summary) {
-        const title = extractSessionTitle(batch.message);
+        const titleSource = batch.message.trim() || (batch.attachments?.[0]?.name ? `Image: ${batch.attachments[0].name}` : 'Image session');
+        const title = extractSessionTitle(titleSource);
         metadata.summary = {
           text: title,
           updatedAt: Date.now(),
@@ -595,7 +628,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
 
       sendEnvelopes(sessionManager.startTurn());
       try {
-        await backend.sendPrompt(process.cwd(), batch.message);
+        await backend.sendPrompt(process.cwd(), promptToSend);
         sendEnvelopes(sessionManager.endTurn('completed'));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

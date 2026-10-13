@@ -211,7 +211,11 @@ export class ApiMachineClient {
                     return { type: 'requestToApproveDirectoryCreation', directory: result.directory };
 
                 case 'error':
-                    throw new Error(result.errorMessage);
+                    // Return the refusal in the typed shape the app reads.
+                    // Throwing turns it into RpcHandlerManager's bare
+                    // `{ error }` envelope, which the app surfaced as an
+                    // unreadable-answer alert with the message lost.
+                    return { type: 'error', errorMessage: result.errorMessage };
             }
         });
 
