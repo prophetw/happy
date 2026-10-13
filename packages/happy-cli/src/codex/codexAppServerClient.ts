@@ -293,6 +293,21 @@ export class CodexAppServerClient {
         return typeof status === 'string' && status.length > 0 ? status : null;
     }
 
+    private isSessionThreadNotification(params: any): boolean {
+        const threadId = stringOrNull(params?.threadId)
+            ?? stringOrNull(params?.thread_id)
+            ?? stringOrNull(params?.conversationId)
+            ?? stringOrNull(params?.msg?.thread_id)
+            ?? stringOrNull(params?.msg?.threadId);
+        // Older notifications omit thread identity; retain their existing behavior.
+        return !threadId || !this._threadId || threadId === this._threadId;
+    }
+
+    private isCurrentTurn(turnId: string | null): boolean {
+        const currentTurnId = this.pendingTurnCompletion?.turnId ?? this._turnId;
+        return !turnId || !currentTurnId || turnId === currentTurnId;
+    }
+
     private shouldHandleRawNotification(method: string): boolean {
         const isRawNotification = method === 'thread/started'
             || method === 'thread/goal/updated'
@@ -324,6 +339,11 @@ export class CodexAppServerClient {
         error: unknown,
         source: string,
     ): void {
+        // A stale completion must not clear turn state or reach the consumer,
+        // even when tryResolvePendingTurn would keep its promise pending.
+        if (!this.isCurrentTurn(turnId)) {
+            return;
+        }
         const aborted = status === 'cancelled' || status === 'canceled' || status === 'aborted' || status === 'interrupted';
 
         this.tryResolvePendingTurn(aborted, turnId, source);
@@ -579,7 +599,8 @@ export class CodexAppServerClient {
             }
 
             // Async questions also use final_answer, but the turn keeps running.
-            if (item.phase === 'final_answer' && item.delivery !== 'async' && this.pendingTurnCompletion) {
+            if (item.phase === 'final_answer' && item.delivery !== 'async' && this.pendingTurnCompletion
+                && this.isSessionThreadNotification(params)) {
                 this.emitRawTurnCompletion(
                     this.extractTurnId(params),
                     'completed',
@@ -1516,11 +1537,26 @@ export class CodexAppServerClient {
     }
 
     private handleNotification(method: string, params: any): void {
+        const isLegacyEvent = method === 'codex/event' || method.startsWith('codex/event/');
+        const isTurnLifecycle = method === 'turn/started' || method === 'turn/completed'
+            || method === 'thread/status/changed'
+            || (isLegacyEvent && (params?.msg?.type === 'task_started'
+                || params?.msg?.type === 'task_complete' || params?.msg?.type === 'turn_aborted'));
+        // App-server multiplexes subagent threads onto this same transport.
+        // Filter lifecycle events before they can change protocol/turn state
+        // or emit a session-level task completion. Child content still flows.
+        if (isTurnLifecycle && !this.isSessionThreadNotification(params)) {
+            return;
+        }
         // codex/event notifications: either `codex/event` or `codex/event/<type>`
-        if (method === 'codex/event' || method.startsWith('codex/event/')) {
+        if (isLegacyEvent) {
             this.notificationProtocol = 'legacy';
             const msg = params?.msg;
             if (msg) {
+                if ((msg.type === 'task_complete' || msg.type === 'turn_aborted')
+                    && !this.isCurrentTurn(msg.turn_id ?? msg.turnId ?? null)) {
+                    return;
+                }
                 // Extract turn_id from task_started events
                 if (msg.type === 'task_started' && msg.turn_id) {
                     this._turnId = msg.turn_id;

@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SandboxConfig } from '@/persistence';
+import { mapCodexMcpMessageToSessionEnvelopes, type CodexTurnState } from './utils/sessionProtocolMapper';
 
 const {
     mockExecSync,
@@ -1183,6 +1184,142 @@ describe('CodexAppServerClient sandbox integration', () => {
         expect(events.filter((event) => event.type === 'task_complete')).toHaveLength(1);
 
         await client.disconnect();
+    });
+
+    it.each([
+        { protocol: 'raw', method: 'thread/status/changed', params: { threadId: 'thread-child', status: { type: 'idle' } } },
+        { protocol: 'raw', method: 'turn/started', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'inProgress' } } },
+        { protocol: 'raw', method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed' } } },
+        { protocol: 'raw', method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'interrupted' } } },
+        { protocol: 'raw', method: 'item/completed', params: {
+            threadId: 'thread-child', turnId: 'turn-main',
+            item: { type: 'agentMessage', id: 'child-answer', text: 'Child finished', phase: 'final_answer' },
+        } },
+        { protocol: 'legacy', method: 'codex/event/task_started', params: { conversationId: 'thread-child', msg: { type: 'task_started', turn_id: 'turn-child' } } },
+        { protocol: 'legacy', method: 'codex/event/task_complete', params: { conversationId: 'thread-child', msg: { type: 'task_complete', turn_id: 'turn-child' } } },
+        { protocol: 'legacy', method: 'codex/event/turn_aborted', params: { conversationId: 'thread-child', msg: { type: 'turn_aborted', turn_id: 'turn-child' } } },
+        { protocol: 'legacy', method: 'turn/started', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'inProgress' } } },
+        { protocol: 'legacy', method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed' } } },
+        { protocol: 'raw', method: 'turn/completed', params: { threadId: 'thread-main', turn: { id: 'turn-old', status: 'completed' } } },
+        { protocol: 'raw', method: 'item/completed', params: {
+            threadId: 'thread-main', turnId: 'turn-old',
+            item: { type: 'agentMessage', id: 'old-answer', text: 'Previous turn finished', phase: 'final_answer' },
+        } },
+        { protocol: 'legacy', method: 'codex/event', params: { msg: { type: 'task_complete', turn_id: 'turn-old' } } },
+    ])('keeps the parent turn active after unrelated $protocol $method ($params)', async ({ protocol, method, params }) => {
+        const requests: MockRpcMessage[] = [];
+        const proc = createMockProcess({
+            onRequest: (msg, stdout) => {
+                requests.push(msg);
+                if (msg.method === 'thread/start' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: {
+                        thread: { id: 'thread-main', path: '/tmp/thread-main' },
+                        model: 'gpt-test', modelProvider: 'openai', cwd: '/tmp/project',
+                        approvalPolicy: 'never', sandbox: { type: 'dangerFullAccess' }, reasoningEffort: null,
+                    } });
+                }
+                if (msg.method === 'turn/start' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: {
+                        turn: { id: 'turn-main', items: [], status: 'inProgress', error: null },
+                    } });
+                    pushJsonLine(stdout, protocol === 'raw' ? {
+                        method: 'turn/started', params: {
+                            threadId: 'thread-main', turn: { id: 'turn-main', status: 'inProgress' },
+                        },
+                    } : {
+                        method: 'codex/event', params: {
+                            conversationId: 'thread-main', msg: { type: 'task_started', turn_id: 'turn-main' },
+                        },
+                    });
+                }
+                if (msg.method === 'turn/interrupt' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: {} });
+                }
+            },
+        });
+        mockSpawn.mockImplementation(() => proc);
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        const events: Array<Record<string, unknown>> = [];
+        let state: CodexTurnState = { currentTurnId: null };
+        const sessionLifecycle: string[] = [];
+        client.setEventHandler((msg) => {
+            events.push(msg as Record<string, unknown>);
+            const mapped = mapCodexMcpMessageToSessionEnvelopes(msg as Record<string, unknown>, state);
+            state = mapped;
+            for (const envelope of mapped.envelopes) {
+                if (envelope.ev.t === 'turn-start' || envelope.ev.t === 'turn-end') {
+                    sessionLifecycle.push(envelope.ev.t);
+                }
+            }
+        });
+        await client.connect();
+        try {
+            await client.startThread({
+                model: 'gpt-test', cwd: '/tmp/project', approvalPolicy: 'never', sandbox: 'danger-full-access',
+            });
+            const onSettled = vi.fn();
+            const turn = client.sendTurnAndWait('Run the parent task');
+            void turn.then(onSettled);
+            await waitFor(() => events.some((event) => event.type === 'task_started'));
+
+            pushJsonLine(proc.stdout, { method, params });
+            if (protocol === 'raw') {
+                pushJsonLine(proc.stdout, { method: 'item/started', params: {
+                    threadId: 'thread-child', turnId: 'turn-child',
+                    item: { type: 'commandExecution', id: 'child-tool', command: 'pwd', cwd: '/tmp/project' },
+                } });
+                pushJsonLine(proc.stdout, { method: 'item/completed', params: {
+                    threadId: 'thread-child', turnId: 'turn-child',
+                    item: { type: 'commandExecution', id: 'child-tool', aggregatedOutput: '/tmp/project', exitCode: 0 },
+                } });
+            }
+            // A parent tool notification is a barrier: the preceding child
+            // notification must have been consumed before these assertions.
+            pushJsonLine(proc.stdout, protocol === 'raw' ? {
+                method: 'item/started', params: {
+                    threadId: 'thread-main', turnId: 'turn-main',
+                    item: { type: 'commandExecution', id: 'parent-tool', command: 'pwd', cwd: '/tmp/project' },
+                },
+            } : {
+                method: 'codex/event', params: {
+                    conversationId: 'thread-main', msg: { type: 'exec_command_begin', call_id: 'parent-tool', command: 'pwd' },
+                },
+            });
+            const parentCallId = protocol === 'raw' ? 'thread-main:parent-tool' : 'parent-tool';
+            await waitFor(() => events.some((event) => event.type === 'exec_command_begin' && event.call_id === parentCallId));
+
+            expect(events.filter((event) => ['task_started', 'task_complete', 'turn_aborted'].includes(String(event.type))))
+                .toEqual([expect.objectContaining({ type: 'task_started', turn_id: 'turn-main' })]);
+            expect(onSettled).not.toHaveBeenCalled();
+            expect(client.turnId).toBe('turn-main');
+            expect(sessionLifecycle).toEqual(['turn-start']);
+            expect(state.currentTurnId).not.toBeNull();
+            if (protocol === 'raw') {
+                expect(events).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ type: 'exec_command_begin', callId: 'thread-child:child-tool' }),
+                    expect.objectContaining({ type: 'exec_command_end', callId: 'thread-child:child-tool' }),
+                ]));
+                if (method === 'item/completed' && params.item) {
+                    expect(events).toContainEqual(expect.objectContaining({ type: 'agent_message', item_id: params.item.id }));
+                }
+            }
+            await client.interruptTurn();
+            expect(requests.find((request) => request.method === 'turn/interrupt')?.params)
+                .toMatchObject({ threadId: 'thread-main', turnId: 'turn-main' });
+
+            pushJsonLine(proc.stdout, {
+                method: 'turn/completed', params: {
+                    threadId: 'thread-main', turn: { id: 'turn-main', status: 'interrupted' },
+                },
+            });
+            await expect(turn).resolves.toEqual({ aborted: true });
+            expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(1);
+            expect(sessionLifecycle).toEqual(['turn-start', 'turn-end']);
+            expect(state.currentTurnId).toBeNull();
+        } finally {
+            await client.disconnect();
+        }
     });
 
     it('maps raw goal notifications into legacy goal events', async () => {
