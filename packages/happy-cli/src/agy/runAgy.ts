@@ -38,6 +38,11 @@ import {
   normalizeAgyEffort,
   resolveAgyModelName,
 } from './constants';
+import { downloadAgyFileEventAttachment } from '@/agyStream/attachmentEvents';
+import {
+  formatAgyPromptWithAttachments,
+  prepareAgyImageAttachments,
+} from '@/agyStream/imageInput';
 
 export interface RunAgyOptions {
   credentials: Credentials;
@@ -194,8 +199,19 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
     process.stdin.setEncoding('utf8');
   }
 
-  session.onUserMessage((message) => {
-    if (!message.content.text) return;
+  session.onFileEvent((fileEvent) => {
+    const ev = fileEvent.content.data?.ev;
+    if (ev) {
+      log(`File event received: ${ev.name} (${ev.size} bytes, ref: ${ev.ref})`);
+      session.trackAttachmentDownload(downloadAgyFileEventAttachment(session, fileEvent));
+    }
+  });
+
+  session.onUserMessage(async (message) => {
+    const attachmentsForThisMessage = await session.drainAttachmentsForUserMessage();
+    const hasText = Boolean(message.content.text && message.content.text.trim().length > 0);
+    const hasAttachments = Boolean(attachmentsForThisMessage && attachmentsForThisMessage.length > 0);
+    if (!hasText && !hasAttachments) return;
 
     if (message.meta?.permissionMode) {
       const mode = normalizeRemotePermissionMode(message.meta.permissionMode);
@@ -221,8 +237,14 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
       }
     }
 
-    messageBuffer.addMessage(message.content.text, 'user');
-    messageQueue.push(message.content.text, {});
+    const promptText = message.content.text ?? '';
+    if (hasText) {
+      messageBuffer.addMessage(promptText, 'user');
+    }
+    if (hasAttachments) {
+      messageBuffer.addMessage(`📎 [${attachmentsForThisMessage.length} image attachment(s)]`, 'user');
+    }
+    messageQueue.push(promptText, {}, attachmentsForThisMessage);
   });
   session.keepAlive(thinking, 'remote');
 
@@ -263,11 +285,22 @@ export async function runAgy(opts: RunAgyOptions): Promise<void> {
         break;
       }
 
-      log(`Incoming prompt: ${batch.message.slice(0, 200)}`);
+      let promptToSend = batch.message;
+      if (batch.attachments && batch.attachments.length > 0) {
+        const { savedFiles } = await prepareAgyImageAttachments(batch.attachments, {
+          sessionId: session.sessionId,
+        });
+        if (savedFiles.length > 0) {
+          promptToSend = formatAgyPromptWithAttachments(batch.message, savedFiles);
+          log(`Prepared ${savedFiles.length} image attachment(s) for agy prompt`);
+        }
+      }
+
+      log(`Incoming prompt: ${promptToSend.slice(0, 200)}`);
       errorReportedForCurrentTurn = false;
       sendEnvelopes(sessionManager.startTurn());
       try {
-        await backend.sendPrompt(process.cwd(), batch.message);
+        await backend.sendPrompt(process.cwd(), promptToSend);
         sendEnvelopes(sessionManager.endTurn('completed'));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

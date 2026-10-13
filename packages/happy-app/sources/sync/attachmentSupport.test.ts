@@ -7,11 +7,13 @@ import {
 } from './attachmentSupport';
 
 describe('supportsImageAttachmentsForFlavor', () => {
-    it('supports legacy sessions, Claude, and Codex', () => {
+    it('supports legacy sessions, Claude, Codex, and Antigravity', () => {
         expect(supportsImageAttachmentsForFlavor(undefined)).toBe(true);
         expect(supportsImageAttachmentsForFlavor(null)).toBe(true);
         expect(supportsImageAttachmentsForFlavor('claude')).toBe(true);
         expect(supportsImageAttachmentsForFlavor('codex')).toBe(true);
+        expect(supportsImageAttachmentsForFlavor('agy')).toBe(true);
+        expect(supportsImageAttachmentsForFlavor('antigravity')).toBe(true);
     });
 
     it('rejects Gemini, OpenClaw, and unknown explicit flavors', () => {
