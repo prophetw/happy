@@ -18,6 +18,9 @@ The adapter handles two protocol forms:
   of a server request. Happy displays these as non-blocking cards. Their answers
   enter the current turn through `turn/steer`, or enter the message queue if the
   turn has already finished. Cards remain answerable after turn completion.
+  These cards currently belong to the primary conversation; child-thread async
+  messages remain transcript text rather than offering a reply that would be
+  sent to the wrong thread. Native child questions use their JSON-RPC responses.
 
 The existing choice form supports both suggested options and a written answer.
 Text-only questions use the answer sheet above the composer. Sending an ordinary

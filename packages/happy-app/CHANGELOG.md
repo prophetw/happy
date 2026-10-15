@@ -1,3 +1,11 @@
+# October 15 - Answer and steer Codex
+
+Requires the updated Happy CLI and a new or restarted Codex session.
+
+- **Answer while Codex works** — choose an option or write your own answer to its asynchronous questions on your phone.
+- **Send now** — adjust Codex's direction during a running task, without waiting for the next turn. Ordinary send still queues your message.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 11 - Start conversations reliably
 
 - **New chats** — first messages no longer wait for older chats to finish syncing.

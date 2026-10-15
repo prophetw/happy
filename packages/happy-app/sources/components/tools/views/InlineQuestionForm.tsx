@@ -176,7 +176,7 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
                                         accessibilityLabel={t('agentQuestion.ownAnswer')}
                                         placeholder={t('agentQuestion.ownAnswerPlaceholder')}
                                         placeholderTextColor={theme.colors.textSecondary}
-                                        style={{ color: theme.colors.text, borderColor: theme.colors.divider, borderWidth: 1, borderRadius: 8, padding: 12 }}
+                                        style={styles.customInput}
                                         value={customAnswers[question.id] ?? ''}
                                         editable={canInteract && !isSubmitting}
                                         secureTextEntry={question.isSecret === true}
@@ -325,6 +325,13 @@ const styles = StyleSheet.create((theme) => ({
         gap: 12,
         marginTop: 8,
         justifyContent: 'flex-end',
+    },
+    customInput: {
+        color: theme.colors.text,
+        borderColor: theme.colors.divider,
+        borderWidth: 1,
+        borderRadius: 8,
+        padding: 12,
     },
     submitButton: {
         backgroundColor: Platform.select({ web: theme.colors.button.primary.background, default: theme.colors.surfaceHighest }),

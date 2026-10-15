@@ -3,8 +3,8 @@ import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentState } from '@/api/types';
 import { CodexCommunicationHandler } from './communicationHandler';
 
-function setup() {
-    let state: AgentState = {};
+function setup(initial: AgentState = {}) {
+    let state: AgentState = initial;
     let reply!: (value: unknown) => Promise<unknown>;
     const emit = vi.fn();
     const sendAnswer = vi.fn(async (_text: string) => {});
@@ -31,18 +31,20 @@ describe('Codex user questions', () => {
         const test = setup();
         const result = test.handler.requestNative('42', native);
         expect(test.handler.hasBlockingRequests()).toBe(true);
-        await test.reply({ id: 'codex-input:thread:42', kind: 'form', status: 'answered', answers: { color: { options: [], custom: 'Green' } } });
+        await test.reply({ id: 'codex-input:thread:turn:item:42', kind: 'form', status: 'answered', answers: { color: { options: [], custom: 'Green' } } });
         expect(await result).toEqual({ answers: { color: { answers: ['Green'] } } });
         expect(test.state().communications).toEqual({});
-        expect(test.state().completedCommunications?.['codex-input:thread:42'].status).toBe('answered');
+        expect(test.state().completedCommunications?.['codex-input:thread:turn:item:42'].status).toBe('answered');
         expect(test.sendAnswer).not.toHaveBeenCalled();
     });
 
-    it('keeps asynchronous questions answerable after native turn cleanup', async () => {
+    it('keeps asynchronous questions answerable after native request cleanup', async () => {
         const test = setup();
+        const nativeAnswer = test.handler.requestNative('42', native);
         test.handler.addAsync(asyncQuestion);
+        test.handler.resolveNative('42');
+        await nativeAnswer;
         expect(test.handler.hasBlockingRequests()).toBe(false);
-        test.handler.cancelNativeRequests();
         const id = 'codex-async:thread:async';
         const question = test.state().communications![id].form.questions[0];
         await test.reply({ id, kind: 'form', status: 'answered', answers: { [question.id]: { options: ['Blue'] } } });
@@ -50,6 +52,28 @@ describe('Codex user questions', () => {
         expect(test.state().completedCommunications?.[id].status).toBe('answered');
         test.handler.addAsync(asyncQuestion);
         expect(test.state().communications).toEqual({});
+    });
+
+    it('does not hide a new question when a restarted server reuses a request id', async () => {
+        const test = setup();
+        const first = test.handler.requestNative('42', native);
+        await test.reply({ id: 'codex-input:thread:turn:item:42', kind: 'form', status: 'answered', answers: { color: { options: ['Blue'] } } });
+        await first;
+        const second = test.handler.requestNative('42', { ...native, turnId: 'next', itemId: 'other' });
+        expect(Object.keys(test.state().communications!)).toEqual(['codex-input:thread:next:other:42']);
+        expect(test.state().completedCommunications?.['codex-input:thread:next:other:42']).toBeUndefined();
+        test.handler.resolveNative('42');
+        await second;
+    });
+
+    it('retires stale Codex questions when replacing the CLI without dropping other forms', () => {
+        const communication = {
+            kind: 'form' as const, createdAt: 1, toolUseId: 'old', isBlocking: true,
+            form: { questions: [] },
+        };
+        const test = setup({ communications: { 'codex-input:old': communication, unrelated: communication } });
+        expect(Object.keys(test.state().communications!)).toEqual(['unrelated']);
+        expect(test.state().completedCommunications?.['codex-input:old'].status).toBe('cancelled');
     });
 
     it('clears an expired native request without cancelling other questions', async () => {

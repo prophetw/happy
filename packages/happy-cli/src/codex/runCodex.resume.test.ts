@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
         onFileEvent: vi.fn(),
         keepAlive: vi.fn(),
         updateMetadata: vi.fn(),
+        updateAgentState: vi.fn(),
+        sendSessionProtocolMessage: vi.fn(),
         sendSessionEvent: vi.fn(),
         sendSessionDeath: vi.fn(),
         flush: vi.fn(),

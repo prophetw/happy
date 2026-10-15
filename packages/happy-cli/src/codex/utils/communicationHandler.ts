@@ -35,6 +35,19 @@ export class CodexCommunicationHandler {
         private session: ApiSessionClient,
         private readonly sendAnswer: (text: string) => Promise<void>,
     ) {
+        // A replaced CLI cannot answer the previous app-server's JSON-RPC ids.
+        // Retire only our own stale cards; other communication kinds are owned
+        // by their respective adapters. The state callback may be retried.
+        this.session.updateAgentState(state => {
+            const communications = { ...state.communications };
+            const completedCommunications = { ...state.completedCommunications };
+            for (const [id, communication] of Object.entries(communications)) {
+                if ((!id.startsWith('codex-input:') && !id.startsWith('codex-async:')) || this.pending.has(id)) continue;
+                delete communications[id];
+                completedCommunications[id] = { ...communication, completedAt: Date.now(), status: 'cancelled' };
+            }
+            return { ...state, communications, completedCommunications };
+        });
         this.registerRpc();
     }
 
@@ -50,7 +63,7 @@ export class CodexCommunicationHandler {
 
     requestNative(requestId: string, params: ToolRequestUserInputParams): Promise<ToolRequestUserInputResponse> {
         if (params.questions.length === 0) return Promise.resolve({ answers: {} });
-        const id = `codex-input:${params.threadId}:${requestId}`;
+        const id = `codex-input:${params.threadId}:${params.turnId}:${params.itemId}:${requestId}`;
         return new Promise(resolve => {
             const communication: AgentCommunication = {
                 kind: 'form',
@@ -91,12 +104,6 @@ export class CodexCommunicationHandler {
     resolveNative(requestId: string): void {
         for (const [id, entry] of this.pending) {
             if (entry.nativeRequestId === requestId) this.finish(id, 'cancelled');
-        }
-    }
-
-    cancelNativeRequests(): void {
-        for (const [id, entry] of this.pending) {
-            if (entry.nativeRequestId !== undefined) this.finish(id, 'cancelled');
         }
     }
 

@@ -38,7 +38,7 @@ function renderQuestion() {
     };
     // A turn can already have finished while this question is still pending.
     const tool = { name: 'request_user_input', state: 'completed', callId: 'async-question' } as ToolViewProps['tool'];
-    act(() => { renderer = create(React.createElement(RequestUserInputView, { tool, sessionId: 'session' })); });
+    act(() => { renderer = create(React.createElement(RequestUserInputView, { tool, sessionId: 'session', metadata: null, messages: [] })); });
 }
 
 describe('Codex question card', () => {

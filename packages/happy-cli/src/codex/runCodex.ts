@@ -720,7 +720,9 @@ export async function runCodex(opts: {
         if (msg.type === 'agent_message' && msg.delivery === 'async' && Array.isArray(msg.questions)) {
             const threadId = typeof msg.thread_id === 'string' ? msg.thread_id : client.threadId;
             const turnId = typeof msg.turn_id === 'string' ? msg.turn_id : client.turnId;
-            if (threadId && turnId && typeof msg.item_id === 'string') {
+            // A child thread's async answers must not be injected into its
+            // parent. Native child requests have their own JSON-RPC reply path.
+            if (threadId && threadId === client.threadId && turnId && typeof msg.item_id === 'string') {
                 communicationHandler?.addAsync({
                     threadId, turnId, itemId: msg.item_id,
                     questions: msg.questions.filter((question): question is { title: string; options?: string[] | null } => (
@@ -730,8 +732,6 @@ export async function runCodex(opts: {
                 });
             }
         }
-        if (msg.type === 'task_complete' || msg.type === 'turn_aborted') communicationHandler?.cancelNativeRequests();
-
         // Add messages to the ink UI buffer based on message type
         if (msg.type === 'agent_message') {
             messageBuffer.addMessage((msg as any).message, 'assistant');

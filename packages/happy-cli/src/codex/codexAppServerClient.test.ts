@@ -43,7 +43,7 @@ vi.mock('../package.json', () => ({
 }));
 
 type MockRpcMessage = {
-    id?: number;
+    id?: number | string;
     method?: string;
     params?: any;
     result?: any;
@@ -1879,8 +1879,8 @@ describe('CodexAppServerClient sandbox integration', () => {
             await waitFor(() => handler.mock.calls.length === 1);
             expect(handler).toHaveBeenCalledWith('question-1', params);
             answer({ answers: { color: { answers: ['Blue'] } } });
-            await waitFor(() => sent.some(message => (message.id as unknown) === 'question-1'));
-            expect(sent.find(message => (message.id as unknown) === 'question-1')?.result).toEqual({ answers: { color: { answers: ['Blue'] } } });
+            await waitFor(() => sent.some(message => message.id === 'question-1'));
+            expect(sent.find(message => message.id === 'question-1')?.result).toEqual({ answers: { color: { answers: ['Blue'] } } });
 
             pushJsonLine(proc.stdout, { id: 'question-2', method: 'item/tool/requestUserInput', params });
             await waitFor(() => handler.mock.calls.length === 2);
@@ -1889,7 +1889,7 @@ describe('CodexAppServerClient sandbox integration', () => {
             answer({ answers: {} });
             await new Promise(resolve => setImmediate(resolve));
             expect(onResolved).toHaveBeenCalledWith('question-2');
-            expect(sent.some(message => (message.id as unknown) === 'question-2')).toBe(false);
+            expect(sent.some(message => message.id === 'question-2')).toBe(false);
         } finally {
             await client.disconnect();
         }
