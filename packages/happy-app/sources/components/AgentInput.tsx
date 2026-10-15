@@ -71,6 +71,7 @@ interface AgentInputProps {
     onChangeText?: (text: string) => void;
     sessionId?: string;
     onSend: () => void;
+    onSendImmediately?: () => void;
     sendIcon?: React.ReactNode;
     onMicPress?: () => void;
     isMicActive?: boolean;
@@ -451,6 +452,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         flexShrink: 0,
         marginLeft: 8,
+    },
+    sendImmediately: {
+        paddingHorizontal: 8,
+        paddingVertical: 8,
+        justifyContent: 'center',
+    },
+    sendImmediatelyText: {
+        color: theme.colors.textLink,
+        fontSize: 12,
+        ...Typography.default('semiBold'),
     },
     mobilePrimaryButton: MOBILE_PRIMARY_ACTION_GEOMETRY,
     mobilePrimaryButtonActive: {
@@ -1292,6 +1303,25 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sendBlockShakerRef.current?.shake();
     }, [hasText, isSendBlocked, props.isSending]);
 
+    const handleImmediateSend = React.useCallback(() => {
+        if (isSendBlocked || props.isSendDisabled || props.isSending) return;
+        if (!(inputRef.current?.getText() ?? '').trim() && !hasImages) return;
+        hapticsLight();
+        props.onSendImmediately?.();
+    }, [isSendBlocked, props.isSendDisabled, props.isSending, props.onSendImmediately, hasImages]);
+
+    const immediateSendButton = props.onSendImmediately && (hasText || hasImages) ? (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('agentInput.sendImmediately')}
+            onPress={handleImmediateSend}
+            disabled={isSendBlocked || props.isSendDisabled || props.isSending}
+            style={styles.sendImmediately}
+        >
+            <Text style={styles.sendImmediatelyText}>{t('agentInput.sendImmediately')}</Text>
+        </Pressable>
+    ) : null;
+
     const handleSendPress = React.useCallback(() => {
         if (isSendBlocked) {
             handleBlockedSendAttempt();
@@ -1624,6 +1654,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         )}
                     </View>}
 
+                    {immediateSendButton}
                     <View
                         style={[
                             styles.sendButton,
@@ -2162,6 +2193,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             <FileViewerButton sessionId={props.sessionId} onPress={props.onFileViewerPress} />
                         )}
 
+                        {immediateSendButton}
                         <Shaker ref={shakerRef}>
                             <View
                                 style={[

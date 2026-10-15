@@ -464,6 +464,7 @@ export const pt: TranslationStructure = {
     },
 
     agentInput: {
+        sendImmediately: 'Enviar agora',
         permissionMode: {
             title: 'MODO DE PERMISSÃO',
             auto: 'decide sozinho, pergunta na dúvida',

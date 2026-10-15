@@ -949,7 +949,7 @@ export function SessionViewLoaded({
 
     // handleSend reads the live message via the composer ref, so it doesn't
     // need to re-create on every keystroke.
-    const handleSend = React.useCallback(() => {
+    const handleSend = React.useCallback((deliveryMode: 'queue' | 'steer' = 'queue') => {
         const composer = composerHandleRef.current;
         if (!sessionId) {
             // Send, on a chat with nothing to send to yet. The text leaves the
@@ -976,7 +976,7 @@ export function SessionViewLoaded({
         const draftUpdatedAt = storage.getState().sessions[sessionId]?.draftUpdatedAt;
         if (liveMessage.trim() || selectedImages.length > 0) {
             const attachments = selectedImages.length > 0 ? selectedImages : undefined;
-            const communicationsToDismiss = [...pendingCommunications];
+            const communicationsToDismiss = pendingCommunications.filter(communication => communication.isBlocking !== false);
             sendingSessionsRef.current.add(sessionId);
 
             void (async () => {
@@ -986,6 +986,7 @@ export function SessionViewLoaded({
                     // available as the user's custom response before the agent is
                     // allowed to continue its turn.
                     const accepted = await sync.sendMessage(sessionId, liveMessage, {
+                        deliveryMode,
                         source: 'chat',
                         attachments,
                         awaitDelivery: communicationsToDismiss.length > 0,
@@ -1195,7 +1196,9 @@ export function SessionViewLoaded({
                 metadata={composerSession?.metadata ?? null}
                 connectionStatus={session ? connectionStatus : undefined}
                 blockSend={isRig && session?.thinking && session.metadata?.capabilities?.steering !== true}
-                onSend={handleSend}
+                onSend={() => handleSend()}
+                onSendImmediately={flavor === 'codex' && !isRig && session?.thinking && session.metadata?.codexCapabilities?.steering
+                    ? () => handleSend('steer') : undefined}
                 onMicPress={(embedded || isDisconnected) ? undefined : micButtonState.onMicPress}
                 isMicActive={(embedded || isDisconnected) ? false : micButtonState.isMicActive}
                 onAbort={!session || isDisconnected || !rigCanAbort(session.metadata) ? undefined : handleAbort}

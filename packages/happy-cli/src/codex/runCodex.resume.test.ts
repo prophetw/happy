@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
         onFileEvent: vi.fn(),
         keepAlive: vi.fn(),
         updateMetadata: vi.fn(),
+        updateAgentState: vi.fn(),
+        sendSessionProtocolMessage: vi.fn(),
         sendSessionEvent: vi.fn(),
         sendSessionDeath: vi.fn(),
         flush: vi.fn(),
@@ -56,6 +58,7 @@ vi.mock('./codexAppServerClient', () => ({
         disconnect = mocks.disconnect;
         setApprovalHandler = vi.fn();
         setEventHandler = vi.fn();
+        setUserInputHandler = vi.fn();
     },
 }));
 vi.mock('./utils/permissionHandler', () => ({ CodexPermissionHandler: class { reset = vi.fn(); } }));

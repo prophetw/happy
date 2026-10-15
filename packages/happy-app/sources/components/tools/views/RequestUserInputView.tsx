@@ -32,11 +32,10 @@ export const RequestUserInputView = React.memo<ToolViewProps>(({ tool, sessionId
         for (const question of communication.questions) {
             const selected = answers[question.id];
             if (!selected?.length) continue;
-            communicationAnswers[question.id] = {
-                options: question.multiSelect
-                    ? selected
-                    : selected.slice(0, 1),
-            };
+            const values = question.multiSelect ? selected : selected.slice(0, 1);
+            const options = values.filter(value => question.options.some(option => option.label === value));
+            const custom = values.filter(value => !options.includes(value)).join('\n');
+            communicationAnswers[question.id] = { options, ...(custom ? { custom } : {}) };
         }
         await sessionAnswerQuestion(sessionId, communication.id, communicationAnswers, communication.kind);
     }, [communication, sessionId]);
@@ -48,7 +47,7 @@ export const RequestUserInputView = React.memo<ToolViewProps>(({ tool, sessionId
     return (
         <InlineQuestionForm
             questions={communication.questions}
-            canInteract={tool.state === 'running' && communication.status === 'pending'}
+            canInteract={communication.status === 'pending'}
             submittedAnswers={submittedAnswers}
             onSubmit={handleSubmit}
         />

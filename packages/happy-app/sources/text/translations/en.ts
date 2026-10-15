@@ -483,6 +483,7 @@ export const en: TranslationStructure = {
     },
 
     agentInput: {
+        sendImmediately: 'Send now',
         permissionMode: {
             title: 'PERMISSION MODE',
             auto: 'asks when unsure',

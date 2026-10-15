@@ -43,7 +43,7 @@ vi.mock('../package.json', () => ({
 }));
 
 type MockRpcMessage = {
-    id?: number;
+    id?: number | string;
     method?: string;
     params?: any;
     result?: any;
@@ -1862,6 +1862,80 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
+    it('routes native questions and stops responding after Codex resolves a request', async () => {
+        const sent: MockRpcMessage[] = [];
+        const proc = createMockProcess({ onRequest: message => { sent.push(message); } });
+        mockSpawn.mockImplementation(() => proc);
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        let answer!: (value: { answers: Record<string, { answers: string[] }> }) => void;
+        const handler = vi.fn(() => new Promise<{ answers: Record<string, { answers: string[] }> }>(resolve => { answer = resolve; }));
+        const onResolved = vi.fn();
+        client.setUserInputHandler(handler, onResolved);
+        await client.connect();
+        const params = { threadId: 'thread', turnId: 'turn', itemId: 'item', isBlocking: false, questions: [] };
+        try {
+            pushJsonLine(proc.stdout, { id: 'question-1', method: 'item/tool/requestUserInput', params });
+            await waitFor(() => handler.mock.calls.length === 1);
+            expect(handler).toHaveBeenCalledWith('question-1', params);
+            answer({ answers: { color: { answers: ['Blue'] } } });
+            await waitFor(() => sent.some(message => message.id === 'question-1'));
+            expect(sent.find(message => message.id === 'question-1')?.result).toEqual({ answers: { color: { answers: ['Blue'] } } });
+
+            pushJsonLine(proc.stdout, { id: 'question-2', method: 'item/tool/requestUserInput', params });
+            await waitFor(() => handler.mock.calls.length === 2);
+            pushJsonLine(proc.stdout, { method: 'serverRequest/resolved', params: { threadId: 'thread', requestId: 'question-2' } });
+            await waitFor(() => onResolved.mock.calls.length === 1);
+            answer({ answers: {} });
+            await new Promise(resolve => setImmediate(resolve));
+            expect(onResolved).toHaveBeenCalledWith('question-2');
+            expect(sent.some(message => message.id === 'question-2')).toBe(false);
+        } finally {
+            await client.disconnect();
+        }
+    });
+
+    it('steers the active turn without starting or interrupting another turn', async () => {
+        const sent: MockRpcMessage[] = [];
+        let rejectSteer = false;
+        const proc = createMockProcess({ onRequest: (message, stdout) => {
+            sent.push(message);
+            if (message.method === 'thread/start') pushJsonLine(stdout, { id: message.id, result: {
+                thread: { id: 'thread-steer' }, model: 'test', modelProvider: 'openai', cwd: '/tmp', approvalPolicy: 'never', sandbox: {}, reasoningEffort: null,
+            } });
+            if (message.method === 'turn/start') {
+                pushJsonLine(stdout, { id: message.id, result: { turn: { id: 'turn-steer' } } });
+                pushJsonLine(stdout, { method: 'turn/started', params: { threadId: 'thread-steer', turn: { id: 'turn-steer' } } });
+            }
+            if (message.method === 'turn/steer') pushJsonLine(stdout, rejectSteer
+                ? { id: message.id, error: { code: -32600, message: 'No active turn' } }
+                : { id: message.id, result: { turnId: 'turn-steer' } });
+        } });
+        mockSpawn.mockImplementation(() => proc);
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        await client.connect();
+        try {
+            await client.startThread({ model: 'test', cwd: '/tmp', approvalPolicy: 'never', sandbox: 'danger-full-access' });
+            const turn = client.sendTurnAndWait('Investigate');
+            await waitFor(() => client.turnId === 'turn-steer');
+            expect(await client.steerTurn('Focus on tests', [{ type: 'localImage', path: '/tmp/input.png' }])).toBe(true);
+            expect(sent.find(message => message.method === 'turn/steer')?.params).toEqual({
+                threadId: 'thread-steer', expectedTurnId: 'turn-steer',
+                input: [{ type: 'text', text: 'Focus on tests' }, { type: 'localImage', path: '/tmp/input.png' }],
+            });
+            expect(sent.filter(message => message.method === 'turn/start')).toHaveLength(1);
+            expect(sent.some(message => message.method === 'turn/interrupt')).toBe(false);
+            rejectSteer = true;
+            expect(await client.steerTurn('Arrived too late')).toBe(false);
+            pushJsonLine(proc.stdout, { method: 'turn/completed', params: { threadId: 'thread-steer', turn: { id: 'turn-steer', status: 'completed' } } });
+            await turn;
+            expect(await client.steerTurn('Next turn')).toBe(false);
+        } finally {
+            await client.disconnect();
+        }
+    });
+
     it('keeps an async final-answer question pending while the same turn continues executing tools', async () => {
         const proc = createMockProcess({
             pid: 3008,
@@ -1915,7 +1989,11 @@ describe('CodexAppServerClient sandbox integration', () => {
 
             expect(events).toEqual(expect.arrayContaining([
                 expect.objectContaining({ type: 'task_started', turn_id: 'turn-async' }),
-                expect.objectContaining({ type: 'agent_message', message: 'Which model should I use?' }),
+                expect.objectContaining({
+                    type: 'agent_message', message: 'Which model should I use?', delivery: 'async',
+                    questions: [{ title: 'Which model should I use?', options: ['Current model'] }],
+                    thread_id: 'thread-async', turn_id: 'turn-async', item_id: 'question-async',
+                }),
                 expect.objectContaining({ type: 'exec_command_begin', callId: 'thread-async:command-async' }),
             ]));
             expect(events.filter((event) => event.type === 'task_complete')).toHaveLength(0);

@@ -48,6 +48,8 @@ import type {
     InputItem,
     ReasoningEffort,
     McpServerElicitationRequestResponse,
+    ToolRequestUserInputParams,
+    ToolRequestUserInputResponse,
 } from './codexAppServerTypes';
 import type { SandboxConfig } from '@/persistence';
 import { initializeSandbox, wrapForMcpTransport } from '@/sandbox/manager';
@@ -59,6 +61,8 @@ type PendingRequest = {
     method: string;
     epoch: number;
 };
+
+class CodexRpcError extends Error {}
 
 type LegacyPatchChanges = Record<string, Record<string, unknown>>;
 
@@ -258,6 +262,23 @@ export class CodexAppServerClient {
     // Handlers set by the consumer (runCodex.ts)
     private eventHandler: ((msg: EventMsg) => void) | null = null;
     private approvalHandler: ApprovalHandler | null = null;
+    private userInputHandler: ((requestId: string, params: ToolRequestUserInputParams) => Promise<ToolRequestUserInputResponse>) | null = null;
+    private userInputResolvedHandler: ((requestId: string) => void) | null = null;
+    private pendingUserInputIds = new Set<number | string>();
+
+    setUserInputHandler(
+        handler: (requestId: string, params: ToolRequestUserInputParams) => Promise<ToolRequestUserInputResponse>,
+        onResolved: (requestId: string) => void,
+    ): void {
+        this.userInputHandler = handler;
+        this.userInputResolvedHandler = onResolved;
+    }
+
+    private clearUserInputs(): void {
+        const ids = [...this.pendingUserInputIds];
+        this.pendingUserInputIds.clear();
+        for (const id of ids) this.userInputResolvedHandler?.(String(id));
+    }
 
     constructor(sandboxConfig?: SandboxConfig) {
         this.sandboxConfig = sandboxConfig;
@@ -595,6 +616,10 @@ export class CodexAppServerClient {
                     message: text,
                     item_id: item.id,
                     phase: item.phase,
+                    delivery: item.delivery,
+                    questions: item.questions,
+                    thread_id: params.threadId,
+                    turn_id: this.extractTurnId(params),
                 });
             }
 
@@ -687,6 +712,7 @@ export class CodexAppServerClient {
                 return;
             }
             this.connected = false;
+            this.clearUserInputs();
             // Reject all pending requests
             for (const [id, req] of this.pending) {
                 if (req.epoch !== epoch) continue;
@@ -757,6 +783,7 @@ export class CodexAppServerClient {
 
         this.process = null;
         this.connected = false;
+        this.clearUserInputs();
         this._turnId = null;
         this.notificationProtocol = 'unknown';
         this.completedTurnIds.clear();
@@ -1288,7 +1315,32 @@ export class CodexAppServerClient {
         logger.debug(`[CodexAppServer] → ${method} (notification)`);
     }
 
-    private respond(id: number, result: unknown): void {
+    /** Returns false only when no turn is active or Codex explicitly rejects the input. */
+    async steerTurn(text: string, extraInputItems: InputItem[] = []): Promise<boolean> {
+        const threadId = this._threadId;
+        const expectedTurnId = this._turnId;
+        if (!threadId || !expectedTurnId || !this.pendingTurnCompletion) return false;
+        const input: InputItem[] = [
+            ...(text.trim() ? [{ type: 'text' as const, text }] : []),
+            ...extraInputItems,
+        ];
+        if (input.length === 0) return false;
+        try {
+            await this.request('turn/steer', { threadId, expectedTurnId, input });
+            return true;
+        } catch (error) {
+            // An explicit error response means the input was rejected (including
+            // a turn that finished while we sent). Queue it for the next turn.
+            // A timeout/disconnect is ambiguous and must not replay the input.
+            if (error instanceof CodexRpcError) {
+                logger.debug('[CodexAppServer] Steer rejected; input can be queued', error.message);
+                return false;
+            }
+            throw error;
+        }
+    }
+
+    private respond(id: number | string, result: unknown): void {
         if (!this.process?.stdin?.writable) return;
         const msg: JsonRpcResponse = { jsonrpc: '2.0', id, result };
         this.process.stdin.write(JSON.stringify(msg) + '\n');
@@ -1319,7 +1371,7 @@ export class CodexAppServerClient {
                 }
                 this.pending.delete(msg.id);
                 if (msg.error) {
-                    pending.reject(new Error(`${pending.method}: ${msg.error.message} (code=${msg.error.code})`));
+                    pending.reject(new CodexRpcError(`${pending.method}: ${msg.error.message} (code=${msg.error.code})`));
                 } else {
                     pending.resolve(msg.result);
                 }
@@ -1420,7 +1472,21 @@ export class CodexAppServerClient {
         };
     }
 
-    private async handleServerRequest(id: number, method: string, params: any): Promise<void> {
+    private async handleServerRequest(id: number | string, method: string, params: any): Promise<void> {
+        if (method === 'item/tool/requestUserInput') {
+            const epoch = this.processEpoch;
+            this.pendingUserInputIds.add(id);
+            try {
+                const result = this.userInputHandler
+                    ? await this.userInputHandler(String(id), params)
+                    : { answers: {} };
+                if (epoch === this.processEpoch && this.pendingUserInputIds.delete(id)) this.respond(id, result);
+            } catch (error) {
+                if (epoch === this.processEpoch && this.pendingUserInputIds.delete(id)) this.respond(id, { answers: {} });
+                throw error;
+            }
+            return;
+        }
         if (method === 'mcpServer/elicitation/request') {
             const threadId = stringOrNull(params?.threadId) ?? this._threadId;
             const turnId = stringOrNull(params?.turnId);
@@ -1537,6 +1603,12 @@ export class CodexAppServerClient {
     }
 
     private handleNotification(method: string, params: any): void {
+        if (method === 'serverRequest/resolved') {
+            if (this.pendingUserInputIds.delete(params.requestId)) {
+                this.userInputResolvedHandler?.(String(params.requestId));
+            }
+            return;
+        }
         const isLegacyEvent = method === 'codex/event' || method.startsWith('codex/event/');
         const isTurnLifecycle = method === 'turn/started' || method === 'turn/completed'
             || method === 'thread/status/changed'

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -18,6 +18,8 @@ export interface InlineQuestion {
     options: InlineQuestionOption[];
     multiSelect?: boolean | null;
     required?: boolean | null;
+    allowCustom?: boolean | null;
+    isSecret?: boolean | null;
 }
 
 export type InlineQuestionAnswers = Record<string, string[]>;
@@ -36,12 +38,14 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
     const { questions, onSubmit } = props;
     const { theme } = useUnistyles();
     const [selections, setSelections] = React.useState<Map<string, Set<number>>>(new Map());
+    const [customAnswers, setCustomAnswers] = React.useState<Record<string, string>>({});
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [locallySubmittedAnswers, setLocallySubmittedAnswers] = React.useState<InlineQuestionAnswers | null>(null);
     const questionKey = questions.map(question => question.id).join('\u0000');
 
     React.useEffect(() => {
         setSelections(new Map());
+        setCustomAnswers({});
         setLocallySubmittedAnswers(null);
         setIsSubmitting(false);
     }, [questionKey]);
@@ -50,11 +54,12 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
     const canInteract = props.canInteract && submittedAnswers === null;
     const allQuestionsAnswered = questions.every((question) => {
         if (question.required === false) return true;
-        return (selections.get(question.id)?.size ?? 0) > 0;
+        return (selections.get(question.id)?.size ?? 0) > 0 || Boolean(customAnswers[question.id]?.trim());
     });
 
     const handleOptionToggle = React.useCallback((question: InlineQuestion, optionIndex: number) => {
         if (!canInteract) return;
+        if (!question.multiSelect) setCustomAnswers(previous => ({ ...previous, [question.id]: '' }));
 
         setSelections(previous => {
             const next = new Map(previous);
@@ -80,10 +85,11 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
         const answers: InlineQuestionAnswers = {};
         for (const question of questions) {
             const selected = selections.get(question.id);
-            if (!selected || selected.size === 0) continue;
-            answers[question.id] = Array.from(selected)
+            answers[question.id] = Array.from(selected ?? [])
                 .map(optionIndex => question.options[optionIndex]?.label)
                 .filter((label): label is string => Boolean(label));
+            const custom = customAnswers[question.id]?.trim();
+            if (custom) answers[question.id].push(custom);
         }
 
         setIsSubmitting(true);
@@ -96,7 +102,7 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
         } finally {
             setIsSubmitting(false);
         }
-    }, [allQuestionsAnswered, isSubmitting, onSubmit, questions, selections]);
+    }, [allQuestionsAnswered, isSubmitting, onSubmit, questions, selections, customAnswers]);
 
     if (submittedAnswers) {
         return (
@@ -106,7 +112,7 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
                         <View key={question.id} style={styles.submittedItem}>
                             <Text style={styles.submittedHeader}>{question.header}:</Text>
                             <Text style={styles.submittedValue}>
-                                {submittedAnswers[question.id]?.join(', ') || '—'}
+                                {question.isSecret ? '••••••' : submittedAnswers[question.id]?.join(', ') || '—'}
                             </Text>
                         </View>
                     ))}
@@ -165,6 +171,26 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
                                         </TouchableOpacity>
                                     );
                                 })}
+                                {question.allowCustom && (
+                                    <TextInput
+                                        accessibilityLabel={t('agentQuestion.ownAnswer')}
+                                        placeholder={t('agentQuestion.ownAnswerPlaceholder')}
+                                        placeholderTextColor={theme.colors.textSecondary}
+                                        style={styles.customInput}
+                                        value={customAnswers[question.id] ?? ''}
+                                        editable={canInteract && !isSubmitting}
+                                        secureTextEntry={question.isSecret === true}
+                                        multiline={!question.isSecret}
+                                        onChangeText={value => {
+                                            setCustomAnswers(previous => ({ ...previous, [question.id]: value }));
+                                            if (!question.multiSelect) setSelections(previous => {
+                                                const next = new Map(previous);
+                                                next.delete(question.id);
+                                                return next;
+                                            });
+                                        }}
+                                    />
+                                )}
                             </View>
                         </View>
                     );
@@ -299,6 +325,13 @@ const styles = StyleSheet.create((theme) => ({
         gap: 12,
         marginTop: 8,
         justifyContent: 'flex-end',
+    },
+    customInput: {
+        color: theme.colors.text,
+        borderColor: theme.colors.divider,
+        borderWidth: 1,
+        borderRadius: 8,
+        padding: 12,
     },
     submitButton: {
         backgroundColor: Platform.select({ web: theme.colors.button.primary.background, default: theme.colors.surfaceHighest }),

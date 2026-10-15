@@ -481,6 +481,7 @@ export const ru: TranslationStructure = {
     },
 
     agentInput: {
+        sendImmediately: 'Отправить сейчас',
         permissionMode: {
             title: 'РЕЖИМ РАЗРЕШЕНИЙ',
             auto: 'решает сам, спрашивает при сомнении',

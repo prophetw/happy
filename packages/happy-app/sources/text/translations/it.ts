@@ -463,6 +463,7 @@ export const it: TranslationStructure = {
     },
 
     agentInput: {
+        sendImmediately: 'Invia ora',
         permissionMode: {
             title: 'MODALITÀ PERMESSI',
             auto: 'decide da sé, chiede in caso di dubbio',

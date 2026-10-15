@@ -23,6 +23,7 @@ export type RigComposerMode = z.infer<typeof RigComposerModeSchema>;
 export type RigComposerDraft = z.infer<typeof RigComposerDraftSchema>;
 
 export const MetadataSchema = z.object({
+    codexCapabilities: z.object({ steering: z.boolean(), asyncUserInput: z.boolean() }).optional(),
     bot: RigBotSchema.optional(),
     models: z.array(z.object({
         code: z.string(),
@@ -329,6 +330,7 @@ export const AgentQuestionSchema = z.object({
     allowCustom: z.boolean().nullish(),
     // When false the user may submit without choosing anything.
     required: z.boolean().nullish(),
+    isSecret: z.boolean().nullish(),
 }).passthrough();
 
 /** Payload for `kind: 'form'`. */
@@ -338,6 +340,7 @@ export const AgentFormSchema = z.object({
 
 export const AgentCommunicationSchema = z.object({
     kind: z.string(),
+    isBlocking: z.boolean().optional(),
     createdAt: z.number().nullish(),
     // Joins the communication to the tool call that raised it, when there is one.
     toolUseId: z.string().nullish(),

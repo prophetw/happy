@@ -12,9 +12,8 @@ export type SessionState =
  * One precedence order for every place that presents session state.
  *
  * Permission requests win over questions because they block the tool before it
- * can run. Agent communications come next: once the agent has asked the user a
- * question it is waiting for input even if its provider still reports the turn
- * as thinking.
+ * can run. Blocking questions come next. Asynchronous questions remain
+ * answerable while the agent continues its work.
  */
 export function resolveSessionState({
     agentState,
@@ -31,7 +30,7 @@ export function resolveSessionState({
         return 'permission_required';
     }
 
-    if (selectPendingCommunications(agentState ?? null).length > 0) {
+    if (selectPendingCommunications(agentState ?? null).some(communication => communication.isBlocking !== false)) {
         return 'input_required';
     }
 

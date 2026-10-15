@@ -488,6 +488,7 @@ export const en = {
     },
 
     agentInput: {
+        sendImmediately: 'Send now',
         permissionMode: {
             // Modes are named with one untranslated word so they fit the
             // composer chip; these strings describe them under that name.
