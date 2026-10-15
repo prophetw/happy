@@ -481,6 +481,7 @@ export const pl: TranslationStructure = {
     },
 
     agentInput: {
+        sendImmediately: 'Wyślij teraz',
         permissionMode: {
             title: 'TRYB UPRAWNIEŃ',
             auto: 'decyduje samodzielnie, pyta w razie wątpliwości',

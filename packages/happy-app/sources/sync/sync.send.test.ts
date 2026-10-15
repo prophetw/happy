@@ -101,6 +101,15 @@ afterEach(() => {
 });
 
 describe('first message session hydration', () => {
+    it('preserves the immediate delivery mode through the encrypted message outbox', async () => {
+        const target = await sessionRecord('codex-session', false, { path: '/test', host: 'test', flavor: 'codex' });
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sessions: [target] }) });
+        await expect(engine.sendMessage('codex-session', 'Focus on tests', { deliveryMode: 'steer', awaitDelivery: true })).resolves.toBe(true);
+        const batch = JSON.parse(mocks.request.mock.calls[0][1].body).messages;
+        expect(await writer.getSessionEncryption('codex-session')!.decryptRaw(batch[0].content)).toMatchObject({
+            role: 'user', content: { type: 'text', text: 'Focus on tests' }, meta: { deliveryMode: 'steer' },
+        });
+    });
     it.each([false, true])('sends a new top-of-list session despite an unrelated corrupt record (legacy=%s)', async (legacy) => {
         const target = await sessionRecord('new-session', legacy);
         const unrelated = { ...await sessionRecord('old-session'), metadata: 'not valid base64!' };

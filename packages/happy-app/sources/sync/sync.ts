@@ -109,6 +109,7 @@ type OutboxMessage = {
 };
 
 type SendMessageOptions = {
+    deliveryMode?: 'queue' | 'steer';
     displayText?: string;
     source?: MessageSentSource;
     /** Optional image attachments to send before the text message. */
@@ -904,6 +905,7 @@ class Sync {
             },
             meta: {
                 sentFrom,
+                ...(options?.deliveryMode ? { deliveryMode: options.deliveryMode } : {}),
                 ...resolveMessageDeliveryMeta(sendingSession, source === 'new_session', hasPendingUserMessage),
                 appendSystemPrompt: systemPrompt,
                 ...(modeMeta.permissionMode !== undefined ? { permissionMode: modeMeta.permissionMode } : {}),

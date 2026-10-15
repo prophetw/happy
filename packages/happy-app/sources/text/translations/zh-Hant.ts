@@ -465,6 +465,7 @@ export const zhHant: TranslationStructure = {
     },
 
     agentInput: {
+        sendImmediately: '立即傳送',
         permissionMode: {
             title: '權限模式',
             auto: '自行判斷，不確定時詢問',

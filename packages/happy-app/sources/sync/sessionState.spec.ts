@@ -38,6 +38,12 @@ function agentState({
 }
 
 describe('resolveSessionState', () => {
+    it('keeps working while a non-blocking question is pending and leaves it answerable when idle', () => {
+        const state = agentState({ communication: true });
+        state.communications!.question.isBlocking = false;
+        expect(resolveSessionState({ agentState: state, thinking: true, isOnline: true })).toBe('thinking');
+        expect(resolveSessionState({ agentState: state, thinking: false, isOnline: true })).toBe('waiting');
+    });
     it('reports a pending agent question as input required ahead of thinking', () => {
         expect(resolveSessionState({
             agentState: agentState({ communication: true }),

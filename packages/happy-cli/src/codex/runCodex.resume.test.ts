@@ -56,6 +56,7 @@ vi.mock('./codexAppServerClient', () => ({
         disconnect = mocks.disconnect;
         setApprovalHandler = vi.fn();
         setEventHandler = vi.fn();
+        setUserInputHandler = vi.fn();
     },
 }));
 vi.mock('./utils/permissionHandler', () => ({ CodexPermissionHandler: class { reset = vi.fn(); } }));

@@ -36,7 +36,9 @@ import {
 } from './utils/sessionProtocolMapper';
 import { resumeExistingThread } from './resumeExistingThread';
 import { emitReadyIfIdle } from './emitReadyIfIdle';
-import { enqueueCodexUserText, isCodexClearText } from './codexClearCommand';
+import { isCodexClearText } from './codexClearCommand';
+import { deliverCodexUserInput } from './codexUserInput';
+import { CodexCommunicationHandler } from './utils/communicationHandler';
 import { downloadCodexFileEventAttachment } from './utils/attachmentEvents';
 import { prepareCodexImageInputItems } from './utils/imageInput';
 import { createSerialAsyncHandler } from './utils/serialAsyncHandler';
@@ -173,6 +175,7 @@ export async function runCodex(opts: {
     });
 
     const skillCommands = await discoverCodexSkillCommands();
+    metadata.codexCapabilities = { steering: true, asyncUserInput: true };
     if (skillCommands.length > 0) {
         metadata.skills = skillCommands;
         metadata.slashCommands = Array.from(new Set([...(metadata.slashCommands ?? []), ...skillCommands]));
@@ -208,6 +211,7 @@ export async function runCodex(opts: {
     // Permission handler declared here so it can be updated in onSessionSwap callback
     // (assigned later at line ~385 after client setup)
     let permissionHandler: CodexPermissionHandler;
+    let communicationHandler: CodexCommunicationHandler | undefined;
     let client!: CodexAppServerClient;
     let reasoningProcessor!: ReasoningProcessor;
     let abortInProgress: Promise<void> | null = null;
@@ -223,6 +227,7 @@ export async function runCodex(opts: {
             if (permissionHandler) {
                 permissionHandler.updateSession(newSession);
             }
+            communicationHandler?.updateSession(newSession);
         }
     });
     session = initialSession;
@@ -335,11 +340,13 @@ export async function runCodex(opts: {
             appendSystemPrompt: messageAppendSystemPrompt,
             effort: modeResolution.effort,
         };
-        const enqueueResult = enqueueCodexUserText({
+        const enqueueResult = await deliverCodexUserInput({
             text: message.content.text,
             mode: enhancedMode,
             queue: messageQueue,
             attachments: attachmentsForThisMessage,
+            immediately: message.meta?.deliveryMode === 'steer' || communicationHandler?.hasBlockingRequests() === true,
+            trySteer,
         });
         if (enqueueResult === 'clear') {
             logger.debug('[Codex] /clear command pushed to isolated queue');
@@ -348,6 +355,7 @@ export async function runCodex(opts: {
         logger.warn('[Codex] Failed to handle user message', {
             errorName: error instanceof Error ? error.name : typeof error,
         });
+        session.sendSessionEvent({ type: 'message', message: 'Could not confirm delivery of your message to Codex. Please check the conversation before sending it again.' });
     });
     session.onUserMessage(handleUserMessage);
     let thinking = false;
@@ -430,6 +438,7 @@ export async function runCodex(opts: {
                 if (permissionHandler) {
                     permissionHandler.abortAll();
                 }
+                communicationHandler?.cancelAll();
 
                 // Request interruption, then force-restart Codex app-server if
                 // it doesn't settle quickly (long-running shell commands).
@@ -556,6 +565,27 @@ export async function runCodex(opts: {
     //
 
     client = new CodexAppServerClient(sandboxConfig);
+    async function trySteer(text: string, attachments?: PendingAttachment[]): Promise<boolean> {
+        if (!client.turnId) return false;
+        const images = await prepareCodexImageInputItems(attachments, { sessionId: session.sessionId });
+        return client.steerTurn(text, images.inputItems);
+    }
+    communicationHandler = new CodexCommunicationHandler(session, async text => {
+        await deliverCodexUserInput({
+            text,
+            mode: {
+                permissionMode: remoteModeState.currentPermissionMode,
+                model: remoteModeState.currentModel,
+                effort: remoteModeState.currentEffort,
+                appendSystemPrompt: currentAppendSystemPrompt,
+            },
+            queue: messageQueue, immediately: true, trySteer,
+        });
+    });
+    client.setUserInputHandler(
+        (id, params) => communicationHandler!.requestNative(id, params),
+        id => communicationHandler?.resolveNative(id),
+    );
 
     permissionHandler = new CodexPermissionHandler(session);
     // Drop any permission requests left in agent state from a previous CLI
@@ -687,6 +717,20 @@ export async function runCodex(opts: {
     client.setEventHandler((msg) => {
         logger.debug(`[Codex] Event: ${JSON.stringify(msg)}`);
         const isSubagentScopedEvent = hasCodexSubagentReference(msg as Record<string, unknown>);
+        if (msg.type === 'agent_message' && msg.delivery === 'async' && Array.isArray(msg.questions)) {
+            const threadId = typeof msg.thread_id === 'string' ? msg.thread_id : client.threadId;
+            const turnId = typeof msg.turn_id === 'string' ? msg.turn_id : client.turnId;
+            if (threadId && turnId && typeof msg.item_id === 'string') {
+                communicationHandler?.addAsync({
+                    threadId, turnId, itemId: msg.item_id,
+                    questions: msg.questions.filter((question): question is { title: string; options?: string[] | null } => (
+                        !!question && typeof question.title === 'string'
+                        && (question.options == null || (Array.isArray(question.options) && question.options.every((option: unknown) => typeof option === 'string')))
+                    )),
+                });
+            }
+        }
+        if (msg.type === 'task_complete' || msg.type === 'turn_aborted') communicationHandler?.cancelNativeRequests();
 
         // Add messages to the ink UI buffer based on message type
         if (msg.type === 'agent_message') {
@@ -908,6 +952,7 @@ export async function runCodex(opts: {
             }
 
             if (isCodexClearText(message.message)) {
+                communicationHandler?.cancelAll();
                 logger.debug('[Codex] Handling /clear command - resetting Codex thread state');
                 client.clearThreadState();
                 currentTurnId = null;
@@ -1059,6 +1104,7 @@ export async function runCodex(opts: {
         }
         throw error;
     } finally {
+        communicationHandler?.cancelAll();
         // Clean up resources when main loop exits
         logger.debug('[codex]: Final cleanup start');
         logActiveHandles('cleanup-start');

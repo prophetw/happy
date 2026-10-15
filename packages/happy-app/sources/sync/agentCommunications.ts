@@ -9,6 +9,7 @@ interface PendingBase {
     id: string;
     createdAt: number;
     toolUseId?: string | null;
+    isBlocking?: boolean;
 }
 
 /** A communication this build knows how to render and answer. */
@@ -62,6 +63,7 @@ export function selectPendingCommunications(state: AgentState | null): PendingAg
             id,
             createdAt: communication.createdAt ?? 0,
             ...(communication.toolUseId ? { toolUseId: communication.toolUseId } : {}),
+            ...(typeof communication.isBlocking === 'boolean' ? { isBlocking: communication.isBlocking } : {}),
         };
 
         if (communication.kind !== 'form') {

@@ -213,6 +213,7 @@ export type Machine = {
  */
 export const MessageMetaSchema = z.object({
   sentFrom: z.string().optional(), // Source identifier
+  deliveryMode: z.enum(['queue', 'steer']).optional(),
   // Any string is accepted so a newer app can name a mode this CLI does not
   // know yet without the whole message failing safeParse and being dropped.
   // Each harness validates the value itself and falls back with a warning.
@@ -309,6 +310,7 @@ export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSche
 export type MessageContent = z.infer<typeof MessageContentSchema>
 
 export type Metadata = {
+  codexCapabilities?: { steering: boolean; asyncUserInput: boolean },
   /**
    * ACP session config option value (normalized for UI metadata consumers).
    */
@@ -416,6 +418,12 @@ export type AgentGoalStatus = {
 );
 
 export type AgentState = {
+  communications?: Record<string, AgentCommunication>
+  completedCommunications?: Record<string, AgentCommunication & {
+    completedAt: number;
+    status: 'answered' | 'cancelled';
+    answers?: Record<string, AgentQuestionAnswer>;
+  }>
   controlledByUser?: boolean | null | undefined
   /**
    * Ephemeral plan rate-limit windows reported by the agent backend.
@@ -453,3 +461,19 @@ export type AgentState = {
   }
   agentGoalStatus?: AgentGoalStatus
 }
+
+export type AgentQuestionAnswer = { options: string[]; custom?: string | null };
+export type AgentCommunication = {
+  kind: 'form';
+  createdAt: number;
+  toolUseId: string;
+  isBlocking: boolean;
+  form: { questions: Array<{
+    id: string;
+    header: string;
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+    allowCustom: boolean;
+    isSecret?: boolean;
+  }> };
+};

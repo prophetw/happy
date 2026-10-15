@@ -67,9 +67,27 @@ export type CollabAgentStatus = "pendingInit" | "running" | "interrupted" | "com
 export type CollabAgentState = { status: CollabAgentStatus | string; message?: string | null };
 export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
 
+export type AsyncUserInputQuestion = { title: string; options?: string[] | null };
+export type ToolRequestUserInputParams = {
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    isBlocking?: boolean;
+    autoResolutionMs?: number | null;
+    questions: Array<{
+        id: string;
+        header: string;
+        question: string;
+        options?: Array<{ label: string; description: string }> | null;
+        isOther?: boolean;
+        isSecret?: boolean;
+    }>;
+};
+export type ToolRequestUserInputResponse = { answers: Record<string, { answers: string[] }> };
+
 export type ThreadItem =
     | { type: "userMessage"; id: string; content: InputItem[] }
-    | { type: "agentMessage"; id: string; text: string; phase?: string | null; memoryCitation?: unknown | null }
+    | { type: "agentMessage"; id: string; text: string; phase?: string | null; memoryCitation?: unknown | null; delivery?: 'async' | null; questions?: AsyncUserInputQuestion[] | null }
     | { type: "reasoning"; id: string; summary?: string[]; content?: string[] }
     | { type: "commandExecution"; id: string; command: string; cwd?: string; status?: string; aggregatedOutput?: string | null; exitCode?: number | null; durationMs?: number | null }
     | { type: "fileChange"; id: string; changes: unknown[]; status?: string }
@@ -331,14 +349,14 @@ export type EventMsg = { type: string } & Record<string, unknown>;
 
 export type JsonRpcRequest = {
     jsonrpc?: "2.0";
-    id?: number;
+    id?: number | string;
     method: string;
     params?: unknown;
 };
 
 export type JsonRpcResponse = {
     jsonrpc?: "2.0";
-    id: number;
+    id: number | string;
     result?: unknown;
     error?: { code: number; message: string; data?: unknown };
 };
