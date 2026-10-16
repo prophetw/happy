@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeRawMessage, RawRecordSchema } from './typesRaw';
 import { createReducer, reducer } from './reducer/reducer';
+import { createEnvelope } from '@slopus/happy-wire';
+import { getTerminalToolResult } from '@/utils/toolResult';
 
 function message(id: string, ev: Record<string, unknown>) {
     const normalized = normalizeRawMessage(id, null, 1, RawRecordSchema.parse({
@@ -54,6 +56,32 @@ describe('Happy Agent tool wire → rendered message contract', () => {
         expect(tool?.kind === 'tool-call' && tool.tool).toMatchObject({
             callId: 'call-1', name: 'CodexBash', title: 'Terminal',
             input: { command: 'echo hello' }, state: expectedState, result: expectedResult,
+        });
+    });
+
+    it.each([
+        ['hello\nworld', false, 'completed'],
+        ['permission denied', true, 'error'],
+        ['', false, 'completed'],
+    ] as const)('renders a validated Codex wire outcome: %j', (output, isError, expectedState) => {
+        const start = message('start', {
+            t: 'tool-call-start', call: 'call-1', name: 'CodexBash', title: 'Run command',
+            description: 'Run command', args: { command: 'echo hello' },
+        });
+        const envelope = createEnvelope('agent', {
+            t: 'tool-call-end', call: 'call-1', result: output, isError,
+        }, { id: 'end', turn: 'turn-1', time: 2 });
+        const end = normalizeRawMessage('end', null, 2, RawRecordSchema.parse({ role: 'session', content: envelope }));
+        expect(end).not.toBeNull();
+        const result = reducer(createReducer(), [start, end!]);
+        const tool = result.messages.find(m => m.kind === 'tool-call');
+        expect(tool?.kind).toBe('tool-call');
+        if (tool?.kind !== 'tool-call') throw new Error('Missing command tool call');
+        expect(tool.tool).toMatchObject({ result: output, state: expectedState });
+        expect(getTerminalToolResult(tool.tool)).toEqual({
+            stdout: isError ? null : output,
+            stderr: null,
+            error: isError ? output : null,
         });
     });
 });

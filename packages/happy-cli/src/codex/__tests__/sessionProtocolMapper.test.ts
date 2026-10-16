@@ -459,6 +459,28 @@ describe('mapCodexMcpMessageToSessionEnvelopes', () => {
         }
     });
 
+    it.each([
+        [{ output: 'hello\n', exit_code: 0 }, 'hello\n', false],
+        [{ output: 'permission denied\n', exit_code: 2 }, 'permission denied\n', true],
+        [{ aggregated_output: 'combined\n', stdout: 'duplicate', stderr: 'duplicate', exit_code: 0 }, 'combined\n', false],
+        [{ stdout: 'partial\n', stderr: 'failed\n', exit_code: 1 }, 'partial\nfailed\n', true],
+        [{ output: '', exit_code: 0 }, '', false],
+        [{ output: '', exit_code: 2 }, 'Command exited with code 2', true],
+        [{ error: 'execution denied', status: 'declined' }, 'execution denied', true],
+        [{ output: 'stopped\n', status: 'failed' }, 'stopped\n', true],
+    ] as const)('attaches command output and failure status to its tool call: %j', (fields, output, isError) => {
+        const result = mapCodexMcpMessageToSessionEnvelopes(
+            { type: 'exec_command_end', call_id: 'call-1', ...fields },
+            { currentTurnId: 'turn-1' },
+        );
+
+        expect(result.envelopes).toHaveLength(1);
+        expect(result.envelopes[0]).toMatchObject({
+            turn: 'turn-1',
+            ev: { t: 'tool-call-end', call: 'call-1', result: output, isError },
+        });
+    });
+
     it('maps token_count messages to usage-only session envelopes', () => {
         const result = mapCodexMcpMessageToSessionEnvelopes(
             { type: 'token_count', total_tokens: 10 },
@@ -715,7 +737,6 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         expect(envelopes.map((envelope) => envelope.ev.t)).toEqual([
             'turn-start',
             'tool-call-start',
-            'text',
             'tool-call-end',
             'turn-end',
         ]);
@@ -727,13 +748,26 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         expect(envelopes[2]).toMatchObject({
             role: 'agent',
             turn: 'turn-1',
-            ev: { t: 'text', text: 'ok', thinking: true },
+            ev: { t: 'tool-call-end', call: 'cmd-1', result: 'ok', isError: false },
         });
-        expect(envelopes[3]).toMatchObject({
-            role: 'agent',
-            turn: 'turn-1',
-            ev: { t: 'tool-call-end', call: 'cmd-1' },
+    });
+
+    it('backfills failed commands with output attached to the matching call', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                items: [{
+                    id: 'cmd-failed', type: 'commandExecution', command: 'cat missing.txt',
+                    aggregatedOutput: 'No such file\n', exitCode: 1, status: 'failed',
+                }],
+            }],
         });
+
+        expect(envelopes.find(envelope => envelope.ev.t === 'tool-call-end')?.ev).toEqual({
+            t: 'tool-call-end', call: 'cmd-failed', result: 'No such file\n', isError: true,
+        });
+        expect(envelopes.some(envelope => envelope.ev.t === 'text')).toBe(false);
     });
 
     it('backfills Codex collab-agent items with session subagent linkage', () => {
@@ -921,7 +955,6 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
             });
 
             expect(envelopes.map((envelope) => envelope.time)).toEqual([
-                10_000,
                 10_000,
                 10_000,
                 20_000,

@@ -53,6 +53,17 @@ describe('session protocol schemas', () => {
     expect(sessionEventSchema.safeParse({ t: 'not-real' }).success).toBe(false);
   });
 
+  it.each([
+    { result: 'hello\nworld', isError: false },
+    { result: 'permission denied', isError: true },
+    { result: '' },
+    { isError: true },
+    {},
+  ])('preserves tool outcomes through envelope validation: %j', (outcome) => {
+    const event = { t: 'tool-call-end' as const, call: 'call-1', ...outcome };
+    expect(createEnvelope('agent', event).ev).toEqual(event);
+  });
+
   it('validates envelopes that include turn/subagent', () => {
     const subagent = createId();
     const envelope = {

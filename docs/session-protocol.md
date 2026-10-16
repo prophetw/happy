@@ -127,12 +127,19 @@ Agent begins a tool invocation.
 Tool invocation completes. Matches a prior `tool-call-start` by `call`.
 
 ```json
-{ "t": "tool-call-end", "call": "tc_abc" }
+{ "t": "tool-call-end", "call": "tc_abc", "result": "hello\n", "isError": false }
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `call` | string | Matches `tool-call-start.call` |
+| `result` | string? | Tool output, displayed in the matching tool's detail view. An empty string means the tool returned no text |
+| `isError` | boolean? | Marks the matching tool as failed; defaults to `false` when omitted |
+
+Both outcome fields are optional, so earlier events containing only `call` remain
+valid. Codex forwards command output and derives `isError` from the exit code,
+failed/declined status, or execution error. Historical command imports attach
+the saved output to the tool result rather than emitting it as reasoning text.
 
 ### `file`
 
