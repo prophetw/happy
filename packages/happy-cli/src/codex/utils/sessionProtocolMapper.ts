@@ -579,6 +579,22 @@ export function isCodexTurnInProgress(turn: ThreadTurn): boolean {
     return status === 'inProgress' || status === 'running' || status === 'active' || status === 'pending';
 }
 
+function commandOutcome(message: Record<string, unknown>): { result: string; isError: boolean } {
+    // V2 items supply output; legacy exec events may supply aggregated_output
+    // or separate streams. Prefer the aggregate so output is never duplicated.
+    const output = typeof message.output === 'string' ? message.output
+        : typeof message.aggregated_output === 'string' ? message.aggregated_output
+        : [message.stdout, message.stderr].filter((value): value is string => typeof value === 'string').join('');
+    const error = typeof message.error === 'string' ? message.error : '';
+    const exitCode = message.exit_code;
+    const isError = (typeof exitCode === 'number' && exitCode !== 0)
+        || message.status === 'failed' || message.status === 'declined' || error.length > 0;
+    return {
+        result: output || error || (isError && typeof exitCode === 'number' ? `Command exited with code ${exitCode}` : ''),
+        isError,
+    };
+}
+
 function emitHistoricalToolCall(
     envelopes: SessionEnvelope[],
     turn: ThreadTurn,
@@ -586,7 +602,7 @@ function emitHistoricalToolCall(
     name: string,
     title: string,
     args: Record<string, unknown>,
-    output: string | null,
+    outcome: { result?: string; isError?: boolean },
     timestamps?: {
         startedAt: number;
         completedAt: number;
@@ -606,20 +622,10 @@ function emitHistoricalToolCall(
         id: `${item.id}:start`,
     }));
 
-    if (output && output.trim().length > 0) {
-        envelopes.push(createEnvelope('agent', {
-            t: 'text',
-            text: output,
-            thinking: true,
-        }, {
-            ...opts,
-            id: `${item.id}:output`,
-        }));
-    }
-
     envelopes.push(createEnvelope('agent', {
         t: 'tool-call-end',
         call: item.id,
+        ...outcome,
     }, {
         ...opts,
         id: `${item.id}:end`,
@@ -707,7 +713,7 @@ export function mapCodexThreadItemToSessionEnvelopes(
                 'CodexBash',
                 commandToTitle(command),
                 { command, cwd: item.cwd },
-                typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : null,
+                commandOutcome({ output: item.aggregatedOutput, exit_code: item.exitCode, status: item.status }),
                 { startedAt, completedAt },
             );
             return envelopes;
@@ -721,7 +727,7 @@ export function mapCodexThreadItemToSessionEnvelopes(
                 'CodexPatch',
                 'Apply patch',
                 { changes: item.changes, status: item.status },
-                null,
+                {},
                 { startedAt, completedAt },
             );
             return envelopes;
@@ -743,7 +749,7 @@ export function mapCodexThreadItemToSessionEnvelopes(
                     tool: item.tool,
                     arguments: item.arguments,
                 },
-                output,
+                output !== null ? { result: output } : {},
                 { startedAt, completedAt },
             );
             return envelopes;
@@ -1267,7 +1273,7 @@ function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unkno
         const call = pickCallId(message);
         const envelopes: SessionEnvelope[] = [];
         maybeEmitSubagentStart(subagent, opts, startedSubagents, activeSubagents, subagentTitles, envelopes);
-        envelopes.push(createEnvelope('agent', { t: 'tool-call-end', call }, opts));
+        envelopes.push(createEnvelope('agent', { t: 'tool-call-end', call, ...commandOutcome(message) }, opts));
         return {
             currentTurnId: state.currentTurnId,
             startedSubagents,
