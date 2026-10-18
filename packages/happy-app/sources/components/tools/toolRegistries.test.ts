@@ -24,6 +24,9 @@ vi.mock('@/text', () => ({ t: (key: string) => key }));
 import { getToolViewComponent, getToolFullViewComponent } from './views/_all';
 
 describe('tool registries', () => {
+    it('uses the existing terminal output view for agy commands', () => {
+        expect(getToolFullViewComponent('run_command')).toBe('TerminalFull');
+    });
     it.each(['apply_patch', 'CodexPatch', 'GeminiPatch'])('wires %s on both surfaces', name => {
         expect(getToolViewComponent(name)).toBe('Patch');
         expect(getToolFullViewComponent(name)).toBe('PatchFull');

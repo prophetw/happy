@@ -28,6 +28,19 @@ function tool(name: string, input: unknown): ToolCall {
 }
 
 describe('terminal tool display helpers', () => {
+    it('shows agy commands and file paths from native argument names', () => {
+        const command = { ...tool('run_command', { CommandLine: 'grep -rn "wikiUrl" scripts/scraper-puppeteer.ts' }),
+            title: 'run_command', description: 'Running run_command' };
+        expect(isTerminalToolName(command.name)).toBe(true);
+        expect(getToolActivityLabel(command)).toBe(command.input.CommandLine);
+        expect(getTerminalToolCommand(command)).toBe(command.input.CommandLine);
+
+        const read = { ...tool('view_file', { AbsolutePath: '/repo/src/app.tsx' }),
+            title: 'view_file', description: 'Running view_file' };
+        expect(getToolSummaryCategory(read.name)).toBe('read');
+        expect(getToolActivityLabel(read)).toContain('/repo/src/app.tsx');
+    });
+
     it('detects command-like terminal tools', () => {
         expect(isTerminalToolName('Bash')).toBe(true);
         expect(isTerminalToolName('CodexBash')).toBe(true);
