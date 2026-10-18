@@ -7,6 +7,7 @@ import { getHappyClientId } from "@/sync/apiSocket";
 export async function authGetToken(secret: Uint8Array, serverUrl: string = getServerUrl()) {
     const { challenge, signature, publicKey } = authChallenge(secret);
     const response = await axios.post(`${serverUrl}/v1/auth`, { challenge: encodeBase64(challenge), signature: encodeBase64(signature), publicKey: encodeBase64(publicKey) }, {
+        timeout: 15_000,
         headers: {
             'X-Happy-Client': getHappyClientId(),
         }

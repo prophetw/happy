@@ -1,3 +1,10 @@
+# October 18 - Switch your relay
+
+Requires the updated Happy CLI and a compatible server.
+
+- **Switch your relay** — move your phone and online computers to a self-hosted server without pairing again. Previous history stays on the old server.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 15 - Answer and steer Codex
 
 Requires the updated Happy CLI and a new or restarted Codex session.

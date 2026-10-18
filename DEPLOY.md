@@ -2,6 +2,28 @@
 
 本文档是 fork（prophetw/happy）日常部署的唯一入口，面向“功能分支开发完，合入个人聚合线并发布到真机”的完整闭环。
 
+2026-10-18 已完成获批的 Relay 分支测试发布：`192.168.99.55:/data/code/happy-relay`，
+API 为 `http://192.168.99.55:8193`。镜像、备份、数据保留和验证记录见
+[自建 Relay 部署说明](docs/deployment.md#1921689955-分支测试发布2026-10-18)。此次仅更新服务端，未发布 App 或 CLI。
+同日已备份并热重载 `99.57` 的现有 Nginx，入口为
+`https://szsp.suitbim.com.cn:7100/home-relay`，复用原端口；健康检查和 WSS 已验证。
+`99.55` 的 `PUBLIC_URL` 已同步为上述 HTTPS 基址，容器健康；配置备份和验证记录见
+[HTTPS 入口](docs/deployment.md#https-入口)。
+
+自建 Relay 的独立服务器测试：使用仓库根目录 `docker-compose.yml`，具体配置、
+启动和持久化步骤见 [Docker Compose 测试部署](docs/deployment.md#自建-relaydocker-compose-测试部署)。
+部署到 `192.168.99.56` 前，先阅读同一文档的“部署前准备”和“容器和首次部署顺序”；
+先执行 `node scripts/deploy-relay.mjs --dry-run` 预览，再按需执行只读的 `--check`。
+此入口只部署 relay API 与路径网关；客户端需使用包含自定义地址支持的版本。
+仅运行 relay API 的场景使用 `docker-compose.relay-only.yml`，直接发布 HTTP
+`8193`，操作见同一部署文档的“仅部署 relay 服务”小节。
+SSH 一键部署使用 `node scripts/deploy-relay.mjs`；准备好镜像时加
+`--image <tag>` 可直接复用。步骤见该文档的“一键部署到 SSH 服务器”小节。
+复用 `99.57` 的 HTTPS 入口时，将 [最小 Nginx 配置](deploy/relay/nginx-location.conf)
+放入现有 TLS `server` 块，复用当前域名和 HTTPS 端口，通过 `/home-relay` 访问。
+接入位置和公网地址配置见
+[HTTPS 入口](docs/deployment.md#https-入口)。
+
 分工：服务端/后端 k8s 部署见仓库内 `docs/deployment.md`（上游，英文）。**本文只讲 fork 特有的操作**：worktree 布局、合并到 fork/main、个人 EAS OTA、daemon 替换、冒烟验证、已知坑。
 
 > 最近实操验证：2026-09-19（合并 847bc6c0 → OTA 30ae3c5d → daemon 1.2.4 → 4/4 冒烟通过）。

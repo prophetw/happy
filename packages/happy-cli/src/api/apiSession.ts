@@ -1,6 +1,7 @@
 import { logger } from '@/ui/logger'
 import { EventEmitter } from 'node:events'
 import { io, Socket } from 'socket.io-client'
+import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl'
 import { AgentState, ClientToServerEvents, FileEventMessage, FileEventMessageSchema, Metadata, ServerToClientEvents, Session, Update, UserMessage, UserMessageSchema, Usage } from './types'
 import { decodeBase64, decryptBlob, decrypt, encodeBase64, encrypt, encryptBlob } from './encryption';
 import { backoff, delay } from '@/utils/time';
@@ -25,6 +26,9 @@ import {
 } from '@/claude/utils/sessionProtocolMapper';
 import { InvalidateSync } from '@/utils/sync';
 import axios from 'axios';
+import type { Credentials } from '@/persistence';
+import { RelaySwitchController, type RelayTarget } from '@/relay/relaySwitch';
+import { relayRequest, probeRelay, prepareRelayPersistence, waitRelaySocket, wrapRelayKey, withRelayLock, publishRelaySnapshot } from '@/relay/relayConnection';
 
 /**
  * ACP (Agent Communication Protocol) message data types.
@@ -190,7 +194,10 @@ function buildMultipartUploadBody(
 }
 
 export class ApiSessionClient extends EventEmitter {
-    private readonly token: string;
+    private token: string;
+    private serverUrl = configuration.serverUrl;
+    private relayGeneration = 0;
+    private relaySwitch: RelaySwitchController | null = null;
     readonly sessionId: string;
     private metadata: Metadata | null;
     private metadataVersion: number;
@@ -247,7 +254,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly receiveSync: InvalidateSync;
     private reconnectCapabilityHeld = false;
 
-    constructor(token: string, session: Session) {
+    constructor(token: string, session: Session, relayCredential?: Credentials) {
         super()
         this.token = token;
         this.sessionId = session.id;
@@ -269,21 +276,35 @@ export class ApiSessionClient extends EventEmitter {
         });
         registerCommonHandlers(this.rpcHandlerManager, this.metadata.path);
 
+        this.socket = this.createSocket({ serverUrl: this.serverUrl, token });
+        if (relayCredential) {
+            this.relaySwitch = new RelaySwitchController(target => this.prepareRelaySwitch(target, relayCredential));
+            this.rpcHandlerManager.registerHandler('relay-switch', input => this.relaySwitch!.handle(input));
+        }
+
         //
-        // Create socket
+        // Connect (after short delay to give a time to add handlers)
         //
 
-        this.socket = io(configuration.serverUrl, {
+        retainReconnectCapabilityMonitor();
+        this.reconnectCapabilityHeld = true;
+        this.socket.connect();
+    }
+
+    private createSocket(target: RelayTarget): Socket<ServerToClientEvents, ClientToServerEvents> {
+        const endpoint = getServerSocketEndpoint(target.serverUrl);
+        const socket = io(endpoint.origin, {
             auth: {
-                token: this.token,
+                token: target.token,
                 clientType: 'session-scoped' as const,
                 sessionId: this.sessionId,
                 happyClient: `cli-coding-session/${configuration.currentCliVersion}`
             },
-            path: '/v1/updates',
+            path: endpoint.path,
             reconnection: false,
             transports: ['websocket'],
             withCredentials: true,
+            forceNew: true,
             autoConnect: false
         });
 
@@ -291,30 +312,36 @@ export class ApiSessionClient extends EventEmitter {
         // Handlers
         //
 
-        this.socket.on('connect', () => {
+        socket.on('connect', () => {
             if (this.closed) {
-                this.socket.close();
+                socket.close();
                 return;
             }
             logger.debug('Socket connected successfully');
             this.clearReconnectTimers();
-            this.rpcHandlerManager.onSocketConnect(this.socket);
+            this.rpcHandlerManager.onSocketConnect(socket);
             this.receiveSync.invalidate();
         })
 
         // Set up global RPC request handler
-        this.socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
+        socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
+            if (socket !== this.socket && data.method !== `${this.sessionId}:relay-switch`) {
+                callback(encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, { error: 'This session moved to another relay' })));
+                return;
+            }
             callback(await this.rpcHandlerManager.handleRequest(data));
         })
 
-        this.socket.on('disconnect', (reason) => {
+        socket.on('disconnect', (reason) => {
+            if (socket !== this.socket) return;
             logger.debug(`[API] Socket disconnected: ${reason}`);
             this.rpcHandlerManager.onSocketDisconnect();
             if (this.closed) return;
             this.startSmartReconnect();
         })
 
-        this.socket.on('connect_error', (error) => {
+        socket.on('connect_error', (error) => {
+            if (socket !== this.socket) return;
             logger.debug('[API] Socket connection error:', error);
             this.rpcHandlerManager.onSocketDisconnect();
             if (this.closed) return;
@@ -322,7 +349,8 @@ export class ApiSessionClient extends EventEmitter {
         })
 
         // Server events
-        this.socket.on('update', (data: Update) => {
+        socket.on('update', (data: Update) => {
+            if (socket !== this.socket) return;
             try {
                 logger.debugLargeJson('[SOCKET] [UPDATE] Received update:', data);
 
@@ -381,17 +409,93 @@ export class ApiSessionClient extends EventEmitter {
         });
 
         // DEATH
-        this.socket.on('error', (error) => {
+        socket.on('error', (error) => {
             logger.debug('[API] Socket error:', error);
         });
 
-        //
-        // Connect (after short delay to give a time to add handlers)
-        //
+        return socket;
+    }
 
-        retainReconnectCapabilityMonitor();
-        this.reconnectCapabilityHeld = true;
-        this.socket.connect();
+    private async prepareRelaySwitch(target: RelayTarget, credential: Credentials) {
+        if (this.closed) throw new Error('Session is closed');
+        const persistence = prepareRelayPersistence(credential, target);
+        const old = {
+            socket: this.socket, serverUrl: this.serverUrl, token: this.token,
+            metadataVersion: this.metadataVersion, agentStateVersion: this.agentStateVersion,
+            lastReceivedSeq: this.lastReceivedSeq,
+        };
+        const register = () => relayRequest<{ seq: number; metadataVersion: number; agentStateVersion: number }>(
+            target, 'PUT', `/v1/relay/sessions/${encodeURIComponent(this.sessionId)}`, {
+                metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, this.metadata)),
+                agentState: this.agentState ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, this.agentState)) : null,
+                dataEncryptionKey: wrapRelayKey(this.encryptionKey, credential),
+            },
+        );
+        await register();
+        await probeRelay(target, { sessionId: this.sessionId });
+        let candidate: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+        return {
+            commit: () => withRelayLock(this.metadataLock, () => withRelayLock(this.agentStateLock, async () => {
+                const snapshot = await register();
+                old.metadataVersion = this.metadataVersion;
+                old.agentStateVersion = this.agentStateVersion;
+                old.lastReceivedSeq = this.lastReceivedSeq;
+                this.relayGeneration++;
+                this.clearReconnectTimers();
+                this.serverUrl = target.serverUrl;
+                this.token = target.token;
+                this.metadataVersion = snapshot.metadataVersion;
+                this.agentStateVersion = snapshot.agentStateVersion;
+                // Old transcripts stay on their relay. Do not replay old prompts
+                // if this live process returns to a relay it used previously.
+                this.lastReceivedSeq = snapshot.seq;
+                this.skipInitialMessages = false;
+                candidate = this.createSocket(target);
+                this.socket = candidate;
+                await waitRelaySocket(candidate, `${this.sessionId}:relay-switch`);
+                persistence.activate();
+                this.sendSync.invalidate();
+            })),
+            finish: () => persistence.finish(),
+            rollback: async () => {
+                if (!candidate) { await persistence.rollback(); return; }
+                await withRelayLock(this.metadataLock, () => withRelayLock(this.agentStateLock, async () => {
+                    if (this.socket !== old.socket) {
+                        this.relayGeneration++;
+                        this.clearReconnectTimers();
+                        this.socket = old.socket;
+                        this.serverUrl = old.serverUrl;
+                        this.token = old.token;
+                        this.metadataVersion = old.metadataVersion;
+                        this.agentStateVersion = old.agentStateVersion;
+                        this.lastReceivedSeq = old.lastReceivedSeq;
+                        this.rpcHandlerManager.onSocketConnect(old.socket);
+                    }
+                    persistence.restore();
+                    try {
+                        // Preserve permissions created while another device was
+                        // still committing, even when the whole move fails.
+                        this.metadataVersion = await publishRelaySnapshot(old.socket, 'update-metadata', {
+                            sid: this.sessionId, expectedVersion: this.metadataVersion,
+                            metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, this.metadata)),
+                        });
+                        this.agentStateVersion = await publishRelaySnapshot(old.socket, 'update-state', {
+                            sid: this.sessionId, expectedVersion: this.agentStateVersion,
+                            agentState: this.agentState ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, this.agentState)) : null,
+                        });
+                    } finally {
+                        this.receiveSync.invalidate();
+                        this.sendSync.invalidate();
+                        await persistence.rollback();
+                    }
+                }));
+            },
+            dispose: () => {
+                const unused = this.socket === old.socket ? candidate : old.socket;
+                unused?.removeAllListeners();
+                unused?.disconnect();
+            },
+        };
     }
 
     onUserMessage(callback: (data: UserMessage) => void) {
@@ -423,7 +527,7 @@ export class ApiSessionClient extends EventEmitter {
 
     private async requestAttachmentUpload(filename: string, size: number): Promise<AttachmentUploadResult> {
         const response = await axios.post<AttachmentUploadResult>(
-            `${configuration.serverUrl}/v1/sessions/${encodeURIComponent(this.sessionId)}/attachments/request-upload`,
+            `${this.serverUrl}/v1/sessions/${encodeURIComponent(this.sessionId)}/attachments/request-upload`,
             { filename, size },
             {
                 headers: this.authHeaders(),
@@ -463,7 +567,7 @@ export class ApiSessionClient extends EventEmitter {
         const headers: Record<string, string> = {
             'Content-Type': 'application/octet-stream',
         };
-        if (upload.uploadUrl.startsWith(configuration.serverUrl)) {
+        if (upload.uploadUrl.startsWith(this.serverUrl)) {
             headers.Authorization = `Bearer ${this.token}`;
         }
 
@@ -499,7 +603,7 @@ export class ApiSessionClient extends EventEmitter {
      * presigned URL that does not accept extra headers.
      */
     async downloadAttachment(ref: string): Promise<Uint8Array> {
-        const requestUrl = `${configuration.serverUrl}/v1/sessions/${this.sessionId}/attachments/request-download`;
+        const requestUrl = `${this.serverUrl}/v1/sessions/${this.sessionId}/attachments/request-download`;
         const requestRes = await axios.post(
             requestUrl,
             { ref },
@@ -513,7 +617,7 @@ export class ApiSessionClient extends EventEmitter {
             throw new Error('request-download returned no downloadUrl');
         }
 
-        const isServerUrl = downloadUrl.startsWith(configuration.serverUrl);
+        const isServerUrl = downloadUrl.startsWith(this.serverUrl);
         const headers: Record<string, string> = {};
         if (isServerUrl) {
             headers['Authorization'] = `Bearer ${this.token}`;
@@ -602,6 +706,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private async fetchMessages() {
+        const generation = this.relayGeneration;
         // On reconnect, skip processing existing messages — just advance the cursor
         const skipRouting = this.skipInitialMessages;
         if (skipRouting) {
@@ -612,7 +717,7 @@ export class ApiSessionClient extends EventEmitter {
         let afterSeq = this.lastReceivedSeq;
         while (true) {
             const response = await axios.get<V3GetSessionMessagesResponse>(
-                `${configuration.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
+                `${this.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
                 {
                     params: {
                         after_seq: afterSeq,
@@ -623,6 +728,7 @@ export class ApiSessionClient extends EventEmitter {
                 }
             );
 
+            if (generation !== this.relayGeneration) return;
             const messages = Array.isArray(response.data.messages) ? response.data.messages : [];
             let maxSeq = afterSeq;
 
@@ -671,12 +777,13 @@ export class ApiSessionClient extends EventEmitter {
         // Send latest messages first so the user sees recent activity immediately,
         // then backfill older messages in subsequent batches.
         while (this.pendingOutbox.length > 0) {
+            const generation = this.relayGeneration;
             const batchSize = Math.min(this.pendingOutbox.length, ApiSessionClient.MAX_OUTBOX_BATCH_SIZE);
             const batchStart = this.pendingOutbox.length - batchSize;
             const batch = this.pendingOutbox.slice(batchStart);
 
             const response = await axios.post<V3PostSessionMessagesResponse>(
-                `${configuration.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
+                `${this.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
                 {
                     messages: batch
                 },
@@ -692,6 +799,7 @@ export class ApiSessionClient extends EventEmitter {
             // how a new session lost the first prompt. Our own messages come
             // back over the socket like everyone else's and move the cursor
             // then, once they have actually been seen.
+            if (generation !== this.relayGeneration) continue;
             this.pendingOutbox.splice(batchStart, batch.length);
         }
     }
@@ -948,7 +1056,9 @@ export class ApiSessionClient extends EventEmitter {
         this.metadataLock.inLock(async () => {
             await backoff(async () => {
                 let updated = handler(this.metadata!); // Weird state if metadata is null - should never happen but here we are
+                const generation = this.relayGeneration;
                 const answer = await this.socket.emitWithAck('update-metadata', { sid: this.sessionId, expectedVersion: this.metadataVersion, metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) });
+                if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
                 if (answer.result === 'success') {
                     this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
                     this.metadataVersion = answer.version;
@@ -974,7 +1084,9 @@ export class ApiSessionClient extends EventEmitter {
         this.agentStateLock.inLock(async () => {
             await backoff(async () => {
                 let updated = handler(this.agentState || {});
+                const generation = this.relayGeneration;
                 const answer = await this.socket.emitWithAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion, agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null });
+                if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
                 if (answer.result === 'success') {
                     this.agentState = answer.agentState ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.agentState)) : null;
                     this.agentStateVersion = answer.version;
@@ -1017,6 +1129,7 @@ export class ApiSessionClient extends EventEmitter {
     async close() {
         if (this.closed) return;
         this.closed = true;
+        this.relaySwitch?.dispose();
         logger.debug('[API] socket.close() called');
         this.sendSync.stop();
         this.receiveSync.stop();

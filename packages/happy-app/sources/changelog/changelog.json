@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "October 18 - Switch your relay",
+      "summary": "Requires the updated Happy CLI and a compatible server.",
+      "markdown": "- **Switch your relay** — move your phone and online computers to a self-hosted server without pairing again. Previous history stays on the old server.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "October 15 - Answer and steer Codex",
       "summary": "Requires the updated Happy CLI and a new or restarted Codex session.",
       "markdown": "- **Answer while Codex works** — choose an option or write your own answer to its asynchronous questions on your phone.\n- **Send now** — adjust Codex's direction during a running task, without waiting for the next turn. Ordinary send still queues your message.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -131,5 +136,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "October 15 - Answer and steer Codex"
+  "latestTitle": "October 18 - Switch your relay"
 }

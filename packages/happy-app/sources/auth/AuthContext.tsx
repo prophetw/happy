@@ -4,14 +4,21 @@ import { syncCreate } from '@/sync/sync';
 import * as Updates from 'expo-updates';
 import { clearPersistence, loadRegisteredPushToken } from '@/sync/persistence';
 import { unregisterPushToken } from '@/sync/apiPush';
-import { Platform } from 'react-native';
+import { DevSettings, Platform } from 'react-native';
+import { apiSocket } from '@/sync/apiSocket';
 import { trackLogout } from '@/track';
+
+export interface LogoutOptions {
+    /** Change server configuration after cleanup against the old server, before reload. */
+    beforeReload?: () => void;
+}
 
 interface AuthContextType {
     isAuthenticated: boolean;
     credentials: AuthCredentials | null;
     login: (token: string, secret: string) => Promise<void>;
-    logout: () => Promise<void>;
+    logout: (options?: LogoutOptions) => Promise<void>;
+    switchServer: (serverUrl: string | null) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -22,7 +29,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
 
     // Update global auth state when local state changes
     useEffect(() => {
-        setCurrentAuth(credentials ? { isAuthenticated, credentials, login, logout } : null);
+        setCurrentAuth(credentials ? { isAuthenticated, credentials, login, logout, switchServer } : null);
     }, [isAuthenticated, credentials]);
 
     const login = async (token: string, secret: string) => {
@@ -37,7 +44,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         }
     };
 
-    const logout = async () => {
+    const logout = async (options?: LogoutOptions) => {
         trackLogout();
         const registeredPushToken = credentials ? loadRegisteredPushToken() : null;
         if (credentials && registeredPushToken) {
@@ -48,7 +55,12 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             }
         }
         clearPersistence();
-        await TokenStorage.removeCredentials();
+        const removed = await TokenStorage.removeCredentials();
+        if (options?.beforeReload) {
+            if (!removed) throw new Error('Failed to clear authentication tokens');
+            apiSocket.disconnect();
+            options.beforeReload();
+        }
         
         // Update React state to ensure UI consistency
         setCredentials(null);
@@ -60,10 +72,33 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             try {
                 await Updates.reloadAsync();
             } catch (error) {
+                if (options?.beforeReload && __DEV__) {
+                    DevSettings.reload();
+                    return;
+                }
+                if (options?.beforeReload) throw error;
                 // In dev mode, reloadAsync will throw ERR_UPDATES_DISABLED
                 console.log('Reload failed (expected in dev mode):', error);
             }
         }
+    };
+
+    const switchServer = async (serverUrl: string | null) => {
+        const { switchServer: performSwitch } = await import('@/sync/switchServer');
+        await performSwitch(serverUrl, credentials, async next => {
+            if (Platform.OS === 'web') {
+                setCredentials(next);
+                window.location.reload();
+            }
+            else {
+                try { await Updates.reloadAsync(); }
+                catch (error) {
+                    if (__DEV__) DevSettings.reload();
+                    else throw error;
+                }
+                setCredentials(next);
+            }
+        });
     };
 
     return (
@@ -73,6 +108,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
                 credentials,
                 login,
                 logout,
+                switchServer,
             }}
         >
             {children}

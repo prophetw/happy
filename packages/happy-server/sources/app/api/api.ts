@@ -4,6 +4,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-
 import { onShutdown } from "@/utils/shutdown";
 import { Fastify } from "./types";
 import { authRoutes } from "./routes/authRoutes";
+import { relayRoutes } from './routes/relayRoutes';
 import { pushRoutes } from "./routes/pushRoutes";
 import { sessionRoutes } from "./routes/sessionRoutes";
 import { connectRoutes } from "./routes/connectRoutes";
@@ -100,6 +101,7 @@ export async function startApi(opts: StartApiOptions = {}) {
 
     // Routes
     authRoutes(typed);
+    relayRoutes(typed);
     pushRoutes(typed);
     sessionRoutes(typed);
     accountRoutes(typed);
