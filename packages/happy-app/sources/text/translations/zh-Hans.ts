@@ -352,12 +352,13 @@ export const zhHans: TranslationStructure = {
     server: {
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
-        selfHostFooter: '在线电脑会自动切换，无需重新扫码或重启。设备配对和草稿会保留，原有历史留在旧服务器。',
+        selfHostFooter: '保存后直接切换，电脑和会话自动重连，暂时失联的设备会自动重试。无需手动结束旧会话，设备配对和草稿会保留，原有历史留在旧服务器。',
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: '服务器配置',
         relaySwitchUnavailable: '此设备或会话的切换接口不可用。请确认在线并更新 CLI/daemon，旧会话需重新打开或恢复。',
         relayRollbackUnconfirmed: '无法确认以下设备或会话已回退',
         keepOriginalRelay: '请保持原 Relay 在线。',
+        relayMigrationPending: ({ count }: { count: number }) => `已切换服务器，${count} 个电脑或会话正在自动重连；App 打开时会继续重试。`,
         enterServerUrl: '请输入服务器 URL',
         notValidHappyServer: '不是有效的 Happy 服务器',
         changeServer: '更改服务器',

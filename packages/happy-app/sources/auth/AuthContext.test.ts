@@ -9,11 +9,13 @@ const mocks = vi.hoisted(() => ({
     unregister: vi.fn(),
     disconnect: vi.fn(),
     reload: vi.fn(),
+    stopMigrations: vi.fn(),
 }));
 vi.mock('react-native', () => ({ Platform: { OS: 'web' }, DevSettings: { reload: vi.fn() } }));
 vi.mock('expo-updates', () => ({ reloadAsync: vi.fn() }));
 vi.mock('@/track', () => ({ trackLogout: vi.fn() }));
 vi.mock('@/sync/sync', () => ({ syncCreate: vi.fn() }));
+vi.mock('@/sync/relayMigrations', () => ({ stopRelayMigrations: mocks.stopMigrations }));
 vi.mock('@/sync/apiSocket', () => ({ apiSocket: { disconnect: mocks.disconnect } }));
 vi.mock('@/sync/persistence', () => ({
     loadRegisteredPushToken: () => 'old-push-token',
@@ -35,6 +37,7 @@ function CaptureAuth() { auth = useAuth(); return null; }
 beforeEach(async () => {
     mocks.events.length = 0;
     mocks.removed = true;
+    mocks.stopMigrations.mockReset().mockImplementation(() => { mocks.events.push('stop-migrations'); });
     mocks.unregister.mockReset().mockImplementation(async () => { mocks.events.push('unregister-old-server'); });
     mocks.disconnect.mockReset().mockImplementation(() => { mocks.events.push('disconnect'); });
     mocks.reload.mockReset().mockImplementation(() => { mocks.events.push('reload'); });
@@ -51,16 +54,17 @@ describe('server changes during logout', () => {
         await act(async () => auth.logout({ beforeReload: () => { mocks.events.push('change-server'); } }));
         expect(mocks.unregister).toHaveBeenCalledWith(credentials, 'old-push-token');
         expect(mocks.events).toEqual([
-            'unregister-old-server', 'clear-persistence', 'remove-credentials',
+            'stop-migrations', 'unregister-old-server', 'clear-persistence', 'remove-credentials',
             'disconnect', 'change-server', 'reload',
         ]);
         expect(auth.credentials).toBeNull();
         expect(auth.isAuthenticated).toBe(false);
+        expect(mocks.stopMigrations).toHaveBeenCalledWith(true);
     });
 
     it('keeps ordinary logout behavior when no server change is requested', async () => {
         await act(async () => auth.logout());
-        expect(mocks.events).toEqual(['unregister-old-server', 'clear-persistence', 'remove-credentials', 'reload']);
+        expect(mocks.events).toEqual(['stop-migrations', 'unregister-old-server', 'clear-persistence', 'remove-credentials', 'reload']);
         expect(mocks.disconnect).not.toHaveBeenCalled();
     });
 

@@ -50,6 +50,7 @@ vi.mock('@/sync/ops', () => ({ sessionSetAgentModes: mocks.setModes }));
 vi.mock('@/sync/persistence', () => ({ loadPendingSettings: () => ({}), savePendingSettings: vi.fn() }));
 vi.mock('@/sync/revenueCat', () => ({ RevenueCat: {}, LogLevel: {}, PaywallResult: {} }));
 vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://example.invalid' }));
+vi.mock('@/sync/relayMigrations', () => ({ waitForRelaySessionMigration: async () => {} }));
 vi.mock('@/sync/pushRegistration', () => ({ syncCurrentPushToken: vi.fn() }));
 vi.mock('@/sync/apiArtifacts', () => ({ fetchArtifact: vi.fn(), fetchArtifacts: vi.fn(), createArtifact: vi.fn(), updateArtifact: vi.fn() }));
 vi.mock('@/sync/apiFriends', () => ({ getFriendsList: vi.fn(), getUserProfile: vi.fn() }));

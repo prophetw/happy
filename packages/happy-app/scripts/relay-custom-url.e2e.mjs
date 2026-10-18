@@ -236,14 +236,10 @@ try {
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page.getByText(/not a valid Happy server/i).waitFor();
     assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('auth_credentials'))), true);
+    results.push('App rejects another service and retains the current login');
+
     await input.fill(`${baseUrl}/`);
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.getByText('Cancel', { exact: true }).click();
-    assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('auth_credentials'))), true);
-    results.push('App rejects another service and cancelling a switch retains the current login');
-
-    await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.getByText('Continue', { exact: true }).click();
     await waitFor(async () => {
         try { return await page.getByRole('textbox').inputValue() === baseUrl; } catch { return false; }
     }, 'App saves the custom URL without logging out');
@@ -257,7 +253,6 @@ try {
 
     await page.goto(`${webOrigin}/server`);
     await page.getByRole('button', { name: 'Reset to Default', exact: true }).click();
-    await page.getByText('Continue', { exact: true }).click();
     await waitFor(async () => {
         try { return await page.getByRole('textbox').inputValue() === backendOrigin; } catch { return false; }
     }, 'App restores the configured root server without logging out');

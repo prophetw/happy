@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     request: vi.fn(),
     alert: vi.fn(),
     clearDraft: vi.fn(),
+    waitForMigration: vi.fn(),
 }));
 
 // Real Sync, key wrapping, key derivation, session decryption and outbox.
@@ -32,6 +33,7 @@ vi.mock('@/sync/rigComposer', () => ({ rigComposerClear: mocks.clearDraft }));
 vi.mock('@/sync/persistence', () => ({ loadPendingSettings: () => ({}), savePendingSettings: vi.fn() }));
 vi.mock('@/sync/revenueCat', () => ({ RevenueCat: {}, LogLevel: {}, PaywallResult: {} }));
 vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://example.invalid' }));
+vi.mock('@/sync/relayMigrations', () => ({ waitForRelaySessionMigration: mocks.waitForMigration }));
 vi.mock('@/sync/pushRegistration', () => ({ syncCurrentPushToken: vi.fn() }));
 vi.mock('@/sync/apiArtifacts', () => ({ fetchArtifact: vi.fn(), fetchArtifacts: vi.fn(), createArtifact: vi.fn(), updateArtifact: vi.fn() }));
 vi.mock('@/sync/apiFriends', () => ({ getFriendsList: vi.fn(), getUserProfile: vi.fn() }));
@@ -74,6 +76,7 @@ async function sessionRecord(id: string, legacy = false, metadata: Record<string
 beforeEach(async () => {
     await sodium.ready;
     vi.clearAllMocks();
+    mocks.waitForMigration.mockReset().mockResolvedValue(undefined);
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.state = {
         sessions: {}, sessionMessages: {}, settings: settingsDefaults,
@@ -101,6 +104,21 @@ afterEach(() => {
 });
 
 describe('first message session hydration', () => {
+    it('keeps a new message in the outbox until its relay migration finishes', async () => {
+        const target = await sessionRecord('new-session');
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sessions: [target] }) });
+        let release!: () => void;
+        mocks.waitForMigration.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
+        await expect(engine.sendMessage('new-session', 'during relay switch')).resolves.toBe(true);
+        await vi.waitFor(() => expect(mocks.waitForMigration).toHaveBeenCalled());
+        expect(mocks.request).not.toHaveBeenCalled();
+        expect(engine.pendingOutbox.get('new-session')).toHaveLength(1);
+        release();
+        await vi.waitFor(() => expect(mocks.request).toHaveBeenCalledOnce());
+        const batch = JSON.parse(mocks.request.mock.calls[0][1].body).messages;
+        expect(await writer.getSessionEncryption('new-session')!.decryptRaw(batch[0].content))
+            .toMatchObject({ role: 'user', content: { type: 'text', text: 'during relay switch' } });
+    });
     it('preserves the immediate delivery mode through the encrypted message outbox', async () => {
         const target = await sessionRecord('codex-session', false, { path: '/test', host: 'test', flavor: 'codex' });
         fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sessions: [target] }) });

@@ -65,6 +65,7 @@ async function fixture() {
     const heartbeat = setInterval(() => client.keepAlive(false, 'remote'), 1000);
     let failureDaemon;
     let legacyDaemon;
+    let failCommit = true;
     await waitFor(() => daemon.isReady(), 'fixture daemon RPC registration');
     client.updateAgentState(() => ({ controlledByUser: false, requests: {
         'permission-before-switch': { tool: 'Bash', arguments: { command: 'echo relay-permission-fixture' }, createdAt: Date.now() },
@@ -73,25 +74,26 @@ async function fixture() {
     await client.flush();
     process.on('message', async command => {
         if (command === 'enable-failure') {
-            const extra = await api.getOrCreateMachine({ machineId: randomUUID(), metadata: { ...machine.metadata, displayName: 'Rollback fixture' } });
+            const extra = await api.getOrCreateMachine({ machineId: randomUUID(), metadata: { ...machine.metadata, displayName: 'Retry fixture' } });
             failureDaemon = api.machineSyncClient(extra);
             failureDaemon.setRPCHandlers({ spawnSession: async () => ({ type: 'success', sessionId: session.id }), stopSession: () => true, requestShutdown: () => {} });
             failureDaemon.rpcHandlerManager.registerHandler('relay-switch', async request => {
-                if (request.phase === 'commit') {
+                if (request.phase === 'commit' && failCommit) {
                     await waitFor(() => configuration.serverUrl === request.serverUrl, 'another participant committed', 5_000);
                     client.updateAgentState(state => ({ ...state, requests: {
                         ...state.requests,
-                        'permission-during-rollback': { tool: 'Bash', arguments: { command: 'echo permission-created-during-switch' }, createdAt: Date.now() },
+                        'permission-during-retry': { tool: 'Bash', arguments: { command: 'echo permission-created-during-switch' }, createdAt: Date.now() },
                     } }));
                     await new Promise(resolve => setTimeout(resolve, 500));
                     return { error: 'Injected participant commit failure' };
                 }
-                return { success: true };
+                return failureDaemon.relaySwitch.handle(request);
             });
             failureDaemon.connect();
             await waitFor(() => failureDaemon.isReady(), 'failure fixture registration');
             process.send({ kind: 'failure-ready' });
         }
+        if (command === 'recover-failure') failCommit = false;
         if (command === 'enable-legacy') {
             const extra = await api.getOrCreateMachine({ machineId: randomUUID(), metadata: { ...machine.metadata, displayName: 'Old CLI computer' } });
             legacyDaemon = api.machineSyncClient(extra);
@@ -100,6 +102,10 @@ async function fixture() {
             legacyDaemon.connect();
             await waitFor(() => legacyDaemon.isReady(), 'legacy fixture registration');
             process.send({ kind: 'legacy-ready' });
+        }
+        if (command === 'upgrade-legacy') {
+            legacyDaemon.rpcHandlerManager.registerHandler('relay-switch', request => legacyDaemon.relaySwitch.handle(request));
+            process.send({ kind: 'legacy-upgraded' });
         }
         if (command === 'state') process.send({ kind: 'state', pid: process.pid, serverUrl: configuration.serverUrl });
         if (command === 'stop') {
@@ -218,7 +224,6 @@ async function main() {
         checks.push('Standalone Settings exposes server configuration while using the default relay');
         await page.getByRole('textbox').fill(newUrl);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
-        await page.getByText('Continue', { exact: true }).click();
         await waitFor(async () => {
             try {
                 const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('auth_credentials') || 'null'));
@@ -227,8 +232,11 @@ async function main() {
         }, 'App retained the account key and obtained a new token');
         await page.getByRole('textbox').waitFor();
         assert.equal(await page.getByRole('textbox').inputValue(), newUrl);
-        fixtureProcess.send('state');
-        await waitFor(() => messages.some(message => message.kind === 'state' && message.serverUrl === newUrl), 'CLI followed the new relay');
+        await waitFor(() => {
+            fixtureProcess.send('state');
+            return messages.some(message => message.kind === 'state' && message.serverUrl === newUrl);
+        }, 'CLI followed the new relay');
+        await page.getByText(/Server switched\. Automatically reconnecting/).waitFor({ state: 'hidden' });
         assert.equal(messages.find(message => message.kind === 'state').pid, ready.pid);
         const persisted = JSON.parse(await readFile(path.join(temporary, 'cli', 'access.key'), 'utf8'));
         assert.equal(persisted.serverUrl, newUrl);
@@ -259,7 +267,6 @@ async function main() {
         const relayBToken = await page.evaluate(() => JSON.parse(localStorage.getItem('auth_credentials')).token);
         await page.getByRole('textbox').fill(oldUrl);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
-        await page.getByText('Continue', { exact: true }).click();
         await waitFor(async () => {
             try { return await page.evaluate(previous => JSON.parse(localStorage.getItem('auth_credentials') || 'null')?.token !== previous, relayBToken); }
             catch { return false; }
@@ -267,6 +274,7 @@ async function main() {
         await waitFor(async () => {
             try { return await page.getByRole('textbox').inputValue() === oldUrl; } catch { return false; }
         }, 'switch back to the original relay');
+        await page.getByText(/Server switched\. Automatically reconnecting/).waitFor({ state: 'hidden' });
         await page.goto(`${webOrigin}/session/${ready.sessionId}`);
         await page.getByRole('textbox').fill('back-on-original-relay');
         await page.getByRole('textbox').press('Enter');
@@ -278,39 +286,42 @@ async function main() {
         await page.screenshot({ path: path.join(artifacts, 'switched-back.png') });
 
         fixtureProcess.send('enable-failure');
-        await waitFor(() => messages.some(message => message.kind === 'failure-ready'), 'rollback fixture');
+        await waitFor(() => messages.some(message => message.kind === 'failure-ready'), 'retry fixture');
         await page.goto(`${webOrigin}/server`);
         await page.getByRole('textbox').fill(newUrl);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
-        await page.getByText('Continue', { exact: true }).click();
         await page.getByText(/Injected participant commit failure/).waitFor({ timeout: 60_000 });
-        fixtureProcess.send('state');
-        await waitFor(() => messages.filter(message => message.kind === 'state').at(-1)?.serverUrl === oldUrl, 'CLI rolled back');
+        assert.equal(await page.getByRole('textbox').inputValue(), newUrl);
+        await waitFor(() => {
+            fixtureProcess.send('state');
+            return messages.filter(message => message.kind === 'state').at(-1)?.serverUrl === newUrl;
+        }, 'healthy CLI stays on the new relay while another computer retries');
+        fixtureProcess.send('recover-failure');
+        await page.getByText(/Server switched\. Automatically reconnecting/).waitFor({ state: 'hidden', timeout: 120_000 });
         await page.goto(`${webOrigin}/session/${ready.sessionId}`);
         await page.getByText('echo permission-created-during-switch', { exact: true }).waitFor();
         await page.getByText('Yes', { exact: true }).click();
-        await waitFor(() => messages.some(message => message.kind === 'permission' && message.request.id === 'permission-during-rollback' && message.serverUrl === oldUrl), 'new permission remains actionable after rollback');
-        checks.push('A participant failure restores the old relay, including permissions created during the attempted switch');
-        await page.screenshot({ path: path.join(artifacts, 'rollback-confirmed.png') });
+        await waitFor(() => messages.some(message => message.kind === 'permission' && message.request.id === 'permission-during-retry' && message.serverUrl === newUrl), 'new permission remains actionable during automatic retry');
+        checks.push('A failing computer does not block the App or healthy CLI; it reconnects automatically after recovery');
+        await page.screenshot({ path: path.join(artifacts, 'retry-completed.png') });
 
         fixtureProcess.send('enable-legacy');
         await waitFor(() => messages.some(message => message.kind === 'legacy-ready'), 'legacy computer fixture');
         await page.goto(`${webOrigin}/server`);
-        const credentialsBeforeLegacy = await page.evaluate(() => localStorage.getItem('auth_credentials'));
-        await page.getByRole('textbox').fill(newUrl);
+        await page.getByRole('textbox').fill(oldUrl);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
-        await page.getByText('Continue', { exact: true }).click();
-        await page.getByText(/Old CLI computer: Relay switching is unavailable/).waitFor({ timeout: 60_000 });
+        await page.getByText(/Old CLI computer:/).waitFor({ timeout: 60_000 });
         assert.equal(await page.getByText(/Rollback could not be confirmed/).count(), 0);
-        assert.equal(await page.evaluate(() => localStorage.getItem('auth_credentials')), credentialsBeforeLegacy);
-        await page.screenshot({ path: path.join(artifacts, 'old-client-diagnostic.png') });
-        fixtureProcess.send('state');
-        await waitFor(() => messages.filter(message => message.kind === 'state').at(-1)?.serverUrl === oldUrl, 'prepared clients stay on the original relay');
+        assert.equal(await page.getByRole('textbox').inputValue(), oldUrl);
+        await page.screenshot({ path: path.join(artifacts, 'old-client-pending.png') });
+        fixtureProcess.send('upgrade-legacy');
+        await waitFor(() => messages.some(message => message.kind === 'legacy-upgraded'), 'legacy fixture gains relay support');
+        await page.getByText(/Server switched\. Automatically reconnecting/).waitFor({ state: 'hidden', timeout: 120_000 });
         await page.goto(`${webOrigin}/session/${ready.sessionId}`);
         await page.getByRole('textbox').fill('after-old-cli-rejection');
         await page.getByRole('textbox').press('Enter');
         await page.getByText('fixture-reply:after-old-cli-rejection', { exact: true }).waitFor();
-        checks.push('An old CLI is named with upgrade guidance; the phone and updated CLI keep working on the original relay');
+        checks.push('An unsupported CLI does not block switching and follows automatically once its switching handler becomes available');
         assert.deepEqual(failures, [], 'Unexpected browser, console or HTTP failures');
         console.log(JSON.stringify({ status: 'PASS', artifacts, checks }, null, 2));
     } catch (error) {

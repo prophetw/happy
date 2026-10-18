@@ -2236,6 +2236,13 @@ class Sync {
         const controller = new AbortController();
         this.sendAbortControllers.set(sessionId, controller);
         try {
+            const accountEncryption = this.encryption;
+            const serverUrl = getServerUrl();
+            const { waitForRelaySessionMigration } = await import('./relayMigrations');
+            await waitForRelaySessionMigration(sessionId, controller.signal);
+            if (controller.signal.aborted || this.encryption !== accountEncryption || getServerUrl() !== serverUrl) {
+                throw new Error('Server changed before the message could be sent');
+            }
             const response = await apiSocket.request(`/v3/sessions/${sessionId}/messages`, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -3360,6 +3367,8 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
     // Initialize socket connection
     const API_ENDPOINT = getServerUrl();
     apiSocket.initialize({ endpoint: API_ENDPOINT, token: credentials.token }, encryption);
+    const { startRelayMigrations } = await import('./relayMigrations');
+    startRelayMigrations(encryption, API_ENDPOINT);
 
     // Wire socket status to storage
     apiSocket.onStatusChange((status) => {

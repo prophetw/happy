@@ -7,6 +7,7 @@ import { unregisterPushToken } from '@/sync/apiPush';
 import { DevSettings, Platform } from 'react-native';
 import { apiSocket } from '@/sync/apiSocket';
 import { trackLogout } from '@/track';
+import { stopRelayMigrations } from '@/sync/relayMigrations';
 
 export interface LogoutOptions {
     /** Change server configuration after cleanup against the old server, before reload. */
@@ -45,6 +46,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     };
 
     const logout = async (options?: LogoutOptions) => {
+        stopRelayMigrations(true);
         trackLogout();
         const registeredPushToken = credentials ? loadRegisteredPushToken() : null;
         if (credentials && registeredPushToken) {
