@@ -1,8 +1,38 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StreamJsonParser } from './streamJson';
 import type { AgentMessage } from '@/agent/core/AgentBackend';
+import { AcpSessionManager } from '@/agent/acp/AcpSessionManager';
 
 describe('StreamJsonParser', () => {
+  it('preserves agy command output through the session protocol mapper', () => {
+    const manager = new AcpSessionManager();
+    const envelopes = manager.startTurn();
+    const parser = new StreamJsonParser({
+      onMessage: (message) => envelopes.push(...manager.mapMessage(message)),
+    });
+
+    parser.feed(JSON.stringify({
+      event: 'step_update',
+      step_update: {
+        step_index: 3, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command',
+        tool_info: { parameters: { CommandLine: 'printf happy_agy_probe' } },
+      },
+    }) + '\n');
+    parser.feed(JSON.stringify({
+      event: 'step_update',
+      step_update: {
+        step_index: 3, state: 'DONE', step_type: 'tool', tool_name: 'run_command',
+        tool_info: { output: 'happy_agy_probe' },
+      },
+    }) + '\n');
+
+    const start = envelopes.find((envelope) => envelope.ev.t === 'tool-call-start');
+    expect(start?.ev).toMatchObject({ args: { CommandLine: 'printf happy_agy_probe' } });
+    expect(envelopes.find((envelope) => envelope.ev.t === 'tool-call-end')?.ev).toMatchObject({
+      result: 'happy_agy_probe',
+    });
+  });
+
   it('parses init event and triggers onInit', () => {
     const onInit = vi.fn();
     const parser = new StreamJsonParser({ onInit });
