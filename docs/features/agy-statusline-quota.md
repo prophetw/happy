@@ -5,21 +5,23 @@ Feature document for Antigravity (`agy`) StatusLine Hook integration and real-ti
 ## 功能目标
 
 将 Happy Agy Adapter 升级为**解耦双通道架构**：
-1. **`stream-json` 纯净通道**：专门处理 Agent 正常对话交互生命周期（初始化、Step 增量、工具调用、思考过程、最终执行结果），不再强行塞入或混杂使用量统计。
-2. **`statusLine hook` 配额通道**：建立实时配额主通道，直接接收 Agy 进程下发的 `statusLine.quota` JSON 数据，支持：
+1. **`stream-json` 对话通道**：处理 Agent 对话生命周期，并将原生 `token-count` 事件转换为标准会话用量信封。
+2. **`statusLine hook` 配额通道**：接收 Agy 进程下发的 `statusLine.quota` JSON 数据，支持：
    - **Gemini 模型池**：5 小时滚动额度 (5h %) 与每周额度 (Weekly %)，包含精确重置倒计时。
    - **Claude / GPT 模型池**：5 小时滚动额度 (5h %) 与每周额度 (Weekly %)，包含精确重置倒计时。
 3. **实时响应与多源回退**：
    - 维护内存级 `AgyQuotaStore`，当 statusLine 数据更新时即时更新。
-   - 当 statusLine hook 尚未收到数据时，自动平滑回退至本地 Language Server RPC (`GetUserStatus`) 及 Google Cloud Code API (`fetchAvailableModels`)。
+   - `/usage` 优先查询 Google Cloud Code API (`fetchAvailableModels`)，失败后依次尝试本地 Language Server RPC (`GetUserStatus`) 和 24 小时内的 statusLine 缓存。
+   - API / Language Server 的实时结果可补充 statusLine 中的每周额度与账户信息。
 
 ## 核心入口
 
 | 组件 | 文件 | 角色 |
 |---|---|---|
 | StatusLine 解析与配额缓存 | `packages/happy-cli/src/agyStream/statusLine.ts` | 解析 `statusLine.quota` JSON，维护 `AgyQuotaStore` 单例与订阅通知 |
-| 配额采集与多源协调 | `packages/happy-cli/src/agyStream/usage.ts` | 统一 `fetchAgyUsage` 优先级调度（statusLine -> LS -> API），格式化输出 |
-| 会话运行与交互 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 拦截 `/usage` 指令并下发实时配额 Markdown 报表 |
+| 配额采集与多源协调 | `packages/happy-cli/src/agyStream/usage.ts` | 统一 `fetchAgyUsage` 优先级调度（API → LS → statusLine），格式化输出 |
+| 用量协议桥接 | `packages/happy-cli/src/agyStream/usageBridge.ts` | 生成会话用量信封和 `agentState.usageLimits`，校验上下文快照的会话身份 |
+| 会话运行与交互 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 订阅配额更新、轮询已有 statusline 文件，拦截 `/usage` 并下发报表 |
 | 单元测试 | `packages/happy-cli/src/agyStream/statusLine.test.ts` | 验证多级窗口解析、分组格式、`AgyQuotaStore` 状态机 |
 
 ## 架构关系与数据流
@@ -49,10 +51,14 @@ Agy 常驻进程
                   AgyQuotaStore (实时单例)
                           │
                           ▼
-            fetchAgyUsage() (P0 优先级)
+            usageBridge / fetchAgyUsage() (补充每周额度或离线回退)
                           │
-              Happy App & Terminal UI
+                  Happy App & Terminal UI
 ```
+
+`/usage` 的实时查询链为 CloudCode API → Language Server → statusLine 缓存；上图展示 statusLine 的本地同步路径。
+
+上下文快照仅在 `conversation_id` / `session_id` 与当前会话匹配时上报。常规文件读取限制为 5 分钟内，`/usage` 离线回退最多接受 24 小时；倒计时根据绝对重置时间重新计算。
 
 ## 关键数据结构
 
@@ -89,13 +95,13 @@ export interface AgyStatusLineQuota {
   - 核心字段：`payload.quota.gemini`、`payload.quota.claude`、`payload.model`、`payload.context_window`。
 - **本地 Language Server RPC (Fallback)**：
   - URL: `http://127.0.0.1:<port>/exa.language_server_pb.LanguageServerService/GetUserStatus`
-- **Google Cloud Code API (Fallback)**：
+- **Google Cloud Code API (Primary for `/usage`)**：
   - URL: `https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels`
 
 ## 异常路径
 
-1. **statusLine hook 暂未上报**：
-   - `fetchAgyUsage` 自动无缝回退至 Language Server 探测或 CloudCode API。
+1. **CloudCode API 不可用**：
+   - `fetchAgyUsage` 回退至 Language Server 探测，再尝试 24 小时内的 statusLine 缓存。
 2. **所有配额渠道皆不可用**：
    - 优雅返回 `source: 'none'`，显示友好的配置与登录排查引导，不中断正常 Agent 对话。
 

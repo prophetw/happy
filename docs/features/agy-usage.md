@@ -6,8 +6,8 @@ Feature document for `/usage` slash command and Antigravity (`agy`) quota & rate
 
 在 Happy 客户端（iOS / Web / Desktop / Terminal）中支持 `/usage` 特殊指令及 `happy usage` CLI 命令，实时查询并展示当前登录账户的 Antigravity (`agy`) 剩余额度，重点包括：
 1. **解耦双通道架构**：
-   - `stream-json` 通道专门承载标准 Agent 对话交互（Turn、Tool Calls、Thinking、Text Deltas）。
-   - `statusLine hook` 通道作为配额与额度同步的主通道，接收 Agy 实时下发的 Quota JSON。
+   - `stream-json` 通道承载 Agent 对话交互及 `token-count` 用量事件。
+   - `statusLine hook` 通道接收配额与上下文快照；`/usage` 优先查询 CloudCode API，并用本地快照补充每周额度。
 2. **5 小时滚动与每周额度 (5-Hour Rolling & Weekly Quotas)**：
    - **Gemini 模型池**：5h 剩余百分比与 Weekly 剩余百分比，包含重置倒计时（Reset In）。
    - **Claude / GPT 模型池**：5h 剩余百分比与 Weekly 剩余百分比，包含重置倒计时。
@@ -20,7 +20,8 @@ Feature document for `/usage` slash command and Antigravity (`agy`) quota & rate
 |---|---|---|
 | 指令解析 | `packages/happy-cli/src/parsers/specialCommands.ts` | 解析 `/usage` 指令并标记为特殊系统命令类型 |
 | StatusLine 解析与配额存储 | `packages/happy-cli/src/agyStream/statusLine.ts` | 解析 `statusLine.quota` JSON（Gemini/Claude 5h & Weekly），维护实时 `AgyQuotaStore` |
-| 额度采集与格式化 | `packages/happy-cli/src/agyStream/usage.ts` | 优先从 `AgyQuotaStore` 读取，回退探测 Language Server 与 Cloud Code API 并格式化输出 |
+| 额度采集与格式化 | `packages/happy-cli/src/agyStream/usage.ts` | 按 CloudCode API → Language Server → 本地缓存的顺序查询并格式化输出 |
+| 用量协议桥接 | `packages/happy-cli/src/agyStream/usageBridge.ts` | 将 token / 上下文转换为会话用量信封，将配额转换为 `agentState.usageLimits` |
 | 运行时拦截与响应 | `packages/happy-cli/src/agyStream/runStreamJsonAgy.ts` | 在会话层拦截 `/usage` 指令，调用采集模块并直接向客户端下发模型输出与状态信封 |
 | CLI 独立命令 | `packages/happy-cli/src/index.ts` | 提供 `happy usage [--markdown | --json]` 终端直接查询能力 |
 | 客户端自动补全 | `packages/happy-app/sources/sync/suggestionCommands.ts` | 将 `usage` 纳入全端 Slash Command 补全与提示列表中 |
@@ -52,9 +53,18 @@ Happy App / CLI ◄─────────┴── [3] /usage 指令拦截�
 
 ### 配额优先级解析链
 
-1. **P0 (Primary)**：`AgyQuotaStore.toUsageStatus()` (来自 Agy 进程的 `statusLine.quota` 实时推送，`source: 'statusline-hook'`)
+1. **P0 (Primary)**：Google Cloud Code API (`fetchAvailableModels`，`source: 'cloudcode-api'`)
 2. **P1 (Fallback 1)**：本地 Language Server RPC (`GetUserStatus`，`source: 'language-server'`)
-3. **P2 (Fallback 2)**：Google Cloud Code API (`fetchAvailableModels`，`source: 'cloudcode-api'`)
+3. **P2 (Fallback 2)**：`AgyQuotaStore.toUsageStatus()`，使用不超过 24 小时的内存 / 磁盘快照（`source: 'statusline-hook'`）；更旧的数据返回不可用。
+
+API 或 Language Server 返回 5 小时额度后，会补充本地快照中的每周额度。快照解析优先使用绝对重置时间重新计算倒计时，避免沿用保存时的旧倒计时。
+
+### 会话中的用量与额度同步
+
+- `token-count` 事件经 `usageBridge.ts` 转换为携带 `usage` 的空 service 信封，不创建聊天气泡。
+- 会话启动时订阅 `AgyQuotaStore`，每 2 秒检查启动时已存在的 statusline 文件，并在回合结束后重新读取快照；退出时取消订阅和文件监听。常规文件读取只接受 5 分钟内的快照。
+- 上下文快照必须携带与当前会话匹配的 `conversation_id` 或 `session_id`；匿名快照及其他会话的快照不写入当前上下文用量。`/clear` 后不再使用恢复前的会话 ID。
+- 5 小时 / 每周额度写入 `agentState.usageLimits`。Gemini 使用 Gemini 额度池，Claude / GPT / OSS 使用 Claude/GPT 额度池。
 
 ## 关键数据结构
 
@@ -120,7 +130,7 @@ export interface AgyUsageStatus {
   - URL: `http://127.0.0.1:<port>/exa.language_server_pb.LanguageServerService/GetUserStatus`
   - Headers: `X-Codeium-Csrf-Token: <csrf_token>`, `Content-Type: application/json`
   - Body: `{"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en"}}`
-- **Google Cloud Code API (Fallback)**：
+- **Google Cloud Code API (Primary)**：
   - URL: `https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels`
   - Headers: `Authorization: Bearer <access_token>`, `Content-Type: application/json`
 
@@ -137,7 +147,8 @@ export interface AgyUsageStatus {
 
 1. **单元测试**：
    - `packages/happy-cli/src/agyStream/statusLine.test.ts`：验证 `statusLine.quota` 解析、Gemini/Claude 分组与 `AgyQuotaStore` 状态机。
-   - `packages/happy-cli/src/agyStream/usage.test.ts`：验证 P0 优先从 `statusLine.quota` 采集配额、分层表格 Markdown 与 Terminal 输出。
+   - `packages/happy-cli/src/agyStream/usage.test.ts`：验证 API 优先、每周额度补充、离线缓存过期，以及 Markdown 与 Terminal 输出。
+   - `packages/happy-cli/src/agyStream/usageBridge.test.ts`：验证用量信封、会话隔离及不同模型的额度池选择。
    - `packages/happy-cli/src/parsers/specialCommands.test.ts`：验证 `/usage` 特殊指令精准解析。
 2. **全量回归测试**：
    - `pnpm --filter happy test src/agy`
