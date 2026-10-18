@@ -93,6 +93,7 @@
     "axios": "^1.13.2",
     "chalk": "^5.6.2",
     "cross-spawn": "^7.0.6",
+    "detect-libc": "^2.1.2",
     "expo-server-sdk": "^3.15.0",
     "fastify": "^5.6.2",
     "fastify-type-provider-zod": "^6.1.0",
