@@ -352,6 +352,7 @@ export const es: TranslationStructure = {
         relaySwitchUnavailable: 'El cambio de Relay no está disponible para este dispositivo o sesión. Comprueba que esté en línea, actualiza su CLI/daemon y vuelve a abrir o reanudar las sesiones anteriores.',
         relayRollbackUnconfirmed: 'No se pudo confirmar la reversión de estos dispositivos o sesiones',
         keepOriginalRelay: 'Mantén disponible el Relay original.',
+        relayMigrationPending: en.server.relayMigrationPending,
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
         selfHostFooter: en.server.selfHostFooter,

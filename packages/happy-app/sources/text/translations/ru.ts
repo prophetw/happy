@@ -297,6 +297,7 @@ export const ru: TranslationStructure = {
         relaySwitchUnavailable: 'Переключение Relay недоступно для этого устройства или сеанса. Проверьте подключение, обновите CLI/daemon и заново откройте или возобновите старые сеансы.',
         relayRollbackUnconfirmed: 'Не удалось подтвердить возврат этих устройств или сеансов',
         keepOriginalRelay: 'Оставьте исходный Relay доступным.',
+        relayMigrationPending: en.server.relayMigrationPending,
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
         selfHostFooter: en.server.selfHostFooter,

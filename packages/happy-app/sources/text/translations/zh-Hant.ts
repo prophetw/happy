@@ -351,12 +351,13 @@ export const zhHant: TranslationStructure = {
     server: {
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
-        selfHostFooter: '在線電腦會自動切換，無需重新掃碼或重新啟動。裝置配對和草稿會保留，原有歷史留在舊伺服器。',
+        selfHostFooter: '儲存後直接切換，電腦和工作階段自動重新連線，暫時離線的裝置會自動重試。無需手動結束舊工作階段，裝置配對和草稿會保留，原有歷史留在舊伺服器。',
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: '伺服器設定',
         relaySwitchUnavailable: '此裝置或工作階段的切換介面無法使用。請確認連線並更新 CLI/daemon，舊工作階段需重新開啟或恢復。',
         relayRollbackUnconfirmed: '無法確認下列裝置或工作階段已復原',
         keepOriginalRelay: '請維持原 Relay 連線可用。',
+        relayMigrationPending: ({ count }: { count: number }) => `已切換伺服器，${count} 個電腦或工作階段正在自動重新連線；App 開啟時會繼續重試。`,
         enterServerUrl: '請輸入伺服器 URL',
         notValidHappyServer: '不是有效的 Happy 伺服器',
         changeServer: '更改伺服器',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
 import { View, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
@@ -21,6 +21,7 @@ import {
     shouldUseCustomServerForVoice,
 } from '@/sync/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { getRelayMigrationStatus, subscribeRelayMigrations } from '@/sync/relayMigrations';
 import { normalizeServerUrl } from '@slopus/happy-wire/serverUrl';
 import { checkServerConnection } from '@/sync/checkServerConnection';
 import { useAuth } from '@/auth/AuthContext';
@@ -98,28 +99,8 @@ export default function ServerConfigScreen() {
     const [useCustomServerForVoice, setUseCustomServerForVoiceState] = useState(shouldUseCustomServerForVoice());
     const [error, setError] = useState<string | null>(null);
     const [isValidating, setIsValidating] = useState(false);
-
-    const validateServer = async (url: string): Promise<boolean> => {
-        try {
-            setIsValidating(true);
-            setError(null);
-            
-            const result = await checkServerConnection(url);
-            if (!result.valid) {
-                setError(result.error === 'connection' ? t('server.failedToConnectToServer')
-                    : result.error === 'response' ? t('server.serverReturnedError')
-                    : t('server.notValidHappyServer'));
-                return false;
-            }
-            
-            return true;
-        } catch (err) {
-            setError(t('server.failedToConnectToServer'));
-            return false;
-        } finally {
-            setIsValidating(false);
-        }
-    };
+    const switching = useRef(false);
+    const migration = useSyncExternalStore(subscribeRelayMigrations, getRelayMigrationStatus, getRelayMigrationStatus);
 
     const handleSave = async () => {
         if (!inputUrl.trim()) {
@@ -133,31 +114,32 @@ export default function ServerConfigScreen() {
             return;
         }
 
-        // Validate the server
-        const isValid = await validateServer(inputUrl);
-        if (!isValid) {
-            return;
-        }
-
         await applyServer(inputUrl);
     };
 
     const applyServer = async (url: string | null) => {
+        if (switching.current) return;
         if (url !== null && normalizeServerUrl(url) === getServerUrl()) return;
-        const confirmed = await Modal.confirm(
-            t('server.changeServer'),
-            t('server.continueWithServer'),
-            { confirmText: t('common.continue') }
-        );
-        if (!confirmed) return;
+        switching.current = true;
         setIsValidating(true);
         setError(null);
         try {
+            if (url !== null) {
+                const result = await checkServerConnection(url);
+                if (!result.valid) {
+                    setError(result.error === 'connection' ? t('server.failedToConnectToServer')
+                        : result.error === 'response' ? t('server.serverReturnedError')
+                        : t('server.notValidHappyServer'));
+                    return;
+                }
+            }
             await auth.switchServer(url);
+            setInputUrl(getServerUrl());
             setIsCustomServer(getServerInfo().isCustom);
         } catch (error) {
             setError(error instanceof Error ? error.message : t('errors.operationFailed'));
         } finally {
+            switching.current = false;
             setIsValidating(false);
         }
     };
@@ -217,6 +199,14 @@ export default function ServerConfigScreen() {
                                     {t('server.validatingServer')}
                                 </Text>
                             )}
+                            {migration.pending > 0 && (
+                                <Text style={styles.statusText}>
+                                    {t('server.relayMigrationPending', { count: migration.pending })}
+                                </Text>
+                            )}
+                            {migration.lastError && (
+                                <Text style={styles.statusText}>{migration.lastError}</Text>
+                            )}
                             <View style={styles.buttonColumn}>
                                 <RoundButton
                                     title={isValidating ? t('server.validating') : t('common.save')}
@@ -230,6 +220,7 @@ export default function ServerConfigScreen() {
                                         size="normal"
                                         display="inverted"
                                         onPress={handleReset}
+                                        disabled={isValidating}
                                     />
                                 )}
                             </View>

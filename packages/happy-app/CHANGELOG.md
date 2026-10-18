@@ -3,6 +3,7 @@
 Requires the updated Happy CLI and a compatible server.
 
 - **Switch your relay** — move your phone and online computers to a self-hosted server without pairing again. Previous history stays on the old server.
+- **Switch without waiting** — save your server URL to switch immediately; computers and sessions reconnect automatically while the app is open.
 - Community Credits: [@prophetw](https://github.com/prophetw).
 
 # October 15 - Answer and steer Codex

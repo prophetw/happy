@@ -42,6 +42,7 @@ export class Encryption {
     // Session and machine encryption management
     private sessionEncryptions = new Map<string, SessionEncryption>();
     private machineEncryptions = new Map<string, MachineEncryption>();
+    private machineDataKeys = new Map<string, Uint8Array>();
     private sessionBlobKeys = new Map<string, Uint8Array>();
     private sessionDataKeys = new Map<string, Uint8Array>();
     private cache: EncryptionCache;
@@ -181,6 +182,7 @@ export class Encryption {
                 this.cache
             );
             this.machineEncryptions.set(machineId, machineEnc);
+            if (dataKey) this.machineDataKeys.set(machineId, dataKey);
         }
     }
 
@@ -192,11 +194,17 @@ export class Encryption {
         return this.machineEncryptions.get(machineId) || null;
     }
 
+    /** Per-machine key for encrypted, resumable relay migration work. */
+    getMachineDataKey(machineId: string): Uint8Array | null {
+        return this.machineDataKeys.get(machineId) ?? null;
+    }
+
     /**
      * Remove machine encryption from memory when the machine is deleted
      */
     removeMachineEncryption(machineId: string): void {
         this.machineEncryptions.delete(machineId);
+        this.machineDataKeys.delete(machineId);
     }
 
     //

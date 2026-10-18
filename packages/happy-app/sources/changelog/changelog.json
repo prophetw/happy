@@ -3,7 +3,7 @@
     {
       "title": "October 18 - Switch your relay",
       "summary": "Requires the updated Happy CLI and a compatible server.",
-      "markdown": "- **Switch your relay** — move your phone and online computers to a self-hosted server without pairing again. Previous history stays on the old server.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+      "markdown": "- **Switch your relay** — move your phone and online computers to a self-hosted server without pairing again. Previous history stays on the old server.\n- **Switch without waiting** — save your server URL to switch immediately; computers and sessions reconnect automatically while the app is open.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
     },
     {
       "title": "October 15 - Answer and steer Codex",

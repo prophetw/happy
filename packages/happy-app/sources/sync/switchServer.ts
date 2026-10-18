@@ -2,15 +2,15 @@ import { io } from 'socket.io-client';
 import { randomUUID } from 'expo-crypto';
 import { type AuthCredentials, TokenStorage } from '@/auth/tokenStorage';
 import { authGetToken } from '@/auth/authGetToken';
-import { decodeBase64 } from '@/encryption/base64';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { apiSocket } from './apiSocket';
 import { storage } from './storage';
 import { getServerUrl, setServerUrl, getDefaultServerUrl } from './serverConfig';
-import { switchRelay, type RelaySwitchParticipant } from './relaySwitch';
+import { queueRelayMigrations, startRelayMigrations, type RelayMigrationParticipant } from './relayMigrations';
+import { sync } from './sync';
 import { getServerSocketEndpoint, normalizeServerUrl } from '@slopus/happy-wire/serverUrl';
 import { loadRegisteredPushToken, clearRelayPersistence } from './persistence';
 import { unregisterPushTokenOnce } from './apiPush';
-import { t } from '@/text';
 
 async function authenticateTarget(secret: string, serverUrl: string): Promise<string> {
     const token = await authGetToken(decodeBase64(secret, 'base64url'), serverUrl);
@@ -55,43 +55,49 @@ export async function switchServer(
     }
 
     const { machines, sessions } = storage.getState();
-    const participants: RelaySwitchParticipant[] = [
+    const encryption = sync.encryption;
+    const dataKey = (key: Uint8Array | null) => key ? encodeBase64(key) : null;
+    const participants: RelayMigrationParticipant[] = [
         ...Object.values(machines).filter(machine => machine.active).map(machine => ({
+            kind: 'machine' as const, entityId: machine.id,
             name: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-            call: request => apiSocket.machineRPC(machine.id, 'relay-switch', request),
-        } satisfies RelaySwitchParticipant)),
+            dataKey: dataKey(encryption.getMachineDataKey(machine.id)),
+        })),
         ...Object.values(sessions).filter(session => session.active).map(session => ({
+            kind: 'session' as const, entityId: session.id,
             name: [session.metadata?.host, session.metadata?.name || session.id].filter(Boolean).join(' / '),
-            call: request => apiSocket.sessionRPC(session.id, 'relay-switch', request),
-        } satisfies RelaySwitchParticipant)),
+            dataKey: dataKey(encryption.getSessionDataKey(session.id)),
+        })),
     ];
-    await switchRelay({
-        id: randomUUID(), serverUrl, participants,
-        authenticate: url => authenticateTarget(credentials.secret, url),
-        messages: {
-            unavailable: t('server.relaySwitchUnavailable'),
-            rollbackUnconfirmed: t('server.relayRollbackUnconfirmed'),
-            keepOriginal: t('server.keepOriginalRelay'),
-        },
-        save: async (url, token) => {
-            const next = { ...credentials, token };
-            try {
-                if (!await TokenStorage.setCredentials(next)) throw new Error('Could not save the new server login.');
-                const pushToken = loadRegisteredPushToken();
-                if (pushToken) {
-                    try { await unregisterPushTokenOnce(credentials, pushToken, oldServerUrl); }
-                    catch { console.warn('Relay switched; the old server could not clear its push registration.'); }
-                }
-                apiSocket.disconnect();
-                setServerUrl(input === null ? null : url);
-                clearRelayPersistence();
-                await reload(next);
-            } catch (error) {
-                setServerUrl(oldServerUrl);
-                if (!await TokenStorage.setCredentials(credentials)) throw new Error('Could not restore the original login after the switch failed.');
-                apiSocket.connect();
-                throw error;
-            }
-        },
-    });
+    const token = await authenticateTarget(credentials.secret, serverUrl);
+    let undoQueue: () => void;
+    try {
+        undoQueue = await queueRelayMigrations({
+            id: randomUUID(), source: { serverUrl: oldServerUrl, token: credentials.token },
+            target: { serverUrl, token }, participants, encryption,
+        });
+    } catch (error) {
+        startRelayMigrations(encryption, oldServerUrl);
+        throw error;
+    }
+    const next = { ...credentials, token };
+    try {
+        if (!await TokenStorage.setCredentials(next)) throw new Error('Could not save the new server login.');
+        const pushToken = loadRegisteredPushToken();
+        // Old relay cleanup is bounded by unregisterPushTokenOnce and is not
+        // a prerequisite for moving the App or reconnecting computers.
+        if (pushToken) void unregisterPushTokenOnce(credentials, pushToken, oldServerUrl)
+            .catch(() => { console.warn('Relay switched; the old server could not clear its push registration.'); });
+        apiSocket.disconnect();
+        setServerUrl(input === null ? null : serverUrl);
+        clearRelayPersistence();
+        await reload(next);
+    } catch (error) {
+        undoQueue();
+        setServerUrl(oldServerUrl);
+        if (!await TokenStorage.setCredentials(credentials)) throw new Error('Could not restore the original login after the switch failed.');
+        apiSocket.connect();
+        startRelayMigrations(encryption, oldServerUrl);
+        throw error;
+    }
 }

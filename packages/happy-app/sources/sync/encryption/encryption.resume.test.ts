@@ -12,6 +12,16 @@ vi.mock('./encryptor', () => ({
 import { Encryption } from './encryption';
 
 describe('resume data-key access', () => {
+    it('retains per-machine keys for relay retries and drops them when a machine is removed', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const key = new Uint8Array(32).fill(3);
+        await encryption.initializeMachines(new Map([['computer', key], ['legacy', null]]));
+        expect(encryption.getMachineDataKey('computer')).toEqual(key);
+        expect(encryption.getMachineDataKey('legacy')).toBeNull();
+        expect(encryption.getMachineDataKey('unknown')).toBeNull();
+        encryption.removeMachineEncryption('computer');
+        expect(encryption.getMachineDataKey('computer')).toBeNull();
+    });
     it('exposes per-session keys only, never the account master or legacy blob key', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         const firstKey = new Uint8Array(32).fill(1);

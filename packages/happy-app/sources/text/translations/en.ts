@@ -366,11 +366,12 @@ export const en: TranslationStructure = {
         relaySwitchUnavailable: 'Relay switching is unavailable for this device or session. Check it is online, update its CLI/daemon, and reopen or resume older sessions.',
         relayRollbackUnconfirmed: 'Rollback could not be confirmed for these devices or sessions',
         keepOriginalRelay: 'Keep the original relay available.',
+        relayMigrationPending: ({ count }: { count: number }) => `Server switched. Automatically reconnecting ${count} computer(s) or session(s); this continues while the app is open.`,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Server Configuration',
         title: 'Server',
         serverUrlLabel: 'Server URL',
-        selfHostFooter: 'For self-hosted servers. Sign out and back in after changing it.',
+        selfHostFooter: 'Save to switch servers. Computers and sessions reconnect automatically, with retries for unavailable devices. Pairing and drafts are kept; previous history stays on the old server.',
         enterServerUrl: 'Please enter a server URL',
         notValidHappyServer: 'Not a valid Happy Server',
         changeServer: 'Change Server',

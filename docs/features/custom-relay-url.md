@@ -4,8 +4,8 @@
 
 ## 客户端配置
 
-- App：进入“设置”，点击页面上方的“服务器配置”，填写完整 HTTP/HTTPS URL。独立设置页和 Web 设置标签页均显示此入口，不受当前是否使用自建服务器的限制。保存前检查服务器；确认后保留账户密钥、设备配对、草稿和本地偏好，在线 CLI / daemon 及运行中会话自动切换。App 重载以重新同步目标服务器；无需重新扫码，也无需手动重启 CLI、daemon 或 Relay。
-- CLI / daemon：首次连接可设置 `HAPPY_SERVER_URL`，或使用 `settings.json` 的 `serverUrl`。App 成功发起在线切换后，CLI 将目标 URL 和新令牌原子写入 `access.key`，保留原有加密密钥与机器 ID。后续进程优先使用此明确选定的地址，再回退到环境变量 → settings → 默认值，避免旧环境变量搭配新令牌。只有手工修改环境变量而没有通过 App 切换时，已有进程仍需重启。
+- App：进入“设置”，点击页面上方的“服务器配置”，填写完整 HTTP/HTTPS URL，点击保存即可切换，无需二次确认。独立设置页和 Web 设置标签页均显示此入口。保存前检查新服务器和账号访问权限；检查通过后保留账户密钥、设备配对、草稿和本地偏好，App 重载并连接新服务器。在线 CLI / daemon 和运行中会话在后台分别迁移，暂时失联的参与者不阻塞 App，无需手动结束旧会话。
+- CLI / daemon：首次连接可设置 `HAPPY_SERVER_URL`，或使用 `settings.json` 的 `serverUrl`。设备完成后台迁移后，CLI 将目标 URL 和新令牌原子写入 `access.key`，保留原有加密密钥与机器 ID。后续进程优先使用此明确选定的地址，再回退到环境变量 → settings → 默认值，避免旧环境变量搭配新令牌。只有手工修改环境变量而没有通过 App 切换时，已有进程仍需重启。
 - happy-agent：设置 `HAPPY_SERVER_URL`；未设置时使用原默认地址。
 
 例如，在自己的运行环境中：
@@ -22,22 +22,38 @@ URL 必须包含 `http://` 或 `https://`，可包含自定义端口和多级路
 完成签名认证并获取新的令牌；目标必须允许该账号访问。`GET /v1/relay` 在鉴权后
 返回 `{ liveSwitch: 1 }` 标识协议支持，旧服务器不支持时会提示失败并保留原连接。
 
-App 通过原 Relay 的加密 `relay-switch` RPC 通知在线机器和活跃会话，依次执行
-`prepare`、`commit`、`finish`。准备阶段登记机器与活跃会话、检查目标 WebSocket；
-确认阶段在原进程内重建连接，保留 RPC 处理器、编码进程、会话 ID、加密密钥及待批准权限。
-全部设备确认后才保存 App 的新登录状态。旧连接短暂保留以支持失败回退；未完成事务
-会尝试自动回退。回退无法确认时明确报错，不能视为设备已恢复。
+App 先用账户密钥加密并保存迁移队列，再保存新登录和地址并重载。不向旧设备发送
+RPC 来决定能否保存新地址；新地址的健康检查、认证或本地持久化失败才会阻止保存。
+旧服务器的 push 注册清理也不阻塞切换。登录保存或重载失败时恢复原登录、地址和原迁移队列。
 
-准备阶段明确拒绝的设备（包括未注册 `relay-switch` 的旧 CLI）不会收到无意义的
-回退请求。界面保留首次失败的设备/会话名称及原因，并提示检查在线状态、升级
-CLI/daemon、重开或恢复旧会话。准备请求超时等无法判断是否执行的情况仍会尝试
-回退；真实回退无法确认时，同时显示首次原因和未确认设备，要求保留原 Relay。
+同步初始化后启动独立迁移 worker，使用独立的 user-scoped WebSocket，通过原 Relay
+的加密 `relay-switch` RPC 为每台在线机器和每个活跃会话分别执行 `prepare`、`commit`、
+`finish`。准备阶段登记机器与活跃会话、检查目标 WebSocket；确认阶段在原进程内
+重建连接，保留 RPC 处理器、编码进程、会话 ID、加密密钥及待批准权限。单个设备
+失败只保留它的未完成任务，不回退已经成功切换的设备，不阻塞 App，也不结束会话。
+
+迁移进度、原服务器令牌、目标令牌和设备数据密钥保存在单独的 `relay-migrations`
+MMKV 实例中，整体由账户密钥加密，不写入明文令牌或明文设备密钥。每个阶段收到
+有效确认后保存进度；App 重载或再次启动后继续执行，运行期间失败会自动退避重试，
+回到前台也会触发重试。确认丢失时可通过目标 Relay 继续完成；CLI 事务已过期时
+重新准备。连续从 A 切到 B 再到 C 时，尚留在 A 的设备任务会改为迁往 C。退出登录
+时清除队列并断开 worker 连接，避免继续发送旧命令。若 App 在保存队列后、应用新
+地址前退出，队列不会擅自迁移仍属于旧地址的设备。
+
+会话迁移尚未完成时，新消息先保留在现有加密发件箱中，完成迁移后自动提交。
+这样可以避免 CLI 切换时建立历史序号基线，把迁移窗口内的新提示词当作旧消息跳过。
+等待期间退出登录或再次切服会取消原连接的发送等待，防止向错误的服务器提交。
+
+服务器设置页显示尚未完成的电脑/会话数量及最近错误。显示“App 已切换”不代表
+全部设备已重连。重试只在 App 运行时执行；旧 Relay 仍需可达，实际无法联系的电脑
+无法由 App 远程修复。不支持 `relay-switch` 的旧 CLI 仍需升级，但不会再阻止手机
+保存新地址；接口恢复可用后队列自动继续，不要求通过结束旧会话来解锁切换。
 
 `PUT /v1/relay/sessions/:sessionId` 只登记当前加密 metadata、agentState 和包装后的
 会话密钥，不复制历史消息或附件。已有同 ID 会话必须属于当前账号，更新时保留历史
 和消息序号。切回曾使用过的 Relay 时不向编码进程重放旧提示词。
 
-在线切换依赖旧 Relay 仍可达，并仅通知当时在线的机器与活跃会话。离线设备、其他
+设备迁移依赖旧 Relay 仍可达，并仅为切换时标记在线的机器与活跃会话建立任务。离线设备、其他
 App 以及独立的 happy-agent 不会自动发现新地址；旧 Relay 宕机后的备用发现通道
 不在本次范围。切服不迁移历史消息、项目或附件，原数据继续保存在原 Relay。
 
@@ -83,7 +99,17 @@ Web App 地址与 API 地址可以不同。CLI Web 登录继续由 `HAPPY_WEBAPP
 
 ## 验证与维护
 
-URL 纯函数、各客户端配置、旧版健康检查回退及切换清理顺序有相关回归测试。可复用的本地流程脚本位于 [relay-custom-url.e2e.mjs](../../packages/happy-app/scripts/relay-custom-url.e2e.mjs)：
+URL 纯函数、各客户端配置、旧版健康检查回退及切换清理顺序有相关回归测试。自动迁移的
+传输集成测试使用真实 loopback Socket.IO、真实 CLI 事务控制器及 AES-GCM 加密，
+覆盖设备独立迁移、App 重开续传、确认丢失、连续切换、事务过期、退出取消和存储写入失败。
+OS 密钥存储和原生加密桥在测试边界替换；它不是浏览器或真实手机 E2E。
+
+```sh
+cd packages/happy-app
+pnpm exec vitest run sources/sync/relayMigrations.test.ts sources/sync/switchServer.test.ts sources/auth/AuthContext.test.ts sources/sync/encryption/encryption.resume.test.ts sources/sync/serverConfig.test.ts sources/sync/checkServerConnection.test.ts
+```
+
+可复用的本地流程脚本位于 [relay-custom-url.e2e.mjs](../../packages/happy-app/scripts/relay-custom-url.e2e.mjs)：
 
 ```sh
 pnpm --filter @slopus/happy-wire build
@@ -91,7 +117,7 @@ pnpm --filter happy build
 pnpm exec tsx packages/happy-app/scripts/relay-custom-url.e2e.mjs
 ```
 
-脚本需要本机 Playwright Chromium。它使用临时 PGlite 数据、loopback 服务和前缀代理，验证真实认证、加密消息、机器 RPC、附件以及 App 保存/取消/切换/恢复。RPC 路由测试的 provider 启动回调使用本地 fixture，不启动外部编码服务。结束后关闭服务并删除临时数据库；关键截图和结果保存在 `.e2e-artifacts/<run-id>/`。
+脚本需要本机 Playwright Chromium。它使用临时 PGlite 数据、loopback 服务和前缀代理，验证真实认证、加密消息、机器 RPC、附件以及 App 保存/切换/恢复。RPC 路由测试的 provider 启动回调使用本地 fixture，不启动外部编码服务。结束后关闭服务并删除临时数据库；关键截图和结果保存在 `.e2e-artifacts/<run-id>/`。
 
 公网 HTTPS、真实手机及外部集成需要按实际部署另行验收。合并上游时，主要维护共享 URL 模块、六处 Socket.IO 接入点及在线切换接口；原有服务端业务路由保持兼容。
 
@@ -107,7 +133,11 @@ pnpm exec tsx packages/happy-app/scripts/relay-live-switch.e2e.mjs
 原有权限请求的批准。仅 provider 启动/回复由本地 fixture 替代，不调用外部模型。
 执行前需正常完成 `pnpm install` 的仓库补丁与 Prisma 生成步骤，并安装 Playwright Chromium。
 
-本地验收（2026-10-17）：CLI 75 项、App 16 项、服务端 21 项针对性测试通过，
+当前自动迁移实现的本地验证（2026-10-18）：App 82 项针对性测试（含现有消息收发、
+历史加载）和 CLI 切换控制器 6 项测试通过；App 类型检查通过。两套 E2E 脚本已更新
+并通过语法检查，本次遵守不启动浏览器的约定，未执行浏览器或真实手机验收。
+
+旧版全员确认流程的本地验收（2026-10-17，不能作为当前自动重试流程的验收结果）：CLI 75 项、App 16 项、服务端 21 项针对性测试通过，
 相关类型检查通过；原有前缀流程 9 项及双 Relay 在线切换流程 6 项真实浏览器检查通过，
 最终两组浏览器报告均无非预期 HTTP、Console 或页面错误。双 Relay 流程另外覆盖
 切回原服不重放提示词，以及设备提交失败时回退并批准切换期间新产生的权限请求。
