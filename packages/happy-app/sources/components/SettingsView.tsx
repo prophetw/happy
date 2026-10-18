@@ -14,7 +14,7 @@ import { ItemList } from '@/components/ItemList';
 import { useConnectTerminal } from '@/hooks/useConnectTerminal';
 import { useEntitlement, useLocalSettingMutable, useSetting } from '@/sync/storage';
 import { sync } from '@/sync/sync';
-import { isUsingCustomServer } from '@/sync/serverConfig';
+import { getServerUrl, isUsingCustomServer } from '@/sync/serverConfig';
 import { trackPaywallButtonClicked, trackWhatsNewClicked } from '@/track';
 import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/useMultiClick';
@@ -227,6 +227,15 @@ export const SettingsView = React.memo(function SettingsView({
                     )}
                 </View>
             </View>
+
+            <ItemGroup>
+                <Item
+                    title={t('server.serverConfiguration')}
+                    subtitle={getServerUrl()}
+                    icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
+                    onPress={() => router.push('/server')}
+                />
+            </ItemGroup>
 
             {/* Connect Terminal - Only show on native platforms */}
             {Platform.OS !== 'web' && (

@@ -199,11 +199,12 @@ async function main() {
         await page.getByText('fixture-reply:message-before-switch', { exact: true }).waitFor();
         await composer.fill('draft-survives-relay-switch');
         await page.screenshot({ path: path.join(artifacts, 'before-switch.png') });
-        await page.goto(webOrigin);
-        await page.getByText('Settings', { exact: true }).click();
-        await page.getByRole('button', { name: 'Server Configuration', exact: true }).click();
+        await page.goto(`${webOrigin}/settings`);
+        await page.getByText('Server Configuration', { exact: true }).waitFor();
+        await page.screenshot({ path: path.join(artifacts, 'settings-server-entry.png') });
+        await page.getByText('Server Configuration', { exact: true }).click({ timeout: 10_000 });
         await page.waitForURL('**/server');
-        checks.push('Server settings are reachable from Settings while using the default relay');
+        checks.push('Standalone Settings exposes server configuration while using the default relay');
         await page.getByRole('textbox').fill(newUrl);
         await page.getByRole('button', { name: 'Save', exact: true }).click();
         await page.getByText('Continue', { exact: true }).click();
