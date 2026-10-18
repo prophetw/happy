@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -29,7 +30,7 @@ export const HappyEngineeringWordmark = React.memo(function HappyEngineeringWord
             width={Math.round(height * ASPECT)}
             height={height}
             viewBox={VIEW_BOX}
-            accessible
+            accessible={Platform.OS === 'web' ? undefined : true}
             accessibilityRole="image"
             accessibilityLabel="Happy Engineering"
         >
