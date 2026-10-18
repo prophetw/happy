@@ -8,6 +8,10 @@ import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
 import { z } from 'zod';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
+import { AsyncLock } from '@/utils/lock';
+import type { Credentials } from '@/persistence';
+import { RelaySwitchController, type RelayTarget } from '@/relay/relaySwitch';
+import { relayRequest, probeRelay, prepareRelayPersistence, waitRelaySocket, wrapRelayKey, publishRelaySnapshot, withRelayLock } from '@/relay/relayConnection';
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
 import { registerCommonHandlers, SpawnSessionOptions, SpawnSessionResult } from '../modules/common/registerCommonHandlers';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
@@ -148,6 +152,11 @@ async function withCodexAppServerClient<T>(handler: (client: CodexAppServerClien
 }
 
 export class ApiMachineClient {
+    private serverUrl = configuration.serverUrl;
+    private relayGeneration = 0;
+    private metadataLock = new AsyncLock();
+    private daemonStateLock = new AsyncLock();
+    private relaySwitch: RelaySwitchController | null = null;
     private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
     private keepAliveInterval: NodeJS.Timeout | null = null;
     private lastKnownCLIAvailability: CLIAvailability | null = null;
@@ -168,7 +177,8 @@ export class ApiMachineClient {
 
     constructor(
         private token: string,
-        private machine: Machine
+        private machine: Machine,
+        relayCredential?: Credentials
     ) {
         // Initialize RPC handler manager
         this.rpcHandlerManager = new RpcHandlerManager({
@@ -181,6 +191,10 @@ export class ApiMachineClient {
         // null = unrestricted: the daemon serves the whole machine, and its
         // process.cwd() is an accident of where it was started, not a workspace.
         registerCommonHandlers(this.rpcHandlerManager, null);
+        if (relayCredential) {
+            this.relaySwitch = new RelaySwitchController(target => this.prepareRelaySwitch(target, relayCredential));
+            this.rpcHandlerManager.registerHandler('relay-switch', input => this.relaySwitch!.handle(input));
+        }
     }
 
     setRPCHandlers({
@@ -454,15 +468,17 @@ export class ApiMachineClient {
      * for example to set a custom name.
      */
     async updateMachineMetadata(handler: (metadata: MachineMetadata | null) => MachineMetadata): Promise<void> {
-        await backoff(async () => {
+        await this.metadataLock.inLock(() => backoff(async () => {
             const updated = handler(this.machine.metadata);
 
+            const generation = this.relayGeneration;
             const answer = await this.socket.emitWithAck('machine-update-metadata', {
                 machineId: this.machine.id,
                 metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
                 expectedVersion: this.machine.metadataVersion
             });
 
+            if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
             if (answer.result === 'success') {
                 this.machine.metadata = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(answer.metadata));
                 this.machine.metadataVersion = answer.version;
@@ -474,7 +490,7 @@ export class ApiMachineClient {
                 }
                 throw new Error('Metadata version mismatch'); // Triggers retry
             }
-        });
+        }));
     }
 
     /**
@@ -482,15 +498,17 @@ export class ApiMachineClient {
      * Simplified without lock - relies on backoff for retry
      */
     async updateDaemonState(handler: (state: DaemonState | null) => DaemonState): Promise<void> {
-        await backoff(async () => {
+        await this.daemonStateLock.inLock(() => backoff(async () => {
             const updated = handler(this.machine.daemonState);
 
+            const generation = this.relayGeneration;
             const answer = await this.socket.emitWithAck('machine-update-state', {
                 machineId: this.machine.id,
                 daemonState: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, updated)),
                 expectedVersion: this.machine.daemonStateVersion
             });
 
+            if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
             if (answer.result === 'success') {
                 this.machine.daemonState = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(answer.daemonState));
                 this.machine.daemonStateVersion = answer.version;
@@ -502,7 +520,7 @@ export class ApiMachineClient {
                 }
                 throw new Error('Daemon state version mismatch'); // Triggers retry
             }
-        });
+        }));
     }
 
     private registeredRpcMethods = new Set<string>();
@@ -520,23 +538,30 @@ export class ApiMachineClient {
             this.reconnectCapabilityHeld = true;
         }
 
-        const endpoint = getServerSocketEndpoint(configuration.serverUrl);
+        this.socket = this.createSocket({ serverUrl: this.serverUrl, token: this.token });
+        this.socket.connect();
+    }
+
+    private createSocket(target: RelayTarget): Socket<ServerToDaemonEvents, DaemonToServerEvents> {
+        const endpoint = getServerSocketEndpoint(target.serverUrl);
         const serverUrl = endpoint.origin.replace(/^http/, 'ws');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
-        this.socket = io(serverUrl, {
+        const socket = io(serverUrl, {
             transports: ['websocket'],
             auth: {
-                token: this.token,
+                token: target.token,
                 clientType: 'machine-scoped' as const,
                 machineId: this.machine.id,
                 happyClient: `cli-daemon/${configuration.currentCliVersion}`
             },
             path: endpoint.path,
             reconnection: false,
+            autoConnect: false,
+            forceNew: true,
         });
 
-        this.socket.on('connect', () => {
+        socket.on('connect', () => {
             this.registeredRpcMethods.clear();
             logger.debug('[API MACHINE] Connected to server');
 
@@ -557,12 +582,13 @@ export class ApiMachineClient {
                 startedAt: Date.now()
             }));
 
-            this.rpcHandlerManager.onSocketConnect(this.socket);
+            this.rpcHandlerManager.onSocketConnect(socket);
             this.syncResumeSessionRpcRegistration();
             this.startKeepAlive();
         });
 
-        this.socket.on('disconnect', (reason) => {
+        socket.on('disconnect', (reason) => {
+            if (socket !== this.socket) return;
             this.registeredRpcMethods.clear();
             logger.debug(`[API MACHINE] Disconnected from server — reason: ${reason}`);
             this.rpcHandlerManager.onSocketDisconnect();
@@ -572,21 +598,28 @@ export class ApiMachineClient {
             }
         });
 
-        this.socket.on('rpc-registered', (data: { method?: unknown } | null) => {
+        socket.on('rpc-registered', (data: { method?: unknown } | null) => {
+            if (socket !== this.socket) return;
             if (typeof data?.method === 'string') this.registeredRpcMethods.add(data.method);
         });
-        this.socket.on('rpc-unregistered', (data: { method?: unknown } | null) => {
+        socket.on('rpc-unregistered', (data: { method?: unknown } | null) => {
+            if (socket !== this.socket) return;
             if (typeof data?.method === 'string') this.registeredRpcMethods.delete(data.method);
         });
 
         // Single consolidated RPC handler
-        this.socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
+        socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
+            if (socket !== this.socket && data.method !== `${this.machine.id}:relay-switch`) {
+                callback(encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, { error: 'This machine moved to another relay' })));
+                return;
+            }
             logger.debugLargeJson(`[API MACHINE] Received RPC request:`, data);
             callback(await this.rpcHandlerManager.handleRequest(data));
         });
 
         // Handle update events from server
-        this.socket.on('update', (data: Update) => {
+        socket.on('update', (data: Update) => {
+            if (socket !== this.socket) return;
             // Machine clients should only care about machine updates
             if (data.body.t === 'update-machine' && (data.body as UpdateMachineBody).machineId === this.machine.id) {
                 // Handle machine metadata or daemon state updates from other clients (e.g., mobile app)
@@ -608,14 +641,89 @@ export class ApiMachineClient {
             }
         });
 
-        this.socket.on('connect_error', (error) => {
+        socket.on('connect_error', (error) => {
+            if (socket !== this.socket) return;
             logger.debug(`[API MACHINE] Connection error: ${error.message}`);
             this.startSmartReconnect();
         });
 
-        this.socket.io.on('error', (error: any) => {
+        socket.io.on('error', (error: any) => {
             logger.debug('[API MACHINE] Socket error:', error);
         });
+        return socket;
+    }
+
+    private async prepareRelaySwitch(target: RelayTarget, credential: Credentials) {
+        const persistence = prepareRelayPersistence(credential, target);
+        const old = { socket: this.socket, token: this.token, serverUrl: this.serverUrl, machine: { ...this.machine } };
+        const register = () => relayRequest<{ machine: { id: string; metadataVersion: number; daemonStateVersion: number } }>(
+            target, 'POST', '/v1/machines', {
+                id: this.machine.id,
+                metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, this.machine.metadata)),
+                daemonState: this.machine.daemonState ? encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, this.machine.daemonState)) : undefined,
+                dataEncryptionKey: wrapRelayKey(this.machine.encryptionKey, credential) ?? undefined,
+            },
+        );
+        const response = await register();
+        if (response.machine.id !== this.machine.id) throw new Error('Target relay returned a different machine');
+        await probeRelay(target, { machineId: this.machine.id });
+        let candidate: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
+        return {
+            commit: async () => {
+                old.machine = { ...this.machine };
+                this.relayGeneration++;
+                this.stopKeepAlive();
+                if (this.reconnectInterval) clearInterval(this.reconnectInterval);
+                if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                this.reconnectInterval = this.reconnectTimeout = null;
+                this.serverUrl = target.serverUrl;
+                this.token = target.token;
+                this.machine.metadataVersion = response.machine.metadataVersion;
+                this.machine.daemonStateVersion = response.machine.daemonStateVersion;
+                candidate = this.createSocket(target);
+                this.socket = candidate;
+                await waitRelaySocket(candidate, `${this.machine.id}:relay-switch`);
+                await withRelayLock(this.metadataLock, async () => {
+                    this.machine.metadataVersion = await publishRelaySnapshot(candidate!, 'machine-update-metadata', {
+                        machineId: this.machine.id, expectedVersion: this.machine.metadataVersion,
+                        metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, this.machine.metadata)),
+                    });
+                });
+                persistence.activate();
+            },
+            finish: () => persistence.finish(),
+            rollback: async () => {
+                if (candidate && this.socket !== old.socket) {
+                    this.relayGeneration++;
+                    this.stopKeepAlive();
+                    this.socket = old.socket;
+                    this.serverUrl = old.serverUrl;
+                    this.token = old.token;
+                    this.machine.metadataVersion = old.machine.metadataVersion;
+                    this.machine.daemonStateVersion = old.machine.daemonStateVersion;
+                    this.rpcHandlerManager.onSocketConnect(old.socket);
+                }
+                persistence.restore();
+                if (candidate) this.startKeepAlive();
+                try {
+                    if (candidate) await withRelayLock(this.metadataLock, () => withRelayLock(this.daemonStateLock, async () => {
+                        this.machine.metadataVersion = await publishRelaySnapshot(old.socket, 'machine-update-metadata', {
+                            machineId: this.machine.id, expectedVersion: this.machine.metadataVersion,
+                            metadata: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, this.machine.metadata)),
+                        });
+                        this.machine.daemonStateVersion = await publishRelaySnapshot(old.socket, 'machine-update-state', {
+                            machineId: this.machine.id, expectedVersion: this.machine.daemonStateVersion,
+                            daemonState: encodeBase64(encrypt(this.machine.encryptionKey, this.machine.encryptionVariant, this.machine.daemonState)),
+                        });
+                    }));
+                } finally { await persistence.rollback(); }
+            },
+            dispose: () => {
+                const unused = this.socket === old.socket ? candidate : old.socket;
+                unused?.removeAllListeners();
+                unused?.disconnect();
+            },
+        };
     }
 
     private sendKeepAlive() {
@@ -764,6 +872,7 @@ export class ApiMachineClient {
 
     shutdown() {
         logger.debug('[API MACHINE] Shutting down');
+        this.relaySwitch?.dispose();
         this.shutdownRequested = true;
         if (this.reconnectCapabilityHeld) {
             releaseReconnectCapabilityMonitor();

@@ -19,12 +19,14 @@ function fixture(t) {
 const {spawnSync}=require('node:child_process');
 const fs=require('node:fs');
 fs.appendFileSync(process.env.TEST_EVENTS,'ssh\\n');
+fs.appendFileSync(process.env.TEST_EVENTS,'ssh-args '+JSON.stringify(process.argv.slice(2))+'\\n');
 const child=spawnSync('sh',['-s'],{input:fs.readFileSync(0),env:{...process.env,TEST_SIDE:'remote'},encoding:'utf8'});
 process.stdout.write(child.stdout||'');process.stderr.write(child.stderr||'');process.exit(child.status??1);
 `);
     command('scp', `
 const fs=require('node:fs');const args=process.argv.slice(2);const src=args.at(-2);const target=args.at(-1).split(':').slice(1).join(':');
 fs.appendFileSync(process.env.TEST_EVENTS,'scp '+src+'\\n');fs.copyFileSync(src,target);
+fs.appendFileSync(process.env.TEST_EVENTS,'scp-args '+JSON.stringify(args)+'\\n');
 `);
     command('docker', `
 const fs=require('node:fs');const args=process.argv.slice(2);
@@ -34,7 +36,11 @@ if(args[0]==='image'){
   console.log(args.at(-1).includes('revision')?process.env.TEST_REVISION:'sha256:1111111111111111111111111111111111111111111111111111111111111111');
 }else if(args[0]==='save'){process.stdout.write('fixture-image');}
 else if(args[0]==='load'){fs.writeFileSync(process.env.TEST_IMPORTED,'yes');}
+else if(args[0]==='run'){
+  if(process.env.TEST_BAD_IMAGE==='1'){console.error('Image lacks required relay capability');process.exit(1);}
+}
 else if(args[0]==='compose'){
+  if(args.includes('--help')){console.log(process.env.TEST_OLD_COMPOSE==='1'?'usage':'--wait --wait-timeout');process.exit(0);}
   if(args.includes('exec')){
     if(args.includes('node')){
       if(process.env.TEST_BAD_ACCESS==='1'){console.log('unknown');process.exit(0);}
@@ -101,6 +107,7 @@ test('initializes a new deployment once, without displaying the generated master
     const master = contents.match(/^HANDY_MASTER_SECRET=([a-f0-9]{64})$/m);
     assert.ok(master);
     assert.match(contents, /^RELAY_PUBLIC_URL=http:\/\/fixture:8193$/m);
+    assert.match(contents, /^RELAY_BIND_ADDRESS=127\.0\.0\.1$/m);
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(master[1]));
 });
 
@@ -173,3 +180,105 @@ test('does not report successful deployment when the account access response is 
     assert.match(result.stderr, /access configuration response is invalid/);
     assert.doesNotMatch(result.stdout, /Deployment verified/);
 });
+
+test('dry-run prints a reusable plan without invoking SSH, Docker or Git', t => {
+    const f = fixture(t);
+    const before = readFileSync(path.join(f.remote, '.env.relay'), 'utf8');
+    const result = f.run(['--dry-run', '--image', 'happy-relay:ready', '--ssh-port', '2222', '--bind-address', '192.168.99.56', '--project', 'team-relay']);
+    assert.equal(result.status, 0, result.stderr);
+    const plan = JSON.parse(result.stdout);
+    assert.equal(plan.executed, false);
+    assert.equal(plan.sshPort, '2222');
+    assert.equal(plan.bindAddress, '192.168.99.56');
+    assert.equal(plan.project, 'team-relay');
+    assert.equal(existsSync(f.env.TEST_EVENTS), false);
+    assert.equal(readFileSync(path.join(f.remote, '.env.relay'), 'utf8'), before);
+});
+
+test('check verifies prerequisites without changing remote configuration or starting containers', t => {
+    const f = fixture(t);
+    const before = readFileSync(path.join(f.remote, '.env.relay'), 'utf8');
+    const result = f.run(['--check']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Prerequisite checks passed/);
+    assert.equal(readFileSync(path.join(f.remote, '.env.relay'), 'utf8'), before);
+    assert.doesNotMatch(f.events(), /docker (build|run|save|load)|compose.*up -d|^scp /m);
+});
+
+test('check rejects Compose without the required wait options', t => {
+    const f = fixture(t);
+    const result = f.run(['--check'], { TEST_OLD_COMPOSE: '1' });
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout, /Prerequisite checks passed/);
+    assert.doesNotMatch(f.events(), /docker (build|run|save|load)|compose.*up -d|^scp /m);
+});
+
+test('passes SSH port and identity consistently to ssh and scp', t => {
+    const f = fixture(t);
+    const identity = path.join(f.dir, 'fixture-key');
+    writeFileSync(identity, 'fixture key, not a real credential', { mode: 0o600 });
+    const result = f.run(['--image', 'happy-relay:ready', '--ssh-port', '2222', '--identity', identity]);
+    assert.equal(result.status, 0, result.stderr);
+    const events = f.events().split('\n');
+    const ssh = JSON.parse(events.find(line => line.startsWith('ssh-args ')).slice('ssh-args '.length));
+    const scp = JSON.parse(events.find(line => line.startsWith('scp-args ')).slice('scp-args '.length));
+    assert.deepEqual(ssh.slice(ssh.indexOf('-p'), ssh.indexOf('-p') + 2), ['-p', '2222']);
+    assert.deepEqual(scp.slice(scp.indexOf('-P'), scp.indexOf('-P') + 2), ['-P', '2222']);
+    assert.equal(ssh[ssh.indexOf('-i') + 1], identity);
+    assert.equal(scp[scp.indexOf('-i') + 1], identity);
+});
+
+test('persists an explicit bind address and project, retaining both on the next deployment', t => {
+    const f = fixture(t);
+    const envPath = path.join(f.remote, '.env.relay');
+    let result = f.run(['--image', 'happy-relay:ready', '--bind-address', '192.168.99.56', '--project', 'team-relay']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(envPath, 'utf8'), /^RELAY_BIND_ADDRESS=192\.168\.99\.56$/m);
+    assert.match(readFileSync(envPath, 'utf8'), /^COMPOSE_PROJECT_NAME=team-relay$/m);
+    result = f.run(['--image', 'happy-relay:ready']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(envPath, 'utf8'), /^RELAY_BIND_ADDRESS=192\.168\.99\.56$/m);
+    assert.match(readFileSync(envPath, 'utf8'), /^COMPOSE_PROJECT_NAME=team-relay$/m);
+});
+
+test('rejects images missing relay access control or live switching before contacting SSH', t => {
+    const f = fixture(t);
+    const result = f.run(['--image', 'happy-relay:old'], { TEST_BAD_IMAGE: '1' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Image lacks required relay capability/);
+    assert.doesNotMatch(f.events(), /^ssh$|^scp /m);
+});
+
+test('rejects a clean freshly fetched main when it lacks the relay feature', t => {
+    const f = fixture(t);
+    const source = path.join(f.dir, 'source');
+    const origin = path.join(f.dir, 'origin.git');
+    mkdirSync(source);
+    const git = (...args) => {
+        const result = spawnSync('git', ['-C', source, ...args], { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout.trim();
+    };
+    git('init', '-b', 'main');
+    git('config', 'user.name', 'Relay deployment test');
+    git('config', 'user.email', 'relay-test@example.invalid');
+    writeFileSync(path.join(source, 'README.md'), 'A main without the relay feature');
+    git('add', '--', 'README.md');
+    git('commit', '-m', 'fixture');
+    git('init', '--bare', origin);
+    git('remote', 'add', 'origin', origin);
+    git('push', 'origin', 'main');
+    const result = f.run(['--source', source]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /missing relay account access or live switching/);
+    assert.equal(existsSync(f.env.TEST_EVENTS), false);
+});
+
+for (const [flag, value] of [['--ssh-port', '70000'], ['--bind-address', '0.0.0.0;echo'], ['--project', '../other']]) {
+    test(`rejects invalid ${flag} before running commands`, t => {
+        const f = fixture(t);
+        const result = f.run(['--image', 'happy-relay:ready', flag, value]);
+        assert.notEqual(result.status, 0);
+        assert.equal(existsSync(f.env.TEST_EVENTS), false);
+    });
+}

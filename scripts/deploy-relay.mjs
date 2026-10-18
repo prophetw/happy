@@ -1,32 +1,43 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync } from 'node:fs';
+import { createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { createGzip } from 'node:zlib';
+import { isIP } from 'node:net';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const options = {
-    host: 'root@192.168.99.55', dir: '/data/code/happy-relay',
+    host: 'root@192.168.99.56', dir: '/data/code/happy-relay',
     source: path.join(homedir(), '.cache', 'happy-relay', 'release-source'),
 };
-const flags = { '--host': 'host', '--dir': 'dir', '--source': 'source', '--image': 'image', '--public-url': 'publicUrl', '--port': 'port', '--allowed-accounts': 'allowedAccounts' };
+const flags = { '--host': 'host', '--dir': 'dir', '--source': 'source', '--image': 'image', '--public-url': 'publicUrl', '--port': 'port', '--allowed-accounts': 'allowedAccounts', '--ssh-port': 'sshPort', '--identity': 'identity', '--bind-address': 'bindAddress', '--project': 'project' };
 for (let i = 2; i < process.argv.length; i++) {
     const flag = process.argv[i];
     if (flag === '--help' || flag === '-h') {
         console.log(`Usage: node scripts/deploy-relay.mjs [options]
-  --host <user@host>    SSH target (default: root@192.168.99.55)
+  --host <user@host>    SSH target or SSH-config Host (default: root@192.168.99.56)
   --dir <path>          Deployment directory (default: /data/code/happy-relay)
   --source <path>       Clean main checkout to build; default is a cached upstream clone
   --image <tag>         Deploy a prebuilt local image instead of fetching/building main
   --public-url <url>    Set client-facing API URL; otherwise retain existing value
   --port <n>            Set published HTTP port; otherwise retain existing value
-  --allowed-accounts <ids>  Comma-separated Happy account IDs; new deployments deny all by default`);
+  --allowed-accounts <ids>  Comma-separated Happy account IDs; new deployments deny all by default
+  --ssh-port <n>        SSH port, applied to both ssh and scp
+  --identity <path>     SSH private-key path (contents are never read by this script)
+  --bind-address <IPv4> Published bind address; retain existing, or 127.0.0.1 for a new instance
+  --project <name>      Compose project name; retained in the remote .env.relay
+  --dry-run            Print a plan without running Git, Docker or SSH
+  --check              Check local tools and remote prerequisites without deploying`);
         process.exit(0);
+    }
+    if (flag === '--dry-run' || flag === '--check') {
+        options[flag === '--dry-run' ? 'dryRun' : 'check'] = true;
+        continue;
     }
     if (!flags[flag] || !process.argv[i + 1]) throw new Error(`Unknown or incomplete option: ${flag}`);
     options[flags[flag]] = process.argv[++i];
@@ -34,6 +45,11 @@ for (let i = 2; i < process.argv.length; i++) {
 if (!/^(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.host)) throw new Error('Use a hostname or IPv4 SSH target, optionally user@host.');
 if (!/^\/[A-Za-z0-9_./-]+$/.test(options.dir)) throw new Error('Use an absolute deployment path containing letters, digits, _, -, / and .');
 if (options.port && (!/^\d+$/.test(options.port) || Number(options.port) < 1 || Number(options.port) > 65535)) throw new Error('Invalid HTTP port.');
+if (options.sshPort && (!/^\d+$/.test(options.sshPort) || Number(options.sshPort) < 1 || Number(options.sshPort) > 65535)) throw new Error('Invalid SSH port.');
+if (options.bindAddress && isIP(options.bindAddress) !== 4) throw new Error('Use an IPv4 bind address, for example 127.0.0.1 or 192.168.99.56.');
+if (options.project && !/^[a-z0-9][a-z0-9_-]*$/.test(options.project)) throw new Error('Invalid Compose project name.');
+if (options.dryRun && options.check) throw new Error('Choose either --dry-run or --check.');
+if (options.identity) options.identity = path.resolve(options.identity.replace(/^~(?=\/)/, homedir()));
 if (options.publicUrl) {
     const url = new URL(options.publicUrl);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid public API URL.');
@@ -55,12 +71,83 @@ function run(command, args, { cwd = root, input, capture = true, allowFailure = 
         if (input !== undefined) child.stdin.end(input);
     });
 }
-const sshArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', options.host];
+const connectionArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', ...(options.identity ? ['-i', options.identity] : [])];
+const sshArgs = [...connectionArgs, ...(options.sshPort ? ['-p', options.sshPort] : []), options.host];
+const scpArgs = ['-q', ...connectionArgs, ...(options.sshPort ? ['-P', options.sshPort] : [])];
 const remote = (script, settings) => run('ssh', [...sshArgs, 'sh -s'], { ...settings, input: `set -eu\n${script}\n` });
 const imageId = async image => {
     const result = await run('docker', ['image', 'inspect', image, '--format', '{{.Id}}'], { allowFailure: true });
     return result.code === 0 ? result.output : null;
 };
+
+function showPlan() {
+    console.log(JSON.stringify({
+        mode: 'dry-run', host: options.host, sshPort: options.sshPort || 'SSH configuration / default',
+        identityFile: options.identity || 'SSH configuration / agent', directory: options.dir,
+        image: options.image || 'build from a clean main equal to freshly fetched origin/main',
+        source: options.image ? undefined : options.source,
+        bindAddress: options.bindAddress || 'retain existing; new instance: 127.0.0.1',
+        publicUrl: options.publicUrl || 'retain existing; new instance: SSH host and published port',
+        port: options.port || 'retain existing; new instance: 8193',
+        project: options.project || 'retain existing; new instance: happy-relay',
+        accountAccess: options.allowedAccounts ? 'specified allowlist' : 'retain existing; new instance: deny-all',
+        steps: ['validate release source / image capabilities', 'check SSH and Docker Compose', 'reuse or transfer image by ID', 'preserve master secret and data volume', 'apply Compose and check health / access mode'],
+        executed: false,
+    }, null, 2));
+}
+
+async function checkPrerequisites() {
+    if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('Node.js 20 or newer is required.');
+    for (const [command, args] of [['git', ['--version']], ['ssh', ['-V']], ['scp', []]]) {
+        // scp has no portable --version and returns nonzero for its usage text.
+        await run(command, args, { allowFailure: command === 'scp' });
+    }
+    const local = await run('docker', ['info', '--format', '{{.OSType}}/{{.Architecture}}']);
+    console.log(`Local Docker engine: ${local.output || 'available'}`);
+    if (options.image && !await imageId(options.image)) throw new Error(`Local image missing: ${options.image}`);
+    const checked = await remote(`
+command -v docker >/dev/null
+command -v openssl >/dev/null
+command -v awk >/dev/null
+command -v df >/dev/null
+docker info >/dev/null
+docker compose version
+compose_help="$(docker compose up --help)"
+printf '%s\\n' "$compose_help" | grep -q -- '--wait-timeout'
+printf 'REMOTE_ARCH:'; uname -m
+if [ -d ${quote(options.dir)} ]; then
+    test -w ${quote(options.dir)}
+    printf 'DEPLOY_DIR:exists-and-writable\\n'
+    df -Pk ${quote(options.dir)}
+else
+    printf 'DEPLOY_DIR:not-created\\n'
+    df -Pk /
+fi
+`);
+    console.log(checked.output);
+    console.log('Prerequisite checks passed. No image was built/imported, configuration changed or container started. Source eligibility and application connectivity remain separate checks.');
+}
+
+const requiredSource = [
+    ['packages/happy-server/sources/app/auth/accountAccess.ts', 'HAPPY_ALLOWED_ACCOUNT_IDS'],
+    ['packages/happy-server/sources/app/api/routes/relayRoutes.ts', 'liveSwitch: 1'],
+    ['packages/happy-server/sources/app/api/api.ts', 'relayRoutes(typed)'],
+];
+
+function checkSourceCapabilities(source) {
+    for (const [file, marker] of requiredSource) {
+        const filename = path.join(source, file);
+        if (!existsSync(filename) || !readFileSync(filename, 'utf8').includes(marker)) {
+            throw new Error(`Release source is missing relay account access or live switching (${file}). Merge the relay feature into main and use --source with that clean standalone clone.`);
+        }
+    }
+}
+
+async function checkImageCapabilities(image) {
+    const checks = requiredSource.map(([file, marker]) => [`/repo/${file}`, marker]);
+    const probe = `const fs=require('node:fs');for(const [file,marker] of ${JSON.stringify(checks)}){if(!fs.existsSync(file)||!fs.readFileSync(file,'utf8').includes(marker)){console.error('Image lacks required relay capability: '+file);process.exit(1)}}`;
+    await run('docker', ['run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node', image, '-e', probe]);
+}
 
 async function selectImage() {
     if (options.image) return options.image;
@@ -79,6 +166,7 @@ async function selectImage() {
     await git(['merge', '--ff-only', 'origin/main']);
     const revision = (await git(['rev-parse', 'HEAD'])).output;
     if (revision !== (await git(['rev-parse', 'origin/main'])).output) throw new Error('main must exactly match freshly fetched origin/main.');
+    checkSourceCapabilities(options.source);
     const image = `happy-relay:main-${revision.slice(0, 8)}`;
     if (!await imageId(image)) {
         console.log(`Building ${image} from clean main ${revision.slice(0, 8)}...`);
@@ -94,10 +182,13 @@ async function selectImage() {
 const started = Date.now();
 let temporary;
 try {
+    if (options.dryRun) { showPlan(); process.exit(0); }
+    if (options.check) { await checkPrerequisites(); process.exit(0); }
     const image = await selectImage();
     const expectedId = await imageId(image);
     if (!expectedId) throw new Error(`Local image missing: ${image}`);
-    await remote(`mkdir -p ${quote(options.dir)}\ncommand -v docker >/dev/null\ndocker compose version >/dev/null`);
+    await checkImageCapabilities(image);
+    await remote(`command -v docker >/dev/null\ndocker info >/dev/null\ndocker compose version >/dev/null\nmkdir -p ${quote(options.dir)}`);
     const found = await remote(`docker image inspect ${quote(image)} --format '{{.Id}}' 2>/dev/null || true`);
     const reused = found.output === expectedId;
     if (reused) {
@@ -113,10 +204,10 @@ try {
         });
         await Promise.all([completed, pipeline(save.stdout, createGzip({ level: 1 }), createWriteStream(archive))]);
         const upload = path.posix.join(options.dir, `.relay-image-${expectedId.slice(7, 19)}.tar.gz`);
-        await run('scp', ['-q', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', archive, `${options.host}:${upload}`]);
+        await run('scp', [...scpArgs, archive, `${options.host}:${upload}`]);
         await remote(`docker load --input ${quote(upload)}\n[ "$(docker image inspect ${quote(image)} --format '{{.Id}}')" = ${quote(expectedId)} ]\nrm ${quote(upload)}`);
     }
-    await run('scp', ['-q', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', path.join(root, 'docker-compose.relay-only.yml'), `${options.host}:${path.posix.join(options.dir, 'docker-compose.relay-only.yml')}`]);
+    await run('scp', [...scpArgs, path.join(root, 'docker-compose.relay-only.yml'), `${options.host}:${path.posix.join(options.dir, 'docker-compose.relay-only.yml')}`]);
     const port = options.port || '8193';
     const publicUrl = options.publicUrl || `http://${options.host.split('@').pop()}:${port}`;
     const setOption = (key, value) => value === undefined ? '' : `set_value ${quote(key)} ${quote(value)}`;
@@ -125,7 +216,7 @@ cd ${quote(options.dir)}
 umask 077
 if [ ! -e .env.relay ]; then
     master_secret="$(openssl rand -hex 32)"
-    printf '%s\\n' ${quote(`RELAY_PUBLIC_URL=${publicUrl}`)} 'RELAY_BIND_ADDRESS=0.0.0.0' ${quote(`RELAY_PORT=${port}`)} "HANDY_MASTER_SECRET=$master_secret" 'HAPPY_ALLOWED_ACCOUNT_IDS=' > .env.relay
+    printf '%s\\n' ${quote(`RELAY_PUBLIC_URL=${publicUrl}`)} ${quote(`RELAY_BIND_ADDRESS=${options.bindAddress || '127.0.0.1'}`)} ${quote(`RELAY_PORT=${port}`)} "HANDY_MASTER_SECRET=$master_secret" 'HAPPY_ALLOWED_ACCOUNT_IDS=' > .env.relay
     unset master_secret
 fi
 set_value() {
@@ -136,6 +227,8 @@ set_value() {
 set_value RELAY_IMAGE ${quote(image)}
 ${setOption('RELAY_PUBLIC_URL', options.publicUrl)}
 ${setOption('RELAY_PORT', options.port)}
+${setOption('RELAY_BIND_ADDRESS', options.bindAddress)}
+${setOption('COMPOSE_PROJECT_NAME', options.project)}
 ${setOption('HAPPY_ALLOWED_ACCOUNT_IDS', options.allowedAccounts)}
 chmod 600 .env.relay
 docker compose -f docker-compose.relay-only.yml --env-file .env.relay config --quiet

@@ -244,20 +244,23 @@ try {
 
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page.getByText('Continue', { exact: true }).click();
-    await page.waitForFunction(() => !localStorage.getItem('auth_credentials'));
+    await waitFor(async () => {
+        try { return await page.getByRole('textbox').inputValue() === baseUrl; } catch { return false; }
+    }, 'App saves the custom URL without logging out');
     await page.getByRole('textbox').waitFor();
     assert.equal(await page.getByRole('textbox').inputValue(), baseUrl);
     await page.screenshot({ path: path.join(artifacts, 'custom-server-saved.png') });
     await page.goto(webOrigin);
-    await page.getByRole('button', { name: /create (?:an )?account/i }).click();
     await waitFor(() => webSockets.some(socket => socket.pathname === '/relay/v1/updates/' && socket.connected), 'App prefixed connection');
     await page.screenshot({ path: path.join(artifacts, 'custom-server-connected.png') });
-    results.push('App saves a normalized custom URL, reloads, signs in and connects through /relay');
+    results.push('App saves a normalized custom URL, preserves pairing and connects through /relay');
 
     await page.goto(`${webOrigin}/server`);
     await page.getByRole('button', { name: 'Reset to Default', exact: true }).click();
-    await page.getByText('Reset', { exact: true }).click();
-    await page.waitForFunction(() => !localStorage.getItem('auth_credentials'));
+    await page.getByText('Continue', { exact: true }).click();
+    await waitFor(async () => {
+        try { return await page.getByRole('textbox').inputValue() === backendOrigin; } catch { return false; }
+    }, 'App restores the configured root server without logging out');
     await page.getByRole('textbox').waitFor();
     assert.equal(await page.getByRole('textbox').inputValue(), backendOrigin);
     results.push('Reset removes the override and restores the configured root server');

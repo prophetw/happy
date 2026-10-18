@@ -276,15 +276,15 @@ export class ApiClient {
   }
 
   sessionSyncClient(session: Session): ApiSessionClient {
-    return new ApiSessionClient(this.credential.token, session);
+    return new ApiSessionClient(this.credential.token, session, this.credential);
   }
 
   machineSyncClient(machine: Machine): ApiMachineClient {
-    return new ApiMachineClient(this.credential.token, machine);
+    return new ApiMachineClient(this.credential.token, machine, this.credential);
   }
 
   push(): PushNotificationClient {
-    return this.pushClient;
+    return new PushNotificationClient(this.credential.token, configuration.serverUrl);
   }
 
   /**

@@ -12,7 +12,8 @@ import packageJson from '../package.json'
 import { normalizeServerUrl } from '@slopus/happy-wire/serverUrl'
 
 class Configuration {
-  public readonly serverUrl: string
+  public serverUrl: string
+  public relayOverrideActive: boolean
   public readonly webappUrl: string
   public readonly isDaemonProcess: boolean
 
@@ -55,8 +56,10 @@ class Configuration {
     // Settings are read sync here (avoid circular import with persistence.ts).
     // webappUrl must follow the same chain as serverUrl, otherwise `happy server`
     // self-host points the API at localhost but auth still opens the prod webapp.
+    const selectedRelay = readSettingsStringSync(this.privateKeyFile, 'serverUrl');
+    this.relayOverrideActive = !!selectedRelay;
     this.serverUrl = normalizeServerUrl(
-      process.env.HAPPY_SERVER_URL ||
+      selectedRelay || process.env.HAPPY_SERVER_URL ||
       readSettingsStringSync(this.settingsFile, 'serverUrl') ||
       'https://api.cluster-fluster.com'
     )
@@ -89,6 +92,12 @@ class Configuration {
     if (!existsSync(this.logsDir)) {
       mkdirSync(this.logsDir, { recursive: true })
     }
+  }
+
+  setRelayServerUrl(serverUrl: string, override = true) {
+    this.serverUrl = normalizeServerUrl(serverUrl);
+    this.relayOverrideActive = override;
+    process.env.HAPPY_SERVER_URL = this.serverUrl;
   }
 }
 

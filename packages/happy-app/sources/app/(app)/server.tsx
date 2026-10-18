@@ -139,52 +139,31 @@ export default function ServerConfigScreen() {
             return;
         }
 
+        await applyServer(inputUrl);
+    };
+
+    const applyServer = async (url: string | null) => {
+        if (url !== null && normalizeServerUrl(url) === getServerUrl()) return;
         const confirmed = await Modal.confirm(
             t('server.changeServer'),
-            `${t('server.continueWithServer')}\n\n${t('settingsAccount.logoutConfirm')}`,
-            { confirmText: t('common.continue'), destructive: true }
+            t('server.continueWithServer'),
+            { confirmText: t('common.continue') }
         );
-
-        if (confirmed) {
-            const normalizedUrl = normalizeServerUrl(inputUrl);
-            if (normalizedUrl !== getServerUrl()) {
-                try {
-                    await auth.logout({ beforeReload: () => {
-                        setServerUrl(normalizedUrl);
-                        if (!getServerInfo().isCustom) setUseCustomServerForVoice(false);
-                    } });
-                } catch {
-                    setError(t('errors.operationFailed'));
-                }
-                return;
-            }
-            setServerUrl(normalizedUrl);
-            const nextIsCustomServer = getServerInfo().isCustom;
-            setIsCustomServer(nextIsCustomServer);
-            if (!nextIsCustomServer) {
-                setUseCustomServerForVoice(false);
-                setUseCustomServerForVoiceState(false);
-            }
+        if (!confirmed) return;
+        setIsValidating(true);
+        setError(null);
+        try {
+            await auth.switchServer(url);
+            setIsCustomServer(getServerInfo().isCustom);
+        } catch (error) {
+            setError(error instanceof Error ? error.message : t('errors.operationFailed'));
+        } finally {
+            setIsValidating(false);
         }
     };
 
     const handleReset = async () => {
-        const confirmed = await Modal.confirm(
-            t('server.resetToDefault'),
-            `${t('server.resetServerDefault')}\n\n${t('settingsAccount.logoutConfirm')}`,
-            { confirmText: t('common.reset'), destructive: true }
-        );
-
-        if (confirmed) {
-            try {
-                await auth.logout({ beforeReload: () => {
-                    setServerUrl(null);
-                    setUseCustomServerForVoice(false);
-                } });
-            } catch {
-                setError(t('errors.operationFailed'));
-            }
-        }
+        await applyServer(null);
     };
 
     const handleUseCustomServerForVoice = (enabled: boolean) => {

@@ -9,6 +9,10 @@ const LOG_SERVER_KEY = 'log-server-url';
 const USE_CUSTOM_SERVER_FOR_VOICE_KEY = 'use-custom-server-for-voice';
 const DEFAULT_SERVER_URL = 'https://api.cluster-fluster.com';
 
+export function getDefaultServerUrl(): string {
+    return normalizeServerUrl((globalThis as any).__HAPPY_CONFIG__?.serverUrl || process.env.EXPO_PUBLIC_HAPPY_SERVER_URL || DEFAULT_SERVER_URL);
+}
+
 export function getServerUrl(): string {
     // A selected private run must not silently reuse a previously persisted
     // server (including another loopback run). Production ignores this path.

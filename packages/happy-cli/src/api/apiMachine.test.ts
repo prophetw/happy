@@ -149,15 +149,15 @@ describe('ApiMachineClient socket reconnection', () => {
         expect(mockIo).toHaveBeenCalledWith('ws://127.0.0.1:3005', expect.objectContaining({
             reconnection: false
         }));
-        expect(mockSocket.connect).not.toHaveBeenCalled();
+        expect(mockSocket.connect).toHaveBeenCalledTimes(1);
 
         emitSocketEvent('connect_error', new Error('ECONNREFUSED'));
 
         await vi.advanceTimersByTimeAsync(1000);
-        expect(mockSocket.connect).toHaveBeenCalledTimes(1);
+        expect(mockSocket.connect).toHaveBeenCalledTimes(2);
 
         await vi.advanceTimersByTimeAsync(3000);
-        expect(mockSocket.connect).toHaveBeenCalledTimes(2);
+        expect(mockSocket.connect).toHaveBeenCalledTimes(3);
 
         client.shutdown();
     });
@@ -167,6 +167,7 @@ describe('ApiMachineClient socket reconnection', () => {
         const client = new ApiMachineClient('fake-token', makeMachine());
         client.connect();
 
+        mockSocket.connect.mockClear();
         mockShouldReconnect.mockReset();
         mockShouldReconnect.mockReturnValueOnce(true).mockReturnValue(false);
         emitSocketEvent('connect_error', new Error('ECONNREFUSED'));

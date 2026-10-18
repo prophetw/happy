@@ -268,7 +268,8 @@ export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, 
   }
   await writeFile(configuration.privateKeyFile, JSON.stringify({
     secret: encodeBase64(credentials.secret),
-    token: credentials.token
+    token: credentials.token,
+    serverUrl: configuration.relayOverrideActive ? configuration.serverUrl : undefined
   }, null, 2));
 }
 
@@ -278,11 +279,15 @@ export async function writeCredentialsDataKey(credentials: { publicKey: Uint8Arr
   }
   await writeFile(configuration.privateKeyFile, JSON.stringify({
     encryption: { publicKey: encodeBase64(credentials.publicKey), machineKey: encodeBase64(credentials.machineKey) },
-    token: credentials.token
+    token: credentials.token,
+    serverUrl: configuration.relayOverrideActive ? configuration.serverUrl : undefined
   }, null, 2));
 }
 
 export async function clearCredentials(): Promise<void> {
+  if (configuration.relayOverrideActive) {
+    await updateSettings(settings => ({ ...settings, serverUrl: configuration.serverUrl }));
+  }
   if (existsSync(configuration.privateKeyFile)) {
     await unlink(configuration.privateKeyFile);
   }

@@ -18,6 +18,7 @@ interface AuthContextType {
     credentials: AuthCredentials | null;
     login: (token: string, secret: string) => Promise<void>;
     logout: (options?: LogoutOptions) => Promise<void>;
+    switchServer: (serverUrl: string | null) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,7 +29,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
 
     // Update global auth state when local state changes
     useEffect(() => {
-        setCurrentAuth(credentials ? { isAuthenticated, credentials, login, logout } : null);
+        setCurrentAuth(credentials ? { isAuthenticated, credentials, login, logout, switchServer } : null);
     }, [isAuthenticated, credentials]);
 
     const login = async (token: string, secret: string) => {
@@ -82,6 +83,24 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         }
     };
 
+    const switchServer = async (serverUrl: string | null) => {
+        const { switchServer: performSwitch } = await import('@/sync/switchServer');
+        await performSwitch(serverUrl, credentials, async next => {
+            if (Platform.OS === 'web') {
+                setCredentials(next);
+                window.location.reload();
+            }
+            else {
+                try { await Updates.reloadAsync(); }
+                catch (error) {
+                    if (__DEV__) DevSettings.reload();
+                    else throw error;
+                }
+                setCredentials(next);
+            }
+        });
+    };
+
     return (
         <AuthContext.Provider
             value={{
@@ -89,6 +108,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
                 credentials,
                 login,
                 logout,
+                switchServer,
             }}
         >
             {children}

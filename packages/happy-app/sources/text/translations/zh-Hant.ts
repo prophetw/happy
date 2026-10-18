@@ -350,13 +350,13 @@ export const zhHant: TranslationStructure = {
     server: {
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
-        selfHostFooter: en.server.selfHostFooter,
+        selfHostFooter: '在線電腦會自動切換，無需重新掃碼或重新啟動。裝置配對和草稿會保留，原有歷史留在舊伺服器。',
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: '伺服器設定',
         enterServerUrl: '請輸入伺服器 URL',
         notValidHappyServer: '不是有效的 Happy 伺服器',
         changeServer: '更改伺服器',
-        continueWithServer: '繼續使用此伺服器？',
+        continueWithServer: '將此裝置和在線電腦切換到新伺服器？無需重新掃碼或重新啟動，原有歷史留在舊伺服器。',
         resetToDefault: '重設為預設',
         resetServerDefault: '重設伺服器為預設值？',
         validating: '驗證中...',

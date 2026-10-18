@@ -64,9 +64,17 @@ export async function fetchPushTokens(credentials: AuthCredentials): Promise<Pus
 
 export async function unregisterPushToken(credentials: AuthCredentials, token: string): Promise<void> {
     const API_ENDPOINT = getServerUrl();
-    await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/push-tokens/${encodeURIComponent(token)}`, {
+    await backoff(() => unregisterPushTokenOnce(credentials, token, API_ENDPOINT));
+}
+
+/** A relay switch must finish even when the old push endpoint is unavailable. */
+export async function unregisterPushTokenOnce(credentials: AuthCredentials, token: string, serverUrl: string): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    try {
+        const response = await fetch(`${serverUrl}/v1/push-tokens/${encodeURIComponent(token)}`, {
             method: 'DELETE',
+            signal: controller.signal,
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',
@@ -82,5 +90,5 @@ export async function unregisterPushToken(credentials: AuthCredentials, token: s
         if (!data.success) {
             throw new Error('Failed to unregister push token');
         }
-    });
+    } finally { clearTimeout(timeout); }
 }
