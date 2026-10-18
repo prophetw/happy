@@ -370,6 +370,9 @@ export const en = {
     server: {
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Server Configuration',
+        relaySwitchUnavailable: 'Relay switching is unavailable for this device or session. Check it is online, update its CLI/daemon, and reopen or resume older sessions.',
+        relayRollbackUnconfirmed: 'Rollback could not be confirmed for these devices or sessions',
+        keepOriginalRelay: 'Keep the original relay available.',
         title: 'Server',
         serverUrlLabel: 'Server URL',
         selfHostFooter: 'Online computers switch automatically. Device pairing and drafts are kept; previous history stays on the old server.',

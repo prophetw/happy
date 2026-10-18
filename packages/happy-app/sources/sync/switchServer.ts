@@ -10,6 +10,7 @@ import { switchRelay, type RelaySwitchParticipant } from './relaySwitch';
 import { getServerSocketEndpoint, normalizeServerUrl } from '@slopus/happy-wire/serverUrl';
 import { loadRegisteredPushToken, clearRelayPersistence } from './persistence';
 import { unregisterPushTokenOnce } from './apiPush';
+import { t } from '@/text';
 
 async function authenticateTarget(secret: string, serverUrl: string): Promise<string> {
     const token = await authGetToken(decodeBase64(secret, 'base64url'), serverUrl);
@@ -60,13 +61,18 @@ export async function switchServer(
             call: request => apiSocket.machineRPC(machine.id, 'relay-switch', request),
         } satisfies RelaySwitchParticipant)),
         ...Object.values(sessions).filter(session => session.active).map(session => ({
-            name: session.metadata?.name || session.id,
+            name: [session.metadata?.host, session.metadata?.name || session.id].filter(Boolean).join(' / '),
             call: request => apiSocket.sessionRPC(session.id, 'relay-switch', request),
         } satisfies RelaySwitchParticipant)),
     ];
     await switchRelay({
         id: randomUUID(), serverUrl, participants,
         authenticate: url => authenticateTarget(credentials.secret, url),
+        messages: {
+            unavailable: t('server.relaySwitchUnavailable'),
+            rollbackUnconfirmed: t('server.relayRollbackUnconfirmed'),
+            keepOriginal: t('server.keepOriginalRelay'),
+        },
         save: async (url, token) => {
             const next = { ...credentials, token };
             try {

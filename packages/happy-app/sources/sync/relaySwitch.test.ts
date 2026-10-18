@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { switchRelay, type RelaySwitchParticipant } from './relaySwitch';
 
 describe('switching relay without pairing again', () => {
@@ -52,5 +52,64 @@ describe('switching relay without pairing again', () => {
             save: async () => { throw new Error('must not save'); },
         })).rejects.toThrow('HTTP 403');
         expect(contacted).toBe(false);
+    });
+
+    it.each(['returned error', 'unregistered RPC'])('identifies an old client without asking it to roll back: %s', async mode => {
+        const events: string[] = [];
+        const legacy: RelaySwitchParticipant = {
+            name: 'Old computer session',
+            call: async request => {
+                events.push(`old:${request.phase}`);
+                if (mode === 'unregistered RPC') throw new Error('RPC method not available');
+                return { error: 'Method not found' };
+            },
+        };
+        const updated: RelaySwitchParticipant = {
+            name: 'Updated computer',
+            call: async request => { events.push(`new:${request.phase}`); return { success: true }; },
+        };
+        await expect(switchRelay({
+            id: 'mixed-clients', serverUrl: 'https://new.test', participants: [updated, legacy],
+            authenticate: async () => 'new-token', save: async () => { events.push('save'); },
+        })).rejects.toThrow('Old computer session');
+        expect(events).toContain('new:rollback');
+        expect(events).not.toContain('old:rollback');
+        expect(events.some(event => /commit|finish|save/.test(event))).toBe(false);
+    });
+
+    it('still rolls back a prepare whose acknowledgement was lost', async () => {
+        const phases: string[] = [];
+        await expect(switchRelay({
+            id: 'lost-ack', serverUrl: 'https://new.test',
+            participants: [{ name: 'Uncertain computer', call: async request => {
+                phases.push(request.phase);
+                if (request.phase === 'prepare') throw new Error('The computer did not respond');
+                return { success: true };
+            } }],
+            authenticate: async () => 'new-token', save: async () => { throw new Error('must not save'); },
+        })).rejects.toThrow('Uncertain computer: The computer did not respond');
+        expect(phases).toEqual(['prepare', 'rollback']);
+    });
+
+    it('keeps malformed prepare acknowledgements uncertain and attempts cleanup', async () => {
+        const call = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValue({ success: true });
+        await expect(switchRelay({
+            id: 'malformed-ack', serverUrl: 'https://new.test', participants: [{ name: 'Malformed client', call }],
+            authenticate: async () => 'new-token', save: async () => { throw new Error('must not save'); },
+        })).rejects.toThrow('Malformed client: Relay switch is not supported');
+        expect(call.mock.calls.map(([request]) => request.phase)).toEqual(['prepare', 'rollback']);
+    });
+
+    it('preserves the initial failure and device name when rollback really cannot be confirmed', async () => {
+        const attempted = switchRelay({
+            id: 'failed-rollback', serverUrl: 'https://new.test',
+            participants: [{ name: 'Disconnected computer', call: async request => {
+                if (request.phase === 'prepare') return { success: true };
+                throw new Error(request.phase === 'commit' ? 'target unreachable' : 'old connection unavailable');
+            } }],
+            authenticate: async () => 'new-token', save: async () => { throw new Error('must not save'); },
+        });
+        await expect(attempted).rejects.toThrow('Disconnected computer: target unreachable');
+        await expect(attempted).rejects.toThrow('Keep the original relay available');
     });
 });

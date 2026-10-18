@@ -366,6 +366,9 @@ export const pl: TranslationStructure = {
     },
 
     server: {
+        relaySwitchUnavailable: 'Przełączanie Relay jest niedostępne dla tego urządzenia lub sesji. Sprawdź połączenie, zaktualizuj CLI/daemon i otwórz ponownie lub wznów starsze sesje.',
+        relayRollbackUnconfirmed: 'Nie udało się potwierdzić przywrócenia tych urządzeń lub sesji',
+        keepOriginalRelay: 'Pozostaw poprzedni Relay dostępny.',
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
         selfHostFooter: en.server.selfHostFooter,

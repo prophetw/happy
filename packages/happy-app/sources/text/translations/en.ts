@@ -363,6 +363,9 @@ export const en: TranslationStructure = {
     },
 
     server: {
+        relaySwitchUnavailable: 'Relay switching is unavailable for this device or session. Check it is online, update its CLI/daemon, and reopen or resume older sessions.',
+        relayRollbackUnconfirmed: 'Rollback could not be confirmed for these devices or sessions',
+        keepOriginalRelay: 'Keep the original relay available.',
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Server Configuration',
         title: 'Server',

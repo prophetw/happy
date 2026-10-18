@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     connect: vi.fn(), disconnect: vi.fn(),
 }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'switch-1' }));
+vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/auth/tokenStorage', () => ({ TokenStorage: {
     setCredentials: async (credentials: { token: string; secret: string }) => { mocks.credentials.push(credentials); return true; },
 } }));
