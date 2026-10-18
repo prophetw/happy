@@ -180,7 +180,7 @@ describe('fetchAgyUsage', () => {
     AgyQuotaStore.resetInstance();
   });
 
-  it('prioritizes live statusLine hook quota when available in AgyQuotaStore', async () => {
+  it('uses statusLine quota when live sources are unavailable', async () => {
     const store = AgyQuotaStore.getInstance();
     store.update({
       quota: {
@@ -195,7 +195,11 @@ describe('fetchAgyUsage', () => {
       },
     });
 
-    const status = await fetchAgyUsage();
+    const status = await fetchAgyUsage({
+      tokenPath: '/non-existent/path',
+      statusLineStatePath: false,
+      execSyncFn: () => { throw new Error('No LS'); },
+    });
     expect(status.source).toBe('statusline-hook');
     expect(status.groups?.gemini?.fiveHour?.percentage).toBe(95);
     expect(status.groups?.claude?.fiveHour?.percentage).toBe(50);
@@ -212,6 +216,67 @@ describe('fetchAgyUsage', () => {
 
     expect(status.source).toBe('none');
     expect(status.models).toEqual([]);
+  });
+
+  it('does not return cached quota older than 24 hours when offline', async () => {
+    AgyQuotaStore.getInstance().update({
+      quota: { gemini: { '5h': { percentage: 5 } } },
+    }, Date.now() - 25 * 60 * 60 * 1000);
+
+    const status = await fetchAgyUsage({
+      tokenPath: '/non-existent/path',
+      statusLineStatePath: false,
+      execSyncFn: () => { throw new Error('No LS'); },
+    });
+
+    expect(status.source).toBe('none');
+    expect(status.models).toEqual([]);
+  });
+
+  it('prefers CloudCode over fresh local quota and supplements weekly quota', async () => {
+    const store = AgyQuotaStore.getInstance();
+    store.update({
+      email: 'quota@example.com',
+      quota: {
+        gemini: {
+          '5h': { percentage: 5 },
+          weekly: { percentage: 85 },
+        },
+      },
+    });
+
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const tmpTokenFile = path.join(os.tmpdir(), `test-token-${Date.now()}.json`);
+    fs.writeFileSync(tmpTokenFile, JSON.stringify({ token: { access_token: 'fake-access-token' } }), 'utf8');
+
+    try {
+      // 模拟 CloudCode API 返回实时的 75%
+      const mockExecFileSync = vi.fn().mockReturnValue(JSON.stringify({
+        models: {
+          'gemini-3.7-flash-high': {
+            quotaInfo: { remainingFraction: 0.75, resetTime: new Date(Date.now() + 3600000).toISOString() },
+          },
+        },
+      }));
+      const localProbe = vi.fn(() => { throw new Error('No LS'); });
+
+      const status = await fetchAgyUsage({
+        tokenPath: tmpTokenFile,
+        execFileSyncFn: mockExecFileSync as any,
+        execSyncFn: localProbe,
+        statusLineStatePath: false, // 依赖 store 内存中的状态
+      });
+
+      expect(status.source).toBe('cloudcode-api');
+      expect(status.groups?.gemini?.fiveHour?.percentage).toBe(75);
+      expect(status.groups?.gemini?.weekly?.percentage).toBe(85);
+      expect(status.email).toBe('quota@example.com');
+      expect(localProbe).not.toHaveBeenCalled();
+    } finally {
+      try { fs.unlinkSync(tmpTokenFile); } catch {}
+    }
   });
 });
 

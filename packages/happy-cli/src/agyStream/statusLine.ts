@@ -111,10 +111,27 @@ export interface AgyQuotaGroup {
   weekly?: AgyQuotaWindow;
 }
 
+export interface AgyContextWindowInfo {
+  conversationId?: string;
+  sessionId?: string;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  contextWindowSize?: number;
+  usedPercentage?: number;
+  remainingPercentage?: number;
+  currentUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+  };
+}
+
 export interface AgyStatusLineQuota {
   gemini?: AgyQuotaGroup;
   claude?: AgyQuotaGroup;
   models?: ModelQuotaInfo[];
+  contextWindow?: AgyContextWindowInfo;
   accountName?: string;
   email?: string;
   planTier?: string;
@@ -192,21 +209,10 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
     rawWindow.reset_time ||
     rawWindow.resetTime;
 
-  let resetInSeconds: number | undefined =
-    typeof rawWindow.reset_in_seconds === 'number'
-      ? rawWindow.reset_in_seconds
-      : typeof rawWindow.resetInSeconds === 'number'
-      ? rawWindow.resetInSeconds
-      : undefined;
-
   // Handle resets_at unix timestamp (seconds or ms)
   const resetsAtRaw = rawWindow.resets_at || rawWindow.resetsAt;
   if (typeof resetsAtRaw === 'number' && resetsAtRaw > 0) {
     const epochMs = resetsAtRaw < 1e11 ? resetsAtRaw * 1000 : resetsAtRaw;
-    const diffMs = epochMs - now;
-    if (resetInSeconds === undefined) {
-      resetInSeconds = Math.max(0, Math.round(diffMs / 1000));
-    }
     if (!resetTime) {
       try {
         resetTime = new Date(epochMs).toISOString();
@@ -216,22 +222,58 @@ export function parseQuotaWindow(rawWindow: any, now = Date.now()): AgyQuotaWind
     }
   }
 
-  let resetsInMinutes: number | undefined =
-    typeof rawWindow.resets_in_minutes === 'number'
-      ? rawWindow.resets_in_minutes
-      : typeof rawWindow.resetsInMinutes === 'number'
-      ? rawWindow.resetsInMinutes
-      : undefined;
+  let resetInSeconds: number | undefined = undefined;
+  let resetsInMinutes: number | undefined = undefined;
 
-  if (resetsInMinutes === undefined && resetInSeconds !== undefined) {
-    resetsInMinutes = Math.max(0, Math.round(resetInSeconds / 60));
-  } else if (resetsInMinutes === undefined && resetTime) {
-    resetsInMinutes = getMinutesUntil(resetTime, now);
+  // 1. 优先使用绝对时间戳（resetTime 或 resets_at），结合当前 now 动态计算真实剩余时间
+  if (resetTime) {
+    try {
+      const target = new Date(resetTime).getTime();
+      if (!isNaN(target)) {
+        const diffMs = target - now;
+        if (diffMs <= 0) {
+          resetInSeconds = 0;
+          resetsInMinutes = 0;
+        } else {
+          resetInSeconds = Math.round(diffMs / 1000);
+          resetsInMinutes = Math.max(0, Math.round(diffMs / 60000));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. 若无绝对时间戳或解析失败，降级使用相对秒数/分钟数
+  if (resetsInMinutes === undefined) {
+    if (typeof rawWindow.resets_in_minutes === 'number') {
+      resetsInMinutes = Math.max(0, rawWindow.resets_in_minutes);
+      resetInSeconds = resetsInMinutes * 60;
+    } else if (typeof rawWindow.resetsInMinutes === 'number') {
+      resetsInMinutes = Math.max(0, rawWindow.resets_inMinutes);
+      resetInSeconds = resetsInMinutes * 60;
+    } else {
+      const rawSec =
+        typeof rawWindow.reset_in_seconds === 'number'
+          ? rawWindow.reset_in_seconds
+          : typeof rawWindow.resetInSeconds === 'number'
+          ? rawWindow.resetInSeconds
+          : undefined;
+      if (rawSec !== undefined) {
+        resetInSeconds = Math.max(0, rawSec);
+        resetsInMinutes = Math.max(0, Math.round(resetInSeconds / 60));
+      }
+    }
   }
 
   let resetsInFormatted: string | undefined = rawWindow.resets_in_formatted || rawWindow.resetsInFormatted;
-  if (!resetsInFormatted && resetsInMinutes !== undefined) {
-    resetsInFormatted = formatCountdown(resetsInMinutes);
+  if (resetsInMinutes !== undefined) {
+    if (resetsInMinutes <= 0) {
+      resetsInFormatted = 'Now';
+    } else if (!resetsInFormatted || resetTime) {
+      // 当存在 resetTime 时，必须以动态计算的倒计时为准，防止静态快照的旧格式化字符串（如 1h 06m）污染
+      resetsInFormatted = formatCountdown(resetsInMinutes);
+    }
   }
 
   if (percentage === undefined && remainingFraction === undefined && usedPercentage === undefined) {
@@ -384,16 +426,83 @@ export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): 
   const email = rawQuotaOrPayload.email || rawQuota.email;
   const planTier = rawQuotaOrPayload.plan_tier || rawQuotaOrPayload.planTier || rawQuota.plan_tier || rawQuota.planTier;
 
+  // 3. Context window usage (e.g. from agy statusline payload)
+  let contextWindow: AgyContextWindowInfo | undefined;
+  const rawCw = rawQuotaOrPayload.context_window || rawQuota.context_window;
+  if (rawCw && typeof rawCw === 'object') {
+    const pickCount = (keys: string[]) => {
+      for (const k of keys) {
+        const v = rawCw[k];
+        if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+          return Math.trunc(v);
+        }
+      }
+      return undefined;
+    };
+    const totalInput = pickCount(['total_input_tokens', 'totalInputTokens', 'input_tokens', 'inputTokens']);
+    const totalOutput = pickCount(['total_output_tokens', 'totalOutputTokens', 'output_tokens', 'outputTokens']);
+    const windowSize = pickCount(['context_window_size', 'contextWindowSize', 'max_tokens', 'maxTokens', 'total_tokens']);
+    const usedPct = typeof rawCw.used_percentage === 'number'
+      ? rawCw.used_percentage
+      : (typeof rawCw.usedPercentage === 'number' ? rawCw.usedPercentage : undefined);
+    const remPct = typeof rawCw.remaining_percentage === 'number'
+      ? rawCw.remaining_percentage
+      : (typeof rawCw.remainingPercentage === 'number' ? rawCw.remainingPercentage : undefined);
+
+    let currentUsage: AgyContextWindowInfo['currentUsage'] = undefined;
+    if (rawCw.current_usage && typeof rawCw.current_usage === 'object') {
+      const cu = rawCw.current_usage as Record<string, unknown>;
+      const pickCu = (keys: string[]) => {
+        for (const k of keys) {
+          const v = cu[k];
+          if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.trunc(v);
+        }
+        return undefined;
+      };
+      currentUsage = {
+        inputTokens: pickCu(['input_tokens', 'inputTokens']),
+        outputTokens: pickCu(['output_tokens', 'outputTokens']),
+        cacheCreationInputTokens: pickCu(['cache_creation_input_tokens', 'cacheCreationInputTokens']),
+        cacheReadInputTokens: pickCu(['cache_read_input_tokens', 'cacheReadInputTokens']),
+      };
+    }
+
+    const conversationId =
+      (typeof rawCw.conversation_id === 'string' ? rawCw.conversation_id : undefined) ||
+      (typeof rawCw.conversationId === 'string' ? rawCw.conversationId : undefined) ||
+      (typeof rawQuotaOrPayload.conversation_id === 'string' ? rawQuotaOrPayload.conversation_id : undefined) ||
+      (typeof rawQuotaOrPayload.conversationId === 'string' ? rawQuotaOrPayload.conversationId : undefined);
+    const sessionId =
+      (typeof rawCw.session_id === 'string' ? rawCw.session_id : undefined) ||
+      (typeof rawCw.sessionId === 'string' ? rawCw.sessionId : undefined) ||
+      (typeof rawQuotaOrPayload.session_id === 'string' ? rawQuotaOrPayload.session_id : undefined) ||
+      (typeof rawQuotaOrPayload.sessionId === 'string' ? rawQuotaOrPayload.sessionId : undefined);
+
+    if (totalInput !== undefined || totalOutput !== undefined || windowSize !== undefined || usedPct !== undefined) {
+      contextWindow = {
+        conversationId,
+        sessionId,
+        totalInputTokens: totalInput,
+        totalOutputTokens: totalOutput,
+        contextWindowSize: windowSize,
+        usedPercentage: usedPct,
+        remainingPercentage: remPct,
+        currentUsage,
+      };
+    }
+  }
+
   if (!gemini && !claude && models.length === 0) {
     const topFiveHour = parseQuotaWindow(rawQuota.five_hour ?? rawQuota['5h'] ?? rawQuota.fiveHour, now);
     const topWeekly = parseQuotaWindow(rawQuota.weekly ?? rawQuota['7d'] ?? rawQuota.weeklyWindow, now);
-    if (topFiveHour || topWeekly) {
+    if (topFiveHour || topWeekly || contextWindow) {
       return {
-        gemini: {
+        gemini: topFiveHour || topWeekly ? {
           name: 'Gemini',
           fiveHour: topFiveHour,
           weekly: topWeekly,
-        },
+        } : undefined,
+        contextWindow,
         email,
         planTier,
         raw: rawQuotaOrPayload,
@@ -407,6 +516,7 @@ export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): 
     gemini,
     claude,
     models: models.length > 0 ? models : undefined,
+    contextWindow,
     email,
     planTier,
     raw: rawQuotaOrPayload,
@@ -468,16 +578,36 @@ export class AgyQuotaStore {
       AgyQuotaStore.instance = null;
     }
   }
+  /**
+   * Check whether current quota is fresh (updated within maxAgeMs, default 5 minutes).
+   */
+  isFresh(maxAgeMs = 5 * 60 * 1000, now = Date.now()): boolean {
+    if (!this.currentQuota) return false;
+    return now - this.currentQuota.updatedAt < maxAgeMs;
+  }
 
-  getQuota(loadFromDisk = true): AgyStatusLineQuota | null {
-    if (!this.currentQuota && loadFromDisk) {
-      this.loadFromFile();
+  getQuota(loadFromDisk = true, maxAgeMs?: number, now = Date.now()): AgyStatusLineQuota | null {
+    if (this.currentQuota) {
+      if (maxAgeMs !== undefined && !this.isFresh(maxAgeMs, now)) {
+        if (loadFromDisk) {
+          this.loadFromFile(undefined, now, maxAgeMs);
+          if (this.currentQuota && this.isFresh(maxAgeMs, now)) {
+            return this.currentQuota;
+          }
+        }
+        return null;
+      }
+      return this.currentQuota;
+    }
+
+    if (loadFromDisk) {
+      this.loadFromFile(undefined, now, maxAgeMs ?? 24 * 3600 * 1000);
     }
     return this.currentQuota;
   }
 
-  hasQuota(loadFromDisk = true): boolean {
-    return this.getQuota(loadFromDisk) !== null;
+  hasQuota(loadFromDisk = true, maxAgeMs?: number): boolean {
+    return this.getQuota(loadFromDisk, maxAgeMs) !== null;
   }
 
   clear(): void {
@@ -503,8 +633,9 @@ export class AgyQuotaStore {
 
   /**
    * Attempts to load quota state from local statusline files.
+   * By default maxAgeMs is 5 minutes to avoid stale cache hijacking fresh RPCs.
    */
-  loadFromFile(customPath?: string, now = Date.now()): boolean {
+  loadFromFile(customPath?: string, now = Date.now(), maxAgeMs = 5 * 60 * 1000): boolean {
     const candidatePaths = customPath !== undefined
       ? (customPath ? [customPath] : [])
       : [
@@ -517,13 +648,24 @@ export class AgyQuotaStore {
       if (fs.existsSync(filePath)) {
         try {
           const stats = fs.statSync(filePath);
-          // Only load if updated within last 24 hours
-          if (now - stats.mtimeMs < 24 * 3600 * 1000) {
+          // Only load if updated within maxAgeMs
+          if (now - stats.mtimeMs < maxAgeMs) {
             const raw = fs.readFileSync(filePath, 'utf8').trim();
             if (raw.startsWith('{')) {
               const parsed = parseStatusLinePayload(raw, now);
               if (parsed?.quota) {
+                parsed.quota.updatedAt = stats.mtimeMs;
+                const isChanged = JSON.stringify(this.currentQuota) !== JSON.stringify(parsed.quota);
                 this.currentQuota = parsed.quota;
+                if (isChanged) {
+                  for (const listener of this.listeners) {
+                    try {
+                      listener(parsed.quota);
+                    } catch {
+                      // ignore listener errors
+                    }
+                  }
+                }
                 return true;
               }
             }
@@ -553,8 +695,8 @@ export class AgyQuotaStore {
   /**
    * Converts the current statusLine quota to standard AgyUsageStatus.
    */
-  toUsageStatus(loadFromDisk = true): AgyUsageStatus | null {
-    const quota = this.getQuota(loadFromDisk);
+  toUsageStatus(loadFromDisk = true, maxAgeMs?: number, now = Date.now()): AgyUsageStatus | null {
+    const quota = this.getQuota(loadFromDisk, maxAgeMs, now);
     if (!quota) {
       return null;
     }

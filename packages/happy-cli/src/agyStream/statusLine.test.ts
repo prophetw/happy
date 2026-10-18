@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseQuotaWindow,
   parseQuotaGroup,
@@ -46,6 +49,34 @@ describe('parseQuotaWindow', () => {
     expect(windowPct?.percentage).toBe(45);
     expect(windowPct?.remainingFraction).toBe(0.45);
     expect(windowPct?.usedPercentage).toBe(55);
+  });
+
+  it('dynamically computes countdown from reset_time instead of relying on stale reset_in_seconds', () => {
+    // 假设当前时间 12:00:00，reset_time 是 12:45:00（剩余 45 分钟）
+    // 但静态快照里记录的旧 reset_in_seconds 是 3985（66分钟）
+    const now = new Date('2026-10-02T12:00:00Z').getTime();
+    const window = parseQuotaWindow({
+      remaining_fraction: 0.5,
+      reset_time: '2026-10-02T12:45:00Z',
+      reset_in_seconds: 3985,
+    }, now);
+
+    expect(window).toBeDefined();
+    expect(window?.resetsInMinutes).toBe(45);
+    expect(window?.resetsInFormatted).toBe('45m');
+  });
+
+  it('sets countdown to Now when reset_time is in the past', () => {
+    const now = new Date('2026-10-02T12:00:00Z').getTime();
+    const window = parseQuotaWindow({
+      remaining_fraction: 0.1,
+      reset_time: '2026-10-02T11:00:00Z',
+      reset_in_seconds: 3985,
+    }, now);
+
+    expect(window).toBeDefined();
+    expect(window?.resetsInMinutes).toBe(0);
+    expect(window?.resetsInFormatted).toBe('Now');
   });
 });
 
@@ -158,6 +189,31 @@ describe('parseStatusLinePayload', () => {
     expect(parsed?.quota?.gemini?.fiveHour?.percentage).toBe(95);
     expect(parsed?.quota?.claude?.fiveHour?.percentage).toBe(70);
   });
+
+  it('parses context_window tokens and size from statusline payload', () => {
+    const jsonStr = JSON.stringify({
+      context_window: {
+        total_input_tokens: 94926,
+        total_output_tokens: 29652,
+        context_window_size: 1048576,
+        used_percentage: 9.05,
+        remaining_percentage: 90.95,
+      },
+      quota: {
+        'gemini-5h': {
+          remaining_fraction: 0.8,
+        },
+      },
+    });
+
+    const parsed = parseStatusLinePayload(jsonStr);
+    expect(parsed?.quota?.contextWindow).toMatchObject({
+      totalInputTokens: 94926,
+      totalOutputTokens: 29652,
+      contextWindowSize: 1048576,
+      usedPercentage: 9.05,
+    });
+  });
 });
 
 describe('AgyQuotaStore', () => {
@@ -227,5 +283,57 @@ describe('AgyQuotaStore', () => {
 
     expect(quota?.email).toBe('testuser@example.com');
     expect(quota?.planTier).toBe('Google AI Pro');
+  });
+
+  it('parses conversation_id and session_id into contextWindow', () => {
+    const rawState = {
+      session_id: 'sess-abc-123',
+      conversation_id: 'conv-xyz-789',
+      context_window: {
+        total_input_tokens: 1200,
+        total_output_tokens: 350,
+        context_window_size: 1048576,
+      },
+    };
+
+    const quota = parseStatusLineQuota(rawState);
+    expect(quota?.contextWindow).toBeDefined();
+    expect(quota?.contextWindow?.conversationId).toBe('conv-xyz-789');
+    expect(quota?.contextWindow?.sessionId).toBe('sess-abc-123');
+    expect(quota?.contextWindow?.totalInputTokens).toBe(1200);
+  });
+
+  it('accurately verifies isFresh against maxAgeMs', () => {
+    const store = AgyQuotaStore.getInstance();
+    const now = 1_000_000;
+    store.update({
+      quota: {
+        gemini: { '5h': 0.8 },
+      },
+    }, now);
+
+    expect(store.isFresh(5 * 60 * 1000, now)).toBe(true);
+    expect(store.isFresh(5 * 60 * 1000, now + 4 * 60 * 1000)).toBe(true);
+    expect(store.isFresh(5 * 60 * 1000, now + 6 * 60 * 1000)).toBe(false);
+  });
+
+  it('uses disk file age when enforcing fresh and offline cache limits', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'happy-agy-quota-'));
+    const file = join(directory, 'quota.json');
+    const now = Date.now();
+    const updatedAt = now - 10 * 60 * 1000;
+    writeFileSync(file, JSON.stringify({ quota: { gemini: { '5h': 0.8 } } }));
+    utimesSync(file, updatedAt / 1000, updatedAt / 1000);
+
+    try {
+      const store = AgyQuotaStore.getInstance();
+      expect(store.loadFromFile(file, now)).toBe(false);
+      expect(store.loadFromFile(file, now, 24 * 60 * 60 * 1000)).toBe(true);
+      expect(store.isFresh(5 * 60 * 1000, now)).toBe(false);
+      expect(store.toUsageStatus(false, 24 * 60 * 60 * 1000, now)?.source).toBe('statusline-hook');
+      expect(store.toUsageStatus(false, 24 * 60 * 60 * 1000, now + 25 * 60 * 60 * 1000)).toBeNull();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
