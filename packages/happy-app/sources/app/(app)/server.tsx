@@ -21,6 +21,9 @@ import {
     shouldUseCustomServerForVoice,
 } from '@/sync/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { normalizeServerUrl } from '@slopus/happy-wire/serverUrl';
+import { checkServerConnection } from '@/sync/checkServerConnection';
+import { useAuth } from '@/auth/AuthContext';
 
 const stylesheet = StyleSheet.create((theme) => ({
     keyboardAvoidingView: {
@@ -88,6 +91,7 @@ export default function ServerConfigScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const auth = useAuth();
     const serverInfo = getServerInfo();
     const [inputUrl, setInputUrl] = useState(serverInfo.isCustom ? getServerUrl() : '');
     const [isCustomServer, setIsCustomServer] = useState(serverInfo.isCustom);
@@ -100,21 +104,11 @@ export default function ServerConfigScreen() {
             setIsValidating(true);
             setError(null);
             
-            const response = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'text/plain'
-                }
-            });
-            
-            if (!response.ok) {
-                setError(t('server.serverReturnedError'));
-                return false;
-            }
-            
-            const text = await response.text();
-            if (!text.includes('Welcome to Happy Server!')) {
-                setError(t('server.notValidHappyServer'));
+            const result = await checkServerConnection(url);
+            if (!result.valid) {
+                setError(result.error === 'connection' ? t('server.failedToConnectToServer')
+                    : result.error === 'response' ? t('server.serverReturnedError')
+                    : t('server.notValidHappyServer'));
                 return false;
             }
             
@@ -145,37 +139,31 @@ export default function ServerConfigScreen() {
             return;
         }
 
+        await applyServer(inputUrl);
+    };
+
+    const applyServer = async (url: string | null) => {
+        if (url !== null && normalizeServerUrl(url) === getServerUrl()) return;
         const confirmed = await Modal.confirm(
             t('server.changeServer'),
             t('server.continueWithServer'),
-            { confirmText: t('common.continue'), destructive: true }
+            { confirmText: t('common.continue') }
         );
-
-        if (confirmed) {
-            setServerUrl(inputUrl);
-            const nextIsCustomServer = getServerInfo().isCustom;
-            setIsCustomServer(nextIsCustomServer);
-            if (!nextIsCustomServer) {
-                setUseCustomServerForVoice(false);
-                setUseCustomServerForVoiceState(false);
-            }
+        if (!confirmed) return;
+        setIsValidating(true);
+        setError(null);
+        try {
+            await auth.switchServer(url);
+            setIsCustomServer(getServerInfo().isCustom);
+        } catch (error) {
+            setError(error instanceof Error ? error.message : t('errors.operationFailed'));
+        } finally {
+            setIsValidating(false);
         }
     };
 
     const handleReset = async () => {
-        const confirmed = await Modal.confirm(
-            t('server.resetToDefault'),
-            t('server.resetServerDefault'),
-            { confirmText: t('common.reset'), destructive: true }
-        );
-
-        if (confirmed) {
-            setServerUrl(null);
-            setUseCustomServerForVoice(false);
-            setInputUrl('');
-            setIsCustomServer(getServerInfo().isCustom);
-            setUseCustomServerForVoiceState(false);
-        }
+        await applyServer(null);
     };
 
     const handleUseCustomServerForVoice = (enabled: boolean) => {

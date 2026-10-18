@@ -356,3 +356,10 @@ export function resetVoiceLocalCounters() {
 export function clearPersistence() {
     mmkv.clearAll();
 }
+
+/** Relay-owned caches are separate from local preferences and unsent drafts. */
+export function clearRelayPersistence() {
+    for (const key of ['profile', 'purchases', REGISTERED_PUSH_TOKEN_KEY]) mmkv.delete(key);
+    const settings = loadSettings();
+    mmkv.set('settings', JSON.stringify({ settings: settings.settings, version: null }));
+}

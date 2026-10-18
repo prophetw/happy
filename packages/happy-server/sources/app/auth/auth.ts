@@ -1,5 +1,6 @@
 import * as privacyKit from "privacy-kit";
 import { debug, log } from "@/utils/log";
+import { AccountAccessDeniedError, getAccountAccessPolicy } from './accountAccess';
 
 /** Cache entries expire after 24 hours */
 const TOKEN_CACHE_TTL = 24 * 60 * 60 * 1000;
@@ -27,6 +28,7 @@ class AuthModule {
     private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
     async init(): Promise<void> {
+        getAccountAccessPolicy(); // Reject malformed access configuration before accepting traffic.
         if (this.tokens) {
             return; // Already initialized
         }
@@ -65,6 +67,9 @@ class AuthModule {
     }
     
     async createToken(userId: string, extras?: any): Promise<string> {
+        if (!getAccountAccessPolicy().allows(userId)) {
+            throw new AccountAccessDeniedError();
+        }
         if (!this.tokens) {
             throw new Error('Auth module not initialized');
         }
@@ -90,6 +95,7 @@ class AuthModule {
         // Check cache first (with TTL)
         const cached = this.tokenCache.get(token);
         if (cached) {
+            if (!getAccountAccessPolicy().allows(cached.userId)) return null;
             if (Date.now() - cached.cachedAt > TOKEN_CACHE_TTL) {
                 this.tokenCache.delete(token);
             } else {
@@ -112,6 +118,7 @@ class AuthModule {
             }
             
             const userId = verified.user as string;
+            if (!getAccountAccessPolicy().allows(userId)) return null;
             const extras = verified.extras;
             
             // Evict oldest entries if cache is at capacity
@@ -194,7 +201,9 @@ class AuthModule {
                 return null;
             }
             
-            return { userId: verified.user as string };
+            const userId = verified.user as string;
+            if (!getAccountAccessPolicy().allows(userId)) return null;
+            return { userId };
         } catch (error) {
             debug({ module: 'auth' }, `auth:github-token-verification-failed error=${error}`);
             return null;

@@ -38,6 +38,7 @@ yarn-error.*
 .env*.local
 .env
 .env.production
+.env.relay
 
 # typescript
 *.tsbuildinfo
