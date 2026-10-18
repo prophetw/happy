@@ -168,10 +168,66 @@ describe('mapClaudeLogMessageToSessionEnvelopes', () => {
         expect(ended.envelopes).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    ev: { t: 'tool-call-end', call: 'tool-1' },
+                    ev: { t: 'tool-call-end', call: 'tool-1', result: 'ok', isError: false },
                 }),
             ]),
         );
+    });
+
+    it.each([
+        ['hello\nworld\n', false, 'hello\nworld\n'],
+        ['permission denied\n', true, 'permission denied\n'],
+        [[{ type: 'text', text: 'first' }, { type: 'text', text: 'second\n' }], false, 'first\nsecond\n'],
+        [[{ type: 'text', text: 'command failed' }], true, 'command failed'],
+        ['', false, ''],
+        [[], false, ''],
+        [0, false, '0'],
+        [false, false, 'false'],
+        [{ stdout: 'hello', stderr: 'warning' }, false, '{"stdout":"hello","stderr":"warning"}'],
+        [null, false, undefined],
+        [undefined, true, undefined],
+    ] as const)('preserves tool output and errors in validated envelopes: %j', (content, isError, output) => {
+        const started = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'assistant', uuid: 'output-start',
+            message: {
+                content: [{ type: 'tool_use', id: 'bash-output', name: 'Bash', input: { command: 'echo hello' } }],
+            },
+        }), { currentTurnId: null });
+        const ended = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'user', uuid: 'output-end',
+            message: {
+                content: [{ type: 'tool_result', tool_use_id: 'bash-output', content, is_error: isError }],
+            },
+        }), { currentTurnId: started.currentTurnId });
+
+        expect(ended.envelopes).toHaveLength(1);
+        expect(ended.envelopes[0].ev).toEqual({
+            t: 'tool-call-end', call: 'bash-output',
+            ...(output !== undefined ? { result: output } : {}),
+            isError,
+        });
+    });
+
+    it('preserves output and failure status for sidechain tool results', () => {
+        const subagent = createId();
+        const result = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'user', uuid: 'sidechain-result', isSidechain: true,
+            parent_tool_use_id: 'task-1',
+            message: {
+                content: [{
+                    type: 'tool_result', tool_use_id: 'child-bash', is_error: true,
+                    content: [{ type: 'text', text: 'child command failed' }],
+                }],
+            },
+        }), {
+            currentTurnId: 'turn-1',
+            providerSubagentToSessionSubagent: new Map([['task-1', subagent]]),
+        });
+
+        expect(result.envelopes.find(envelope => envelope.ev.t === 'tool-call-end')).toMatchObject({
+            subagent,
+            ev: { t: 'tool-call-end', call: 'child-bash', result: 'child command failed', isError: true },
+        });
     });
 
     it('exposes the generated session subagent id on Agent tool calls', () => {
@@ -317,7 +373,7 @@ describe('mapClaudeLogMessageToSessionEnvelopes', () => {
                 ev: { t: 'stop' },
             }),
             expect.objectContaining({
-                ev: { t: 'tool-call-end', call: 'tool-agent-stop' },
+                ev: { t: 'tool-call-end', call: 'tool-agent-stop', result: 'done', isError: false },
             }),
         ]));
     });

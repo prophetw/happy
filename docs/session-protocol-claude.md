@@ -93,7 +93,7 @@ Implemented in:
 | `assistant` thinking block | `agent:text` with `thinking: true` |
 | `assistant` tool_use block (non-Task) | `agent:tool-call-start` |
 | `assistant` tool_use block (`Task`) | no parent tool-call envelope; registers provider->session subagent mapping and flushes buffered subagent messages |
-| `user` tool_result block (non-Task) | `agent:tool-call-end` |
+| `user` tool_result block (non-Task) | `agent:tool-call-end` with output in `result` and `is_error` mapped to `isError` |
 | `user` tool_result block (`Task` parent result) | `agent:stop` for the subagent (no parent `tool-call-end`) |
 | `user` plain string (non-sidechain) | `turn-end(completed)` (if open), then emit both `user:text` (legacy) and `session:text` (migration shadow copy) |
 | `user` plain string (sidechain) | `agent:start` (once) then `agent:text` (`subagent` set to session cuid2) |
@@ -101,6 +101,7 @@ Implemented in:
 | `summary` | ignored for protocol output (metadata update only) |
 
 Notes:
+- Tool result strings are forwarded unchanged, including empty strings. Text-block arrays are joined with newlines; other non-null result values are JSON-serialized. Missing or null content leaves `result` unset. This applies to local transcripts, remote SDK messages, and sidechain tools.
 - Turn starts lazily on first agent output in a turn (`turn-start` envelope created when needed).
 - `turn` values in emitted protocol envelopes are cuid2 (examples below use `tA` shorthand for readability).
 - Sidechain linking uses `subagent` on envelopes, and `subagent` is always a session cuid2.
@@ -127,7 +128,7 @@ Emitted session envelopes (simplified):
 { "role": "agent", "turn": "tA", "ev": { "t": "turn-start" } }
 { "role": "agent", "turn": "tA", "ev": { "t": "text", "text": "I will inspect auth files." } }
 { "role": "agent", "turn": "tA", "ev": { "t": "tool-call-start", "call": "toolu_1", "name": "Bash", "title": "Bash call", "description": "Bash call", "args": { "command": "rg auth src" } } }
-{ "role": "agent", "turn": "tA", "ev": { "t": "tool-call-end", "call": "toolu_1" } }
+{ "role": "agent", "turn": "tA", "ev": { "t": "tool-call-end", "call": "toolu_1", "result": "src/auth/index.ts", "isError": false } }
 { "role": "agent", "turn": "tA", "ev": { "t": "turn-end", "status": "completed" } }
 ```
 

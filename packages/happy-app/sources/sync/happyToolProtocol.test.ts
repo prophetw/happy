@@ -3,6 +3,8 @@ import { normalizeRawMessage, RawRecordSchema } from './typesRaw';
 import { createReducer, reducer } from './reducer/reducer';
 import { createEnvelope } from '@slopus/happy-wire';
 import { getTerminalToolResult } from '@/utils/toolResult';
+import { mapClaudeLogMessageToSessionEnvelopes } from '../../../happy-cli/src/claude/utils/sessionProtocolMapper';
+import { RawJSONLinesSchema } from '../../../happy-cli/src/claude/types';
 
 function message(id: string, ev: Record<string, unknown>) {
     const normalized = normalizeRawMessage(id, null, 1, RawRecordSchema.parse({
@@ -14,6 +16,44 @@ function message(id: string, ev: Record<string, unknown>) {
 }
 
 describe('Happy Agent tool wire → rendered message contract', () => {
+    it.each([
+        ['hello\nworld\n', false, 'hello\nworld\n'],
+        [[{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }], false, 'first\nsecond'],
+        ['permission denied', true, 'permission denied'],
+        ['', false, ''],
+    ] as const)('preserves Claude Bash output from the provider through the detail view parser: %j', (content, isError, output) => {
+        const started = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'assistant', uuid: 'claude-start',
+            message: {
+                content: [{ type: 'tool_use', id: 'claude-bash', name: 'Bash', input: { command: 'echo hello' } }],
+            },
+        }), { currentTurnId: null });
+        const ended = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'user', uuid: 'claude-end',
+            message: {
+                content: [{ type: 'tool_result', tool_use_id: 'claude-bash', content, is_error: isError }],
+            },
+        }), { currentTurnId: started.currentTurnId });
+        const messages = [...started.envelopes, ...ended.envelopes].map(envelope => {
+            return normalizeRawMessage(envelope.id, null, envelope.time, RawRecordSchema.parse({
+                role: 'session', content: envelope,
+            }));
+        }).filter(normalized => normalized !== null);
+        const result = reducer(createReducer(), messages);
+        const tool = result.messages.find(m => m.kind === 'tool-call');
+        expect(tool?.kind).toBe('tool-call');
+        if (tool?.kind !== 'tool-call') throw new Error('Missing Claude Bash tool call');
+        expect(tool.tool).toMatchObject({
+            name: 'Bash', callId: 'claude-bash', input: { command: 'echo hello' },
+            state: isError ? 'error' : 'completed', result: output,
+        });
+        expect(getTerminalToolResult(tool.tool)).toEqual({
+            stdout: isError ? null : output,
+            stderr: null,
+            error: isError ? output : null,
+        });
+    });
+
     it('preserves a wire title when a legacy tool update omits it', () => {
         const state = createReducer();
         reducer(state, [message('start', {
