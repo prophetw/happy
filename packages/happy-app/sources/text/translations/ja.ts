@@ -350,6 +350,9 @@ export const ja: TranslationStructure = {
     },
 
     server: {
+        relaySwitchUnavailable: 'このデバイスまたはセッションでは Relay を切り替えられません。オンラインであることを確認し、CLI/daemon を更新して、以前のセッションを開き直すか再開してください。',
+        relayRollbackUnconfirmed: '次のデバイスまたはセッションの切り戻しを確認できませんでした',
+        keepOriginalRelay: '元の Relay を利用できる状態にしてください。',
         title: en.server.title,
         serverUrlLabel: en.server.serverUrlLabel,
         selfHostFooter: en.server.selfHostFooter,
