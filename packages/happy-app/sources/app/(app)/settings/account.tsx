@@ -8,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { formatSecretKeyForBackup } from '@/auth/secretKeyBackup';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
+import { SessionNotificationSettings } from '@/components/SessionNotificationSettings';
 import { ItemList } from '@/components/ItemList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -501,6 +502,8 @@ export default React.memo(() => {
                         showChevron={false}
                     />
                 </ItemGroup>
+
+                <SessionNotificationSettings />
 
                 <ItemGroup
                     title="Push Notifications"

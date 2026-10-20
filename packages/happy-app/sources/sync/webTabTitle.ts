@@ -1,20 +1,20 @@
 /**
- * Web-only: prefix the browser tab title with "(N) " when new messages arrive
- * while the tab is hidden or unfocused — same pattern as Telegram/Discord/etc.
- * Resets the counter when the tab regains visibility + focus.
+ * Web-only: show unread completed conversations as "✓ (N) " in the tab title.
+ * Lifecycle events retain their "(N) " fallback until the tab regains focus.
  *
  * The base title (e.g. screen-specific titles set by Expo Router) is recovered
- * by stripping our own "(N) " prefix on every apply, so we don't fight other
- * code that updates document.title.
+ * by stripping our own prefix. Observe navigation title changes so the
+ * indicator survives Expo Router updates as well.
  */
 
 import { Platform } from 'react-native';
 
 let unreadCount = 0;
+let completedSessionCount = 0;
 let initialized = false;
 
-function isVisible(): boolean {
-    if (typeof document === 'undefined') {
+export function isWebTabActive(): boolean {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
         return true;
     }
     const visible = document.visibilityState === 'visible';
@@ -26,8 +26,10 @@ function applyTitle() {
     if (typeof document === 'undefined') {
         return;
     }
-    const stripped = document.title.replace(/^\(\d+\)\s*/, '');
-    document.title = unreadCount > 0 ? `(${unreadCount}) ${stripped}` : stripped;
+    const stripped = document.title.replace(/^(?:✓\s+)?\(\d+\)\s*/, '');
+    const prefix = completedSessionCount > 0 ? `✓ (${completedSessionCount}) ` : unreadCount > 0 ? `(${unreadCount}) ` : '';
+    const title = prefix + stripped;
+    if (document.title !== title) document.title = title;
 }
 
 function ensureInit() {
@@ -36,13 +38,23 @@ function ensureInit() {
     }
     initialized = true;
     const reset = () => {
-        if (isVisible() && unreadCount !== 0) {
+        if (isWebTabActive() && unreadCount !== 0) {
             unreadCount = 0;
             applyTitle();
         }
     };
     document.addEventListener('visibilitychange', reset);
     window.addEventListener('focus', reset);
+    if (typeof MutationObserver !== 'undefined' && document.head) {
+        new MutationObserver(applyTitle).observe(document.head, { childList: true, subtree: true, characterData: true });
+    }
+}
+
+export function setCompletedSessionCount(count: number) {
+    if (Platform.OS !== 'web') return;
+    ensureInit();
+    completedSessionCount = count;
+    applyTitle();
 }
 
 export function notifyUnreadMessage() {
@@ -50,7 +62,7 @@ export function notifyUnreadMessage() {
         return;
     }
     ensureInit();
-    if (isVisible()) {
+    if (isWebTabActive()) {
         return;
     }
     unreadCount++;

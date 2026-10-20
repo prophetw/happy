@@ -95,6 +95,22 @@ export const zhHans: TranslationStructure = {
         activeNow: '当前活跃',
         unknown: '未知',
         unread: '新结果',
+        running: '运行中',
+        completed: '已完成',
+        viewConversation: '点击查看对话',
+        dismissCompletion: '关闭完成通知',
+        failed: '执行失败',
+    },
+
+    sessionNotifications: {
+        title: '任务提醒',
+        open: '查看全部提醒',
+        close: '关闭提醒列表',
+        alwaysPush: '始终提醒手机',
+        alwaysPushDescription: '即使其他设备正在查看该对话，也发送系统推送。',
+        haptics: 'App 内触感提醒',
+        hapticsDescription: '其他对话完成、失败或等待处理时轻触提醒一次。',
+        summary: ({ completed, action }: { completed: number; action: number }) => `${completed} 个已完成 · ${action} 个待处理`,
     },
 
     time: {

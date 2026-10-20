@@ -49,6 +49,7 @@ const {
 
 vi.mock("@/storage/db", () => ({ db: dbMock }));
 vi.mock("@/app/push/pushSend", () => ({ sendPushNotifications: pushSendMock }));
+vi.mock('@/app/push/sessionAttention', () => ({ recordSessionAttention: vi.fn(async () => ({ created: true, shouldNotify: true })), getAttentionBadgeCount: vi.fn(async () => 1), markAttentionPushDelivered: vi.fn(async () => {}) }));
 
 // The real eventRouter is used so these tests exercise the production presence
 // rule end to end — a regression in hasActiveUiClient fails them. Only the
@@ -128,12 +129,23 @@ describe('POST /v1/sessions/:sessionId/push-event', () => {
         expect(state.sent).toHaveLength(1);
     });
 
-    it('suppresses and says so when a UI client is in the foreground', async () => {
-        state.sockets.push({ data: { clientType: 'user-scoped', appState: 'active' } });
+    it('suppresses and says so when a UI client is viewing this conversation', async () => {
+        state.sockets.push({ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: SESSION } });
         const res = await postPushEvent(app);
         expect(res.statusCode).toBe(200);
         expect(res.json()).toMatchObject({ success: true, result: 'suppressed', reason: 'active-ui-client' });
         expect(state.sent).toHaveLength(0);
+    });
+
+    it('sends while another conversation is foreground and groups notifications by session', async () => {
+        state.sockets.push({ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: 'another-session' } });
+        expect((await postPushEvent(app)).json()).toMatchObject({ result: 'sent' });
+        expect(state.sent[0]).toMatchObject({ threadId: SESSION, badge: 1 });
+    });
+
+    it('honors always-notify even when a foreground client is viewing the conversation', async () => {
+        state.sockets.push({ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: SESSION, alwaysPushToPhone: true } });
+        expect((await postPushEvent(app)).json()).toMatchObject({ result: 'sent' });
     });
 
     it('reports no_tokens instead of claiming success', async () => {

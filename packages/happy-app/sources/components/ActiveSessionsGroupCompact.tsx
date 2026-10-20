@@ -8,6 +8,7 @@ import { type SessionState, formatPathRelativeToHome, vibingMessages, formatLast
 import { Avatar } from './Avatar';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from './StatusDot';
+import { SessionStatusBadge } from './SessionStatusBadge';
 import { useAllMachines, useSessionGitStatus } from '@/sync/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -268,7 +269,10 @@ export const CompactSessionRow = React.memo(({ session, selected, showBorder }: 
     const renderTrailingIndicator = () => {
         let indicator: React.ReactNode = null;
 
-        if (needsUserAction) {
+        if ((Platform.OS === 'web' || Platform.OS === 'ios') && !session.archived && !session.machineOffline
+            && (needsUserAction || session.state === 'thinking' || session.hasUnread)) {
+            indicator = <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} kind={session.attentionKind} />;
+        } else if (needsUserAction) {
             indicator = <StatusDot color={status.dotColor} isPulsing={status.isPulsing} />;
         } else if (session.hasUnread) {
             indicator = <StatusDot color={status.dotColor} isPulsing={false} />;
@@ -506,13 +510,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionTitleDisconnected: {
         color: theme.colors.textSecondary,
     },
-    // 18 wide so the dot's center lines up with the center of the project
-    // header's "+" button above the card, on both platform paddings.
+    // Ordinary dots keep their 18px slot; labelled Web badges can expand.
     trailingIndicatorSlot: {
         alignItems: 'center',
         justifyContent: 'center',
-        width: 18,
-        height: 18,
+        minWidth: 18,
+        minHeight: 18,
+        flexShrink: 0,
         marginLeft: 8,
     },
     swipeAction: {

@@ -122,6 +122,8 @@ class ApiSocket {
                 clientType: 'user-scoped' as const,
                 happyClient: getHappyClientId(),
                 appState: getCurrentAppState(),
+                viewingSessionId: storage.getState().currentViewingSessionId,
+                alwaysPushToPhone: storage.getState().settings.alwaysPushToPhone === true,
             }),
             transports: ['websocket'],
             reconnection: true,
@@ -247,10 +249,14 @@ class ApiSocket {
 
     /**
      * Sends app focus state to server for push notification routing.
-     * Server uses this to suppress pushes when the mobile app is in foreground.
+     * Session focus and the phone preference determine push suppression.
      */
     sendAppState(state: string) {
-        this.socket?.emit('app-state', { state });
+        this.socket?.emit('app-state', {
+            state,
+            viewingSessionId: storage.getState().currentViewingSessionId,
+            alwaysPushToPhone: storage.getState().settings.alwaysPushToPhone === true,
+        });
     }
 
     send(event: string, data: any) {

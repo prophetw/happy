@@ -19,6 +19,6 @@
 
 import { eventRouter } from "@/app/events/eventRouter";
 
-export async function isUserActive(userId: string): Promise<boolean> {
-    return eventRouter.hasActiveUiClient(userId);
+export async function isUserActive(userId: string, sessionId?: string): Promise<boolean> {
+    return eventRouter.hasActiveUiClient(userId, sessionId);
 }

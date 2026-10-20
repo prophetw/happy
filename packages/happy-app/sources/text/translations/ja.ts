@@ -95,6 +95,22 @@ export const ja: TranslationStructure = {
         activeNow: 'アクティブ',
         unknown: '不明',
         unread: '新しい結果',
+        running: '実行中',
+        completed: '完了',
+        viewConversation: '会話を開く',
+        dismissCompletion: '完了通知を閉じる',
+        failed: 'Failed',
+    },
+
+    sessionNotifications: {
+        title: 'Task notifications',
+        open: 'View all notifications',
+        close: 'Close notification list',
+        alwaysPush: 'Always notify my phone',
+        alwaysPushDescription: 'Send mobile push notifications even while another device is viewing this conversation.',
+        haptics: 'In-app haptic feedback',
+        hapticsDescription: 'Use one haptic when another conversation finishes, fails, or needs your attention.',
+        summary: ({ completed, action }: { completed: number; action: number }) => `${completed} completed · ${action} need attention`,
     },
 
     time: {

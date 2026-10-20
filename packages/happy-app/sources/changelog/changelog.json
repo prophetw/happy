@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "October 20 - Know when tasks finish",
+      "summary": "Task status and reminders are easier to spot on iPhone.",
+      "markdown": "- **See task status** — running, completed, waiting, and failed tasks have clear labels and colors.\n- **Find finished tasks** — keep unread reminders in one list and tap straight into the conversation.\n- **Notice new reminders** — a brief banner and haptic feedback draw your attention while the app is open.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "October 18 - Switch your relay",
       "summary": "Requires the updated Happy CLI and a compatible server.",
       "markdown": "- **Switch your relay** — move your phone and online computers to a self-hosted server without pairing again. Previous history stays on the old server.\n- **Switch without waiting** — save your server URL to switch immediately; computers and sessions reconnect automatically while the app is open.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -136,5 +141,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "October 18 - Switch your relay"
+  "latestTitle": "October 20 - Know when tasks finish"
 }

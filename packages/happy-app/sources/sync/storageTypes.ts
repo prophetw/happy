@@ -435,6 +435,8 @@ export type SessionComposerPatch = Partial<Pick<Session,
 >>;
 
 export interface Session {
+    attentionKind?: 'done' | 'permission' | 'question' | 'failed';
+    lastTurnStatus?: 'completed' | 'failed' | 'cancelled';
     id: string,
     avatarDescriptor?: SessionAvatarDescriptor | null,
     avatar?: ProjectAvatar | null,
