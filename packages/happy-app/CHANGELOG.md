@@ -1,3 +1,12 @@
+# October 20 - Know when tasks finish
+
+Task status and reminders are easier to spot on iPhone.
+
+- **See task status** — running, completed, waiting, and failed tasks have clear labels and colors.
+- **Find finished tasks** — keep unread reminders in one list and tap straight into the conversation.
+- **Notice new reminders** — a brief banner and haptic feedback draw your attention while the app is open.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 18 - Switch your relay
 
 Requires the updated Happy CLI and a compatible server.
