@@ -96,6 +96,18 @@ export const en = {
         completed: 'Completed',
         viewConversation: 'Open conversation',
         dismissCompletion: 'Dismiss completion notification',
+        failed: 'Failed',
+    },
+
+    sessionNotifications: {
+        title: 'Task notifications',
+        open: 'View all notifications',
+        close: 'Close notification list',
+        alwaysPush: 'Always notify my phone',
+        alwaysPushDescription: 'Send mobile push notifications even while another device is viewing this conversation.',
+        haptics: 'In-app haptic feedback',
+        hapticsDescription: 'Use one haptic when another conversation finishes, fails, or needs your attention.',
+        summary: ({ completed, action }: { completed: number; action: number }) => `${completed} completed · ${action} need attention`,
     },
 
     time: {

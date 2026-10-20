@@ -98,6 +98,18 @@ export const zhHant: TranslationStructure = {
         completed: '已完成',
         viewConversation: '點擊查看對話',
         dismissCompletion: '關閉完成通知',
+        failed: '執行失敗',
+    },
+
+    sessionNotifications: {
+        title: '任務提醒',
+        open: '查看所有提醒',
+        close: '關閉提醒列表',
+        alwaysPush: '一律提醒手機',
+        alwaysPushDescription: '即使其他裝置正在查看該對話，也傳送系統推播。',
+        haptics: 'App 內觸覺提醒',
+        hapticsDescription: '其他對話完成、失敗或等待處理時輕觸提醒一次。',
+        summary: ({ completed, action }: { completed: number; action: number }) => `${completed} 個已完成 · ${action} 個待處理`,
     },
 
     time: {

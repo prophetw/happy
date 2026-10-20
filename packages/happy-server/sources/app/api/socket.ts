@@ -153,9 +153,13 @@ export function startSocket(app: Fastify) {
         if (initialAppState) {
             socket.data.appState = initialAppState === 'active' ? 'active' : 'background';
         }
+        socket.data.viewingSessionId = typeof socket.handshake.auth.viewingSessionId === 'string' ? socket.handshake.auth.viewingSessionId : null;
+        socket.data.alwaysPushToPhone = socket.handshake.auth.alwaysPushToPhone === true;
 
-        socket.on('app-state', (data: { state: string }) => {
+        socket.on('app-state', (data: { state: string; viewingSessionId?: string | null; alwaysPushToPhone?: boolean }) => {
             socket.data.appState = data?.state === 'active' ? 'active' : 'background';
+            socket.data.viewingSessionId = typeof data?.viewingSessionId === 'string' ? data.viewingSessionId : null;
+            socket.data.alwaysPushToPhone = data?.alwaysPushToPhone === true;
         });
 
         socket.on('disconnect', () => {

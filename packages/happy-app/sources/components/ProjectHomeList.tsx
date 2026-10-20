@@ -483,12 +483,13 @@ const ProjectRow = React.memo(({ project }: {
             : {};
 
     return (
+        <View style={{ position: 'relative' }}>
         <RowPressable
             {...(session ? pressHandlers : {})}
             {...menuHandlers}
             accessibilityRole="button"
             accessibilityLabel={project.name}
-            style={styles.projectRow}
+            style={[styles.projectRow, canCreateWorkspace && { paddingRight: ROW_PADDING_X + 38 }]}
         >
             <View style={styles.avatarLane}>
                 {project.avatarSession && (
@@ -511,22 +512,18 @@ const ProjectRow = React.memo(({ project }: {
                     <View style={styles.unreadDot} />
                 ) : null}
                 <GitChanges changes={changes} />
-                {canCreateWorkspace && (
-                    <Pressable
-                        onPress={(event) => {
-                            event.stopPropagation();
-                            createWorkspace();
-                        }}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Create workspace in ${project.name}`}
-                        style={({ pressed }) => [styles.projectAdd, pressed && styles.pressed]}
-                    >
-                        <Ionicons name="add" size={18} color={theme.colors.textSecondary} />
-                    </Pressable>
-                )}
             </View>
         </RowPressable>
+        {canCreateWorkspace && (
+            <View style={{ position: 'absolute', top: 8, bottom: 0, right: ROW_PADDING_X, justifyContent: 'center' }} pointerEvents="box-none">
+                <Pressable onPress={createWorkspace} hitSlop={8} accessibilityRole="button"
+                    accessibilityLabel={`Create workspace in ${project.name}`}
+                    style={({ pressed }) => [styles.projectAdd, pressed && styles.pressed]}>
+                    <Ionicons name="add" size={18} color={theme.colors.textSecondary} />
+                </Pressable>
+            </View>
+        )}
+        </View>
     );
 }, (before, after) => sameEntry(before.project, after.project));
 
@@ -735,8 +732,8 @@ const ChatRow = React.memo(({ session, bot = false, archived = false }: {
                 style={styles.projectNameText}
             />
             <View style={styles.trailing}>
-                {Platform.OS === 'web' && !archived && !session.machineOffline && getSessionAttentionStatus(session.state, session.hasUnread) ? (
-                    <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} />
+                {(Platform.OS === 'web' || Platform.OS === 'ios') && !archived && !session.machineOffline && getSessionAttentionStatus(session.state, session.hasUnread, session.attentionKind) ? (
+                    <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} kind={session.attentionKind} />
                 ) : presentation.topRight.type === 'dot' ? (
                     <StatusDot color={presentation.topRight.color} size={10} />
                 ) : (
@@ -948,7 +945,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 7,
         height: 7,
         borderRadius: 4,
-        backgroundColor: Platform.OS === 'web' ? '#34C759' : '#007AFF',
+        backgroundColor: (Platform.OS === 'web' || Platform.OS === 'ios') ? '#34C759' : '#007AFF',
     },
     changes: {
         flexDirection: 'row',

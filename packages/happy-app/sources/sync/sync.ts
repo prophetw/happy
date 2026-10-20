@@ -20,6 +20,9 @@ import { ApiEphemeralUpdateSchema, ApiMessage, ApiUpdateContainerSchema } from '
 import type { ApiEphemeralActivityUpdate } from './apiTypes';
 import { Session, Machine } from './storageTypes';
 import { InvalidateSync } from '@/utils/sync';
+import { kvBulkGet, kvMutate } from './apiKv';
+import { SESSION_ATTENTION_PREFIX, decodeAttentionItem, encodeAttentionValue, type SessionAttentionRecords } from './sessionAttention';
+import { loadSessionAttention, saveSessionAttention } from './persistence';
 import { delay } from '@/utils/time';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { randomUUID } from 'expo-crypto';
@@ -146,6 +149,10 @@ class Sync {
     private credentials!: AuthCredentials;
     public encryptionCache = new EncryptionCache();
     private sessionsSync: InvalidateSync;
+    private attentionSync: InvalidateSync;
+    private attentionReadSync: InvalidateSync;
+    private attentionUnsubscribe?: () => void;
+    private attentionScope = '';
     private projectsSync: InvalidateSync;
     private messagesSync = new Map<string, InvalidateSync>();
     private messagePreloader = new SessionMessagePreloader((sessionId, signal) => this.preloadLatestPage(sessionId, signal));
@@ -209,6 +216,8 @@ class Sync {
 
     constructor() {
         this.sessionsSync = new InvalidateSync(this.fetchSessions);
+        this.attentionSync = new InvalidateSync(this.fetchSessionAttention);
+        this.attentionReadSync = new InvalidateSync(this.flushAttentionReads);
         this.projectsSync = new InvalidateSync(this.fetchProjects);
         this.settingsSync = new InvalidateSync(this.syncSettings);
         this.profileSync = new InvalidateSync(this.fetchProfile);
@@ -229,6 +238,8 @@ class Sync {
         // Listen for app state changes to refresh purchases
         AppState.addEventListener('change', (nextAppState) => {
             this.appState = nextAppState;
+            storage.setState({ appIsActive: getCurrentAppState() === 'active' });
+            if (nextAppState === 'active') this.attentionSync.invalidate();
 
             // Notify server of focus state for push notification routing.
             // Mobile: AppState.currentState reflects fg/bg directly.
@@ -285,6 +296,7 @@ class Sync {
         // the user is actually looking at this client.
         if (Platform.OS === 'web' && typeof document !== 'undefined') {
             const broadcast = () => {
+                storage.setState({ appIsActive: getCurrentAppState() === 'active' });
                 apiSocket.sendAppState(getCurrentAppState());
             };
             document.addEventListener('visibilitychange', broadcast);
@@ -292,6 +304,57 @@ class Sync {
             window.addEventListener('blur', broadcast);
         }
     }
+
+    private fetchSessionAttention = async () => {
+        const credentials = this.credentials;
+        if (!credentials || !this.attentionScope) return;
+        const ids = Object.keys(storage.getState().sessions);
+        for (let offset = 0; offset < ids.length; offset += 100) {
+            const result = await kvBulkGet(credentials, ids.slice(offset, offset + 100).map(id => SESSION_ATTENTION_PREFIX + id));
+            if (this.credentials !== credentials) return;
+            const records = Object.fromEntries(result.values.map(decodeAttentionItem).filter(item => item !== null));
+            if (Object.keys(records).length) storage.getState().applySessionAttention(records);
+        }
+    };
+
+    private flushAttentionReads = async () => {
+        const credentials = this.credentials;
+        if (!credentials) return;
+        const pending = Object.entries(storage.getState().sessionAttention).filter(([, record]) => record.pendingRead || record.pendingEvent);
+        for (let offset = 0; offset < pending.length; offset += 100) {
+            const batch = pending.slice(offset, offset + 100);
+            const result = await kvMutate(credentials, batch.map(([id, record]) => ({ key: SESSION_ATTENTION_PREFIX + id, value: encodeAttentionValue(record), version: record.version })));
+            if (this.credentials !== credentials) return;
+            if (result.success) {
+                const records: SessionAttentionRecords = {};
+                for (const item of result.results) {
+                    const id = item.key.slice(SESSION_ATTENTION_PREFIX.length);
+                    const sent = batch.find(([key]) => key === id)?.[1];
+                    if (sent) records[id] = { ...sent, version: item.version, pendingRead: false, pendingEvent: false };
+                }
+                storage.getState().applySessionAttention(records);
+            } else {
+                const records = Object.fromEntries(result.errors.filter(item => item.value !== null).map(item => decodeAttentionItem({ ...item, value: item.value! })).filter(item => item !== null));
+                for (const error of result.errors.filter(item => item.value === null)) {
+                    const id = error.key.slice(SESSION_ATTENTION_PREFIX.length);
+                    const sent = batch.find(([key]) => key === id)?.[1];
+                    if (sent) records[id] = { ...sent, version: error.version, pendingRead: false, pendingEvent: sent.pendingEvent, read: true };
+                }
+                storage.getState().applySessionAttention(records);
+            }
+        }
+    };
+
+    private publishSessionFailure = async (sessionId: string, seq: number, at: number) => {
+        const state = storage.getState();
+        const previous = state.sessionAttention[sessionId];
+        if (previous?.seq !== undefined && previous.seq > seq) return;
+        state.applySessionAttention({ [sessionId]: {
+            kind: 'failed', eventId: `failed:${seq}`, seq, at,
+            read: state.appIsActive && state.currentViewingSessionId === sessionId,
+            version: previous?.version ?? -1, pendingEvent: true,
+        } });
+    };
 
     async create(credentials: AuthCredentials, encryption: Encryption) {
         this.sessionAvatars.clear();
@@ -324,6 +387,22 @@ class Sync {
 
     async #init() {
 
+        this.attentionUnsubscribe?.();
+        this.attentionScope = `${getServerUrl()}|${this.serverID}`;
+        const cachedAttention = loadSessionAttention(this.attentionScope);
+        storage.setState({ sessionAttention: cachedAttention.records, unreadSessionIds: new Set(cachedAttention.unread), appIsActive: getCurrentAppState() === 'active' });
+        this.attentionUnsubscribe = storage.subscribe((state, previous) => {
+            if (state.sessionAttention !== previous.sessionAttention || state.unreadSessionIds !== previous.unreadSessionIds) {
+                saveSessionAttention(this.attentionScope, state.sessionAttention, state.unreadSessionIds);
+                if (Object.values(state.sessionAttention).some(record => record.pendingRead || record.pendingEvent)) this.attentionReadSync.invalidate();
+            }
+            if (state.currentViewingSessionId !== previous.currentViewingSessionId
+                || state.settings.alwaysPushToPhone !== previous.settings.alwaysPushToPhone || state.appIsActive !== previous.appIsActive) {
+                apiSocket.sendAppState(getCurrentAppState());
+                if (state.appIsActive && state.currentViewingSessionId) state.markSessionRead(state.currentViewingSessionId);
+            }
+        });
+
         // Subscribe to updates
         this.subscribeToUpdates();
 
@@ -340,6 +419,8 @@ class Sync {
         // Invalidate sync
         log.log('🔄 #init: Invalidating all syncs');
         this.sessionsSync.invalidate();
+        this.attentionSync.invalidate();
+        this.attentionReadSync.invalidate();
         this.settingsSync.invalidate();
         this.profileSync.invalidate();
         this.purchasesSync.invalidate();
@@ -1403,9 +1484,11 @@ class Sync {
             avatarUpdateSeq: current[s.id]?.avatarUpdateSeq,
             thinking: s.active ? (current[s.id]?.thinking ?? false) : false,
             thinkingAt: s.active ? (current[s.id]?.thinkingAt ?? 0) : 0,
+            lastTurnStatus: current[s.id]?.lastTurnStatus,
         })));
         this.projectsSync.invalidate();
         log.log(`📥 fetchSessions completed - processed ${decryptedSessions.length} sessions`);
+        this.attentionSync.invalidate();
         // Machine-readable for scripts/perf-e2e.mjs, which deep-links through
         // the most recent real sessions and reads [perf] timings off Metro.
         const recent = [...decryptedSessions]
@@ -2590,6 +2673,8 @@ class Sync {
 
         // Subscribe to connection state changes
         apiSocket.onReconnected(() => {
+            this.attentionSync.invalidate();
+            this.attentionReadSync.invalidate();
             log.log('🔌 Socket reconnected');
 
             // Send current focus state on reconnect so the server's
@@ -2634,7 +2719,11 @@ class Sync {
         const updateData = validatedUpdate.data;
         console.log(`🔄 Sync: Validated update type: ${updateData.body.t}`);
 
-        if (updateData.body.t === 'new-message') {
+        if (updateData.body.t === 'kv-batch-update') {
+            const records = Object.fromEntries(updateData.body.changes.filter(item => item.value !== null)
+                .map(item => decodeAttentionItem({ ...item, value: item.value! })).filter(item => item !== null));
+            if (Object.keys(records).length) storage.getState().applySessionAttention(records);
+        } else if (updateData.body.t === 'new-message') {
 
             // Get encryption — may not be ready if sessions are still syncing
             let encryption = this.encryption.getSessionEncryption(updateData.body.sid);
@@ -2663,7 +2752,7 @@ class Sync {
                             type?: string;
                             data?: {
                                 type?: string;
-                                ev?: { t?: string };
+                                ev?: { t?: string; status?: string };
                             }
                         }
                     } | null;
@@ -2697,9 +2786,14 @@ class Sync {
                             updatedAt: updateData.createdAt,
                             seq: updateData.seq,
                             // Update thinking state based on task lifecycle events
-                            ...(isTaskComplete ? { thinking: false } : {}),
-                            ...(isTaskStarted ? { thinking: true } : {})
+                            ...(isTaskComplete ? { thinking: false, lastTurnStatus: dataType === 'turn_aborted' || rawContent?.content?.data?.ev?.status === 'cancelled'
+                                ? 'cancelled' as const : rawContent?.content?.data?.ev?.status === 'failed' ? 'failed' as const : 'completed' as const } : {}),
+                            ...(isTaskStarted ? { thinking: true, lastTurnStatus: undefined } : {})
                         }])
+                        if (sessionEventType === 'turn-end' && rawContent?.content?.data?.ev?.status === 'failed') {
+                            void this.publishSessionFailure(session.id, updateData.body.message.seq, decrypted.createdAt)
+                                .catch(error => console.error('Failed to sync session failure status', error));
+                        }
                     } else {
                         // Fetch sessions again if we don't have this session
                         this.fetchSessions();

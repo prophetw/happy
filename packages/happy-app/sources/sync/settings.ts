@@ -35,6 +35,8 @@ export const SettingsSchema = z.object({
     avatarStyle: z.string().describe('Generated avatar style: brutalist, pixelated, or gradient'),
     avatarMonochrome: z.boolean().describe('Render generated avatars in black and white'),
     sessionListGrouping: z.enum(SESSION_LIST_GROUPING_MODES).describe('Home session list layout: flat activity list or grouped by project'),
+    alwaysPushToPhone: z.boolean().describe('Send mobile notifications even while viewing the same conversation on another client'),
+    sessionNotificationHaptics: z.boolean().describe('Use one haptic for new session attention while the app is active'),
     // Keep the legacy key for synced settings compatibility. It controls the
     // harness badges in the session list.
     showFlavorIcons: z.boolean().describe('Whether to show harness icons in the session list'),
@@ -120,6 +122,8 @@ export const settingsDefaults: Settings = {
     avatarStyle: 'brutalist',
     avatarMonochrome: false,
     sessionListGrouping: 'flat',
+    alwaysPushToPhone: false,
+    sessionNotificationHaptics: true,
     showFlavorIcons: false,
     showHarnessIconInSessionHeader: true,
     userMessageBubbleColor: DEFAULT_USER_MESSAGE_BUBBLE_COLOR,

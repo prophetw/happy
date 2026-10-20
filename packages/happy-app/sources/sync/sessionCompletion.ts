@@ -22,6 +22,7 @@ export function selectCompletedSessionIds(state: {
 }): string[] {
     return [...state.unreadSessionIds].reverse().filter(id => {
         const session = state.sessions[id];
+        if (session?.attentionKind && session.attentionKind !== 'done') return false;
         if (!session || (id === state.currentViewingSessionId && isWebTabActive()) || state.archivingSessionIds.has(id)
             || session.metadata?.isSideChat || session.metadata?.lifecycleState === 'archived'
             || (!session.active && !isRigMetadata(session.metadata))) return false;

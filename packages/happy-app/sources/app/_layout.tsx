@@ -14,6 +14,7 @@ import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
 import { SessionCompletionNotifications } from '@/components/web/SessionCompletionNotifications';
+import { MobileSessionNotifications } from '@/components/MobileSessionNotifications';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform, AppState, LogBox } from 'react-native';
 import { ModalProvider } from '@/modal';
@@ -464,6 +465,7 @@ export default function RootLayout() {
                                         <HorizontalSafeAreaWrapper>
                                             <SidebarNavigator />
                                             {Platform.OS === 'web' && <SessionCompletionNotifications />}
+                                            {Platform.OS === 'ios' && <MobileSessionNotifications />}
                                         </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>

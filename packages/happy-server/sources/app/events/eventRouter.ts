@@ -319,11 +319,13 @@ class EventRouter {
      * this throws and the caller fails open — an infrastructure problem must
      * never turn into silence.
      */
-    async hasActiveUiClient(userId: string): Promise<boolean> {
+    async hasActiveUiClient(userId: string, sessionId?: string): Promise<boolean> {
         const sockets = await this.io.in(`user:${userId}`)
             .timeout(PRESENCE_FETCH_TIMEOUT_MS)
             .fetchSockets();
-        return sockets.some(s => s.data.clientType === 'user-scoped' && s.data.appState === 'active');
+        if (sockets.some(s => s.data.clientType === 'user-scoped' && s.data.alwaysPushToPhone === true)) return false;
+        return sockets.some(s => s.data.clientType === 'user-scoped' && s.data.appState === 'active'
+            && (sessionId === undefined || s.data.viewingSessionId === sessionId));
     }
 
     // === PRIVATE ROUTING LOGIC ===

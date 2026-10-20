@@ -89,7 +89,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
         hasUnread: showUnreadDot,
         faded,
     });
-    const showWebStatus = Platform.OS === 'web' && !faded && !!getSessionAttentionStatus(session.state, showUnreadDot);
+    const showStatusBadge = (Platform.OS === 'web' || Platform.OS === 'ios') && !faded && !!getSessionAttentionStatus(session.state, showUnreadDot, session.attentionKind);
     const topRightAccessibilityLabel = presentation.topRight.type === 'dot'
         ? session.state === 'input_required'
             ? t('status.inputRequired')
@@ -174,7 +174,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
                         )}
                     </View>
                     <SessionShortcutHintBadge sessionId={session.id} style={styles.shortcutBadge} />
-                    {showWebStatus ? <SessionStatusBadge state={session.state} hasUnread={showUnreadDot} /> : <View
+                    {showStatusBadge ? <SessionStatusBadge state={session.state} hasUnread={showUnreadDot} kind={session.attentionKind} /> : <View
                         style={styles.topRightStatus}
                         accessible={topRightAccessibilityLabel !== undefined}
                         accessibilityRole={topRightAccessibilityLabel ? 'text' : undefined}
