@@ -49,6 +49,26 @@ describe('isRetryableAgyError', () => {
 });
 
 describe('AgyBackend persistent single-process', () => {
+  it.each(['CANCELED', 'CANCELLED'])('keeps a %s result cancelled even after producing output', async (status) => {
+    const { child, stdin, stdout } = makeFakeChild();
+    const backend = new AgyBackend({ cwd: '/work', permissionMode: 'default', spawnFn: vi.fn(() => child) as unknown as SpawnFn });
+    const messages: AgentMessage[] = [];
+    backend.onMessage((message) => messages.push(message));
+    const startup = backend.startSession();
+    stdout.emit('data', '{"event":"init","conversation_id":"cancelled-conversation"}\n');
+    await startup;
+
+    const turn = backend.sendPrompt('/work', 'Long task');
+    const rejected = expect(turn).rejects.toMatchObject({ name: 'AgyTurnCancelledError' });
+    await vi.waitFor(() => expect(stdin.write).toHaveBeenCalled());
+    stdout.emit('data', '{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"Partial output"}}\n');
+    stdout.emit('data', JSON.stringify({ event: 'result', result: { status, response: 'Partial output' } }) + '\n');
+    await rejected;
+    expect(messages.at(-1)).toMatchObject({ type: 'status', status: 'stopped' });
+    expect(messages).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'idle' }));
+    await backend.dispose();
+  });
+
   it('initializes persistent child and executes multiple turns in single process', async () => {
     const { child, stdin, stdout } = makeFakeChild();
     const spawnFn = vi.fn(() => child) as unknown as SpawnFn;

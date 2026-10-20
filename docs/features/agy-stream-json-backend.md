@@ -90,6 +90,32 @@ bridge request, so changes apply on the next turn with no restart.
   and the `agy models` subcommand for discovery.
 - Google OAuth / network access for agy's eligibility checks.
 
+## Session notifications
+
+The shared stream-json/SDK runner uses the existing `PushNotificationClient`
+and `/v1/sessions/:id/push-event` endpoint to notify registered phones:
+
+- A successfully completed model turn sends one `done` event. Startup,
+  `/clear`, `/usage`, `/skills`, failed turns and cancelled turns do not send
+  completion pushes. Repeated backend idle/status events do not send pushes.
+- A tool that actually enters the permission handler's pending state sends
+  one `permission` event with its request ID. Safe tools and automatic approval
+  modes do not notify; repeated updates for the same pending tool share its
+  approval and notification.
+- Push requests contain the current Happy session ID and metadata, including
+  after offline reconnection swaps the session. The server applies the focus
+  policy and handles device delivery; a push failure does not fail the task.
+
+AGY currently exposes no separate structured question event in this runner;
+plain assistant text is not classified as a question notification. The frozen
+legacy engine and other agent flavors are unchanged.
+
+Deploy this CLI build to each computer running AGY. Restart the daemon after
+installation and reopen/resume existing AGY sessions to load the new runner;
+phone OTA updates do not update computer-side processes. The phone still needs
+notification permission and a registered token on the same account/server.
+The new session-specific focus policy requires the matching server deployment.
+
 ## Error Paths
 
 - **Transient startup failures** (eligibility check, EOF, TLS handshake,
@@ -117,6 +143,11 @@ Covers: persistent multi-turn in one process, startup retry, single error
 status on failed turns, mid-turn crash, and model switching (no-op on
 unchanged model, immediate restart when idle, deferred restart mid-turn,
 respawn args carrying new `--model` + preserved `--conversation`).
+
+`src/agyStream/runStreamJsonAgy.test.ts` also exercises the real runner,
+permission RPC handler and push client through a mocked HTTP transport,
+covering successful turns, cancellation races, command suppression,
+reconnection, duplicate permissions and push failures. No real push is sent.
 
 ## Change Log
 

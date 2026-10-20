@@ -23,6 +23,7 @@ import type {
 import { resolveAgyModelName, type DiscoveredModel } from './discoverModels';
 import type { SpawnFn } from './AgyBackend';
 import type { AgyPermissionHandler } from './permissionHandler';
+import { AgyTurnCancelledError } from './types';
 
 export interface AgySdkBackendOptions {
   cwd: string;
@@ -300,6 +301,10 @@ export class AgySdkBackend implements AgentBackend {
         if (event.status === 'SUCCESS') {
           this.emit({ type: 'status', status: 'idle' });
           this.pendingTurn?.resolve();
+        } else if (event.status === 'CANCELED' || event.status === 'CANCELLED') {
+          const error = new AgyTurnCancelledError();
+          this.emit({ type: 'status', status: 'stopped', detail: error.message });
+          this.pendingTurn?.reject(error);
         } else {
           const detail = event.error || 'SDK turn failed';
           this.emit({ type: 'status', status: 'error', detail });

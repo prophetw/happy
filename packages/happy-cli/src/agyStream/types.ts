@@ -6,6 +6,13 @@
 
 import type { PermissionMode } from '@/api/types';
 
+export class AgyTurnCancelledError extends Error {
+  constructor() {
+    super('AGY turn cancelled');
+    this.name = 'AgyTurnCancelledError';
+  }
+}
+
 /**
  * Mode configuration for an agy turn, derived from the incoming user message meta.
  */
