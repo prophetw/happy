@@ -4,7 +4,19 @@ import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/storageTypes';
 
-const mocks = vi.hoisted(() => ({ authenticated: true, navigate: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+    authenticated: true, navigate: vi.fn(), foreground: true,
+    setCompletedSessionCount: vi.fn(), updateFavicon: vi.fn(), resetFavicon: vi.fn(),
+}));
+
+vi.mock('@/sync/webTabTitle', () => ({
+    isWebTabActive: () => mocks.foreground,
+    setCompletedSessionCount: mocks.setCompletedSessionCount,
+}));
+vi.mock('@/utils/web/faviconGenerator', () => ({
+    updateFaviconWithNotification: mocks.updateFavicon,
+    resetFavicon: mocks.resetFavicon,
+}));
 
 vi.mock('react-native', async () => {
     const React = await import('react');
@@ -36,12 +48,18 @@ vi.mock('@/sync/storage', async () => {
     return { storage: create(() => ({
         sessions: {} as Record<string, Session>, unreadSessionIds: new Set<string>(),
         archivingSessionIds: new Set<string>(), currentViewingSessionId: null as string | null,
+        markSessionRead: (id: string) => {
+            const next = new Set(storage.getState().unreadSessionIds);
+            next.delete(id);
+            storage.setState({ unreadSessionIds: next });
+        },
     })) };
 });
 
 import { storage } from '@/sync/storage';
 import { SessionCompletionNotifications } from './SessionCompletionNotifications';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
+import { WebTabStatus } from './WebTabStatus';
 
 function session(id: string, thinking = false): Session {
     return {
@@ -70,11 +88,55 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     mocks.authenticated = true;
     mocks.navigate.mockReset();
+    mocks.foreground = true;
+    mocks.setCompletedSessionCount.mockReset();
+    mocks.updateFavicon.mockReset();
+    mocks.resetFavicon.mockReset();
+    vi.stubGlobal('document', new EventTarget());
+    vi.stubGlobal('window', new EventTarget());
     storage.setState({ sessions: { a: session('a'), b: session('b') }, unreadSessionIds: new Set(), archivingSessionIds: new Set(), currentViewingSessionId: null });
     const original = console.error;
     vi.spyOn(console, 'error').mockImplementation((message: unknown, ...args: unknown[]) => {
         if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
         original(message, ...args);
+    });
+});
+
+describe('browser tab completion indicator', () => {
+    it('updates the title count and favicon from completed sessions without a session-event push', () => {
+        mocks.foreground = false;
+        render(React.createElement(WebTabStatus));
+        update({ unreadSessionIds: new Set(['a', 'b']) });
+        expect(mocks.setCompletedSessionCount).toHaveBeenLastCalledWith(2);
+        expect(mocks.updateFavicon).toHaveBeenCalled();
+        update({ unreadSessionIds: new Set(['b']) });
+        expect(mocks.setCompletedSessionCount).toHaveBeenLastCalledWith(1);
+        update({ unreadSessionIds: new Set() });
+        expect(mocks.setCompletedSessionCount).toHaveBeenLastCalledWith(0);
+        expect(mocks.resetFavicon).toHaveBeenCalled();
+    });
+
+    it('marks only the open conversation read when the tab becomes visible and focused again', () => {
+        mocks.foreground = false;
+        storage.setState({ currentViewingSessionId: 'a', unreadSessionIds: new Set(['a', 'b']) });
+        render(React.createElement(WebTabStatus));
+        act(() => document.dispatchEvent(new Event('visibilitychange')));
+        expect(storage.getState().unreadSessionIds.has('a')).toBe(true);
+        mocks.foreground = true;
+        act(() => window.dispatchEvent(new Event('focus')));
+        expect(storage.getState().unreadSessionIds).toEqual(new Set(['b']));
+        expect(mocks.setCompletedSessionCount).toHaveBeenLastCalledWith(1);
+    });
+
+    it('preserves the permission favicon after the last completion is read', () => {
+        const a = session('a');
+        a.agentState = { requests: { permission: { tool: 'Bash', arguments: {} } } } as Session['agentState'];
+        storage.setState({ sessions: { a, b: session('b') }, unreadSessionIds: new Set(['b']) });
+        render(React.createElement(WebTabStatus));
+        mocks.resetFavicon.mockClear();
+        update({ unreadSessionIds: new Set() });
+        expect(mocks.resetFavicon).not.toHaveBeenCalled();
+        expect(mocks.updateFavicon).toHaveBeenCalled();
     });
 });
 afterEach(() => {
