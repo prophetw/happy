@@ -95,6 +95,10 @@ export const ja: TranslationStructure = {
         activeNow: 'アクティブ',
         unknown: '不明',
         unread: '新しい結果',
+        running: '実行中',
+        completed: '完了',
+        viewConversation: '会話を開く',
+        dismissCompletion: '完了通知を閉じる',
     },
 
     time: {

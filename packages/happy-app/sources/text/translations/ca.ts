@@ -93,6 +93,10 @@ export const ca: TranslationStructure = {
         activeNow: 'Actiu ara',
         unknown: 'desconegut',
         unread: 'nous resultats',
+        running: 'En curs',
+        completed: 'Completat',
+        viewConversation: 'Obre la conversa',
+        dismissCompletion: 'Tanca la notificació de finalització',
     },
 
     time: {

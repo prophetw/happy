@@ -436,6 +436,10 @@ export const ru: TranslationStructure = {
         activeNow: 'Активен сейчас',
         unknown: 'неизвестно',
         unread: 'новые результаты',
+        running: 'Выполняется',
+        completed: 'Завершено',
+        viewConversation: 'Открыть диалог',
+        dismissCompletion: 'Закрыть уведомление о завершении',
     },
 
     time: {

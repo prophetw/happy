@@ -93,6 +93,10 @@ export const es: TranslationStructure = {
         activeNow: 'Activo ahora',
         unknown: 'desconocido',
         unread: 'nuevos resultados',
+        running: 'En curso',
+        completed: 'Completado',
+        viewConversation: 'Abrir conversación',
+        dismissCompletion: 'Cerrar aviso de finalización',
     },
 
     time: {

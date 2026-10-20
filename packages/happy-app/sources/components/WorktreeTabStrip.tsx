@@ -572,7 +572,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 7,
         height: 7,
         borderRadius: 4,
-        backgroundColor: '#007AFF',
+        backgroundColor: Platform.OS === 'web' ? '#34C759' : '#007AFF',
     },
     divider: {
         width: StyleSheet.hairlineWidth,

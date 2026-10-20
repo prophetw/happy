@@ -92,6 +92,10 @@ export const it: TranslationStructure = {
         activeNow: 'Attivo ora',
         unknown: 'sconosciuto',
         unread: 'nuovi risultati',
+        running: 'In corso',
+        completed: 'Completato',
+        viewConversation: 'Apri conversazione',
+        dismissCompletion: 'Chiudi notifica di completamento',
     },
 
     time: {

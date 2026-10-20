@@ -18,6 +18,7 @@ import { NormalizedMessage } from "./typesRaw";
 import { isMachineOnline } from '@/utils/machineUtils';
 import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
 import { resolveSessionState, type SessionState } from './sessionState';
+import { didSessionCompleteTurn } from './sessionCompletion';
 import { getSessionActivityAt } from '@/utils/sessionActivity';
 import { applySettings, Settings } from "./settings";
 import { LocalSettings, applyLocalSettings } from "./localSettings";
@@ -786,21 +787,19 @@ export const storage = create<StorageState>()((set, get) => {
                 }
             });
 
-            // Track unread: detect when agent finishes all work for a request.
-            // "Was active" = thinking or had pending permission requests.
-            // "Now idle" = online, not thinking, no pending permissions.
+            // A new turn supersedes the previous result. Only a transition to
+            // idle (not a disconnect or blocking question) marks work complete.
             let unreadSessionIds = state.unreadSessionIds;
             sessions.forEach(session => {
                 const oldSession = state.sessions[session.id];
                 if (!oldSession) return;
-                const wasActive = oldSession.thinking === true
-                    || (oldSession.agentState?.requests && Object.keys(oldSession.agentState.requests).length > 0);
                 const newSession = mergedSessions[session.id];
-                if (!newSession || !wasActive) return;
-                const isNowIdle = newSession.thinking !== true
-                    && newSession.presence === 'online'
-                    && (!newSession.agentState?.requests || Object.keys(newSession.agentState.requests).length === 0);
-                if (isNowIdle && state.currentViewingSessionId !== session.id) {
+                if (!newSession) return;
+                if (newSession.thinking && unreadSessionIds.has(session.id)) {
+                    unreadSessionIds = new Set(unreadSessionIds);
+                    unreadSessionIds.delete(session.id);
+                }
+                if (didSessionCompleteTurn(oldSession, newSession) && state.currentViewingSessionId !== session.id) {
                     if (!unreadSessionIds.has(session.id)) {
                         unreadSessionIds = new Set(unreadSessionIds);
                         unreadSessionIds.add(session.id);
