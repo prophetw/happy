@@ -269,9 +269,9 @@ export const CompactSessionRow = React.memo(({ session, selected, showBorder }: 
     const renderTrailingIndicator = () => {
         let indicator: React.ReactNode = null;
 
-        if (Platform.OS === 'web' && !session.archived && !session.machineOffline
+        if ((Platform.OS === 'web' || Platform.OS === 'ios') && !session.archived && !session.machineOffline
             && (needsUserAction || session.state === 'thinking' || session.hasUnread)) {
-            indicator = <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} />;
+            indicator = <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} kind={session.attentionKind} />;
         } else if (needsUserAction) {
             indicator = <StatusDot color={status.dotColor} isPulsing={status.isPulsing} />;
         } else if (session.hasUnread) {

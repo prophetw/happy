@@ -19,6 +19,7 @@ import { isMachineOnline } from '@/utils/machineUtils';
 import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
 import { resolveSessionState, type SessionState } from './sessionState';
 import { didSessionCompleteTurn } from './sessionCompletion';
+import { mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecords } from './sessionAttention';
 import { isWebTabActive } from './webTabTitle';
 import { getSessionActivityAt } from '@/utils/sessionActivity';
 import { applySettings, Settings } from "./settings";
@@ -136,6 +137,7 @@ interface SessionMessages {
 
 // Display-only row data — all primitives, cheap to deep-equal
 export interface SessionRowData {
+    attentionKind?: 'done' | 'permission' | 'question' | 'failed';
     botId?: string | null;
     botUsername?: string | null;
     id: string;
@@ -240,6 +242,7 @@ function buildSessionRowData(
         gitInsertions: rigGit?.insertions ?? null,
         gitBranch: typeof metadataBranch === 'string' ? metadataBranch : null,
         state,
+        attentionKind: session.attentionKind,
         createdAt: session.createdAt,
         lastActivityAt: getSessionActivityAt(session),
         ...(!session.active && { activeAt: session.activeAt }),
@@ -367,8 +370,11 @@ interface StorageState {
     // Feed methods
     applyFeedItems: (items: FeedItem[]) => void;
     clearFeed: () => void;
-    // Unread session tracking (memory-only)
+    // Sync persists attention and unread state per account and server.
     unreadSessionIds: Set<string>;
+    sessionAttention: SessionAttentionRecords;
+    applySessionAttention: (records: SessionAttentionRecords) => void;
+    appIsActive: boolean;
     currentViewingSessionId: string | null;
     markSessionRead: (sessionId: string) => void;
     markSessionUnread: (sessionId: string) => void;
@@ -376,7 +382,7 @@ interface StorageState {
     /**
      * Chats the user has archived, before any machine has agreed to it.
      *
-     * Memory-only, like the unread set above: an app that was restarted has no
+     * Memory-only: an app that was restarted has no
      * archive still in flight, and the server has long since answered.
      */
     archivingSessionIds: Set<string>;
@@ -538,6 +544,8 @@ export const storage = create<StorageState>()((set, get) => {
         isDataReady: false,
         nativeUpdateStatus: null,
         unreadSessionIds: new Set<string>(),
+        sessionAttention: {},
+        appIsActive: true,
         currentViewingSessionId: null,
         archivingSessionIds: new Set<string>(),
         isMutableToolCall: (sessionId: string, callId: string) => {
@@ -788,6 +796,11 @@ export const storage = create<StorageState>()((set, get) => {
                 }
             });
 
+            let sessionAttention = state.sessionAttention;
+            for (const session of sessions) {
+                const merged = mergedSessions[session.id];
+                if (merged) merged.attentionKind = merged.lastTurnStatus === 'failed' ? 'failed' : sessionAttention[session.id]?.kind ?? merged.attentionKind;
+            }
             // A new turn supersedes the previous result. Only a transition to
             // idle (not a disconnect or blocking question) marks work complete.
             let unreadSessionIds = state.unreadSessionIds;
@@ -799,9 +812,12 @@ export const storage = create<StorageState>()((set, get) => {
                 if (newSession.thinking && unreadSessionIds.has(session.id)) {
                     unreadSessionIds = new Set(unreadSessionIds);
                     unreadSessionIds.delete(session.id);
+                    const record = sessionAttention[session.id];
+                    if (record && !record.read) sessionAttention = { ...sessionAttention, [session.id]: readAttentionRecord(record) };
                 }
-                if (didSessionCompleteTurn(oldSession, newSession)
-                    && (state.currentViewingSessionId !== session.id || !isWebTabActive())) {
+                if (didSessionCompleteTurn(oldSession, newSession) && newSession.lastTurnStatus !== 'cancelled'
+                    && (!state.appIsActive || state.currentViewingSessionId !== session.id || !isWebTabActive())) {
+                    newSession.attentionKind = newSession.lastTurnStatus === 'failed' ? 'failed' : 'done';
                     if (!unreadSessionIds.has(session.id)) {
                         unreadSessionIds = new Set(unreadSessionIds);
                         unreadSessionIds.add(session.id);
@@ -842,6 +858,7 @@ export const storage = create<StorageState>()((set, get) => {
                 sessionMessages: updatedSessionMessages,
                 unreadSessionIds,
                 archivingSessionIds,
+                sessionAttention,
             };
             });
             for (const sessionId of pendingComposerWrites) {
@@ -1645,13 +1662,29 @@ export const storage = create<StorageState>()((set, get) => {
             feedLoaded: false,  // Reset loading flag
             friendsLoaded: false  // Reset loading flag
         })),
+        applySessionAttention: (records) => set(state => {
+            const sessionAttention = { ...state.sessionAttention };
+            const unreadSessionIds = new Set(state.unreadSessionIds);
+            const sessions = { ...state.sessions };
+            for (const [id, incoming] of Object.entries(records)) {
+                let record = mergeAttentionRecord(sessionAttention[id], incoming);
+                if (sessions[id]?.lastTurnStatus === 'cancelled' && record.kind === 'done') record = readAttentionRecord(record);
+                if (state.appIsActive && isWebTabActive() && state.currentViewingSessionId === id) record = readAttentionRecord(record);
+                sessionAttention[id] = record;
+                if (record.read) unreadSessionIds.delete(id); else unreadSessionIds.add(id);
+                if (sessions[id]) sessions[id] = { ...sessions[id], attentionKind: sessions[id].lastTurnStatus === 'failed' ? 'failed' : record.kind };
+            }
+            return { sessionAttention, unreadSessionIds, sessions, sessionListViewData: buildSessionListViewData(sessions, unreadSessionIds, state.machines, state.archivingSessionIds, state.projects) };
+        }),
         markSessionRead: (sessionId: string) => set((state) => {
-            if (!state.unreadSessionIds.has(sessionId)) return state;
+            const record = state.sessionAttention[sessionId];
+            if (!state.unreadSessionIds.has(sessionId) && (!record || record.read)) return state;
             const next = new Set(state.unreadSessionIds);
             next.delete(sessionId);
             return {
                 ...state,
                 unreadSessionIds: next,
+                ...(record ? { sessionAttention: { ...state.sessionAttention, [sessionId]: readAttentionRecord(record) } } : {}),
                 sessionListViewData: buildSessionListViewData(state.sessions, next, state.machines, state.archivingSessionIds, state.projects),
             };
         }),
@@ -1668,12 +1701,15 @@ export const storage = create<StorageState>()((set, get) => {
         setCurrentViewingSession: (sessionId: string | null) => set((state) => {
             if (state.currentViewingSessionId === sessionId) return state;
             // Navigation in a background tab does not mean the result was read.
-            const next = sessionId && isWebTabActive() && state.unreadSessionIds.has(sessionId)
+            const next = sessionId && state.appIsActive && isWebTabActive() && state.unreadSessionIds.has(sessionId)
                 ? (() => { const s = new Set(state.unreadSessionIds); s.delete(sessionId); return s; })()
                 : state.unreadSessionIds;
             return {
                 ...state,
                 currentViewingSessionId: sessionId,
+                ...(sessionId && state.appIsActive && isWebTabActive() && state.sessionAttention[sessionId] ? {
+                    sessionAttention: { ...state.sessionAttention, [sessionId]: readAttentionRecord(state.sessionAttention[sessionId]) },
+                } : {}),
                 unreadSessionIds: next,
                 ...(next !== state.unreadSessionIds ? {
                     sessionListViewData: buildSessionListViewData(state.sessions, next, state.machines, state.archivingSessionIds, state.projects),

@@ -10,9 +10,9 @@
  * Connected clients still receive the realtime message update over socket;
  * only the Expo push for "new message" went away.
  *
- * Suppression: if the user is demonstrably looking at a UI client
- * (`user-scoped` socket reporting `app-state: active`), suppress the push —
- * they can see in-app indicators (unread dots, tab title counter) instead.
+ * Suppression requires an active UI explicitly viewing this conversation,
+ * unless the user has chosen to always notify their phone. A foreground
+ * home page or another conversation must not suppress mobile notifications.
  * Anything short of that proof sends, because a missed push is far more
  * costly than a redundant one. See eventRouter.hasActiveUiClient.
  *
@@ -42,6 +42,7 @@ async function fetchTokensAndSend(params: {
     body: string;
     data: Record<string, unknown>;
     channelId: string;
+    badge?: number;
 }): Promise<PushOutcome> {
     // All push tokens are mobile — web/CLI never register Expo tokens.
     const tokens = await db.accountPushToken.findMany({
@@ -60,6 +61,8 @@ async function fetchTokensAndSend(params: {
             body: params.body,
             data: params.data,
             sound: 'default' as const,
+            threadId: params.sessionId,
+            badge: params.badge,
             channelId: params.channelId
         }))
     );
@@ -101,12 +104,13 @@ export async function dispatchSessionEventPush(params: {
     title: string;
     body: string;
     data?: Record<string, unknown>;
+    badge?: number;
 }): Promise<PushOutcome> {
     const { userId, sessionId, title, body, data } = params;
 
     try {
         try {
-            if (await isUserActive(userId)) {
+            if (await isUserActive(userId, sessionId)) {
                 log({ module: 'push' }, `Suppressed session-event push for user ${userId} session ${sessionId}: user active`);
                 return { result: 'suppressed', reason: 'active-ui-client' };
             }
@@ -121,7 +125,8 @@ export async function dispatchSessionEventPush(params: {
             title,
             body,
             data: { sessionId, ...(data ?? {}) },
-            channelId: 'messages'
+            channelId: 'messages',
+            badge: params.badge,
         });
     } catch (error) {
         log({ module: 'push', level: 'error' }, `Session-event push dispatch failed: ${error}`);

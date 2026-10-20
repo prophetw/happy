@@ -738,9 +738,9 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                 )}
 
                 <View style={styles.statusRow}>
-                    {Platform.OS === 'web' && !session.archived && !session.machineOffline && (needsUserAction || session.state === 'thinking' || session.hasUnread) ? (
+                    {(Platform.OS === 'web' || Platform.OS === 'ios') && !session.archived && !session.machineOffline && (needsUserAction || session.state === 'thinking' || session.hasUnread) ? (
                         <>
-                            <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} />
+                            <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} kind={session.attentionKind} />
                             {(session.modelName || session.activitySummary) && (
                                 <Text style={[styles.statusText, { marginLeft: 6 }]}>
                                     {[session.modelName, session.activitySummary].filter(Boolean).join(' · ')}

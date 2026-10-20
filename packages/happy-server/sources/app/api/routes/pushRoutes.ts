@@ -3,6 +3,7 @@ import { type Fastify } from "../types";
 import { db } from "@/storage/db";
 import { dispatchSessionEventPush } from "@/app/push/pushDispatch";
 import { buildSessionEventEphemeral, eventRouter } from "@/app/events/eventRouter";
+import { recordSessionAttention, getAttentionBadgeCount, markAttentionPushDelivered } from '@/app/push/sessionAttention';
 
 export function pushRoutes(app: Fastify) {
     
@@ -121,16 +122,20 @@ export function pushRoutes(app: Fastify) {
 
         const session = await db.session.findFirst({
             where: { id: sessionId, accountId: userId },
-            select: { id: true }
+            select: { id: true, seq: true, agentStateVersion: true }
         });
         if (!session) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
+        const eventId = `${kind}:${session.seq}:${session.agentStateVersion}`;
+        const recorded = await recordSessionAttention(userId, sessionId, kind, eventId);
+        if (!recorded.shouldNotify) return reply.send({ success: true, result: 'suppressed', reason: 'duplicate-session-event' });
+
         // Fan out the event to user's connected clients (web tabs use this to
         // bump tab-title unread counter for "user attention needed" moments only,
         // instead of pinging on every encrypted message).
-        eventRouter.emitEphemeral({
+        if (recorded.created) eventRouter.emitEphemeral({
             userId,
             payload: buildSessionEventEphemeral(sessionId, kind, title, body),
             recipientFilter: { type: 'all-interested-in-session', sessionId }
@@ -143,8 +148,10 @@ export function pushRoutes(app: Fastify) {
             sessionId,
             title,
             body,
+            badge: await getAttentionBadgeCount(userId),
             data: { ...(data ?? {}), kind }
         });
+        if (outcome.result === 'sent' || outcome.result === 'partial') await markAttentionPushDelivered(userId, sessionId, eventId);
 
         return reply.send({ success: true, ...outcome });
     });

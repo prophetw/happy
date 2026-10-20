@@ -36,6 +36,18 @@ describe('session avatar events', () => {
 });
 
 describe('EventRouter.hasActiveUiClient', () => {
+    it('only suppresses a session event while that exact conversation is being viewed', async () => {
+        eventRouter.init(stubIo([{ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: 'a' } }]));
+        expect(await eventRouter.hasActiveUiClient('u1', 'a')).toBe(true);
+        expect(await eventRouter.hasActiveUiClient('u1', 'b')).toBe(false);
+    });
+
+    it('fails open for older clients without a viewed conversation and honors always-notify', async () => {
+        eventRouter.init(stubIo([socket('user-scoped', 'active')]));
+        expect(await eventRouter.hasActiveUiClient('u1', 'a')).toBe(false);
+        eventRouter.init(stubIo([{ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: 'a', alwaysPushToPhone: true } }]));
+        expect(await eventRouter.hasActiveUiClient('u1', 'a')).toBe(false);
+    });
     it('counts a foreground UI client as present', async () => {
         eventRouter.init(stubIo([socket('user-scoped', 'active')]));
         expect(await eventRouter.hasActiveUiClient('u1')).toBe(true);
