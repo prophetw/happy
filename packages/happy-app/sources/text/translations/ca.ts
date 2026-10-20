@@ -552,6 +552,11 @@ export const ca: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: 'Cerca projectes o carpetes',
+        searchRecentProjects: 'Cerca projectes recents',
+        directorySearchScope: 'Cerca projectes recents i carpetes al directori actual i superior',
+        noMatchingDirectories: 'No hi ha projectes ni carpetes coincidents',
+        clearDirectorySearch: 'Esborra la cerca',
         directoryPickerTitle: 'Selecciona una carpeta',
         selectDirectory: 'Utilitza aquesta carpeta',
         parentDirectory: 'Carpeta superior',

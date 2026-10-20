@@ -570,6 +570,11 @@ export const en: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: 'Search projects or directories',
+        searchRecentProjects: 'Search recent projects',
+        directorySearchScope: 'Searches recent projects and folders in the current and parent directory',
+        noMatchingDirectories: 'No matching projects or directories',
+        clearDirectorySearch: 'Clear search',
         directoryPickerTitle: 'Select directory',
         selectDirectory: 'Use this directory',
         parentDirectory: 'Parent directory',

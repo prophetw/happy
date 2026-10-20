@@ -552,6 +552,11 @@ export const zhHant: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: '搜尋專案或目錄',
+        searchRecentProjects: '搜尋最近專案',
+        directorySearchScope: '搜尋範圍：最近專案、目前目錄的子目錄及同層目錄',
+        noMatchingDirectories: '沒有符合的專案或目錄',
+        clearDirectorySearch: '清除搜尋',
         directoryPickerTitle: '選擇目錄',
         selectDirectory: '使用此目錄',
         parentDirectory: '返回上層目錄',

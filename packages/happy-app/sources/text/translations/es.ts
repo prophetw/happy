@@ -552,6 +552,11 @@ export const es: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: 'Buscar proyectos o carpetas',
+        searchRecentProjects: 'Buscar proyectos recientes',
+        directorySearchScope: 'Busca proyectos recientes y carpetas en el directorio actual y superior',
+        noMatchingDirectories: 'No hay proyectos ni carpetas coincidentes',
+        clearDirectorySearch: 'Borrar búsqueda',
         directoryPickerTitle: 'Seleccionar carpeta',
         selectDirectory: 'Usar esta carpeta',
         parentDirectory: 'Carpeta superior',

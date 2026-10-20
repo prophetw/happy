@@ -568,6 +568,11 @@ export const pl: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: 'Szukaj projektów lub folderów',
+        searchRecentProjects: 'Szukaj ostatnich projektów',
+        directorySearchScope: 'Wyszukiwanie ostatnich projektów i folderów w bieżącym i nadrzędnym katalogu',
+        noMatchingDirectories: 'Brak pasujących projektów lub folderów',
+        clearDirectorySearch: 'Wyczyść wyszukiwanie',
         directoryPickerTitle: 'Wybierz katalog',
         selectDirectory: 'Użyj tego katalogu',
         parentDirectory: 'Katalog nadrzędny',

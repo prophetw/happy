@@ -553,6 +553,11 @@ export const zhHans: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: '搜索项目或目录',
+        searchRecentProjects: '搜索最近项目',
+        directorySearchScope: '搜索范围：最近项目、当前目录的子目录及同级目录',
+        noMatchingDirectories: '没有匹配的项目或目录',
+        clearDirectorySearch: '清除搜索',
         directoryPickerTitle: '选择目录',
         selectDirectory: '使用此目录',
         parentDirectory: '返回上级目录',

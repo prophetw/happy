@@ -551,6 +551,11 @@ export const pt: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: 'Buscar projetos ou pastas',
+        searchRecentProjects: 'Buscar projetos recentes',
+        directorySearchScope: 'Busca projetos recentes e pastas no diretório atual e superior',
+        noMatchingDirectories: 'Nenhum projeto ou pasta correspondente',
+        clearDirectorySearch: 'Limpar busca',
         directoryPickerTitle: 'Selecionar pasta',
         selectDirectory: 'Usar esta pasta',
         parentDirectory: 'Pasta superior',

@@ -568,6 +568,11 @@ export const ru: TranslationStructure = {
     },
 
     machineLauncher: {
+        searchDirectories: 'Поиск проектов или папок',
+        searchRecentProjects: 'Поиск недавних проектов',
+        directorySearchScope: 'Поиск недавних проектов и папок в текущем и родительском каталоге',
+        noMatchingDirectories: 'Совпадающие проекты или папки не найдены',
+        clearDirectorySearch: 'Очистить поиск',
         directoryPickerTitle: 'Выбрать папку',
         selectDirectory: 'Использовать эту папку',
         parentDirectory: 'Родительская папка',
