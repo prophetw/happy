@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentState, Session } from './storageTypes';
 import { didSessionCompleteTurn, selectCompletedSessionIds } from './sessionCompletion';
 import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
 
 // The real store; only native storage, the socket and encryption are replaced.
-vi.mock('react-native', () => ({ Platform: { OS: 'ios' }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } }));
+vi.mock('react-native', () => ({ Platform: { OS: 'web' }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } }));
 vi.mock('./persistence', () => ({
     loadSettings: () => ({}), loadLocalSettings: () => ({}), saveLocalSettings: vi.fn(), saveSettings: vi.fn(),
     loadPurchases: () => null, savePurchases: vi.fn(), loadProfile: () => null, saveProfile: vi.fn(),
@@ -19,6 +19,8 @@ vi.mock('@/components/tools/knownTools', () => ({ isMutableTool: () => true }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
 import { storage } from './storage';
+
+afterEach(() => vi.unstubAllGlobals());
 
 function session(id = 'a', patch: Partial<Session> = {}): Session {
     return {
@@ -106,6 +108,28 @@ describe('completion state through the real session store', () => {
         storage.getState().setCurrentViewingSession('a');
         apply({ thinking: false });
         expect(storage.getState().unreadSessionIds.size).toBe(0);
+    });
+
+    it.each(['hidden', 'unfocused'])('queues the open conversation when its browser tab is %s', (background) => {
+        vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+        apply({ thinking: true });
+        storage.getState().setCurrentViewingSession('a');
+        vi.stubGlobal('document', {
+            visibilityState: background === 'hidden' ? 'hidden' : 'visible',
+            hasFocus: () => background === 'hidden',
+        });
+        apply({ thinking: false });
+        expect(storage.getState().unreadSessionIds.has('a')).toBe(true);
+        expect(selectCompletedSessionIds(storage.getState())).toEqual(['a']);
+    });
+
+    it('does not clear unread when navigation changes while the browser tab is hidden', () => {
+        apply({ thinking: true });
+        apply({ thinking: false });
+        vi.stubGlobal('document', { visibilityState: 'hidden', hasFocus: () => false });
+        storage.getState().setCurrentViewingSession('a');
+        expect(storage.getState().unreadSessionIds.has('a')).toBe(true);
+        expect(selectCompletedSessionIds(storage.getState())).toEqual(['a']);
     });
 
     it('does not mark blocking questions or disconnects completed', () => {

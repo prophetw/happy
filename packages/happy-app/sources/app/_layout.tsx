@@ -22,7 +22,7 @@ import { tracking } from '@/track/tracking';
 import { syncRestore } from '@/sync/sync';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
-import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
+import { WebTabStatus } from '@/components/web/WebTabStatus';
 import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/StatusBarProvider';
 // import * as SystemUI from 'expo-system-ui';
@@ -484,7 +484,7 @@ export default function RootLayout() {
 
     return (
         <>
-            <FaviconPermissionIndicator />
+            <WebTabStatus />
             {providers}
         </>
     );

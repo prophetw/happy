@@ -19,6 +19,7 @@ import { isMachineOnline } from '@/utils/machineUtils';
 import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
 import { resolveSessionState, type SessionState } from './sessionState';
 import { didSessionCompleteTurn } from './sessionCompletion';
+import { isWebTabActive } from './webTabTitle';
 import { getSessionActivityAt } from '@/utils/sessionActivity';
 import { applySettings, Settings } from "./settings";
 import { LocalSettings, applyLocalSettings } from "./localSettings";
@@ -799,7 +800,8 @@ export const storage = create<StorageState>()((set, get) => {
                     unreadSessionIds = new Set(unreadSessionIds);
                     unreadSessionIds.delete(session.id);
                 }
-                if (didSessionCompleteTurn(oldSession, newSession) && state.currentViewingSessionId !== session.id) {
+                if (didSessionCompleteTurn(oldSession, newSession)
+                    && (state.currentViewingSessionId !== session.id || !isWebTabActive())) {
                     if (!unreadSessionIds.has(session.id)) {
                         unreadSessionIds = new Set(unreadSessionIds);
                         unreadSessionIds.add(session.id);
@@ -1665,8 +1667,8 @@ export const storage = create<StorageState>()((set, get) => {
         }),
         setCurrentViewingSession: (sessionId: string | null) => set((state) => {
             if (state.currentViewingSessionId === sessionId) return state;
-            // If switching to a new session, mark it as read
-            const next = sessionId && state.unreadSessionIds.has(sessionId)
+            // Navigation in a background tab does not mean the result was read.
+            const next = sessionId && isWebTabActive() && state.unreadSessionIds.has(sessionId)
                 ? (() => { const s = new Set(state.unreadSessionIds); s.delete(sessionId); return s; })()
                 : state.unreadSessionIds;
             return {

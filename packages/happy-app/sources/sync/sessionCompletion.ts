@@ -1,6 +1,7 @@
 import type { Session } from './storageTypes';
 import { resolveSessionState } from './sessionState';
 import { isRigMetadata } from './rig';
+import { isWebTabActive } from './webTabTitle';
 
 function workState(session: Session) {
     return resolveSessionState({ agentState: session.agentState, thinking: session.thinking, isOnline: session.presence === 'online' });
@@ -21,7 +22,7 @@ export function selectCompletedSessionIds(state: {
 }): string[] {
     return [...state.unreadSessionIds].reverse().filter(id => {
         const session = state.sessions[id];
-        if (!session || id === state.currentViewingSessionId || state.archivingSessionIds.has(id)
+        if (!session || (id === state.currentViewingSessionId && isWebTabActive()) || state.archivingSessionIds.has(id)
             || session.metadata?.isSideChat || session.metadata?.lifecycleState === 'archived'
             || (!session.active && !isRigMetadata(session.metadata))) return false;
         // A completed result remains available if the agent disconnects afterwards.
