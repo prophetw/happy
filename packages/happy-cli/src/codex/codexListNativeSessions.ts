@@ -1,4 +1,5 @@
 import type { ListThreadsParams, ListThreadsResponse } from './codexAppServerTypes';
+import { stripHappySystemBlocks } from '@/utils/happySystemBlock';
 
 export type NativeCodexSession = {
     sessionId: string;
@@ -38,7 +39,8 @@ export async function listNativeCodexSessions(client: ThreadListClient, director
             sessionId: thread.id,
             cwd: thread.cwd,
             gitBranch: thread.gitInfo?.branch ?? null,
-            firstUserMessage: thread.preview?.trim() || null,
+            // Existing threads can still have Happy instructions before the user text.
+            firstUserMessage: stripHappySystemBlocks(thread.preview ?? '') || null,
             summary: thread.name?.trim() || null,
             timestamp: seconds * 1000,
         }];

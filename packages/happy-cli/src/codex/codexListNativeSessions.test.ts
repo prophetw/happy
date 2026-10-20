@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { listNativeCodexSessions } from './codexListNativeSessions';
+import { wrapHappySystem } from '@/utils/happySystemBlock';
 
 describe('listNativeCodexSessions', () => {
     it('lists native and Happy conversations newest first with recognizable previews', async () => {
@@ -42,6 +43,43 @@ describe('listNativeCodexSessions', () => {
             { sessionId: 'image-only', cwd: '/project', gitBranch: null, firstUserMessage: null, summary: null, timestamp: 10_000 },
         ]);
         expect(client.listThreads).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/project' }));
+    });
+
+    it.each(['before', 'after'])('removes Happy instructions %s the user message from native previews', async (position) => {
+        const userMessage = '修复登录超时\n\n保留现有登录方式';
+        const instructions = wrapHappySystem('# Options\n\n' + 'Choose an option. '.repeat(100));
+        const preview = position === 'before'
+            ? `${instructions}\n\n${userMessage}`
+            : `${userMessage}\n\n${instructions}`;
+        const client = {
+            listThreads: vi.fn().mockResolvedValue({
+                data: [{
+                    id: 'happy-thread', cwd: '/project', createdAt: 10, updatedAt: 20,
+                    preview: `${preview}\n\n${wrapHappySystem('Change the chat title.')}`,
+                }],
+                nextCursor: null,
+            }),
+        };
+
+        expect(await listNativeCodexSessions(client)).toEqual([
+            { sessionId: 'happy-thread', cwd: '/project', gitBranch: null, firstUserMessage: userMessage, summary: null, timestamp: 20_000 },
+        ]);
+    });
+
+    it('returns no preview for instruction-only messages', async () => {
+        const client = {
+            listThreads: vi.fn().mockResolvedValue({
+                data: [{
+                    id: 'image-only', cwd: '/project', createdAt: 10, updatedAt: 20,
+                    preview: wrapHappySystem('Choose an option.'),
+                }],
+                nextCursor: null,
+            }),
+        };
+
+        expect(await listNativeCodexSessions(client)).toEqual([
+            { sessionId: 'image-only', cwd: '/project', gitBranch: null, firstUserMessage: null, summary: null, timestamp: 20_000 },
+        ]);
     });
 
     it('propagates backend failures instead of reporting an empty list', async () => {
