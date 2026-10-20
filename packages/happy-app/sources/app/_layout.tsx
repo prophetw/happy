@@ -13,6 +13,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
+import { SessionCompletionNotifications } from '@/components/web/SessionCompletionNotifications';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform, AppState, LogBox } from 'react-native';
 import { ModalProvider } from '@/modal';
@@ -462,6 +463,7 @@ export default function RootLayout() {
                                     <RealtimeProvider>
                                         <HorizontalSafeAreaWrapper>
                                             <SidebarNavigator />
+                                            {Platform.OS === 'web' && <SessionCompletionNotifications />}
                                         </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>

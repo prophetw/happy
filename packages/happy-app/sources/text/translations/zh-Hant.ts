@@ -94,6 +94,10 @@ export const zhHant: TranslationStructure = {
         activeNow: '目前活躍',
         unknown: '未知',
         unread: '新結果',
+        running: '執行中',
+        completed: '已完成',
+        viewConversation: '點擊查看對話',
+        dismissCompletion: '關閉完成通知',
     },
 
     time: {

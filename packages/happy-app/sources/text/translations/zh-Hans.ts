@@ -95,6 +95,10 @@ export const zhHans: TranslationStructure = {
         activeNow: '当前活跃',
         unknown: '未知',
         unread: '新结果',
+        running: '运行中',
+        completed: '已完成',
+        viewConversation: '点击查看对话',
+        dismissCompletion: '关闭完成通知',
     },
 
     time: {

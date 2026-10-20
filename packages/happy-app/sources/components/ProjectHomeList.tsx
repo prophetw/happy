@@ -52,6 +52,8 @@ import { requestHomeDockFocus } from './homeDockFocus';
 import { hapticsLight } from './haptics';
 import { Avatar } from './Avatar';
 import { StatusDot } from './StatusDot';
+import { SessionStatusBadge } from './SessionStatusBadge';
+import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
 import { ShimmerText } from './ShimmerText';
 import { HomeListHeader } from './HomeListHeader';
 import { layout } from './layout';
@@ -733,7 +735,9 @@ const ChatRow = React.memo(({ session, bot = false, archived = false }: {
                 style={styles.projectNameText}
             />
             <View style={styles.trailing}>
-                {presentation.topRight.type === 'dot' ? (
+                {Platform.OS === 'web' && !archived && !session.machineOffline && getSessionAttentionStatus(session.state, session.hasUnread) ? (
+                    <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} />
+                ) : presentation.topRight.type === 'dot' ? (
                     <StatusDot color={presentation.topRight.color} size={10} />
                 ) : (
                     <Text style={styles.timestamp} numberOfLines={1}>{timestamp}</Text>
@@ -944,7 +948,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 7,
         height: 7,
         borderRadius: 4,
-        backgroundColor: '#007AFF',
+        backgroundColor: Platform.OS === 'web' ? '#34C759' : '#007AFF',
     },
     changes: {
         flexDirection: 'row',

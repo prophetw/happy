@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHasArchivedSessions, useVisibleSessionListViewData } from '@/hooks/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from './StatusDot';
+import { SessionStatusBadge } from './SessionStatusBadge';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/responsive';
 import { getHarnessName } from '@/utils/harnessCatalog';
@@ -737,15 +738,28 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                 )}
 
                 <View style={styles.statusRow}>
-                    <View style={styles.statusDotContainer}>
-                        <StatusDot color={status.dotColor} isPulsing={status.isPulsing} />
-                    </View>
-                    <Text style={[
-                        styles.statusText,
-                        { color: status.color }
-                    ]}>
-                        {session.modelName ? `${session.modelName} · ` : ''}{statusText}{session.activitySummary ? ` · ${session.activitySummary}` : ''}
-                    </Text>
+                    {Platform.OS === 'web' && !session.archived && !session.machineOffline && (needsUserAction || session.state === 'thinking' || session.hasUnread) ? (
+                        <>
+                            <SessionStatusBadge state={session.state} hasUnread={session.hasUnread} />
+                            {(session.modelName || session.activitySummary) && (
+                                <Text style={[styles.statusText, { marginLeft: 6 }]}>
+                                    {[session.modelName, session.activitySummary].filter(Boolean).join(' · ')}
+                                </Text>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <View style={styles.statusDotContainer}>
+                                <StatusDot color={status.dotColor} isPulsing={status.isPulsing} />
+                            </View>
+                            <Text style={[
+                                styles.statusText,
+                                { color: status.color }
+                            ]}>
+                                {session.modelName ? `${session.modelName} · ` : ''}{statusText}{session.activitySummary ? ` · ${session.activitySummary}` : ''}
+                            </Text>
+                        </>
+                    )}
                 </View>
             </View>
         </Pressable>

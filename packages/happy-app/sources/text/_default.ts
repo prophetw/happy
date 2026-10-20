@@ -92,6 +92,10 @@ export const en = {
         activeNow: 'Active now',
         unknown: 'unknown',
         unread: 'new results',
+        running: 'Running',
+        completed: 'Completed',
+        viewConversation: 'Open conversation',
+        dismissCompletion: 'Dismiss completion notification',
     },
 
     time: {

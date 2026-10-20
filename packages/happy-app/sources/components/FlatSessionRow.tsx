@@ -7,6 +7,7 @@ import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
 import { Avatar } from './Avatar';
 import { StatusDot } from './StatusDot';
+import { SessionStatusBadge } from './SessionStatusBadge';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
 import { SessionShortcutHintBadge } from './ShortcutHints';
 import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
@@ -18,6 +19,7 @@ import { t } from '@/text';
 import { RigGitLineChanges } from './RigGitLineChanges';
 import { ShimmerText } from './ShimmerText';
 import { resolveFlatSessionRowPresentation } from '@/utils/flatSessionRowPresentation';
+import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
 
 // Roughly three quarters of the row, the proportion a chat list uses: the row
 // is 10 + 61 + 10, so 60 leaves an even 10 either side of the avatar.
@@ -87,6 +89,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
         hasUnread: showUnreadDot,
         faded,
     });
+    const showWebStatus = Platform.OS === 'web' && !faded && !!getSessionAttentionStatus(session.state, showUnreadDot);
     const topRightAccessibilityLabel = presentation.topRight.type === 'dot'
         ? session.state === 'input_required'
             ? t('status.inputRequired')
@@ -171,7 +174,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
                         )}
                     </View>
                     <SessionShortcutHintBadge sessionId={session.id} style={styles.shortcutBadge} />
-                    <View
+                    {showWebStatus ? <SessionStatusBadge state={session.state} hasUnread={showUnreadDot} /> : <View
                         style={styles.topRightStatus}
                         accessible={topRightAccessibilityLabel !== undefined}
                         accessibilityRole={topRightAccessibilityLabel ? 'text' : undefined}
@@ -196,7 +199,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
                                 />
                             </View>
                         )}
-                    </View>
+                    </View>}
                 </View>
 
                 <Text style={styles.project} numberOfLines={1}>
