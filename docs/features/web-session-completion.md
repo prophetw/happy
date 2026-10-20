@@ -8,10 +8,20 @@ Web 全局右上角显示未读完成通知，包含会话标题，点击沿用�
 
 浏览器标签页标题以 `✓ (N)` 展示未读完成会话数，并复用现有 favicon 提醒标记；有权限请求时也保留图标标记，避免两类提醒互相覆盖。关闭页面内的通知卡片不会清除标签页上的未读完成提示。
 
-标签页可见且窗口获得焦点时，当前打开的会话视为正在阅读，不弹完成通知。切换到其他标签页或窗口后，即便仍打开该会话，完成结果也会记为未读；返回并获得焦点后只清除当前会话的未读，其他会话继续提示。侧边子对话、正在归档及已归档的会话不弹完成通知。通知不申请系统通知权限。最新客户端会按账户缓存完成/未读状态，并通过服务端会话提醒记录恢复和同步已读；只有在线运行状态、没有服务端事件的完成标记仅在本机恢复。共享数据流见 [Expo iOS 会话状态与任务提醒](ios-session-notifications.md)。
+标签页可见且窗口获得焦点时，当前打开的会话视为正在阅读，不弹完成通知。切换到其他标签页或窗口后，即便仍打开该会话，完成结果也会记为未读；返回并获得焦点后只清除当前会话的未读，其他会话继续提示。侧边子对话、正在归档及已归档的会话不弹完成通知。页面内提示无需系统通知权限。最新客户端会按账户缓存完成/未读状态，并通过服务端会话提醒记录恢复和同步已读；只有在线运行状态、没有服务端事件的完成标记仅在本机恢复。共享数据流见 [Expo iOS 会话状态与任务提醒](ios-session-notifications.md)。
+
+## 浏览器桌面通知
+
+在「设置 → 账户 → 浏览器通知」开启「桌面通知」，由这次点击触发浏览器授权。HTTP 的 `localhost`、回环地址和 HTTPS 都属于可用的安全上下文，`http://localhost:8989/` 无需配置证书。权限及通知开关按当前浏览器和网站来源保存；授权被拒绝时，原开关替换为可点击的「查看通知开启方法」，展示地址栏网站权限的操作步骤，不重复请求授权。在浏览器中允许通知后，支持 Permissions API 的浏览器会立即恢复开关；其他浏览器在返回页面或刷新后更新。
+
+网页保持打开时，新的后台完成结果会发送系统通知，点击通知聚焦浏览器并打开对应会话；已读、再次运行、关闭通知开关或退出账号会清理相应通知。前台完成、首次载入的历史结果和刚开启开关时已有的结果不补发系统通知。关闭页面内卡片不会重复发送。浏览器不支持通知或拒绝权限时，页面内卡片及标签页提示继续可用。关闭整个网页后的推送需要另行接入 Web Push，不包含在此功能内。
 
 ## 验证
 
 本地 Expo Web 已运行且 CLI 已构建时，可执行 `pnpm exec node packages/happy-app/scripts/session-completion.e2e.mjs`。默认连接 `http://127.0.0.1:8989`，可通过 `HAPPY_COMPLETION_WEB_ORIGIN` 指定其他本地地址。脚本启动临时本地服务及测试账号，通过真实 Socket.IO 更新验证运行、完成、授权等待、关闭、再次完成和会话跳转，结束后清理服务及临时数据；报告和关键截图保存在 `.e2e-artifacts/session-completion-<时间>/`。
 
 验证真实后台标签页时，Linux 下执行 `HAPPY_COMPLETION_BACKGROUND_TABS=1 xvfb-run -a pnpm exec node packages/happy-app/scripts/session-completion.e2e.mjs`；有桌面显示环境时可省略 `xvfb-run -a`。该模式使用有界面的 Chromium，并通过 CDP 禁用 Playwright 默认的焦点模拟，实际切换标签页后断言 `visibilityState === 'hidden'` 且 `hasFocus() === false`，再验证后台完成的标题计数、favicon、返回后的单会话已读及全部已读后的恢复。报告中的 `tabStates` 保存这些检查点的浏览器状态。
+
+验证本地桌面通知时执行 `HAPPY_COMPLETION_WEB_ORIGIN=http://localhost:8989 HAPPY_COMPLETION_DESKTOP_NOTIFICATIONS=1 xvfb-run -a pnpm exec node packages/happy-app/scripts/session-completion.e2e.mjs`。脚本通过自动化授予浏览器权限，验证用户开启开关、刷新后保留偏好、前台不弹、后台真实 Notification 的 `show` 事件，以及通知实例的点击回跳处理；不自动操作系统通知中心的原生按钮。`notificationResults` 保存原生 API 的显示结果和对应会话。
+
+额外设置 `HAPPY_COMPLETION_NATIVE_CLICK=1` 时，会使用 Python/Pillow 捕获原生桌面，并让通知保持显示以等待真实点击，用于验证系统通知到浏览器聚焦及会话跳转的完整交互。

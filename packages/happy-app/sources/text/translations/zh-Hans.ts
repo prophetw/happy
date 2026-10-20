@@ -17,6 +17,18 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const zhHans: TranslationStructure = {
+    browserNotifications: {
+        title: '浏览器通知',
+        enable: '开启桌面通知',
+        description: '标签页在后台时，任务完成后发送系统通知。',
+        blocked: '通知已被浏览器阻止，请在此网站的浏览器设置中允许通知。',
+        manage: '查看通知开启方法',
+        instructions: '1. 点击地址栏左侧的网站信息或权限图标。\n2. 将「通知」设为「允许」（可能需要先进入「网站设置」）。\n3. 返回本页，再开启「桌面通知」。\n\n如果开关未更新，请刷新页面。',
+        unsupported: '当前浏览器不支持桌面通知。',
+        insecure: '请使用 localhost 或 HTTPS 地址开启桌面通知。',
+        error: '无法开启桌面通知，请重试。',
+    },
+
     voiceStatusBar: {
         tapToEnd: '点按结束',
         connecting: '连接中…',
