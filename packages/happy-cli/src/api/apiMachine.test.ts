@@ -7,7 +7,8 @@ const {
     mockShouldReconnect,
     mockDetectCLIAvailability,
     mockDetectResumeSupport,
-    mockDiscoverDshModels
+    mockDiscoverDshModels,
+    mockDiscoverClaudeModels,
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     mockShouldReconnect: vi.fn(() => true),
@@ -25,7 +26,8 @@ const {
         requiresHappyAgentAuth: false,
         happyAgentAuthenticated: false
     })),
-    mockDiscoverDshModels: vi.fn()
+    mockDiscoverDshModels: vi.fn(),
+    mockDiscoverClaudeModels: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -68,6 +70,8 @@ vi.mock('@/utils/detectCLI', () => ({
 vi.mock('@/dsh/discoverModels', () => ({
     discoverDshModels: mockDiscoverDshModels
 }));
+
+vi.mock('@/claude/utils/discoverModels', () => ({ discoverClaudeModels: mockDiscoverClaudeModels }));
 
 vi.mock('@/resume/localHappyAgentAuth', () => ({
     detectResumeSupport: mockDetectResumeSupport
@@ -114,6 +118,7 @@ describe('ApiMachineClient socket reconnection', () => {
         vi.clearAllMocks();
         mockShouldReconnect.mockReturnValue(true);
         mockDiscoverDshModels.mockResolvedValue(null);
+        mockDiscoverClaudeModels.mockResolvedValue(null);
         socketHandlers = {};
         mockSocket = {
             connected: false,
@@ -323,6 +328,34 @@ describe('ApiMachineClient keepalive availability republish', () => {
     afterEach(() => {
         vi.useRealTimers();
         vi.restoreAllMocks();
+    });
+
+    it('publishes Claude host models and refreshes them when settings change', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ claude: true }));
+        mockDiscoverClaudeModels.mockResolvedValue({
+            currentCode: 'host-model', options: [{ code: 'host-model', value: 'host-model' }],
+        });
+        const machine = makeMachine();
+        const client = new ApiMachineClient('fake-token', machine);
+        const updateSpy = vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async handler => {
+            machine.metadata = handler(machine.metadata);
+        });
+        client.connect();
+        emitSocketEvent('connect');
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(machine.metadata.claudeModels).toEqual({
+            currentCode: 'host-model', options: [{ code: 'host-model', value: 'host-model' }], detectedAt: expect.any(Number),
+        });
+        updateSpy.mockClear();
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(updateSpy).not.toHaveBeenCalled();
+        mockDiscoverClaudeModels.mockResolvedValue({ currentCode: 'new-model', options: [] });
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(machine.metadata.claudeModels?.currentCode).toBe('new-model');
+        expect(updateSpy).toHaveBeenCalledOnce();
+        client.shutdown();
     });
 
     it('republishes machine metadata when dsh availability appears between keepalives', async () => {

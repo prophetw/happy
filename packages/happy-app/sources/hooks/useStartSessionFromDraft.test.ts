@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
     uploadSessionBlob: vi.fn(),
     sessionSetAvatar: vi.fn(),
     rememberRecentProject: vi.fn(),
+    getMachineModelModes: vi.fn(),
 }));
 
 // Counts up so a test can tell a reused idempotency key from a fresh one.
@@ -128,24 +129,11 @@ vi.mock('@/components/modelModeOptions', () => ({
         { key: 'yolo', name: 'YOLO' },
         { key: 'bypassPermissions', name: 'YOLO' },
     ],
-    getHardcodedModelModes: () => [
-        { key: 'default', name: 'Default' },
-        { key: 'opus', name: 'Opus' },
-    ],
+    getMachineModelModes: mocks.getMachineModelModes,
     getEffortLevelsForModel: () => [
         { key: 'medium', name: 'Medium' },
     ],
     getSupportsWorktree: (agentType: string) => agentType !== 'openclaw',
-    includeConfiguredModel: (
-        flavor: string,
-        models: Array<{ key: string; name: string }>,
-        configuredModelKey?: string | null,
-    ) => flavor === 'codex'
-        && configuredModelKey
-        && configuredModelKey !== 'default'
-        && !models.some((model) => model.key === configuredModelKey)
-        ? [...models, { key: configuredModelKey, name: configuredModelKey }]
-        : models,
 }));
 
 vi.mock('@/modal', () => ({
@@ -236,6 +224,11 @@ describe('useStartSessionFromDraft', () => {
         mocks.uuidCount = 0;
         completeSpawnRequest();
         mocks.defaultOverrides = {};
+        mocks.getMachineModelModes.mockReturnValue([
+            { key: 'default', name: 'Default' },
+            { key: 'opus', name: 'Opus' },
+            { key: 'my-workspace-model', name: 'Workspace model' },
+        ]);
         mocks.sessions = [];
         mocks.machines = [{ id: 'machine-1', online: true, metadata: { homeDir: '/Users/dev' } }];
         mocks.draft = createDraft();
@@ -347,6 +340,22 @@ describe('useStartSessionFromDraft', () => {
             agent: 'claude',
             permissionMode: 'bypassPermissions',
         }));
+    });
+
+    it('uses the selected host catalog and omits an obsolete Claude model at spawn', async () => {
+        const metadata = { homeDir: '/Users/dev', claudeModels: {
+            currentCode: 'host-model', options: [{ code: 'host-model', value: 'host-model' }],
+        } };
+        mocks.machines = [{ id: 'machine-1', online: true, metadata }];
+        mocks.draft = createDraft({ agentType: 'claude', modelMode: 'claude-fable-5-1' });
+        mocks.getMachineModelModes.mockReturnValue([
+            { key: 'default', name: 'host-model' }, { key: 'host-model', name: 'host-model' },
+        ]);
+        const { startSession } = useStartSessionFromDraft();
+        await expect(startSession()).resolves.toBe(true);
+        expect(mocks.getMachineModelModes).toHaveBeenCalledWith('claude', metadata, expect.any(Function), 'default');
+        expect(mocks.machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({ agent: 'claude', modelMode: undefined }));
+        expect(mocks.sessionSetAgentModes).toHaveBeenCalledWith('session-1', expect.objectContaining({ modelMode: 'default' }));
     });
 
     it('starts codex with a custom model saved in agent settings', async () => {

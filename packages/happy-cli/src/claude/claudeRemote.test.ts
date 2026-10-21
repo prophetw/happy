@@ -39,6 +39,7 @@ describe('claudeRemote', () => {
         const onReady = vi.fn();
         const onCompletionEvent = vi.fn();
         const onMessage = vi.fn();
+        const onSDKMetadata = vi.fn();
         const nextMessage = vi.fn()
             .mockResolvedValueOnce({ message: 'Original prompt', mode })
             .mockResolvedValue(null);
@@ -47,13 +48,21 @@ describe('claudeRemote', () => {
             path: '/fixture/project',
             allowedTools: [],
             hookSettingsPath: '/fixture/settings.json',
-            nextMessage, onReady, onCompletionEvent, onMessage,
+            nextMessage, onReady, onCompletionEvent, onMessage, onSDKMetadata,
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
             isAborted: () => false,
             onSessionFound: vi.fn(),
         });
-        return { onReady, onCompletionEvent, onMessage, nextMessage };
+        return { onReady, onCompletionEvent, onMessage, nextMessage, onSDKMetadata };
     }
+
+    it('reports the actual SDK model in session metadata', async () => {
+        const callbacks = await runMessages([
+            { type: 'system', subtype: 'init', model: 'gateway-model', tools: [], slash_commands: [] },
+            { type: 'result', subtype: 'success', is_error: false, result: 'Done' },
+        ]);
+        expect(callbacks.onSDKMetadata).toHaveBeenCalledWith(expect.objectContaining({ currentModelCode: 'gateway-model' }));
+    });
 
     it('explains host OAuth expiry once and closes the turn as failed', async () => {
         const callbacks = await runMessages([

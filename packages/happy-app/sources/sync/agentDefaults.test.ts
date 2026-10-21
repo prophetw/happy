@@ -47,18 +47,11 @@ describe('agent defaults', () => {
         ).permissionMode).toBe('auto');
     });
 
-    it.each(['1.2.6-beta.0', '1.2.6-beta.1', '1.2.6', '1.3.0'])('defaults Claude to Opus 5.5 on CLI %s', (version) => {
-        expect(getCodeAgentDefaults('claude', version).modelMode).toBe('claude-opus-5-5');
-        expect(resolveAgentDefaultConfig({}, 'claude', version).modelMode).toBe('claude-opus-5-5');
-    });
-
-    // Unlike the auto gate, an unknown version keeps the old model: an Opus 5.5
-    // default on a CLI whose bundled Claude Code predates it fails every turn.
-    it.each(['1.2.5', '1.2.5-beta.2', '1.2.0', 'not-a-version', undefined, null])(
-        'keeps Claude on Opus 5 on CLI %s',
+    it.each(['1.2.6-beta.0', '1.3.0', '1.2.5', '1.2.0', 'not-a-version', undefined, null])(
+        'inherits the host Claude model on CLI %s',
         (version) => {
-            expect(getCodeAgentDefaults('claude', version).modelMode).toBe('claude-opus-5');
-            expect(resolveAgentDefaultConfig({}, 'claude', version).modelMode).toBe('claude-opus-5');
+            expect(getCodeAgentDefaults('claude', version).modelMode).toBe('default');
+            expect(resolveAgentDefaultConfig({}, 'claude', version).modelMode).toBe('default');
         },
     );
 

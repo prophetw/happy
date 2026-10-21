@@ -50,10 +50,18 @@
 ## 数据流
 
 1. 新会话创建或 composer 初始化时，调用 `resolveAgentDefaultConfig(state.agentDefaultOverrides, flavor, cliVersion)`。
-2. 若用户没有覆盖某字段，则使用 `codeAgentDefaults` 中的值。
+2. 若用户没有覆盖某字段，则使用 `codeAgentDefaults` 中的值。Claude 的默认模型为 `default`，表示不传模型覆盖，由宿主机 Claude Code 配置决定。
 3. 对于 `permissionMode === 'auto'` 的 Claude/Codex，如果远端 CLI 版本低于 `CLI_VERSION_WITH_AUTO`（`1.2.1-beta.2`），会降级为 `'default'`，避免发送不被旧 CLI 解析的模式导致整条消息被丢弃。
 4. 最终配置写入新会话的 `Session.modelMode`、`Session.permissionMode`、`Session.effortLevel`。
 5. 发送消息时，`sync.ts` 读取会话上的值并写入 `message.meta.model` / `message.meta.permissionMode`。
+
+### Claude 宿主机模型
+
+Claude 模型选择器使用宿主机配置，移除了固定的 Fable / Opus / Sonnet 型号列表。daemon 在心跳时通过已安装 Claude Agent SDK 的 `resolveSettings` 读取用户设置，将模型目录发布为机器元数据 `claudeModels: { options, currentCode, detectedAt }`。新建会话、首页输入框和 Agent Defaults 使用该目录；切换机器时切换目录。目录未到达时默认跟随 Claude Code，已保存的显式模型覆盖仍可显示。
+
+目录读取 `ANTHROPIC_MODEL`、`model`、`ANTHROPIC_DEFAULT_OPUS_MODEL` / `SONNET_MODEL` / `HAIKU_MODEL`，并遵守 `availableModels` 的限制。使用 `CLAUDE_CONFIG_DIR` 指定的位置；模型别名会使用宿主机的映射，保留配置的上下文后缀。只发布模型字段，不发布 API Key、Token 或服务地址。目录表示本机配置，未调用网关 `/v1/models` 验证可用性。
+
+会话创建后按工作目录重新读取项目和本地设置，通过会话 `models` 元数据发布，并在 SDK 初始化时更新 `currentModelCode`。默认选项显示配置的实际模型；选择它时新建会话不传 `--model`，已有会话发送 `meta.model = null` 清除覆盖。新建会话时，保存的旧模型若不在该机器目录中，回退到默认配置；已有会话保留显示目录外的当前模型，并允许手动切回默认配置。已有进程需加载新版 CLI 后才能发布目录。
 
 ## 关键数据结构
 
@@ -65,7 +73,7 @@ export type AgentDefaultConfig = {
 };
 
 const codeAgentDefaults: Record<AgentKey, AgentDefaultConfig> = {
-    claude: { permissionMode: 'auto', modelMode: 'claude-sonnet-5', effortLevel: 'medium' },
+    claude: { permissionMode: 'auto', modelMode: 'default', effortLevel: 'medium' },
     codex:  { permissionMode: 'auto', modelMode: 'gpt-5.6-sol',    effortLevel: 'medium' },
     gemini: { permissionMode: 'default', modelMode: 'gemini-2.5-pro', effortLevel: null },
     openclaw: { permissionMode: 'default', modelMode: 'default', effortLevel: null },
@@ -77,7 +85,7 @@ const codeAgentDefaults: Record<AgentKey, AgentDefaultConfig> = {
 
 - 依赖 `happy-cli` / 远端 agent 对 `permissionMode` 和 `modelMode` key 的解析能力。
 - `CLI_VERSION_WITH_AUTO` 必须与 `happy-cli` 实际支持 `auto` 的版本保持一致。
-- 模型 key 必须与 CLI 的模型别名表或 API 可接受的模型 ID 对齐（参见 `modelModeOptions.ts` 中的注释）。
+- 模型 key 必须与宿主机配置或 API 可接受的模型 ID 对齐；Claude 的 `default` 是不覆盖本机模型的特殊值。
 
 ## 异常路径
 
@@ -102,5 +110,6 @@ pnpm test -- modelModeOptions.test.ts
 
 ## 变更记录
 
+- **2026-10-21** Claude 模型改为跟随宿主机配置，通过机器和会话元数据显示实际模型，默认不覆盖 Claude Code 的模型选择。
 - **2026-08-28** 将 Claude 默认模型从 `claude-opus-5` 调整为 `claude-sonnet-5`，以降低默认首 token 延迟和整体生成耗时，同时保留 5 代模型的能力水平。
 - **之前** Claude 默认使用 `opus`（Opus 4.8），后随 5 代模型上线改为 `claude-opus-5`。

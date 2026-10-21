@@ -401,6 +401,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             slashCommands: metadata.slashCommands,
                             mcpServers: metadata.mcpServers,
                             skills: metadata.skills,
+                            currentModelCode: metadata.currentModelCode,
                         }));
                     },
                     onUsageLimits: (patch) => {

@@ -592,10 +592,17 @@ export const MachineMetadataSchema = z.object({
         happyAgentAuthenticated: z.boolean().optional(),
         detectedAt: z.number().optional(),
     }).passthrough().optional().catch(undefined),
-    // The dsh model catalog, probed by the machine's daemon over a throwaway
-    // ACP session and published next to cliAvailability. Defensive for the
-    // same reason as the Rig blocks above: a malformed catalog must degrade
-    // to "no pre-spawn list", never to a rejected machine metadata parse.
+    // Host Claude Code configuration. Malformed catalogs must not reject the machine.
+    claudeModels: z.object({
+        options: z.array(z.object({
+            code: z.string(),
+            value: z.string(),
+            description: z.string().nullish(),
+        }).passthrough()).optional().catch([]),
+        currentCode: z.string().nullish().optional(),
+        detectedAt: z.number().optional(),
+    }).passthrough().optional().catch(undefined),
+    // dsh model catalog, probed by the daemon over a throwaway ACP session.
     dshModels: z.object({
         options: z.array(z.object({
             code: z.string(),

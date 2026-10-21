@@ -19,6 +19,7 @@ import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
+import { discoverClaudeModels } from '@/claude/utils/discoverModels';
 import {
     releaseReconnectCapabilityMonitor,
     retainReconnectCapabilityMonitor,
@@ -168,6 +169,7 @@ export class ApiMachineClient {
      * not) and will not retry until dsh availability drops and comes back.
      */
     private dshModelsProbe: 'pending' | 'in-flight' | 'done' = 'pending';
+    private claudeModelsRefreshing = false;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -742,6 +744,7 @@ export class ApiMachineClient {
 
         // Re-detect CLI availability and push metadata update if changed
         const newAvailability = detectCLIAvailability();
+        if (newAvailability.claude) void this.refreshClaudeModels();
         const prev = this.lastKnownCLIAvailability;
         const newResumeSupport = detectResumeSupport();
         const prevResume = this.lastKnownResumeSupport;
@@ -788,6 +791,26 @@ export class ApiMachineClient {
             this.maybeProbeDshModels();
         } else {
             this.dshModelsProbe = 'pending';
+        }
+    }
+
+    private async refreshClaudeModels(): Promise<void> {
+        if (this.claudeModelsRefreshing) return;
+        this.claudeModelsRefreshing = true;
+        try {
+            const catalog = await discoverClaudeModels();
+            if (!catalog) return;
+            const previous = this.machine.metadata?.claudeModels;
+            if (JSON.stringify(previous?.options) === JSON.stringify(catalog.options)
+                && previous?.currentCode === catalog.currentCode) return;
+            await this.updateMachineMetadata(metadata => ({
+                ...(metadata ?? this.machine.metadata),
+                claudeModels: { ...catalog, detectedAt: Date.now() },
+            }));
+        } catch {
+            logger.debug('[API MACHINE] Failed to publish Claude model configuration');
+        } finally {
+            this.claudeModelsRefreshing = false;
         }
     }
 

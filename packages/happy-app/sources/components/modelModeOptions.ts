@@ -1,4 +1,5 @@
-import type { Metadata } from '@/sync/storageTypes';
+import type { MachineMetadata, Metadata } from '@/sync/storageTypes';
+import { getMachineDshModelCatalog } from '@/sync/dshModelCatalog';
 import { hackModes } from '@/sync/modeHacks';
 import { sortPermissionModes } from '@/utils/permissionModeLabels';
 import { sortRigModelsForPicker } from '@/utils/rigModelPickerOrder';
@@ -154,34 +155,14 @@ export function getGeminiPermissionModes(translate: Translate): PermissionMode[]
     ];
 }
 
-// The current generation only. Older Claudes and the `default model` row are
-// deliberately absent: picking a model is the point of this menu, and every
-// entry here is a 5.
-//
-// Keys are full model IDs rather than the short aliases, because the aliases
-// do not all mean what the row says. `sonnet` still resolves to Sonnet 4.6 in
-// the CLI's alias table, and `opus-5` is not in that table at all (`claude
-// --model opus-5` errors on 2.1.199). Full IDs pass straight through to the
-// API, so they say exactly which model is meant.
-//
-// One row per model, with no `[1m]` twins. Every model here is 1M-native in
-// Claude Code's own model table (`context.native_1m`), so the plain ID already
-// gets the 1M window, and the suffix only adds the context-1m beta header —
-// which gateways, Bedrock, Vertex and Foundry can refuse. Saved `[1m]` keys are
-// mapped onto these rows by retireModelMode.
-//
-// Sonnet 5.5 and Haiku 5.5 are in that table from Claude Code 2.1.287 and
-// 2.1.293. happy-cli now requires Agent SDK 0.3.295 (2.1.295), but an older
-// install can still carry 0.3.283 (2.1.283), which runs them as unknown
-// models: at 200K, compacting early.
-export function getClaudeModelModes(): ModelMode[] {
+// A gateway may accept none of Anthropic's public model IDs. Until the host
+// publishes its configuration, only offer the ambient, no-override default.
+export function getClaudeModelModes(catalog?: MachineMetadata['claudeModels'] | null): ModelMode[] {
+    const options = mapMetadataOptions(catalog?.options).filter(model => model.key !== 'default');
+    const currentName = options.find(model => model.key === catalog?.currentCode)?.name ?? catalog?.currentCode;
     return [
-        { key: 'claude-fable-5-1', name: 'Fable 5.1', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
-        { key: 'claude-fable-5', name: 'Fable 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
-        { key: 'claude-opus-5-5', name: 'Opus 5.5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
-        { key: 'claude-opus-5', name: 'Opus 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
-        { key: 'claude-sonnet-5-5', name: 'Sonnet 5.5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
-        { key: 'claude-haiku-5-5', name: 'Haiku 5.5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'default', name: currentName || 'Default model', description: 'Claude Code default' },
+        ...options,
     ];
 }
 
@@ -486,6 +467,21 @@ export function getAvailableModels(
         return models;
     }
     const metadataModels = mapMetadataOptions(metadata?.models);
+    const isClaude = !flavor || flavor === 'claude';
+    if (isClaude && (metadataModels.length > 0 || metadata?.currentModelCode)) {
+        const models: ModelMode[] = metadataModels.some(model => model.key === 'default')
+            ? metadataModels
+            : [{ key: 'default', name: 'Default model', description: 'Claude Code default' }, ...metadataModels];
+        // A running or locally selected model can outlive its host catalog.
+        // Keep it visible so the chip cannot say "default" while sending an
+        // old override. The ambient row lets the user explicitly reset it.
+        for (const key of [selectedKey, metadata?.currentModelCode]) {
+            if (key && !models.some(model => model.key === key)) {
+                models.push({ key, name: key, description: 'Not in host model configuration', disabled: true, unavailable: true });
+            }
+        }
+        return models;
+    }
     if (metadataModels.length > 0) {
         if (flavor === 'codex' && !metadataModels.some((model) => model.key === 'default')) {
             return [{ key: 'default', name: 'default model', description: null }, ...metadataModels];
@@ -497,6 +493,20 @@ export function getAvailableModels(
         getHardcodedModelModes(flavor, translate),
         selectedKey,
     );
+}
+
+/** All session creation entrypoints must use the chosen machine's catalog. */
+export function getMachineModelModes(
+    flavor: AgentFlavor,
+    metadata: MachineMetadata | null | undefined,
+    translate: Translate,
+    configuredModelKey?: string | null,
+): ModelMode[] {
+    if (flavor !== 'rig' && normalizeAgentKey(flavor) === 'claude' && metadata?.claudeModels) {
+        return getClaudeModelModes(metadata.claudeModels);
+    }
+    if (flavor === 'dsh') return getDshModelModes(getMachineDshModelCatalog(metadata));
+    return includeConfiguredModel(flavor, getHardcodedModelModes(flavor, translate), configuredModelKey);
 }
 
 export function getAvailablePermissionModes(

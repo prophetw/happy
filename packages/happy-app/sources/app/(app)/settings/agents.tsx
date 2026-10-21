@@ -6,9 +6,8 @@ import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
 import {
     getEffortLevelsForModel,
-    getHardcodedModelModes,
+    getMachineModelModes,
     getHardcodedPermissionModes,
-    includeConfiguredModel,
     type ModeOption,
 } from '@/components/modelModeOptions';
 import { collectDshModelCatalog, getDshModelCatalogDefaultName } from '@/sync/dshModelCatalog';
@@ -85,9 +84,8 @@ export default function AgentsSettingsScreen() {
     const dshModelCatalog = React.useMemo(() => (
         collectDshModelCatalog(machines)
     ), [machines]);
-    // Code defaults depend on the CLI that will run them (Opus 5.5 needs a new
-    // enough one). Describe them for the machine listed first: online, then
-    // most recently active, which is where a new session most likely starts.
+    // Permission defaults depend on the CLI that will parse them. Prefer
+    // online machines, then the one most recently active.
     const defaultsCliVersion = machineChoices.find((choice) => choice.happyMachine)
         ?.happyMachine?.metadata?.happyCliVersion;
 
@@ -265,11 +263,12 @@ export default function AgentsSettingsScreen() {
                         name: option.value,
                         description: option.description ?? null,
                     }))
-                    : includeConfiguredModel(
+                    : getMachineModelModes(
                         agent,
-                        getHardcodedModelModes(agent, t),
+                        machineChoices.find(choice => choice.happyMachine?.metadata?.claudeModels)?.happyMachine?.metadata,
+                        t,
                         effectiveDefaults.modelMode,
-                    ).filter((option) => option.key !== 'default');
+                    ).filter((option) => agent === 'claude' || option.key !== 'default');
                 const effortOptions = getEffortLevelsForModel(agent, effectiveDefaults.modelMode);
                 const fields: FieldConfig[] = [
                     {

@@ -1715,16 +1715,19 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         label: string,
         description: string | null | undefined,
         onPress: () => void,
+        disabled: boolean = false,
     ) => (
         <Pressable
             key={key}
             onPress={onPress}
+            disabled={disabled}
             style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'flex-start',
                 paddingHorizontal: 16,
                 paddingVertical: 8,
                 backgroundColor: pressed ? theme.colors.surfacePressed : 'transparent',
+                opacity: disabled ? 0.5 : 1,
             })}
         >
             <View style={{
@@ -1817,6 +1820,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     props.onModelModeChange?.(model);
                                     closePicker();
                                 },
+                                model.disabled,
                             )) : (
                                 <Text style={{
                                     fontSize: 13,

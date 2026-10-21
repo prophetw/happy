@@ -40,6 +40,7 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
     const flavor = metadata?.flavor;
     const cliVersion = metadata?.version;
     const isRig = isRigMetadata(metadata);
+    const isClaude = !flavor || flavor === 'claude';
     const agentDefaultOverrides = useSetting('agentDefaultOverrides');
     const effectiveAgentDefaults = React.useMemo(() => (
         resolveAgentDefaultConfig(agentDefaultOverrides, flavor, cliVersion)
@@ -78,10 +79,12 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
     const modelMode = React.useMemo<ModelMode | null>(() => (
         resolveCurrentOption(availableModels, [
             sessionModelMode,
-            isRig ? getRigCurrentModelOptionKey(metadata) : effectiveAgentDefaults.modelMode,
-            isRig ? undefined : metadata?.currentModelCode,
+            isRig ? getRigCurrentModelOptionKey(metadata)
+                : isClaude ? metadata?.currentModelCode : effectiveAgentDefaults.modelMode,
+            isRig ? undefined
+                : isClaude ? effectiveAgentDefaults.modelMode : metadata?.currentModelCode,
         ])
-    ), [availableModels, sessionModelMode, effectiveAgentDefaults.modelMode, metadata, isRig]);
+    ), [availableModels, sessionModelMode, effectiveAgentDefaults.modelMode, metadata, isRig, isClaude]);
 
     const modelKey = modelMode?.key ?? 'default';
     const availableEffortLevels = React.useMemo<EffortLevel[]>(() => (

@@ -207,30 +207,10 @@ describe('modelModeOptions', () => {
         expect(includeConfiguredModel('openclaw', models, 'my-workspace-model')).toBe(models);
     });
 
-    it('only offers the current-generation claude models', () => {
-        const models = getClaudeModelModes();
-        expect(models.map((model) => model.key)).toEqual([
-            'claude-fable-5-1',
-            'claude-fable-5',
-            'claude-opus-5-5',
-            'claude-opus-5',
-            'claude-sonnet-5-5',
-            'claude-haiku-5-5',
+    it('offers only the host default until Claude publishes its configuration', () => {
+        expect(getClaudeModelModes()).toEqual([
+            { key: 'default', name: 'Default model', description: 'Claude Code default' },
         ]);
-        expect(models.map((model) => model.name)).toEqual([
-            'Fable 5.1',
-            'Fable 5',
-            'Opus 5.5',
-            'Opus 5',
-            'Sonnet 5.5',
-            'Haiku 5.5',
-        ]);
-        // No `default model` row, and no alias keys: an alias would silently
-        // resolve to an older model than the row claims.
-        expect(models.some((model) => model.key === 'default')).toBe(false);
-        expect(models.some((model) => ['opus', 'sonnet', 'fable', 'haiku'].includes(model.key))).toBe(false);
-        // One row per model: each is 1M-native, so a `[1m]` twin runs the same thing.
-        expect(models.some((model) => model.key.endsWith('[1m]'))).toBe(false);
     });
 
     it('keeps a saved claude model that left the list as its own row', () => {
@@ -249,7 +229,7 @@ describe('modelModeOptions', () => {
             .toContain('claude-sonnet-5');
         // A flavorless session is a Claude session.
         expect(includeConfiguredModel(undefined, models, 'claude-sonnet-5')).toEqual(withSaved);
-        expect(includeConfiguredModel('claude', models, 'claude-opus-5-5')).toBe(models);
+        expect(includeConfiguredModel('claude', models, 'claude-opus-5-5').map(model => model.key)).toContain('claude-opus-5-5');
         expect(includeConfiguredModel('claude', models, 'default')).toBe(models);
     });
 
@@ -257,10 +237,10 @@ describe('modelModeOptions', () => {
         ['claude-opus-5-5[1m]', 'claude-opus-5-5'],
         ['claude-opus-5[1m]', 'claude-opus-5'],
         ['claude-sonnet-5-5[1m]', 'claude-sonnet-5-5'],
-    ])('resolves a saved %s onto the %s row without adding one', (saved, row) => {
+    ])('resolves a saved %s onto a saved %s row', (saved, row) => {
         const models = getAvailableModels('claude', null, translate, saved);
 
-        expect(models).toEqual(getClaudeModelModes());
+        expect(models).toHaveLength(getClaudeModelModes().length + 1);
         expect(models.some((model) => model.key === saved)).toBe(false);
         expect(models.some((model) => model.key === row)).toBe(true);
     });
@@ -303,8 +283,8 @@ describe('modelModeOptions', () => {
 
     it('uses code defaults for agent defaults', () => {
         expect(getDefaultPermissionModeKey('claude')).toBe('auto');
-        expect(getDefaultModelKey('claude')).toBe('claude-opus-5');
-        expect(getDefaultModelKey('claude', '1.2.6-beta.0')).toBe('claude-opus-5-5');
+        expect(getDefaultModelKey('claude')).toBe('default');
+        expect(getDefaultModelKey('claude', '1.2.6-beta.0')).toBe('default');
         expect(getDefaultEffortKey('claude')).toBe('medium');
         expect(getDefaultPermissionModeKey('codex')).toBe('auto');
         expect(getDefaultModelKey('codex')).toBe('gpt-6.1-sol');

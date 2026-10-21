@@ -7,6 +7,7 @@ import { loop } from '@/claude/loop';
 import { AgentGoalStatus, AgentState, Metadata } from '@/api/types';
 import packageJson from '../../package.json';
 import { Credentials, readSettings } from '@/persistence';
+import { discoverClaudeModels } from './utils/discoverModels';
 import { EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
@@ -129,6 +130,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const forkedFromMessageId = process.env.HAPPY_FORKED_FROM_MESSAGE_ID;
     const isSideChat = process.env.HAPPY_SIDE_CHAT === '1';
 
+    const modelCatalog = await discoverClaudeModels(workingDirectory);
     let metadata: Metadata = {
         path: workingDirectory,
         host: os.hostname(),
@@ -146,6 +148,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: 'claude',
+        ...(modelCatalog ? {
+            models: [
+                { code: 'default', value: modelCatalog.currentCode ?? 'Default model', description: 'Claude Code default' },
+                ...modelCatalog.options,
+            ],
+            currentModelCode: options.model ?? modelCatalog.currentCode ?? undefined,
+        } : {}),
         sandbox: sandboxConfig?.enabled ? sandboxConfig : null,
         dangerouslySkipPermissions,
         ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),

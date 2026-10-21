@@ -9,6 +9,7 @@ const {
     mockStartHappyServer,
     mockStartHookServer,
     mockRegisterKillSessionHandler,
+    mockDiscoverClaudeModels,
 } = vi.hoisted(() => ({
     mockApiClientCreate: vi.fn(),
     mockCreateSessionScanner: vi.fn(),
@@ -18,6 +19,7 @@ const {
     mockStartHappyServer: vi.fn(),
     mockStartHookServer: vi.fn(),
     mockRegisterKillSessionHandler: vi.fn(),
+    mockDiscoverClaudeModels: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/api/api', () => ({
@@ -37,6 +39,8 @@ vi.mock('@/claude/utils/sessionScanner', () => ({
 vi.mock('@/claude/loop', () => ({
     loop: mockLoop,
 }));
+
+vi.mock('@/claude/utils/discoverModels', () => ({ discoverClaudeModels: mockDiscoverClaudeModels }));
 
 vi.mock('@/daemon/controlClient', () => ({
     notifyDaemonSessionStarted: mockNotifyDaemonSessionStarted,
@@ -237,6 +241,7 @@ describe('runClaude remote JSONL scanner', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockDiscoverClaudeModels.mockResolvedValue(null);
         for (const event of processEvents) {
             originalListeners.set(event, process.listeners(event as any) as Array<(...args: any[]) => void>);
         }
@@ -812,6 +817,33 @@ describe('runClaude remote JSONL scanner', () => {
 
         await expectPromptRejectsFast(handler({ action: 'clear' }), /not ready|remote/i);
         expect(harness.loopOptions.messageQueue.queue).toEqual([]);
+        await harness.finish();
+    });
+
+    it('publishes project model settings without forcing a model override', async () => {
+        mockDiscoverClaudeModels.mockResolvedValue({
+            currentCode: 'project-model', options: [{ code: 'project-model', value: 'project-model' }],
+        });
+        const harness = await startRemoteRunClaudeHarness();
+        expect(harness.api.getOrCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: expect.objectContaining({
+                currentModelCode: 'project-model',
+                models: [
+                    { code: 'default', value: 'project-model', description: 'Claude Code default' },
+                    { code: 'project-model', value: 'project-model' },
+                ],
+            }),
+        }));
+        expect(harness.loopOptions.model).toBeUndefined();
+        await harness.finish();
+    });
+
+    it('clears a fixed model when the app selects the host default', async () => {
+        const harness = await startRemoteRunClaudeHarness();
+        const userMessageHandler = harness.sessionClient.onUserMessage.mock.calls[0][0];
+        await userMessageHandler({ content: { text: 'fixed model' }, meta: { model: 'claude-fable-5-1' } });
+        await userMessageHandler({ content: { text: 'host default' }, meta: { model: null } });
+        expect(harness.loopOptions.messageQueue.queue[1].mode.model).toBeUndefined();
         await harness.finish();
     });
 

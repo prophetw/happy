@@ -159,11 +159,17 @@ export const MachineMetadataSchema = z.object({
     happyAgentAuthenticated: z.boolean(),
     detectedAt: z.number(),
   }).optional(),
-  // dsh's model catalog, probed once per daemon lifetime over a throwaway
-  // ACP session (see dsh/discoverModels.ts). The option codes are opaque
-  // provider/model route strings, so the app's pre-spawn pickers read them
-  // from here instead of a hardcoded list. Optional for the same
-  // backward-compat reason as cliAvailability.agy/dsh.
+  // Model settings of the host's Claude Code; refreshed at each keepalive.
+  claudeModels: z.object({
+    options: z.array(z.object({
+      code: z.string(),
+      value: z.string(),
+      description: z.string().nullable().optional(),
+    })),
+    currentCode: z.string().nullable().optional(),
+    detectedAt: z.number(),
+  }).optional(),
+  // dsh's opaque provider routes, probed once per daemon lifetime over ACP.
   dshModels: z.object({
     options: z.array(z.object({
       code: z.string(),
