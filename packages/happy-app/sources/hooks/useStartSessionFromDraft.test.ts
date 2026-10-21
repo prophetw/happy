@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
     paintBotFace: vi.fn(),
     uploadSessionBlob: vi.fn(),
     sessionSetAvatar: vi.fn(),
+    rememberRecentProject: vi.fn(),
 }));
 
 // Counts up so a test can tell a reused idempotency key from a fresh one.
@@ -93,6 +94,8 @@ vi.mock('@/hooks/useNewSessionDraft', () => ({
         getState: () => mocks.draft,
     },
 }));
+
+vi.mock('@/hooks/useRecentProjects', () => ({ rememberRecentProject: mocks.rememberRecentProject }));
 
 vi.mock('@/hooks/useNavigateToSession', () => ({
     useNavigateToSession: () => mocks.navigateToSession,
@@ -269,6 +272,7 @@ describe('useStartSessionFromDraft', () => {
             effortLevel: 'medium',
         });
         expect(mocks.ensureSessionReady).toHaveBeenCalledWith('session-1');
+        expect(mocks.rememberRecentProject).toHaveBeenCalledWith({ machineId: 'machine-1', path: '/absolute/project' });
         expect(mocks.draft.setInput).toHaveBeenCalledWith('');
         expect(mocks.draft.setAttachments).toHaveBeenCalledWith([]);
         expect(mocks.navigateToSession).toHaveBeenCalledWith('session-1');
@@ -1245,6 +1249,7 @@ describe('useStartSessionFromDraft', () => {
         await expect(startSession()).resolves.toBe(false);
 
         expect(mocks.alert).toHaveBeenCalledWith('common.error', 'Machine rejected the request');
+        expect(mocks.rememberRecentProject).not.toHaveBeenCalled();
         expect(mocks.draft.setInput).not.toHaveBeenCalled();
         expect(mocks.draft.setAttachments).not.toHaveBeenCalled();
         expect(mocks.navigateToSession).not.toHaveBeenCalled();
@@ -1320,6 +1325,22 @@ describe('useStartSessionFromDraft', () => {
         expect(mocks.navigateToSession).not.toHaveBeenCalled();
         expect(mocks.machineStopSession).toHaveBeenCalledExactlyOnceWith('machine-1', 'session-1');
         expect(mocks.sessionSetAgentModes).not.toHaveBeenCalled();
+    });
+
+    it('changing catalog projects on the same computer during hydration does not send to or remember the old project', async () => {
+        mocks.machines = [createRigMachine()];
+        mocks.draft = createDraft({ agentType: 'rig', selectedPath: null, selectedProjectId: 'project-1' });
+        let finish!: () => void;
+        mocks.ensureSessionReady.mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
+        const { startSession } = useStartSessionFromDraft();
+        const starting = startSession();
+        await vi.waitFor(() => expect(mocks.ensureSessionReady).toHaveBeenCalledOnce());
+        mocks.draft.selectedProjectId = 'project-2';
+        finish();
+        await expect(starting).resolves.toBe(false);
+        expect(mocks.sendMessage).not.toHaveBeenCalled();
+        expect(mocks.rememberRecentProject).not.toHaveBeenCalled();
+        expect(mocks.navigateToSession).not.toHaveBeenCalled();
     });
 
     it.each(['target-change', 'stop'])('never kills a session adopted while hydration is pending: %s', async (action) => {

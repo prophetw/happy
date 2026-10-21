@@ -8,6 +8,16 @@ import { useMachineDirectory } from '@/hooks/useMachineDirectory';
 import { getDirectoryBrowserPath, getParentDirectory, joinDirectoryPath } from '@/utils/directoryBrowser';
 import { formatDirectorySearchOption, searchDirectoryOptions } from '@/utils/directorySearch';
 import { PickerSheetOption, PickerSheetSection } from './PickerSheet';
+import type { ProjectSearchOption } from '@/sync/recentProjects';
+import { projectPlaceKey } from '@/sync/agentSessionPlaces';
+
+type DirectorySearchCandidate = {
+    key: string;
+    name: string;
+    description?: string | null;
+    recent: boolean;
+    project?: ProjectSearchOption;
+};
 
 /** Render inside PickerSheetPanel so navigation and recent paths share one scroll area. */
 export function DirectoryBrowser(props: {
@@ -16,6 +26,12 @@ export function DirectoryBrowser(props: {
     initialPath: string | null;
     recentPaths: { key: string; name: string; description?: string | null }[];
     selectedKey?: string | null;
+    /** iOS offers projects from every computer alongside browsing the selected computer. */
+    projectSearch?: {
+        options: readonly ProjectSearchOption[];
+        machineId: string | null;
+        onSelect: (project: ProjectSearchOption) => void;
+    };
     onSelectDirectory: (path: string) => void;
     onSelectRecent: (key: string) => void;
     onRequestCustomPath: () => void;
@@ -39,8 +55,13 @@ export function DirectoryBrowser(props: {
     const parentListing = useMachineDirectory(props.machineId, parent);
     const recentPaths = React.useMemo(() => props.recentPaths.map(formatDirectorySearchOption), [props.recentPaths]);
     const results = React.useMemo(() => {
-        const candidates = recentPaths.map((recent) => ({ ...recent, recent: true }));
-        const seen = new Set(candidates.map((candidate) => candidate.key));
+        const candidates: DirectorySearchCandidate[] = props.projectSearch
+            ? props.projectSearch.options.map((project) => ({ ...project, recent: true, project }))
+            : recentPaths.map((recent) => ({ ...recent, recent: true }));
+        const seen = new Set(props.projectSearch
+            ? props.projectSearch.options.filter((project) => project.machineId === props.projectSearch!.machineId && project.path)
+                .map((project) => project.path!)
+            : candidates.map((candidate) => candidate.key));
         for (const [directory, listing] of [[path, currentListing], [parent, parentListing]] as const) {
             if (!directory) continue;
             for (const entry of listing.directories) {
@@ -51,8 +72,21 @@ export function DirectoryBrowser(props: {
             }
         }
         return searchDirectoryOptions(candidates, query);
-    }, [recentPaths, path, parent, currentListing.directories, parentListing.directories, query]);
+    }, [recentPaths, path, parent, currentListing.directories, parentListing.directories, query, props.projectSearch]);
     const searching = query.trim().length > 0;
+
+    const renderProject = (project: ProjectSearchOption) => (
+        <PickerSheetOption
+            key={project.key}
+            testID="directory-project-result"
+            label={project.name}
+            description={`${project.machineName} · ${t(project.online ? 'status.online' : 'status.offline')}${project.path ? `\n${project.path}` : ''}`}
+            selected={project.machineId === props.projectSearch?.machineId
+                && ((project.path !== null && project.path === props.selectedKey)
+                    || (!!project.projectId && projectPlaceKey(project.projectId) === props.selectedKey))}
+            onPress={() => props.projectSearch?.onSelect(project)}
+        />
+    );
 
     const renderNavigation = (label: string, destination: string, icon: 'folder-outline' | 'arrow-up-outline') => (
         <Pressable
@@ -96,6 +130,7 @@ export function DirectoryBrowser(props: {
                 <View style={styles.searchRow}>
                     <Ionicons name="search" size={18} color={theme.colors.textSecondary} />
                     <TextInput
+                        autoFocus={props.projectSearch !== undefined}
                         value={query}
                         onChangeText={setQuery}
                         placeholder={t('machineLauncher.searchDirectories')}
@@ -117,11 +152,13 @@ export function DirectoryBrowser(props: {
                         </Pressable>
                     )}
                 </View>
-                <Text style={styles.statusText}>{t('machineLauncher.directorySearchScope')}</Text>
+                <Text style={styles.statusText}>
+                    {props.projectSearch ? `${t('machineLauncher.allMachines')} · ` : ''}{t('machineLauncher.directorySearchScope')}
+                </Text>
             </View>
             {searching ? (
                 <>
-                    {results.map((result) => (
+                    {results.map((result) => result.project ? renderProject(result.project) : (
                         <PickerSheetOption
                             key={result.key}
                             label={result.name}
@@ -145,10 +182,10 @@ export function DirectoryBrowser(props: {
                 </>
             ) : (
                 <>
-                    {recentPaths.length > 0 && (
+                    {(props.projectSearch ? props.projectSearch.options.length > 0 : recentPaths.length > 0) && (
                         <>
                             <PickerSheetSection title={t('machineLauncher.recentDirectories')} />
-                            {recentPaths.map((recent) => (
+                            {props.projectSearch ? props.projectSearch.options.map(renderProject) : recentPaths.map((recent) => (
                                 <PickerSheetOption
                                     key={recent.key}
                                     label={recent.name}

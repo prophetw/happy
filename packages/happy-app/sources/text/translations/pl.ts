@@ -586,6 +586,7 @@ export const pl: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Wszystkie komputery',
         searchDirectories: 'Szukaj projektów lub folderów',
         searchRecentProjects: 'Szukaj ostatnich projektów',
         directorySearchScope: 'Wyszukiwanie ostatnich projektów i folderów w bieżącym i nadrzędnym katalogu',

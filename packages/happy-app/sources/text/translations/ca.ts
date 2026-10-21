@@ -570,6 +570,7 @@ export const ca: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Tots els equips',
         searchDirectories: 'Cerca projectes o carpetes',
         searchRecentProjects: 'Cerca projectes recents',
         directorySearchScope: 'Cerca projectes recents i carpetes al directori actual i superior',

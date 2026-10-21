@@ -570,6 +570,7 @@ export const es: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Todos los equipos',
         searchDirectories: 'Buscar proyectos o carpetas',
         searchRecentProjects: 'Buscar proyectos recientes',
         directorySearchScope: 'Busca proyectos recientes y carpetas en el directorio actual y superior',

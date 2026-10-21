@@ -33,6 +33,8 @@ import { Typography } from '@/constants/Typography';
 import { layout } from './layout';
 import { t } from '@/text';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
+import { useRecentProjects } from '@/hooks/useRecentProjects';
+import { addRecentProjectPlaces, collectProjectSearchOptions } from '@/sync/recentProjects';
 import { useAllMachines, useProjects, useSessions, useSetting } from '@/sync/storage';
 import { getCodeAgentDefaults, resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import { formatLastSeen, formatPathRelativeToHome } from '@/utils/sessionUtils';
@@ -781,13 +783,18 @@ export const HomeDock = React.memo(({
         () => (sessions ?? []).filter((item): item is Session => typeof item !== 'string'),
         [sessions],
     );
+    const recentProjects = useRecentProjects(sessionList, machineChoices);
+    const projectSearchOptions = React.useMemo(
+        () => collectProjectSearchOptions(recentProjects, machineChoices),
+        [recentProjects, machineChoices],
+    );
     const places = React.useMemo(
-        () => collectSessionPlaces({
+        () => addRecentProjectPlaces(collectSessionPlaces({
             machineIds: placeMachineIds,
             selectedPath: selectedPath ?? '~',
             sessions: sessionList,
-        }),
-        [placeMachineIds, selectedPath, sessionList],
+        }), recentProjects, placeMachineIds),
+        [placeMachineIds, selectedPath, sessionList, recentProjects],
     );
     // Happy Agent's half of this computer, and only this computer's: a session asked for here is
     // never handed to a daemon somewhere else because that one happened to be reachable.
@@ -1721,6 +1728,14 @@ export const HomeDock = React.memo(({
                         initialPath={selectedPath}
                         recentPaths={projectOptions}
                         selectedKey={config.selectedKey}
+                        projectSearch={Platform.OS === 'ios' ? {
+                            options: projectSearchOptions,
+                            machineId: selectedChoice?.id ?? null,
+                            onSelect: (project) => {
+                                useNewSessionDraft.getState().selectPlace(project);
+                                closePicker();
+                            },
+                        } : undefined}
                         onSelectDirectory={(path) => {
                             setPath(path);
                             closePicker();

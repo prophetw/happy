@@ -138,4 +138,22 @@ describe('useNewSessionDraft', () => {
         expect(useNewSessionDraft.getState().attachments).toEqual([attachment]);
         expect(mockPersistence.saved).toHaveLength(0);
     });
+
+    it('selects a computer and its path in one update, clears the old worktree, and preserves the prompt', async () => {
+        mockPersistence.draft = persistedDraft({ input: 'my task', selectedMachineId: 'old', selectedPath: '/old', sessionType: 'worktree', worktreeKey: '/old/worktree' });
+        const { useNewSessionDraft } = await import('./useNewSessionDraft');
+        const changes: unknown[] = [];
+        const unsubscribe = useNewSessionDraft.subscribe((state) => changes.push([state.selectedMachineId, state.selectedPath]));
+        useNewSessionDraft.getState().selectPlace({ machineId: 'new', path: 'D:\\code\\happy' });
+        unsubscribe();
+        expect(changes).toEqual([['new', 'D:\\code\\happy']]);
+        expect(useNewSessionDraft.getState()).toMatchObject({ input: 'my task', selectedProjectId: null, sessionType: 'simple', worktreeKey: null });
+        expect(mockPersistence.saved.at(-1)).toMatchObject({ selectedMachineId: 'new', selectedPath: 'D:\\code\\happy' });
+    });
+
+    it('selects a catalog-only project on its own computer with the harness that can resolve it', async () => {
+        const { useNewSessionDraft } = await import('./useNewSessionDraft');
+        useNewSessionDraft.getState().selectPlace({ machineId: 'new', path: null, projectId: 'project' });
+        expect(useNewSessionDraft.getState()).toMatchObject({ selectedMachineId: 'new', selectedPath: null, selectedProjectId: 'project', agentType: 'rig', pickedAgentType: 'rig' });
+    });
 });

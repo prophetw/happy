@@ -41,6 +41,10 @@ import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
+import { useRecentProjects, rememberRecentProject } from '@/hooks/useRecentProjects';
+import { addRecentProjectPlaces, collectProjectSearchOptions } from '@/sync/recentProjects';
+import { WebProjectSearch } from '@/components/WebProjectSearch';
+import { ProjectDirectoryPicker } from '@/components/ProjectDirectoryPicker';
 import { useWorktrees } from '@/hooks/useWorktrees';
 import { useShallow } from 'zustand/react/shallow';
 import type { MultiTextInputHandle } from '@/components/MultiTextInput';
@@ -999,17 +1003,22 @@ function NewSessionScreen() {
         () => (sessions ?? []).filter((item): item is Session => typeof item !== 'string'),
         [sessions],
     );
+    const recentProjects = useRecentProjects(sessionList, machineChoices);
+    const projectSearchOptions = React.useMemo(
+        () => collectProjectSearchOptions(recentProjects, machineChoices),
+        [recentProjects, machineChoices],
+    );
     const placeMachineIds = React.useMemo(
         () => selectedChoice?.machineIds ?? [],
         [selectedChoice],
     );
     const places = React.useMemo(
-        () => collectSessionPlaces({
+        () => addRecentProjectPlaces(collectSessionPlaces({
             machineIds: placeMachineIds,
             selectedPath,
             sessions: sessionList,
-        }),
-        [placeMachineIds, selectedPath, sessionList],
+        }), recentProjects, placeMachineIds),
+        [placeMachineIds, selectedPath, sessionList, recentProjects],
     );
     const selectedProjectId = React.useMemo(
         () => draftProjectId
@@ -1551,7 +1560,7 @@ function NewSessionScreen() {
         let ownsCreatedSession = true;
         const isCurrentTarget = () => {
             const current = useNewSessionDraft.getState();
-            return ownsCreatedSession && (['selectedMachineId', 'selectedPath', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
+            return ownsCreatedSession && (['selectedMachineId', 'selectedPath', 'selectedProjectId', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
                 .every(key => current[key] === draftState[key]);
         };
         const choice = findMachineChoice(collectMachineChoices(allMachines), selectedMachineId);
@@ -1774,6 +1783,11 @@ function NewSessionScreen() {
                     }
 
                     completeSpawnRequest(clientRequestId);
+                    rememberRecentProject({
+                        machineId: choice.id,
+                        path: draftProjectId ? null : absolutePath,
+                        ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+                    });
                     const currentDraft = useNewSessionDraft.getState();
                     if (currentDraft.input === draftState.input) currentDraft.setInput('');
                     if (currentDraft.attachments === attachments) currentDraft.setAttachments([]);
@@ -1861,9 +1875,9 @@ function NewSessionScreen() {
         return false;
     }, [agentInputEnterToSend, canSend, handleSend]);
 
-    // Auto-focus the text input when the composer mounts
+    // Web starts in the project search; selecting a result focuses the composer.
     React.useEffect(() => {
-        if (isNativeMobile) {
+        if (isNativeMobile || Platform.OS === 'web') {
             return;
         }
         const timeout = setTimeout(() => {
@@ -2030,6 +2044,18 @@ function NewSessionScreen() {
 
     const configContent = (
         <>
+            {Platform.OS === 'web' && (
+                <WebProjectSearch
+                    options={projectSearchOptions}
+                    onFocus={closePicker}
+                    onSelect={(option) => {
+                        useNewSessionDraft.getState().selectPlace(option);
+                        setWorktreeKey('__none__');
+                        closePicker();
+                        composerInputRef.current?.focus();
+                    }}
+                />
+            )}
             <View style={[
                 styles.configBox,
                 activePicker && styles.configBoxWithPopover,
@@ -2081,16 +2107,20 @@ function NewSessionScreen() {
                             </View>
                         )}
 
-                        <View style={{ opacity: isOffline ? 0.4 : 1 }} pointerEvents={isOffline ? 'none' : 'auto'}>
+                        <View style={{ opacity: isOffline && Platform.OS !== 'ios' ? 0.4 : 1 }} pointerEvents={isOffline && Platform.OS !== 'ios' ? 'none' : 'auto'}>
                             <BubblePressable
                                 scaleFeedback={false}
                                 style={(p) => [styles.configRow, p.pressed && styles.configRowPressed]}
                                 onPress={() => togglePicker('path')}
+                                accessibilityRole="button"
+                                accessibilityLabel={Platform.OS === 'ios'
+                                    ? `${t('machineLauncher.searchDirectories')} · ${t('machineLauncher.allMachines')}` : undefined}
                             >
                                 <Ionicons name="folder-outline" size={15} color={theme.colors.textSecondary} />
                                 <Text style={[styles.configLabel, styles.configValueText]} numberOfLines={1}>
                                     {pathName}
                                 </Text>
+                                {Platform.OS === 'ios' && <Text style={styles.iosProjectSearchScope}>{t('machineLauncher.allMachines')}</Text>}
                                 <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
                             </BubblePressable>
                             {renderActivePickerPopover('path')}
@@ -2545,7 +2575,7 @@ function NewSessionScreen() {
                 </View>
             )}
 
-            {isNativeMobile && activePicker && nativePickerContent && (
+            {isNativeMobile && activePicker && nativePickerContent && !(Platform.OS === 'ios' && activePicker === 'path') && (
                 <KeyboardStickyView
                     enabled={activePicker === 'path'}
                     style={[
@@ -2580,6 +2610,31 @@ function NewSessionScreen() {
                         </MobileGlassSurface>
                     </AnimatedPopup>
                 </KeyboardStickyView>
+            )}
+
+            {Platform.OS === 'ios' && activePicker === 'path' && (
+                <ProjectDirectoryPicker visible onClose={closePicker}
+                    machineId={selectedChoice?.happyMachine && isMachineOnline(selectedChoice.happyMachine)
+                        ? selectedChoice.happyMachine.id : null}
+                    homeDir={selectedHomeDir}
+                    initialPath={selectedPath}
+                    selectedKey={selectedProjectKey ?? selectedPath}
+                    recentPaths={pathItems.map((item) => ({ key: item.key, name: item.label, description: item.subtitle }))}
+                    projectSearch={{
+                        options: projectSearchOptions,
+                        machineId: selectedChoice?.id ?? null,
+                        onSelect: (project) => {
+                            useNewSessionDraft.getState().selectPlace(project);
+                            setWorktreeKey('__none__');
+                        },
+                    }}
+                    onSelectDirectory={setSelectedPath}
+                    onSelectRecent={(key) => {
+                        const projectId = pathItems.find((item) => item.key === key)?.projectId;
+                        if (projectId) selectProjectPlace(projectId);
+                        else setSelectedPath(key);
+                    }}
+                />
             )}
 
             {/* Native: picker bottom sheet */}
@@ -2673,6 +2728,13 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         gap: 8,
         paddingTop: 12,
+        // A popup's own zIndex cannot escape this parent and the spacer below it.
+        ...Platform.select({ web: { zIndex: NEW_SESSION_PICKER_LAYERS.config } }),
+    },
+    iosProjectSearchScope: {
+        fontSize: 11,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
     },
     mobileInlineConfigWrap: {
         paddingHorizontal: 20,

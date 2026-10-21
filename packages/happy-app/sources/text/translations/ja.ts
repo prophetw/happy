@@ -571,6 +571,7 @@ export const ja: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'すべてのマシン',
         searchDirectories: 'プロジェクトまたはフォルダーを検索',
         searchRecentProjects: '最近のプロジェクトを検索',
         directorySearchScope: '最近のプロジェクトと現在および親フォルダー内を検索',

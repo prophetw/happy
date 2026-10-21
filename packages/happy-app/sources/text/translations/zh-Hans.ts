@@ -581,6 +581,7 @@ export const zhHans: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: '所有机器',
         searchDirectories: '搜索项目或目录',
         searchRecentProjects: '搜索最近项目',
         directorySearchScope: '搜索范围：最近项目、当前目录的子目录及同级目录',

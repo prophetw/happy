@@ -580,6 +580,7 @@ export const zhHant: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: '所有電腦',
         searchDirectories: '搜尋專案或目錄',
         searchRecentProjects: '搜尋最近專案',
         directorySearchScope: '搜尋範圍：最近專案、目前目錄的子目錄及同層目錄',

@@ -586,6 +586,7 @@ export const ru: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Все компьютеры',
         searchDirectories: 'Поиск проектов или папок',
         searchRecentProjects: 'Поиск недавних проектов',
         directorySearchScope: 'Поиск недавних проектов и папок в текущем и родительском каталоге',
