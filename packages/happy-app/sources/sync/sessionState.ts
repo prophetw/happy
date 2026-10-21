@@ -13,7 +13,7 @@ export type SessionState =
  *
  * Permission requests win over questions because they block the tool before it
  * can run. Blocking questions come next. Asynchronous questions remain
- * answerable while the agent continues its work.
+ * answerable while the agent continues its work, and require input once idle.
  */
 export function resolveSessionState({
     agentState,
@@ -30,7 +30,8 @@ export function resolveSessionState({
         return 'permission_required';
     }
 
-    if (selectPendingCommunications(agentState ?? null).some(communication => communication.isBlocking !== false)) {
+    const communications = selectPendingCommunications(agentState ?? null);
+    if (communications.some(communication => !thinking || communication.isBlocking !== false)) {
         return 'input_required';
     }
 

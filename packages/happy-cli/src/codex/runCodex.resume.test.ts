@@ -76,6 +76,7 @@ describe('Codex resume startup readiness', () => {
         vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', '');
         vi.stubEnv('HAPPY_FORK_CODEX_THREAD_ID', '');
         mocks.createApi.mockResolvedValue({
+            push: () => ({ sendSessionNotification: vi.fn() }),
             getOrCreateMachine: vi.fn().mockResolvedValue({}),
             getOrCreateSession: vi.fn().mockResolvedValue({
                 id: 'happy-resumed',

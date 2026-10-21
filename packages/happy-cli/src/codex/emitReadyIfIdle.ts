@@ -2,6 +2,7 @@ type ReadyEventOptions = {
     pending: unknown;
     queueSize: () => number;
     shouldExit: boolean;
+    hasPendingQuestions?: boolean;
     sendReady: () => void;
     notify?: () => void;
 };
@@ -10,8 +11,8 @@ type ReadyEventOptions = {
  * Notify connected clients when Codex finishes processing and the queue is idle.
  * Returns true when a ready event was emitted.
  */
-export function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, notify }: ReadyEventOptions): boolean {
-    if (shouldExit) {
+export function emitReadyIfIdle({ pending, queueSize, shouldExit, hasPendingQuestions, sendReady, notify }: ReadyEventOptions): boolean {
+    if (shouldExit || hasPendingQuestions) {
         return false;
     }
     if (pending) {

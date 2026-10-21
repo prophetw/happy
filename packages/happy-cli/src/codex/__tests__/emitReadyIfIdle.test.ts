@@ -60,4 +60,15 @@ describe('emitReadyIfIdle', () => {
         expect(emitted).toBe(false);
         expect(sendReady).not.toHaveBeenCalled();
     });
+
+    it('keeps an unanswered question from being replaced by a completed notification', () => {
+        const sendReady = vi.fn();
+        const notify = vi.fn();
+        expect(emitReadyIfIdle({
+            pending: null, queueSize: () => 0, shouldExit: false,
+            hasPendingQuestions: true, sendReady, notify,
+        })).toBe(false);
+        expect(sendReady).not.toHaveBeenCalled();
+        expect(notify).not.toHaveBeenCalled();
+    });
 });

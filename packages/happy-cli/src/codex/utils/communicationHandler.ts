@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { createEnvelope } from '@slopus/happy-wire';
 import type { ApiSessionClient } from '@/api/apiSession';
+import type { PushNotificationClient } from '@/api/pushNotifications';
 import type { AgentCommunication, AgentQuestionAnswer } from '@/api/types';
+import { logger } from '@/ui/logger';
 import type {
     AsyncUserInputQuestion,
     ToolRequestUserInputParams,
@@ -34,6 +36,7 @@ export class CodexCommunicationHandler {
     constructor(
         private session: ApiSessionClient,
         private readonly sendAnswer: (text: string) => Promise<void>,
+        private readonly push: Pick<PushNotificationClient, 'sendSessionNotification'>,
     ) {
         // A replaced CLI cannot answer the previous app-server's JSON-RPC ids.
         // Retire only our own stale cards; other communication kinds are owned
@@ -59,6 +62,10 @@ export class CodexCommunicationHandler {
 
     hasBlockingRequests(): boolean {
         return [...this.pending.values()].some(entry => entry.communication.isBlocking);
+    }
+
+    hasPendingQuestions(): boolean {
+        return this.pending.size > 0;
     }
 
     requestNative(requestId: string, params: ToolRequestUserInputParams): Promise<ToolRequestUserInputResponse> {
@@ -153,6 +160,18 @@ export class CodexCommunicationHandler {
             description: entry.communication.isBlocking ? 'Waiting for your answer' : 'You can answer while Codex continues working',
             args: { questions: entry.communication.form.questions, isBlocking: entry.communication.isBlocking },
         }, { turn: entry.turnId }));
+        try {
+            this.push.sendSessionNotification({
+                kind: 'question',
+                metadata: this.session.getMetadata(),
+                data: {
+                    sessionId: this.session.sessionId, type: 'question_request', provider: 'codex',
+                    tool: 'request_user_input', toolCallId: entry.communication.toolUseId,
+                },
+            });
+        } catch (error) {
+            logger.debug('[Codex] Failed to send question push', error);
+        }
     }
 
     private publish(id: string, entry: Pending): void {

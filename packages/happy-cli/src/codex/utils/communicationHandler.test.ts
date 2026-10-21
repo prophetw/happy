@@ -2,19 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentState } from '@/api/types';
 import { CodexCommunicationHandler } from './communicationHandler';
+import { emitReadyIfIdle } from '../emitReadyIfIdle';
 
 function setup(initial: AgentState = {}) {
     let state: AgentState = initial;
     let reply!: (value: unknown) => Promise<unknown>;
     const emit = vi.fn();
     const sendAnswer = vi.fn(async (_text: string) => {});
+    const metadata = { path: '/project', summary: { text: 'Project work', updatedAt: 1 } };
+    const push = { sendSessionNotification: vi.fn() };
     const session = {
+        sessionId: 'session',
+        getMetadata: () => metadata,
         updateAgentState: (update: (state: AgentState) => AgentState) => { state = update(state); },
         sendSessionProtocolMessage: emit,
         rpcHandlerManager: { registerHandler: (_name: string, handler: typeof reply) => { reply = handler; } },
     } as unknown as ApiSessionClient;
-    const handler = new CodexCommunicationHandler(session, sendAnswer);
-    return { handler, state: () => state, reply: (value: unknown) => reply(value), emit, sendAnswer };
+    const handler = new CodexCommunicationHandler(session, sendAnswer, push);
+    return { handler, state: () => state, reply: (value: unknown) => reply(value), emit, sendAnswer, push, metadata };
 }
 
 const native = {
@@ -27,6 +32,66 @@ const asyncQuestion = {
 };
 
 describe('Codex user questions', () => {
+    it.each([true, false])('notifies for a native question with isBlocking=%s', async (isBlocking) => {
+        const test = setup();
+        const result = test.handler.requestNative('42', { ...native, isBlocking });
+        expect(test.handler.hasPendingQuestions()).toBe(true);
+        expect(test.push.sendSessionNotification).toHaveBeenCalledExactlyOnceWith({
+            kind: 'question', metadata: test.metadata,
+            data: {
+                sessionId: 'session', type: 'question_request', provider: 'codex',
+                tool: 'request_user_input', toolCallId: 'codex-input:thread:turn:item:42',
+            },
+        });
+        test.handler.resolveNative('42');
+        await result;
+        expect(test.handler.hasPendingQuestions()).toBe(false);
+    });
+
+    it('notifies once for an async question even when its event is replayed', () => {
+        const test = setup();
+        test.handler.addAsync(asyncQuestion);
+        test.handler.addAsync(asyncQuestion);
+        expect(test.push.sendSessionNotification).toHaveBeenCalledExactlyOnceWith({
+            kind: 'question', metadata: test.metadata,
+            data: {
+                sessionId: 'session', type: 'question_request', provider: 'codex',
+                tool: 'request_user_input', toolCallId: 'codex-async:thread:async',
+            },
+        });
+    });
+
+    it('does not notify for empty questions', async () => {
+        const test = setup();
+        await test.handler.requestNative('42', { ...native, questions: [] });
+        test.handler.addAsync({ ...asyncQuestion, questions: [] });
+        expect(test.push.sendSessionNotification).not.toHaveBeenCalled();
+    });
+
+    it('keeps the question reminder until the async answer has been delivered', async () => {
+        const test = setup();
+        const sendReady = vi.fn();
+        const completeTurn = () => emitReadyIfIdle({
+            pending: null, queueSize: () => 0, shouldExit: false, sendReady,
+            hasPendingQuestions: test.handler.hasPendingQuestions(),
+        });
+        test.handler.addAsync(asyncQuestion);
+        expect(completeTurn()).toBe(false);
+        expect(sendReady).not.toHaveBeenCalled();
+        expect(test.handler.hasBlockingRequests()).toBe(false);
+
+        const id = 'codex-async:thread:async';
+        const questionId = test.state().communications![id].form.questions[0].id;
+        test.sendAnswer.mockRejectedValueOnce(new Error('offline'));
+        const answer = { id, kind: 'form', status: 'answered', answers: { [questionId]: { options: ['Blue'] } } };
+        await expect(test.reply(answer)).rejects.toThrow('offline');
+        expect(completeTurn()).toBe(false);
+        await test.reply(answer);
+        expect(completeTurn()).toBe(true);
+        expect(sendReady).toHaveBeenCalledOnce();
+        expect(test.push.sendSessionNotification).toHaveBeenCalledOnce();
+    });
+
     it('returns structured native answers, including free text, through the communication RPC', async () => {
         const test = setup();
         const result = test.handler.requestNative('42', native);
@@ -74,6 +139,7 @@ describe('Codex user questions', () => {
         const test = setup({ communications: { 'codex-input:old': communication, unrelated: communication } });
         expect(Object.keys(test.state().communications!)).toEqual(['unrelated']);
         expect(test.state().completedCommunications?.['codex-input:old'].status).toBe('cancelled');
+        expect(test.push.sendSessionNotification).not.toHaveBeenCalled();
     });
 
     it('clears an expired native request without cancelling other questions', async () => {

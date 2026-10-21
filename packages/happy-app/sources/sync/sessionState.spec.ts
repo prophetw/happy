@@ -42,7 +42,7 @@ describe('resolveSessionState', () => {
         const state = agentState({ communication: true });
         state.communications!.question.isBlocking = false;
         expect(resolveSessionState({ agentState: state, thinking: true, isOnline: true })).toBe('thinking');
-        expect(resolveSessionState({ agentState: state, thinking: false, isOnline: true })).toBe('waiting');
+        expect(resolveSessionState({ agentState: state, thinking: false, isOnline: true })).toBe('input_required');
     });
     it('reports a pending agent question as input required ahead of thinking', () => {
         expect(resolveSessionState({
@@ -65,8 +65,9 @@ describe('resolveSessionState', () => {
         })).toBe('disconnected');
     });
 
-    it('ignores completed questions and falls back to thinking or waiting', () => {
+    it.each([true, false])('ignores completed questions with isBlocking=%s', (isBlocking) => {
         const completedQuestion = agentState({ communication: true, completed: true });
+        completedQuestion.communications!.question.isBlocking = isBlocking;
         expect(resolveSessionState({
             agentState: completedQuestion,
             thinking: true,

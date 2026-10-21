@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentState, Session } from './storageTypes';
 import { didSessionCompleteTurn, selectCompletedSessionIds } from './sessionCompletion';
 import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
+import { selectMobileSessionAttention } from './mobileSessionAttention';
 
 // The real store; only native storage, the socket and encryption are replaced.
 vi.mock('react-native', () => ({ Platform: { OS: 'web' }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } }));
@@ -32,6 +33,7 @@ function session(id = 'a', patch: Partial<Session> = {}): Session {
 
 const permission = { requests: { p: { tool: 'Bash', arguments: {} } } } as AgentState;
 const question = { communications: { q: { kind: 'form', form: { questions: [{ id: 'q', header: 'Continue', question: 'Continue?', options: [{ label: 'Yes' }] }] } } } } as AgentState;
+const asyncQuestion = { communications: { q: { ...question.communications!.q, isBlocking: false } } } as AgentState;
 
 describe('session completion', () => {
     it('recognizes an active turn becoming idle, but not an ordinary heartbeat or initial load', () => {
@@ -139,5 +141,16 @@ describe('completion state through the real session store', () => {
         apply({ thinking: true, agentState: null });
         apply({ thinking: false, active: false });
         expect(storage.getState().unreadSessionIds.size).toBe(0);
+    });
+
+    it('shows a pending async question as input required after the turn stops', () => {
+        apply({ thinking: true });
+        apply({ agentState: asyncQuestion });
+        apply({ thinking: false });
+        const state = storage.getState();
+        expect(selectCompletedSessionIds(state)).toEqual([]);
+        expect(state.sessions.a.attentionKind).not.toBe('done');
+        expect(selectMobileSessionAttention({ ...state, sessionAttention: {}, appIsActive: false }))
+            .toEqual([expect.objectContaining({ id: 'a', status: 'input_required' })]);
     });
 });

@@ -581,7 +581,7 @@ export async function runCodex(opts: {
             },
             queue: messageQueue, immediately: true, trySteer,
         });
-    });
+    }, api.push());
     client.setUserInputHandler(
         (id, params) => communicationHandler!.requestNative(id, params),
         id => communicationHandler?.resolveNative(id),
@@ -979,6 +979,7 @@ export async function runCodex(opts: {
                     pending,
                     queueSize: () => messageQueue.size(),
                     shouldExit,
+                    hasPendingQuestions: communicationHandler?.hasPendingQuestions(),
                     sendReady,
                 });
                 continue;
@@ -1082,6 +1083,7 @@ export async function runCodex(opts: {
                     pending,
                     queueSize: () => messageQueue.size(),
                     shouldExit,
+                    hasPendingQuestions: communicationHandler?.hasPendingQuestions(),
                     sendReady,
                 });
                 logActiveHandles('after-turn');

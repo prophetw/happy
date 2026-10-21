@@ -22,6 +22,13 @@ The adapter handles two protocol forms:
   messages remain transcript text rather than offering a reply that would be
   sent to the wrong thread. Native child questions use their JSON-RPC responses.
 
+Both forms send a question notification through Happy's existing session push
+API, using the session title and the usual device/focus preferences. Replayed
+async question events do not send another notification. A pending asynchronous
+question keeps the session running while Codex works; once the turn stops, the
+session shows that an answer is required. A turn with unanswered questions does
+not send a completion notification that would replace the question reminder.
+
 The existing choice form supports both suggested options and a written answer.
 Text-only questions use the answer sheet above the composer. Sending an ordinary
 chat message dismisses blocking forms, while asynchronous forms remain pending.
