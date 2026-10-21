@@ -26,7 +26,7 @@ vi.mock('react-native', () => ({ AppState: { addEventListener: (_event: string, 
 } } }));
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
 
-import { getRelayMigrationStatus, queueRelayMigrations, startRelayMigrations, stopRelayMigrations, waitForRelaySessionMigration, type RelayMigrationParticipant } from './relayMigrations';
+import { cancelRelayMigration, getRelayMigrationStatus, queueRelayMigrations, startRelayMigrations, stopRelayMigrations, waitForRelaySessionMigration, type RelayMigrationParticipant } from './relayMigrations';
 
 // Real AES-GCM protects the journal and RPC payloads in this transport harness;
 // native OS storage and cryptographic bridges are replaced at their boundaries.
@@ -63,6 +63,7 @@ interface Device {
     holdPrepare?: Promise<void>;
     onFinish?: () => void;
     rejectCommit?: boolean;
+    rpcMissing?: boolean;
     phases: string[];
 }
 const devices = new Map<string, Device>();
@@ -90,6 +91,10 @@ async function relay(prefix = '') {
     io.on('connection', socket => {
         socket.on('rpc-call', async ({ method, params }, reply) => {
             const item = devices.get(method.split(':')[0]);
+            if (item?.rpcMissing) {
+                reply({ ok: false, error: 'RPC method not available' });
+                return;
+            }
             if (!item?.available || (url !== item.relay && item.finished)) {
                 reply({ ok: false, error: 'The computer did not respond' });
                 return;
@@ -113,7 +118,7 @@ async function relay(prefix = '') {
             reply({ ok: true, result: Buffer.from(seal(answer, key)).toString('base64') });
         });
     });
-    const result = { url, close: () => new Promise<void>(resolve => io.close(() => resolve())) };
+    const result = { url, connections: () => io.sockets.sockets.size, close: () => new Promise<void>(resolve => io.close(() => resolve())) };
     relays.push(result);
     return result;
 }
@@ -343,5 +348,108 @@ describe('durable automatic relay migration over Socket.IO', () => {
         await waitUntil(() => !!getRelayMigrationStatus().lastError);
         stopRelayMigrations(true);
         await rejected;
+    });
+
+    it('cancels only the selected missing RPC task and keeps other devices retrying after reload', async () => {
+        const source = await relay();
+        const target = await relay();
+        const ended = device('ended-session', source.url, 'session');
+        ended.rpcMissing = true;
+        const offline = device('offline-computer', source.url);
+        offline.available = false;
+        await enqueue(source.url, target.url, [ended, offline]);
+        startRelayMigrations(encryption, target.url);
+        await waitUntil(() => !!getRelayMigrationStatus().tasks.find(task => task.entityId === ended.participant.entityId)?.lastError);
+        const task = getRelayMigrationStatus().tasks.find(task => task.entityId === ended.participant.entityId)!;
+        expect(task.lastError).toContain('RPC method not available');
+
+        await cancelRelayMigration(task);
+        await waitUntil(() => getRelayMigrationStatus().pending === 1);
+        expect((await journal()).jobs.map((job: any) => job.entityId)).toEqual(['offline-computer']);
+        stopRelayMigrations();
+        startRelayMigrations(encryption, target.url);
+        await waitUntil(() => getRelayMigrationStatus().pending === 1);
+        offline.available = true;
+        mocks.foreground?.('active');
+        await waitUntil(() => offline.finished && getRelayMigrationStatus().pending === 0);
+        expect(ended.phases).toEqual([]);
+    });
+
+    it('disconnects migration sockets and rejects waiting sends without committing a cancelled task', async () => {
+        const source = await relay();
+        const target = await relay();
+        const session = device('session', source.url, 'session');
+        let release!: () => void;
+        session.holdPrepare = new Promise<void>(resolve => { release = resolve; });
+        await enqueue(source.url, target.url, [session]);
+        startRelayMigrations(encryption, target.url);
+        const waiting = waitForRelaySessionMigration('session');
+        const rejected = expect(waiting).rejects.toThrow('Relay changed');
+        try {
+            await waitUntil(() => session.phases.includes('prepare'));
+            const task = getRelayMigrationStatus().tasks[0];
+            await cancelRelayMigration(task);
+            await rejected;
+            release();
+            await waitUntil(() => source.connections() === 0 && target.connections() === 0);
+            expect(session.phases).toEqual(['prepare']);
+            expect(getRelayMigrationStatus().pending).toBe(0);
+            expect(getRelayMigrationStatus().lastError).toBeNull();
+            expect((await journal()).jobs).toEqual([]);
+            stopRelayMigrations();
+            startRelayMigrations(encryption, target.url);
+            await waitUntil(() => getRelayMigrationStatus().pending === 0);
+            expect(session.finished).toBe(false);
+        } finally {
+            release();
+            stopRelayMigrations();
+            await rejected;
+        }
+    });
+
+    it('retains the task and resumes retries when saving a cancellation fails', async () => {
+        const source = await relay();
+        const target = await relay();
+        const session = device('session', source.url, 'session');
+        session.available = false;
+        await enqueue(source.url, target.url, [session]);
+        startRelayMigrations(encryption, target.url);
+        await waitUntil(() => !!getRelayMigrationStatus().lastError);
+        const task = getRelayMigrationStatus().tasks[0];
+        mocks.failStorage = true;
+        await expect(cancelRelayMigration(task)).rejects.toThrow('Disk full');
+        expect((await journal()).jobs).toHaveLength(1);
+        mocks.failStorage = false;
+        await waitUntil(() => getRelayMigrationStatus().pending === 1);
+        session.available = true;
+        mocks.foreground?.('active');
+        await waitUntil(() => session.finished && getRelayMigrationStatus().pending === 0);
+    });
+
+    it('does not restore migration credentials if logout happens while cancelling', async () => {
+        const source = await relay();
+        const target = await relay();
+        const session = device('session', source.url, 'session');
+        session.available = false;
+        await enqueue(source.url, target.url, [session]);
+        startRelayMigrations(encryption, target.url);
+        await waitUntil(() => !!getRelayMigrationStatus().lastError);
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const original = encryption.encryptRaw;
+        const encrypt = vi.spyOn(encryption, 'encryptRaw').mockImplementationOnce(async data => {
+            await gate;
+            return original(data);
+        });
+        try {
+            const cancelling = cancelRelayMigration(getRelayMigrationStatus().tasks[0]);
+            const rejected = expect(cancelling).rejects.toThrow('Relay changed');
+            await waitUntil(() => encrypt.mock.calls.length > 0);
+            stopRelayMigrations(true);
+            release();
+            await rejected;
+            expect(mocks.values.size).toBe(0);
+            expect(getRelayMigrationStatus().pending).toBe(0);
+        } finally { release(); encrypt.mockRestore(); }
     });
 });

@@ -22,19 +22,24 @@ const queueSchema = z.object({ serverUrl: z.string(), jobs: z.array(jobSchema) }
 type Endpoint = z.infer<typeof endpointSchema>;
 type Job = z.infer<typeof jobSchema>;
 export type RelayMigrationParticipant = z.infer<typeof participantSchema>;
+export type RelayMigrationTask = Pick<Job, 'id' | 'kind' | 'entityId' | 'name' | 'lastError'>;
 
 // URL/token pairs and per-device keys are encrypted with the account key.
 // This store survives relay cache cleanup and the reload after switching.
 const store = new MMKV({ id: 'relay-migrations' });
 const listeners = new Set<() => void>();
-let status = { pending: 0, lastError: null as string | null };
+let status = { pending: 0, lastError: null as string | null, tasks: [] as RelayMigrationTask[] };
 export const getRelayMigrationStatus = () => status;
 export const subscribeRelayMigrations = (listener: () => void) => {
     listeners.add(listener);
     return () => { listeners.delete(listener); };
 };
 function publish(jobs: Job[], error: string | null = null) {
-    status = { pending: jobs.length, lastError: error ?? jobs.find(job => job.lastError)?.lastError ?? null };
+    status = {
+        pending: jobs.length,
+        lastError: error ?? jobs.find(job => job.lastError)?.lastError ?? null,
+        tasks: jobs.map(({ id, kind, entityId, name, lastError }) => ({ id, kind, entityId, name, lastError })),
+    };
     for (const listener of listeners) listener();
 }
 
@@ -51,6 +56,7 @@ interface Worker {
     removeAppStateListener?: () => void;
 }
 let worker: Worker | null = null;
+let workerRevision = 0;
 
 /** Keep new prompts in the existing outbox until the live CLI has moved. */
 export async function waitForRelaySessionMigration(sessionId: string, signal?: AbortSignal): Promise<void> {
@@ -76,6 +82,7 @@ export async function waitForRelaySessionMigration(sessionId: string, signal?: A
 }
 
 export function stopRelayMigrations(clear = false) {
+    workerRevision++;
     if (worker) {
         worker.stopped = true;
         clearTimeout(worker.timer);
@@ -85,6 +92,33 @@ export function stopRelayMigrations(clear = false) {
     }
     if (clear) store.clearAll();
     publish([]);
+}
+
+/** Abandon one task explicitly; an unavailable RPC alone cannot prove a device has exited. */
+export async function cancelRelayMigration(task: RelayMigrationTask): Promise<void> {
+    const state = worker;
+    if (!state) return;
+    await state.ready;
+    if (state.stopped || worker !== state) throw new Error('Relay changed while stopping automatic reconnection');
+    const remaining = state.jobs.filter(job =>
+        job.id !== task.id || job.kind !== task.kind || job.entityId !== task.entityId);
+    if (remaining.length === state.jobs.length) return;
+
+    // Stop in-flight RPCs and journal writes before replacing the queue. Waiting
+    // outbox sends must reject, rather than treating cancellation as a successful move.
+    stopRelayMigrations();
+    const revision = workerRevision;
+    try {
+        const encrypted = await state.encryption.encryptRaw({ serverUrl: state.serverUrl, jobs: remaining });
+        if (workerRevision !== revision) throw new Error('Relay changed while stopping automatic reconnection');
+        store.set(state.encryption.anonID, encrypted);
+    } catch (error) {
+        // A failed save retains the previous durable queue. Do not revive it
+        // after logout or a concurrent server switch.
+        if (workerRevision === revision) startRelayMigrations(state.encryption, state.serverUrl);
+        throw error;
+    }
+    startRelayMigrations(state.encryption, state.serverUrl);
 }
 
 async function load(encryption: Encryption): Promise<z.infer<typeof queueSchema> | null> {

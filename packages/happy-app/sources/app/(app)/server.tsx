@@ -21,7 +21,7 @@ import {
     shouldUseCustomServerForVoice,
 } from '@/sync/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { getRelayMigrationStatus, subscribeRelayMigrations } from '@/sync/relayMigrations';
+import { cancelRelayMigration, getRelayMigrationStatus, subscribeRelayMigrations, type RelayMigrationTask } from '@/sync/relayMigrations';
 import { normalizeServerUrl } from '@slopus/happy-wire/serverUrl';
 import { checkServerConnection } from '@/sync/checkServerConnection';
 import { useAuth } from '@/auth/AuthContext';
@@ -99,6 +99,7 @@ export default function ServerConfigScreen() {
     const [useCustomServerForVoice, setUseCustomServerForVoiceState] = useState(shouldUseCustomServerForVoice());
     const [error, setError] = useState<string | null>(null);
     const [isValidating, setIsValidating] = useState(false);
+    const [cancellingTask, setCancellingTask] = useState<string | null>(null);
     const switching = useRef(false);
     const migration = useSyncExternalStore(subscribeRelayMigrations, getRelayMigrationStatus, getRelayMigrationStatus);
 
@@ -118,7 +119,7 @@ export default function ServerConfigScreen() {
     };
 
     const applyServer = async (url: string | null) => {
-        if (switching.current) return;
+        if (switching.current || cancellingTask) return;
         if (url !== null && normalizeServerUrl(url) === getServerUrl()) return;
         switching.current = true;
         setIsValidating(true);
@@ -151,6 +152,24 @@ export default function ServerConfigScreen() {
     const handleUseCustomServerForVoice = (enabled: boolean) => {
         setUseCustomServerForVoice(enabled);
         setUseCustomServerForVoiceState(enabled);
+    };
+
+    const handleStopReconnecting = async (task: RelayMigrationTask) => {
+        if (switching.current || cancellingTask) return;
+        const confirmed = await Modal.confirm(
+            t('server.relayMigrationStop'),
+            `${task.name}\n\n${t('server.relayMigrationStopDescription')}`,
+            { confirmText: t('server.relayMigrationStop'), destructive: true },
+        );
+        if (!confirmed) return;
+        setCancellingTask(`${task.kind}:${task.entityId}`);
+        try {
+            await cancelRelayMigration(task);
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed'));
+        } finally {
+            setCancellingTask(null);
+        }
     };
 
     return (
@@ -212,7 +231,7 @@ export default function ServerConfigScreen() {
                                     title={isValidating ? t('server.validating') : t('common.save')}
                                     size="normal"
                                     action={handleSave}
-                                    disabled={isValidating}
+                                    disabled={isValidating || cancellingTask !== null}
                                 />
                                 {isCustomServer && (
                                     <RoundButton
@@ -220,7 +239,7 @@ export default function ServerConfigScreen() {
                                         size="normal"
                                         display="inverted"
                                         onPress={handleReset}
-                                        disabled={isValidating}
+                                        disabled={isValidating || cancellingTask !== null}
                                     />
                                 )}
                             </View>
@@ -231,6 +250,23 @@ export default function ServerConfigScreen() {
                             )}
                         </View>
                     </ItemGroup>
+
+                    {migration.tasks.length > 0 && (
+                        <ItemGroup title={t('server.relayMigrationTasks')} footer={t('server.relayMigrationTasksHint')}>
+                            {migration.tasks.map(task => (
+                                <Item
+                                    key={`${task.kind}:${task.entityId}`}
+                                    title={task.name}
+                                    subtitle={task.lastError ?? undefined}
+                                    detail={t('server.relayMigrationStop')}
+                                    onPress={() => { void handleStopReconnecting(task); }}
+                                    loading={cancellingTask === `${task.kind}:${task.entityId}`}
+                                    disabled={isValidating || cancellingTask !== null}
+                                    showChevron={false}
+                                />
+                            ))}
+                        </ItemGroup>
+                    )}
 
                     {isCustomServer && (
                         <ItemGroup

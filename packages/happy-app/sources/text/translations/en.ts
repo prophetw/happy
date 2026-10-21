@@ -395,6 +395,10 @@ export const en: TranslationStructure = {
         relayRollbackUnconfirmed: 'Rollback could not be confirmed for these devices or sessions',
         keepOriginalRelay: 'Keep the original relay available.',
         relayMigrationPending: ({ count }: { count: number }) => `Server switched. Automatically reconnecting ${count} computer(s) or session(s); this continues while the app is open.`,
+        relayMigrationTasks: 'Automatic reconnection',
+        relayMigrationTasksHint: 'Select a computer or session to stop its automatic reconnection.',
+        relayMigrationStop: 'Stop reconnecting',
+        relayMigrationStopDescription: 'Stop automatically reconnecting this computer or session? If it is still using the previous server, reconnect it manually. Your current server, login and session data are kept.',
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Server Configuration',
         title: 'Server',
