@@ -17,6 +17,18 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const zhHant: TranslationStructure = {
+    browserNotifications: {
+        title: '瀏覽器通知',
+        enable: '開啟桌面通知',
+        description: '分頁在背景時，任務完成後傳送系統通知。',
+        blocked: '通知已被瀏覽器封鎖，請在此網站的瀏覽器設定中允許通知。',
+        manage: '查看通知開啟方法',
+        instructions: '1. 點選網址列左側的網站資訊或權限圖示。\n2. 將「通知」設為「允許」（可能需要先進入「網站設定」）。\n3. 返回本頁，再開啟「桌面通知」。\n\n如果開關未更新，請重新整理頁面。',
+        unsupported: '目前瀏覽器不支援桌面通知。',
+        insecure: '請使用 localhost 或 HTTPS 網址開啟桌面通知。',
+        error: '無法開啟桌面通知，請重試。',
+    },
+
     voiceStatusBar: {
         tapToEnd: '點按結束',
         connecting: '連接中…',
@@ -568,6 +580,12 @@ export const zhHant: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: '所有電腦',
+        searchDirectories: '搜尋專案或目錄',
+        searchRecentProjects: '搜尋最近專案',
+        directorySearchScope: '搜尋範圍：最近專案、目前目錄的子目錄及同層目錄',
+        noMatchingDirectories: '沒有符合的專案或目錄',
+        clearDirectorySearch: '清除搜尋',
         directoryPickerTitle: '選擇目錄',
         selectDirectory: '使用此目錄',
         parentDirectory: '返回上層目錄',

@@ -18,6 +18,8 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const ja: TranslationStructure = {
+    browserNotifications: en.browserNotifications,
+
     voiceStatusBar: {
         tapToEnd: 'タップして終了',
         connecting: '接続中…',
@@ -569,6 +571,12 @@ export const ja: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'すべてのマシン',
+        searchDirectories: 'プロジェクトまたはフォルダーを検索',
+        searchRecentProjects: '最近のプロジェクトを検索',
+        directorySearchScope: '最近のプロジェクトと現在および親フォルダー内を検索',
+        noMatchingDirectories: '一致するプロジェクトまたはフォルダーはありません',
+        clearDirectorySearch: '検索をクリア',
         directoryPickerTitle: 'ディレクトリを選択',
         selectDirectory: 'このディレクトリを使用',
         parentDirectory: '親ディレクトリへ',

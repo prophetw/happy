@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Modal as RNModal, Pressable, ScrollView, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
+import { KeyboardAvoidingView, Modal as RNModal, Platform, Pressable, ScrollView, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -212,6 +212,7 @@ export function PickerSheet(props: {
     title: string;
     onClose: () => void;
     children: React.ReactNode;
+    avoidKeyboard?: boolean;
 }) {
     const styles = stylesheet;
     const insets = useSafeAreaInsets();
@@ -225,7 +226,11 @@ export function PickerSheet(props: {
             navigationBarTranslucent
             onRequestClose={props.onClose}
         >
-            <View style={styles.root}>
+            <KeyboardAvoidingView
+                style={styles.root}
+                enabled={props.avoidKeyboard === true}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
                 <Pressable
                     style={styles.scrim}
                     onPress={props.onClose}
@@ -236,11 +241,12 @@ export function PickerSheet(props: {
                     attached
                     title={props.title}
                     onClose={props.onClose}
-                    style={{ maxHeight: height * MAX_HEIGHT_FRACTION, paddingBottom: insets.bottom }}
+                    style={{ maxHeight: height * MAX_HEIGHT_FRACTION, paddingBottom: insets.bottom,
+                        ...(props.avoidKeyboard ? { flexShrink: 1 } : {}) }}
                 >
                     {props.children}
                 </PickerSheetPanel>
-            </View>
+            </KeyboardAvoidingView>
         </RNModal>
     );
 }
@@ -280,12 +286,14 @@ export function PickerSheetOption(props: {
     /** A small glyph before the label, such as a permission mode's kind. */
     labelIcon?: React.ReactNode;
     onPress: () => void;
+    testID?: string;
 }) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const label = props.description ? `${props.label}, ${props.description}` : props.label;
     return (
         <Pressable
+            testID={props.testID}
             disabled={props.disabled}
             onPress={props.onPress}
             android_ripple={{ color: rippleColor(theme.dark) }}

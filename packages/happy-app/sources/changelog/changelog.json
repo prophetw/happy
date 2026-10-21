@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "October 21 - Find projects across computers",
+      "summary": "",
+      "markdown": "- **Find projects faster** — search projects across your computers and pick the right machine and folder together.\n- **Keep recent projects** — your recent list stays available after chats are archived or older history stops loading.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "October 20 - Know when tasks finish",
       "summary": "Task status and reminders are easier to spot on iPhone.",
       "markdown": "- **See task status** — running, completed, waiting, and failed tasks have clear labels and colors.\n- **Find finished tasks** — keep unread reminders in one list and tap straight into the conversation.\n- **Notice new reminders** — a brief banner and haptic feedback draw your attention while the app is open.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -141,5 +146,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "October 20 - Know when tasks finish"
+  "latestTitle": "October 21 - Find projects across computers"
 }

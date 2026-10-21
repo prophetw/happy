@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { AgentDefaultOverridesSchema } from './agentDefaults';
 import { DEFAULT_USER_MESSAGE_BUBBLE_COLOR } from '../utils/userMessageBubbleColor';
+import { RecentProjectSchema } from './recentProjects';
 
 //
 // Settings Schema
@@ -66,6 +67,7 @@ export const SettingsSchema = z.object({
         machineId: z.string(),
         path: z.string()
     })).describe('Last 10 machine-path combinations, ordered by most recent first'),
+    recentProjects: z.array(RecentProjectSchema).describe('Last 100 projects across machines, retained independently of sessions'),
     lastUsedAgent: z.string().nullable().describe('Last selected agent type for new sessions'),
     lastUsedPermissionMode: z.string().nullable().describe('Last selected permission mode for new sessions'),
     lastUsedModelMode: z.string().nullable().describe('Last selected model mode for new sessions'),
@@ -143,6 +145,7 @@ export const settingsDefaults: Settings = {
     voiceBypassToken: false,
     preferredLanguage: null,
     recentMachinePaths: [],
+    recentProjects: [],
     lastUsedAgent: null,
     lastUsedPermissionMode: null,
     lastUsedModelMode: null,

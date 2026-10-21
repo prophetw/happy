@@ -34,13 +34,12 @@ export function buildCodexTurnPrompt(opts: {
     includeAppendSystemPrompt: boolean;
     includeTitleInstruction: boolean;
 }): string {
-    const parts: string[] = [];
+    // Native Codex previews start with the turn text, so keep user input first.
+    const parts: string[] = [opts.message];
 
     if (opts.includeAppendSystemPrompt && opts.mode.appendSystemPrompt) {
         parts.push(wrapHappySystem(opts.mode.appendSystemPrompt));
     }
-
-    parts.push(opts.message);
 
     if (opts.includeTitleInstruction) {
         parts.push(wrapHappySystem(CHANGE_TITLE_INSTRUCTION));

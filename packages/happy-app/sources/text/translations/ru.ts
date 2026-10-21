@@ -26,6 +26,8 @@ function plural({ count, one, few, many }: { count: number; one: string; few: st
  * Must match the exact structure of the English translations
  */
 export const ru: TranslationStructure = {
+    browserNotifications: en.browserNotifications,
+
     voiceStatusBar: {
         tapToEnd: 'нажмите, чтобы завершить',
         connecting: 'Подключение…',
@@ -584,6 +586,12 @@ export const ru: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Все компьютеры',
+        searchDirectories: 'Поиск проектов или папок',
+        searchRecentProjects: 'Поиск недавних проектов',
+        directorySearchScope: 'Поиск недавних проектов и папок в текущем и родительском каталоге',
+        noMatchingDirectories: 'Совпадающие проекты или папки не найдены',
+        clearDirectorySearch: 'Очистить поиск',
         directoryPickerTitle: 'Выбрать папку',
         selectDirectory: 'Использовать эту папку',
         parentDirectory: 'Родительская папка',

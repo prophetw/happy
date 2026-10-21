@@ -145,16 +145,10 @@ export function buildUsageEnvelopeFromContextWindow(
   currentModel?: string,
   currentConversationId?: string,
 ): SessionEnvelope | null {
-  // If the context window is tied to a specific conversation or session, verify it matches
-  // the current conversation to avoid cross-session token contamination.
-  if (contextWindow.conversationId || contextWindow.sessionId) {
-    const targetId = contextWindow.conversationId || contextWindow.sessionId;
-    if (!currentConversationId || targetId !== currentConversationId) {
-      return null;
-    }
-  } else if (!currentConversationId) {
-    // If the context window has no conversation metadata and no active conversation is known,
-    // do not guess or inject arbitrary usage into uninitialized sessions.
+  const targetId = contextWindow.conversationId || contextWindow.sessionId;
+  if (!currentConversationId || !targetId || targetId !== currentConversationId) {
+    // Global statusline files can belong to a different session. Only accept
+    // context metrics that can be attributed to the active conversation.
     return null;
   }
 
@@ -200,9 +194,9 @@ export function buildAgyUsageLimits(
 ): UsageLimits | null {
   if (!quota) return null;
 
-  const isClaude = /claude/i.test(currentModel || '');
+  const isThirdParty = /claude|gpt|oss/i.test(currentModel || '');
   // Prioritize the relevant channel based on active model, falling back to the other
-  const activeGroup = isClaude
+  const activeGroup = isThirdParty
     ? (quota.claude ?? quota.gemini)
     : (quota.gemini ?? quota.claude);
 

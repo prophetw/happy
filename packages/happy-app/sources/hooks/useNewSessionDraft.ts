@@ -55,6 +55,7 @@ interface NewSessionDraftState {
     setInput: (input: string) => void;
     setAttachments: (attachments: AttachmentPreview[]) => void;
     setMachineId: (id: string | null) => void;
+    selectPlace: (place: { machineId: string; path: string | null; projectId?: string }) => void;
     /**
      * Renames the machine this draft already points at, keeping everything chosen on it.
      *
@@ -124,6 +125,17 @@ export const useNewSessionDraft = create<NewSessionDraftState>()((set, get) => (
     setInput: (input) => { set({ input }); persist(get()); },
     setAttachments: (attachments) => { set({ attachments }); },
     setMachineId: (id) => { set({ selectedMachineId: id, selectedPath: null, selectedProjectId: null, worktreeKey: null }); persist(get()); },
+    selectPlace: ({ machineId, path, projectId }) => {
+        set({
+            selectedMachineId: machineId,
+            selectedPath: path,
+            selectedProjectId: path === null ? projectId ?? null : null,
+            worktreeKey: null,
+            sessionType: 'simple',
+            ...(path === null && projectId ? { agentType: 'rig' as const, pickedAgentType: 'rig' as const } : {}),
+        });
+        persist(get());
+    },
     renameMachineId: (id) => { set({ selectedMachineId: id }); persist(get()); },
     setPath: (path) => { set({ selectedPath: path, selectedProjectId: null, worktreeKey: null }); persist(get()); },
     setProjectId: (id) => { set({ selectedProjectId: id, selectedPath: null, worktreeKey: null }); persist(get()); },

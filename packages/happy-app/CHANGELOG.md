@@ -1,3 +1,9 @@
+# October 21 - Find projects across computers
+
+- **Find projects faster** — search projects across your computers and pick the right machine and folder together.
+- **Keep recent projects** — your recent list stays available after chats are archived or older history stops loading.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 20 - Know when tasks finish
 
 Task status and reminders are easier to spot on iPhone.

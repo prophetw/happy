@@ -26,6 +26,8 @@ function plural({ count, one, few, many }: { count: number; one: string; few: st
  * Must match the exact structure of the English translations
  */
 export const pl: TranslationStructure = {
+    browserNotifications: en.browserNotifications,
+
     voiceStatusBar: {
         tapToEnd: 'dotknij, aby zakończyć',
         connecting: 'Łączenie…',
@@ -584,6 +586,12 @@ export const pl: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Wszystkie komputery',
+        searchDirectories: 'Szukaj projektów lub folderów',
+        searchRecentProjects: 'Szukaj ostatnich projektów',
+        directorySearchScope: 'Wyszukiwanie ostatnich projektów i folderów w bieżącym i nadrzędnym katalogu',
+        noMatchingDirectories: 'Brak pasujących projektów lub folderów',
+        clearDirectorySearch: 'Wyczyść wyszukiwanie',
         directoryPickerTitle: 'Wybierz katalog',
         selectDirectory: 'Użyj tego katalogu',
         parentDirectory: 'Katalog nadrzędny',

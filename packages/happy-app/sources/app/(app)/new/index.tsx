@@ -11,8 +11,6 @@ import {
     ScrollView,
     LayoutAnimation,
     ActivityIndicator,
-    TextInputSelectionChangeEventData,
-    NativeSyntheticEvent,
     Image as RNImage,
     Keyboard,
     useWindowDimensions,
@@ -43,6 +41,10 @@ import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
+import { useRecentProjects, rememberRecentProject } from '@/hooks/useRecentProjects';
+import { addRecentProjectPlaces, collectProjectSearchOptions } from '@/sync/recentProjects';
+import { WebProjectSearch } from '@/components/WebProjectSearch';
+import { ProjectDirectoryPicker } from '@/components/ProjectDirectoryPicker';
 import { useWorktrees } from '@/hooks/useWorktrees';
 import { useShallow } from 'zustand/react/shallow';
 import type { MultiTextInputHandle } from '@/components/MultiTextInput';
@@ -98,6 +100,8 @@ import { resolveHappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
 import { MobileGlassSurface } from '@/components/MobileGlass';
 import { getNativeGlassInteractivity } from '@/components/glassInteractionPolicy';
 import { BubblePressable } from '@/components/BubblePressable';
+import { DirectoryPicker } from '@/components/DirectoryPicker';
+import { formatDirectorySearchOption, searchDirectoryOptions } from '@/utils/directorySearch';
 import { Header } from '@/components/navigation/Header';
 import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
 import {
@@ -524,6 +528,7 @@ function PathPickerContent({
     value,
     selectedProjectKey,
     homeDir,
+    directoryMachineId,
     onChangeValue,
     onSelectProject,
     onDone,
@@ -538,6 +543,7 @@ function PathPickerContent({
      */
     selectedProjectKey: string | null;
     homeDir?: string;
+    directoryMachineId?: string | null;
     onChangeValue: (value: string) => void;
     onSelectProject: (projectId: string) => void;
     onDone?: () => void;
@@ -546,7 +552,16 @@ function PathPickerContent({
     const { theme } = useUnistyles();
     const inputRef = React.useRef<TextInput>(null);
     const currentValue = value ?? '';
-    const [selection, setSelection] = React.useState<{ start: number; end: number } | undefined>(undefined);
+    const [query, setQuery] = React.useState('');
+    const [enteringCustomPath, setEnteringCustomPath] = React.useState(false);
+    const [customPath, setCustomPath] = React.useState(currentValue);
+    const options = React.useMemo(() => items.map((item) => formatDirectorySearchOption({
+        ...item, name: item.label, description: item.subtitle,
+    })), [items]);
+    const filtered = React.useMemo(
+        () => searchDirectoryOptions(options, enteringCustomPath ? '' : query),
+        [options, query, enteringCustomPath],
+    );
 
     React.useEffect(() => {
         // Embedded mobile pickers are positioned next to their trigger. Opening
@@ -554,14 +569,14 @@ function PathPickerContent({
         // its pre-keyboard coordinates and makes it overlap the composer.
         // Recent paths remain immediately selectable; focus the custom path
         // field only after the user explicitly taps it.
-        if (embedded) {
+        if (!enteringCustomPath && (embedded || Platform.OS !== 'web')) {
             return;
         }
         const timeout = setTimeout(() => {
             inputRef.current?.focus();
         }, 50);
         return () => clearTimeout(timeout);
-    }, [embedded]);
+    }, [embedded, enteringCustomPath]);
 
     const matchedItemKey = React.useMemo(() => {
         const normalizedValue = normalizePathForComparison(currentValue, homeDir);
@@ -581,26 +596,24 @@ function PathPickerContent({
             // There is no path to put in the field: the project is picked by identity, and the
             // field goes back to standing empty for whatever directory is typed next.
             onSelectProject(item.projectId);
-            return;
+        } else {
+            onChangeValue(item.key);
         }
-        const nextValue = item.label;
-        const nextSelection = { start: nextValue.length, end: nextValue.length };
-
-        onChangeValue(nextValue);
-        setSelection(nextSelection);
-
-        setTimeout(() => {
-            inputRef.current?.focus();
-        }, 0);
-    }, [onChangeValue, onSelectProject]);
+        onDone?.();
+    }, [onChangeValue, onSelectProject, onDone]);
 
     const selectedProjectName = selectedProjectKey
         ? items.find((item) => item.key === selectedProjectKey)?.label ?? null
         : null;
-    const isCustomPath = currentValue.trim().length > 0 && matchedItemKey === null;
-    const handleSelectionChange = React.useCallback((event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
-        setSelection(event.nativeEvent.selection);
-    }, []);
+    const startCustomPath = () => {
+        setCustomPath(currentValue);
+        setEnteringCustomPath(true);
+    };
+    const applyCustomPath = () => {
+        if (!customPath.trim()) return;
+        onChangeValue(customPath.trim());
+        onDone?.();
+    };
     const doneIconColor = theme.colors.header.tint;
 
     return (
@@ -610,14 +623,15 @@ function PathPickerContent({
                     <Text style={[pickerStyles.title, { color: theme.colors.text }]}>{title}</Text>
                     {Platform.OS !== 'web' && onDone && (
                         <BubblePressable
-                            onPress={onDone}
+                            onPress={enteringCustomPath ? applyCustomPath : onDone}
+                            disabled={enteringCustomPath && !customPath.trim()}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             style={({ pressed }) => [
                                 pickerStyles.doneButtonPressable,
                                 { opacity: pressed ? 0.82 : 1 },
                             ]}
                             accessibilityRole="button"
-                            accessibilityLabel="Done"
+                            accessibilityLabel={enteringCustomPath ? t('machineLauncher.selectDirectory') : 'Done'}
                         >
                             <GlassView
                                 glassEffectStyle="regular"
@@ -649,15 +663,14 @@ function PathPickerContent({
                     embedded && pickerStyles.embeddedPathInputRow,
                 ]}
             >
-                <Ionicons name="folder-outline" size={16} color={theme.colors.textSecondary} />
+                <Ionicons name={enteringCustomPath ? 'folder-outline' : 'search'} size={16} color={theme.colors.textSecondary} />
                 <View style={pickerStyles.pathInputField}>
                     <TextInput
                         ref={inputRef}
-                        value={currentValue}
-                        onChangeText={onChangeValue}
-                        onSelectionChange={handleSelectionChange}
-                        selection={selection}
-                        placeholder="Enter project path"
+                        value={enteringCustomPath ? customPath : query}
+                        onChangeText={enteringCustomPath ? setCustomPath : setQuery}
+                        placeholder={t(enteringCustomPath ? 'machineLauncher.enterCustomPath' : 'machineLauncher.searchRecentProjects')}
+                        accessibilityLabel={t(enteringCustomPath ? 'machineLauncher.enterCustomPath' : 'machineLauncher.searchRecentProjects')}
                         placeholderTextColor={theme.colors.textSecondary}
                         style={[
                             pickerStyles.pathTextInput,
@@ -668,24 +681,61 @@ function PathPickerContent({
                         autoCorrect={false}
                         multiline={false}
                         numberOfLines={1}
-                        returnKeyType="done"
-                        onSubmitEditing={onDone}
+                        returnKeyType={enteringCustomPath ? 'done' : 'search'}
+                        onSubmitEditing={enteringCustomPath ? applyCustomPath : undefined}
                     />
                 </View>
+                {enteringCustomPath ? (
+                    <BubblePressable
+                        onPress={applyCustomPath}
+                        disabled={!customPath.trim()}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('machineLauncher.selectDirectory')}
+                        style={pickerStyles.pathInputAction}
+                    >
+                        <Ionicons name="checkmark" size={20} color={doneIconColor} />
+                    </BubblePressable>
+                ) : query.length > 0 && (
+                    <BubblePressable
+                        onPress={() => setQuery('')}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('machineLauncher.clearDirectorySearch')}
+                        style={pickerStyles.pathInputAction}
+                    >
+                        <Ionicons name="close-circle" size={20} color={theme.colors.textSecondary} />
+                    </BubblePressable>
+                )}
+                {Platform.OS === 'web' && (
+                    <DirectoryPicker
+                        machineId={directoryMachineId ?? null}
+                        homeDir={homeDir}
+                        initialPath={value}
+                        recentPaths={items.map((item) => ({ key: item.key, name: item.label, description: item.subtitle }))}
+                        selectedKey={selectedProjectKey ?? matchedItemKey}
+                        onSelectDirectory={(path) => {
+                            onChangeValue(path);
+                            onDone?.();
+                        }}
+                        onSelectRecent={(key) => {
+                            const item = items.find((item) => item.key === key);
+                            if (!item) return;
+                            if (item.projectId) onSelectProject(item.projectId);
+                            else onChangeValue(item.key);
+                            onDone?.();
+                        }}
+                        onRequestCustomPath={startCustomPath}
+                    />
+                )}
             </View>
 
-            {selectedProjectName ? (
+            {(selectedProjectName || currentValue) && (
                 <Text style={[pickerStyles.pathMetaText, { color: theme.colors.textSecondary }]}>
-                    using project {selectedProjectName}
-                </Text>
-            ) : isCustomPath && (
-                <Text style={[pickerStyles.pathMetaText, { color: theme.colors.textSecondary }]}>
-                    using custom path above
+                    {selectedProjectName ?? formatPathRelativeToHome(currentValue, homeDir)}
                 </Text>
             )}
 
             <Text style={[pickerStyles.sectionLabel, { color: theme.colors.textSecondary }]}>
-                Recent
+                {t('machineLauncher.recentDirectories')}
             </Text>
 
             <ScrollView
@@ -693,7 +743,7 @@ function PathPickerContent({
                 contentContainerStyle={embedded && pickerStyles.embeddedOptionListContent}
                 keyboardShouldPersistTaps="handled"
             >
-                {items.map((item) => {
+                {filtered.map((item) => {
                     const isSelected = selectedProjectKey
                         ? item.key === selectedProjectKey
                         : item.key === matchedItemKey;
@@ -716,8 +766,13 @@ function PathPickerContent({
                             />
                             <View style={{ flex: 1, minWidth: 0 }}>
                                 <Text style={[pickerStyles.optionText, { color: theme.colors.text }]} numberOfLines={1}>
-                                    {item.label}
+                                    {item.name}
                                 </Text>
+                                {item.description && (
+                                    <Text style={[pickerStyles.optionText, { color: theme.colors.textSecondary, fontSize: 13 }]} numberOfLines={1}>
+                                        {item.description}
+                                    </Text>
+                                )}
                             </View>
                             {isSelected && (
                                 <Ionicons
@@ -730,12 +785,22 @@ function PathPickerContent({
                     );
                 })}
 
-                {items.length === 0 && (
+                {filtered.length === 0 && (
                     <Text style={[pickerStyles.emptyText, { color: theme.colors.textSecondary }]}>
-                        no recent projects yet
+                        {t('machineLauncher.noMatchingDirectories')}
                     </Text>
                 )}
             </ScrollView>
+            <BubblePressable
+                onPress={enteringCustomPath ? () => setEnteringCustomPath(false) : startCustomPath}
+                accessibilityRole="button"
+                accessibilityLabel={t(enteringCustomPath ? 'common.cancel' : 'machineLauncher.enterCustomPath')}
+                style={pickerStyles.option}
+            >
+                <Text style={[pickerStyles.optionText, { color: theme.colors.textSecondary }]}>
+                    {t(enteringCustomPath ? 'common.cancel' : 'machineLauncher.enterCustomPath')}
+                </Text>
+            </BubblePressable>
         </View>
     );
 }
@@ -938,17 +1003,22 @@ function NewSessionScreen() {
         () => (sessions ?? []).filter((item): item is Session => typeof item !== 'string'),
         [sessions],
     );
+    const recentProjects = useRecentProjects(sessionList, machineChoices);
+    const projectSearchOptions = React.useMemo(
+        () => collectProjectSearchOptions(recentProjects, machineChoices),
+        [recentProjects, machineChoices],
+    );
     const placeMachineIds = React.useMemo(
         () => selectedChoice?.machineIds ?? [],
         [selectedChoice],
     );
     const places = React.useMemo(
-        () => collectSessionPlaces({
+        () => addRecentProjectPlaces(collectSessionPlaces({
             machineIds: placeMachineIds,
             selectedPath,
             sessions: sessionList,
-        }),
-        [placeMachineIds, selectedPath, sessionList],
+        }), recentProjects, placeMachineIds),
+        [placeMachineIds, selectedPath, sessionList, recentProjects],
     );
     const selectedProjectId = React.useMemo(
         () => draftProjectId
@@ -1490,7 +1560,7 @@ function NewSessionScreen() {
         let ownsCreatedSession = true;
         const isCurrentTarget = () => {
             const current = useNewSessionDraft.getState();
-            return ownsCreatedSession && (['selectedMachineId', 'selectedPath', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
+            return ownsCreatedSession && (['selectedMachineId', 'selectedPath', 'selectedProjectId', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
                 .every(key => current[key] === draftState[key]);
         };
         const choice = findMachineChoice(collectMachineChoices(allMachines), selectedMachineId);
@@ -1713,6 +1783,11 @@ function NewSessionScreen() {
                     }
 
                     completeSpawnRequest(clientRequestId);
+                    rememberRecentProject({
+                        machineId: choice.id,
+                        path: draftProjectId ? null : absolutePath,
+                        ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+                    });
                     const currentDraft = useNewSessionDraft.getState();
                     if (currentDraft.input === draftState.input) currentDraft.setInput('');
                     if (currentDraft.attachments === attachments) currentDraft.setAttachments([]);
@@ -1800,9 +1875,9 @@ function NewSessionScreen() {
         return false;
     }, [agentInputEnterToSend, canSend, handleSend]);
 
-    // Auto-focus the text input when the composer mounts
+    // Web starts in the project search; selecting a result focuses the composer.
     React.useEffect(() => {
-        if (isNativeMobile) {
+        if (isNativeMobile || Platform.OS === 'web') {
             return;
         }
         const timeout = setTimeout(() => {
@@ -1823,6 +1898,9 @@ function NewSessionScreen() {
                 value={selectedPath}
                 selectedProjectKey={selectedProjectKey}
                 homeDir={selectedHomeDir}
+                directoryMachineId={selectedChoice?.happyMachine && isMachineOnline(selectedChoice.happyMachine)
+                    ? selectedChoice.happyMachine.id
+                    : null}
                 onChangeValue={setSelectedPath}
                 onSelectProject={selectProjectPlace}
                 onDone={closePicker}
@@ -1854,6 +1932,7 @@ function NewSessionScreen() {
         pickerData,
         selectProjectPlace,
         selectedProjectKey,
+        selectedChoice,
         selectedHomeDir,
         selectedPath,
         setSelectedPath,
@@ -1965,6 +2044,18 @@ function NewSessionScreen() {
 
     const configContent = (
         <>
+            {Platform.OS === 'web' && (
+                <WebProjectSearch
+                    options={projectSearchOptions}
+                    onFocus={closePicker}
+                    onSelect={(option) => {
+                        useNewSessionDraft.getState().selectPlace(option);
+                        setWorktreeKey('__none__');
+                        closePicker();
+                        composerInputRef.current?.focus();
+                    }}
+                />
+            )}
             <View style={[
                 styles.configBox,
                 activePicker && styles.configBoxWithPopover,
@@ -2016,16 +2107,20 @@ function NewSessionScreen() {
                             </View>
                         )}
 
-                        <View style={{ opacity: isOffline ? 0.4 : 1 }} pointerEvents={isOffline ? 'none' : 'auto'}>
+                        <View style={{ opacity: isOffline && Platform.OS !== 'ios' ? 0.4 : 1 }} pointerEvents={isOffline && Platform.OS !== 'ios' ? 'none' : 'auto'}>
                             <BubblePressable
                                 scaleFeedback={false}
                                 style={(p) => [styles.configRow, p.pressed && styles.configRowPressed]}
                                 onPress={() => togglePicker('path')}
+                                accessibilityRole="button"
+                                accessibilityLabel={Platform.OS === 'ios'
+                                    ? `${t('machineLauncher.searchDirectories')} · ${t('machineLauncher.allMachines')}` : undefined}
                             >
                                 <Ionicons name="folder-outline" size={15} color={theme.colors.textSecondary} />
                                 <Text style={[styles.configLabel, styles.configValueText]} numberOfLines={1}>
                                     {pathName}
                                 </Text>
+                                {Platform.OS === 'ios' && <Text style={styles.iosProjectSearchScope}>{t('machineLauncher.allMachines')}</Text>}
                                 <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
                             </BubblePressable>
                             {renderActivePickerPopover('path')}
@@ -2480,7 +2575,7 @@ function NewSessionScreen() {
                 </View>
             )}
 
-            {isNativeMobile && activePicker && nativePickerContent && (
+            {isNativeMobile && activePicker && nativePickerContent && !(Platform.OS === 'ios' && activePicker === 'path') && (
                 <KeyboardStickyView
                     enabled={activePicker === 'path'}
                     style={[
@@ -2515,6 +2610,31 @@ function NewSessionScreen() {
                         </MobileGlassSurface>
                     </AnimatedPopup>
                 </KeyboardStickyView>
+            )}
+
+            {Platform.OS === 'ios' && activePicker === 'path' && (
+                <ProjectDirectoryPicker visible onClose={closePicker}
+                    machineId={selectedChoice?.happyMachine && isMachineOnline(selectedChoice.happyMachine)
+                        ? selectedChoice.happyMachine.id : null}
+                    homeDir={selectedHomeDir}
+                    initialPath={selectedPath}
+                    selectedKey={selectedProjectKey ?? selectedPath}
+                    recentPaths={pathItems.map((item) => ({ key: item.key, name: item.label, description: item.subtitle }))}
+                    projectSearch={{
+                        options: projectSearchOptions,
+                        machineId: selectedChoice?.id ?? null,
+                        onSelect: (project) => {
+                            useNewSessionDraft.getState().selectPlace(project);
+                            setWorktreeKey('__none__');
+                        },
+                    }}
+                    onSelectDirectory={setSelectedPath}
+                    onSelectRecent={(key) => {
+                        const projectId = pathItems.find((item) => item.key === key)?.projectId;
+                        if (projectId) selectProjectPlace(projectId);
+                        else setSelectedPath(key);
+                    }}
+                />
             )}
 
             {/* Native: picker bottom sheet */}
@@ -2608,6 +2728,13 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         gap: 8,
         paddingTop: 12,
+        // A popup's own zIndex cannot escape this parent and the spacer below it.
+        ...Platform.select({ web: { zIndex: NEW_SESSION_PICKER_LAYERS.config } }),
+    },
+    iosProjectSearchScope: {
+        fontSize: 11,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
     },
     mobileInlineConfigWrap: {
         paddingHorizontal: 20,
@@ -3175,6 +3302,12 @@ const pickerStyles = {
     pathInputField: {
         flex: 1,
         minWidth: 0,
+    } as const,
+    pathInputAction: {
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     } as const,
     pathTextInput: {
         fontSize: 16,

@@ -30,6 +30,7 @@ import type {
 import { resolveAgyBin, AGY_PRINT_TIMEOUT } from './constants';
 import { resolveAgyModelName, type DiscoveredModel } from './discoverModels';
 import { StreamJsonParser, type AgyResult } from './streamJson';
+import { AgyTurnCancelledError } from './types';
 import type { AgyPermissionHandler } from './permissionHandler';
 
 export type SpawnFn = typeof spawn;
@@ -249,6 +250,10 @@ export class AgyBackend implements AgentBackend {
           if (event.result.conversation_id) {
             this.setConversationId(event.result.conversation_id);
           }
+          if (event.result.status === 'CANCELED' || event.result.status === 'CANCELLED') {
+            this.activeTurnReject?.(new AgyTurnCancelledError());
+            return;
+          }
           // agy CLI stream-json emits a result event when turn execution finishes.
           // Note: agy CLI sets result.status = 'ERROR' and result.error = '<tool error>'
           // whenever ANY step in the conversation trajectory (such as a past tool failure)
@@ -295,7 +300,11 @@ export class AgyBackend implements AgentBackend {
       this.emit({ type: 'status', status: 'idle' });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.emit({ type: 'status', status: 'error', detail: errorMsg });
+      this.emit({
+        type: 'status',
+        status: err instanceof AgyTurnCancelledError ? 'stopped' : 'error',
+        detail: errorMsg,
+      });
       // When a turn fails with an error (e.g. tool failure or unhandled exception in agy),
       // recycle the child process so it does not retain corrupted state or re-emit stale errors
       // across turns. On the next turn, ensureChildRunning will cleanly respawn agy with

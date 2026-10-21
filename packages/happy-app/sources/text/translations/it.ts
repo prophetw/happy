@@ -15,6 +15,8 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const it: TranslationStructure = {
+    browserNotifications: en.browserNotifications,
+
     voiceStatusBar: {
         tapToEnd: 'tocca per terminare',
         connecting: 'Connessione…',
@@ -566,6 +568,12 @@ export const it: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'Tutti i computer',
+        searchDirectories: 'Cerca progetti o cartelle',
+        searchRecentProjects: 'Cerca progetti recenti',
+        directorySearchScope: 'Cerca nei progetti recenti e nelle cartelle del percorso attuale e superiore',
+        noMatchingDirectories: 'Nessun progetto o cartella corrispondente',
+        clearDirectorySearch: 'Cancella ricerca',
         directoryPickerTitle: 'Seleziona cartella',
         selectDirectory: 'Usa questa cartella',
         parentDirectory: 'Cartella superiore',

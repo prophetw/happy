@@ -110,6 +110,18 @@ afterEach(() => {
 });
 
 describe('tool rendering on mobile and web', () => {
+    it.each(['ios', 'android', 'web'])('renders the agy command and its output on %s', platform => {
+        settings.platform = platform;
+        const call = { ...tool('run_command', { CommandLine: 'printf happy_agy_probe' }),
+            title: 'run_command', description: 'Running run_command', result: 'happy_agy_probe' };
+        const row = render(React.createElement(ToolView, { tool: call, metadata: null }));
+        expect(JSON.stringify(row.toJSON())).toContain('printf happy_agy_probe');
+        const full = render(React.createElement(ToolFullView, { tool: call }));
+        expect(full.root.findByType('CommandView').props).toMatchObject({
+            command: 'printf happy_agy_probe', stdout: 'happy_agy_probe',
+        });
+    });
+
     it.each([
         ['Edit', EditView, { old_string: '  x', new_string: '    x' }],
         ['Edit', EditViewFull, { old_string: '  x', new_string: '    x' }],

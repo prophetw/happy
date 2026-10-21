@@ -11,6 +11,7 @@ import {
 } from '@/sync/ops';
 import { sync } from '@/sync/sync';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
+import { rememberRecentProject } from '@/hooks/useRecentProjects';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
@@ -432,8 +433,9 @@ export function useStartSessionFromDraft() {
             // session being started is still the one that was asked for — and
             // treating it as a mismatch would put down every start made from a
             // chat's own `+`, which supplies all of them.
-            const targetUnchanged = (['selectedMachineId', 'selectedPath', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
-                .every(key => draftOverrides[key] !== undefined || current[key] === draft[key]);
+            const targetUnchanged = (['selectedMachineId', 'selectedPath', 'selectedProjectId', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
+                .every(key => (key === 'selectedProjectId' && draftOverrides.selectedPath !== undefined)
+                    || draftOverrides[key] !== undefined || current[key] === draft[key]);
             // A bot is only ever created from the composer — no override names
             // one — so these are always read straight off the draft.
             const botUnchanged = (['createsBot', 'botName', 'botFaceSeeds', 'botFaceSlot'] as const)
@@ -743,6 +745,13 @@ export function useStartSessionFromDraft() {
             // whatever the user has been typing on another screen.
             // Do not erase edits made while hydration or attachment upload ran.
             const currentDraft = useNewSessionDraft.getState();
+            if (!createsBot) {
+                rememberRecentProject({
+                    machineId: choice.id,
+                    path: draftProjectId ? null : absolutePath,
+                    ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+                });
+            }
             if (createsBot) {
                 // The next bot starts from a clean name and fresh faces; the
                 // composer goes back to offering a session, the ordinary case.

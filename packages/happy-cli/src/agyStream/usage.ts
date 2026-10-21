@@ -2,8 +2,9 @@
  * Antigravity (agy) Usage and Quota Fetcher
  *
  * Queries quota and rate limits for Antigravity (agy):
- * 1. Primary: Probes local running Antigravity Language Server (LanguageServerService/GetUserStatus)
- * 2. Fallback: Calls Google Cloud Code API (https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels)
+ * 1. Primary: Google Cloud Code API (fetchAvailableModels)
+ * 2. Fallback: Local Antigravity Language Server (GetUserStatus)
+ * 3. Offline fallback: statusLine quota cached for at most 24 hours
  *
  * Surfaces 5-hour rolling window quota, weekly quota/tier, per-model remaining fractions,
  * and reset countdowns.
@@ -463,7 +464,7 @@ export async function fetchAgyUsage(opts: FetchAgyUsageOptions = {}): Promise<Ag
   }
 
   // 3. 降级 (P2): 本地 statusLine 缓存（当离线或无 Token 时兜底）
-  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus(loadFromDisk);
+  const liveStatus = AgyQuotaStore.getInstance().toUsageStatus(loadFromDisk, 24 * 3600 * 1000);
   if (
     liveStatus &&
     (liveStatus.models.length > 0 || (liveStatus.groups && Object.keys(liveStatus.groups).length > 0))
@@ -588,43 +589,43 @@ export function formatAgyUsageMarkdown(status: AgyUsageStatus): string {
         return getScore(a) - getScore(b);
       });
 
-    for (const m of sortedModels) {
-      const icon = m.label.toLowerCase().includes('claude')
-        ? '🔮'
-        : m.label.toLowerCase().includes('pro')
-        ? '🧠'
-        : m.label.toLowerCase().includes('gpt')
-        ? '🌐'
-        : '⚡';
+      for (const m of sortedModels) {
+        const icon = m.label.toLowerCase().includes('claude')
+          ? '🔮'
+          : m.label.toLowerCase().includes('pro')
+          ? '🧠'
+          : m.label.toLowerCase().includes('gpt')
+          ? '🌐'
+          : '⚡';
 
-      let remStr = '未知';
-      let usedStr = '未知';
-      if (typeof m.remainingFraction === 'number') {
-        const remPct = Math.round(m.remainingFraction * 100);
-        remStr = remPct >= 80 ? `🟢 **${remPct}%**` : remPct >= 40 ? `🟡 **${remPct}%**` : `🔴 **${remPct}%**`;
-        usedStr = `${100 - remPct}%`;
-      }
+        let remStr = '未知';
+        let usedStr = '未知';
+        if (typeof m.remainingFraction === 'number') {
+          const remPct = Math.round(m.remainingFraction * 100);
+          remStr = remPct >= 80 ? `🟢 **${remPct}%**` : remPct >= 40 ? `🟡 **${remPct}%**` : `🔴 **${remPct}%**`;
+          usedStr = `${100 - remPct}%`;
+        }
 
-      let resetStr = '-';
-      if (m.resetsInFormatted) {
-        resetStr = `↻ ${m.resetsInFormatted}`;
-        if (m.resetTime) {
-          try {
-            const timePart = new Date(m.resetTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-            resetStr += ` (${timePart})`;
-          } catch {
-            // ignore
+        let resetStr = '-';
+        if (m.resetsInFormatted) {
+          resetStr = `↻ ${m.resetsInFormatted}`;
+          if (m.resetTime) {
+            try {
+              const timePart = new Date(m.resetTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+              resetStr += ` (${timePart})`;
+            } catch {
+              // ignore
+            }
           }
         }
+
+        lines.push(`| ${icon} **${m.label}** | ${remStr} | ${usedStr} | ${resetStr} |`);
       }
-
-      lines.push(`| ${icon} **${m.label}** | ${remStr} | ${usedStr} | ${resetStr} |`);
+      lines.push('');
     }
-    lines.push('');
   }
-}
 
-  lines.push('> 💡 **提示**：Gemini 与 Claude/GPT 模型池各自拥有独立的 5 小时滚动与每周额度。优先通过 `statusLine.quota` 实时同步。');
+  lines.push('> 💡 **提示**：Gemini 与 Claude/GPT 模型池各自拥有独立的 5 小时滚动与每周额度。优先查询 CloudCode API，并通过 `statusLine.quota` 补充每周额度。');
 
   return lines.join('\n');
 }

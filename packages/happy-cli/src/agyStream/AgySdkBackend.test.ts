@@ -27,6 +27,30 @@ function makeFakeSdkChild() {
 }
 
 describe('AgySdkBackend', () => {
+  it.each(['CANCELED', 'CANCELLED'])('preserves a %s result and accepts the next SDK turn', async (status) => {
+    const { child, stdout } = makeFakeSdkChild();
+    const backend = new AgySdkBackend({ cwd: '/work', permissionMode: 'default', spawnFn: vi.fn(() => child) as unknown as SpawnFn });
+    const messages: AgentMessage[] = [];
+    backend.onMessage((message) => messages.push(message));
+    const startup = backend.startSession();
+    stdout.emit('data', '{"event":"ready","conversation_id":"sdk-cancelled"}\n');
+    await startup;
+
+    const turn = backend.sendPrompt('/work', 'Long task');
+    const rejected = expect(turn).rejects.toMatchObject({ name: 'AgyTurnCancelledError' });
+    stdout.emit('data', '{"event":"text_delta","delta":"Partial output"}\n');
+    stdout.emit('data', JSON.stringify({ event: 'turn_complete', status }) + '\n');
+    await rejected;
+    expect(messages.at(-1)).toMatchObject({ type: 'status', status: 'stopped' });
+    expect(messages).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'idle' }));
+
+    const next = backend.sendPrompt('/work', 'Next task');
+    stdout.emit('data', '{"event":"turn_complete","status":"SUCCESS"}\n');
+    await next;
+    expect(messages.at(-1)).toMatchObject({ type: 'status', status: 'idle' });
+    await backend.dispose();
+  });
+
   it('initializes persistent bridge and completes multi-turn chat in single process', async () => {
     const { child, stdin, stdout } = makeFakeSdkChild();
     const spawnFn = vi.fn(() => child) as unknown as SpawnFn;

@@ -30,6 +30,18 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const en: TranslationStructure = {
+    browserNotifications: {
+        title: 'Browser notifications',
+        enable: 'Enable desktop notifications',
+        description: 'Notify when a task finishes while this tab is in the background.',
+        blocked: 'Notifications are blocked. Allow them in your browser site settings.',
+        manage: 'How to enable notifications',
+        instructions: '1. Click the site information or permissions icon to the left of the address bar.\n2. Set Notifications to Allow (you may need to open Site settings).\n3. Return to this page and enable desktop notifications.\n\nIf the switch does not update, refresh the page.',
+        unsupported: 'This browser does not support desktop notifications.',
+        insecure: 'Use localhost or HTTPS to enable desktop notifications.',
+        error: 'Could not enable desktop notifications. Please try again.',
+    },
+
     voiceStatusBar: {
         tapToEnd: 'tap to end',
         connecting: 'Connecting…',
@@ -586,6 +598,12 @@ export const en: TranslationStructure = {
     },
 
     machineLauncher: {
+        allMachines: 'All machines',
+        searchDirectories: 'Search projects or directories',
+        searchRecentProjects: 'Search recent projects',
+        directorySearchScope: 'Searches recent projects and folders in the current and parent directory',
+        noMatchingDirectories: 'No matching projects or directories',
+        clearDirectorySearch: 'Clear search',
         directoryPickerTitle: 'Select directory',
         selectDirectory: 'Use this directory',
         parentDirectory: 'Parent directory',

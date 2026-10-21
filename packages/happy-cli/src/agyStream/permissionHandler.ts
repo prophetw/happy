@@ -22,8 +22,12 @@ export type { PermissionResult, PendingRequest };
  */
 export class AgyPermissionHandler extends BasePermissionHandler {
   private currentPermissionMode: PermissionMode = 'default';
+  private readonly pendingApprovals = new Map<string, Promise<PermissionResult>>();
 
-  constructor(session: ApiSessionClient) {
+  constructor(
+    session: ApiSessionClient,
+    private readonly onPermissionRequest?: (toolCallId: string, toolName: string) => void,
+  ) {
     super(session);
   }
 
@@ -127,6 +131,9 @@ export class AgyPermissionHandler extends BasePermissionHandler {
     toolName: string,
     input: unknown,
   ): Promise<PermissionResult> {
+    const existing = this.pendingApprovals.get(toolCallId);
+    if (existing) return existing;
+
     if (this.shouldAutoApprove(toolName, toolCallId, input)) {
       logger.debug(
         `${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`,
@@ -141,7 +148,7 @@ export class AgyPermissionHandler extends BasePermissionHandler {
       };
     }
 
-    return new Promise<PermissionResult>((resolve, reject) => {
+    const approval = new Promise<PermissionResult>((resolve, reject) => {
       this.pendingRequests.set(toolCallId, {
         resolve,
         reject,
@@ -151,10 +158,18 @@ export class AgyPermissionHandler extends BasePermissionHandler {
 
       this.addPendingRequestToState(toolCallId, toolName, input);
 
+      this.onPermissionRequest?.(toolCallId, toolName);
+
       logger.debug(
         `${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`,
       );
     });
+    this.pendingApprovals.set(toolCallId, approval);
+    try {
+      return await approval;
+    } finally {
+      this.pendingApprovals.delete(toolCallId);
+    }
   }
 
   /**

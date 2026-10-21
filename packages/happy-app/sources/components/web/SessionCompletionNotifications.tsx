@@ -11,6 +11,7 @@ import { selectCompletedSessionIds } from '@/sync/sessionCompletion';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { getSessionName } from '@/utils/sessionUtils';
 import { t } from '@/text';
+import { useBrowserCompletionNotifications } from './useBrowserCompletionNotifications';
 
 export function SessionCompletionNotifications() {
     const { isAuthenticated } = useAuth();
@@ -19,6 +20,7 @@ export function SessionCompletionNotifications() {
 
 function CompletionNotifications() {
     const completedIds = storage(useShallow(selectCompletedSessionIds));
+    useBrowserCompletionNotifications(completedIds);
     const [dismissed, setDismissed] = React.useState<ReadonlySet<string>>(() => new Set());
     const { width, height } = useWindowDimensions();
 

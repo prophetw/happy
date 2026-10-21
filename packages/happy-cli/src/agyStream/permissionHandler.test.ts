@@ -145,6 +145,41 @@ describe('AgyPermissionHandler', () => {
     expect(currentState.completedRequests?.['call-reset']?.status).toBe('canceled');
   });
 
+  it('notifies only when a tool actually needs user approval', async () => {
+    const notify = vi.fn();
+    const handler = new AgyPermissionHandler(session, notify);
+    await handler.handleToolCall('title', 'change_title', {});
+    handler.setPermissionMode('safe-yolo');
+    await handler.handleToolCall('read', 'view_file', {});
+    handler.setPermissionMode('bypassPermissions');
+    await handler.handleToolCall('auto', 'run_command', {});
+    expect(notify).not.toHaveBeenCalled();
+
+    handler.setPermissionMode('default');
+    const approval = handler.handleToolCall('manual', 'run_command', {});
+    expect(notify).toHaveBeenCalledExactlyOnceWith('manual', 'run_command');
+    expect(currentState.requests?.manual).toBeDefined();
+    await rpcHandlers.get('permission')!({ id: 'manual', approved: true });
+    await expect(approval).resolves.toEqual({ decision: 'approved' });
+  });
+
+  it('shares duplicate pending requests and allows a later approval with the same id', async () => {
+    const notify = vi.fn();
+    const handler = new AgyPermissionHandler(session, notify);
+    const first = handler.handleToolCall('tool-1', 'run_command', {});
+    const duplicate = handler.handleToolCall('tool-1', 'run_command', {});
+    expect(notify).toHaveBeenCalledTimes(1);
+    await rpcHandlers.get('permission')!({ id: 'tool-1', approved: false, decision: 'denied' });
+    expect(await Promise.all([first, duplicate])).toEqual([{ decision: 'denied' }, { decision: 'denied' }]);
+
+    const retry = handler.handleToolCall('tool-1', 'run_command', {});
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(currentState.requests?.['tool-1']).toBeDefined();
+    expect(currentState.completedRequests?.['tool-1']).toBeUndefined();
+    handler.abortAll();
+    await expect(retry).resolves.toEqual({ decision: 'abort' });
+  });
+
   it('completes tool call via completeToolCall()', () => {
     const handler = new AgyPermissionHandler(session);
     currentState.requests = {

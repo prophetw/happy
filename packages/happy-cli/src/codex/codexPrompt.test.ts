@@ -12,7 +12,7 @@ const APPEND = '<options><option>Yes</option></options>';
 const wrapped = (text: string) => `<happy-system>\n${text}\n</happy-system>`;
 
 describe('buildCodexTurnPrompt', () => {
-    it('prepends Happy append system prompt (wrapped) before the first Codex user message', () => {
+    it('appends Happy instructions after the first Codex user message so native previews start with user text', () => {
         const prompt = buildCodexTurnPrompt({
             message: 'pick an option',
             mode: { appendSystemPrompt: APPEND },
@@ -21,8 +21,8 @@ describe('buildCodexTurnPrompt', () => {
         });
 
         expect(prompt).toBe(
-            `${wrapped(APPEND)}\n\n` +
             'pick an option\n\n' +
+            `${wrapped(APPEND)}\n\n` +
             wrapped(CHANGE_TITLE_INSTRUCTION),
         );
     });
@@ -57,7 +57,7 @@ describe('buildCodexTurnPrompt', () => {
             includeTitleInstruction: false,
         });
 
-        expect(prompt).toBe(`${wrapped(APPEND)}\n\nstart fresh`);
+        expect(prompt).toBe(`start fresh\n\n${wrapped(APPEND)}`);
     });
 });
 

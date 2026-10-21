@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseQuotaWindow,
   parseQuotaGroup,
@@ -312,5 +315,25 @@ describe('AgyQuotaStore', () => {
     expect(store.isFresh(5 * 60 * 1000, now)).toBe(true);
     expect(store.isFresh(5 * 60 * 1000, now + 4 * 60 * 1000)).toBe(true);
     expect(store.isFresh(5 * 60 * 1000, now + 6 * 60 * 1000)).toBe(false);
+  });
+
+  it('uses disk file age when enforcing fresh and offline cache limits', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'happy-agy-quota-'));
+    const file = join(directory, 'quota.json');
+    const now = Date.now();
+    const updatedAt = now - 10 * 60 * 1000;
+    writeFileSync(file, JSON.stringify({ quota: { gemini: { '5h': 0.8 } } }));
+    utimesSync(file, updatedAt / 1000, updatedAt / 1000);
+
+    try {
+      const store = AgyQuotaStore.getInstance();
+      expect(store.loadFromFile(file, now)).toBe(false);
+      expect(store.loadFromFile(file, now, 24 * 60 * 60 * 1000)).toBe(true);
+      expect(store.isFresh(5 * 60 * 1000, now)).toBe(false);
+      expect(store.toUsageStatus(false, 24 * 60 * 60 * 1000, now)?.source).toBe('statusline-hook');
+      expect(store.toUsageStatus(false, 24 * 60 * 60 * 1000, now + 25 * 60 * 60 * 1000)).toBeNull();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

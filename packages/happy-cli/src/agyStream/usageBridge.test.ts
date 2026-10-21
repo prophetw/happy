@@ -136,6 +136,14 @@ describe('buildUsageEnvelopeFromContextWindow', () => {
   it('returns null if no tokens or context window size available', () => {
     expect(buildUsageEnvelopeFromContextWindow({}, 'Gemini 3.8 Flash (High)', 'any-id')).toBeNull();
   });
+
+  it('ignores anonymous context snapshots even after a conversation starts', () => {
+    expect(buildUsageEnvelopeFromContextWindow(
+      { totalInputTokens: 94926, contextWindowSize: 1048576 },
+      'Gemini 3.8 Flash (High)',
+      'new-conversation',
+    )).toBeNull();
+  });
 });
 
 describe('buildAgyUsageLimits', () => {
@@ -201,5 +209,11 @@ describe('buildAgyUsageLimits', () => {
 
     const weekly = limits?.windows.find((w) => w.id === 'seven_day');
     expect(weekly?.utilization).toBe(70);
+  });
+
+  it('uses the Claude / GPT quota pool for GPT models', () => {
+    const limits = buildAgyUsageLimits(mockQuota, 'GPT-OSS 120B (Medium)');
+    expect(limits?.windows.find((w) => w.id === 'five_hour')?.utilization).toBe(20);
+    expect(limits?.windows.find((w) => w.id === 'seven_day')?.utilization).toBe(70);
   });
 });

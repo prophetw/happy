@@ -9,6 +9,7 @@ import { formatSecretKeyForBackup } from '@/auth/secretKeyBackup';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { SessionNotificationSettings } from '@/components/SessionNotificationSettings';
+import { BrowserNotificationSettings } from '@/components/web/BrowserNotificationSettings';
 import { ItemList } from '@/components/ItemList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -504,6 +505,7 @@ export default React.memo(() => {
                 </ItemGroup>
 
                 <SessionNotificationSettings />
+                <BrowserNotificationSettings />
 
                 <ItemGroup
                     title="Push Notifications"

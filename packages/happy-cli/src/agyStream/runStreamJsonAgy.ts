@@ -37,6 +37,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { AgyDisplay } from '@/ui/ink/AgyDisplay';
 import type { AgentMessage } from '@/agent/core';
 import type { Session as ApiSession, PermissionMode } from '@/api/types';
+import type { SessionNotificationKind } from '@/api/pushNotifications';
 import { normalizeRemotePermissionMode } from '@/claude/utils/permissionMode';
 import { createAgyBackend } from './createAgyBackend';
 import { DEFAULT_AGY_MODEL } from './constants';
@@ -54,6 +55,7 @@ import {
 import { downloadAgyFileEventAttachment } from './attachmentEvents';
 import { formatAgyPromptWithAttachments, prepareAgyImageAttachments } from './imageInput';
 import { AgyPermissionHandler } from './permissionHandler';
+import { AgyTurnCancelledError } from './types';
 import { AgyQuotaStore, type AgyStatusLineQuota } from './statusLine';
 import {
   buildAgyUsageEnvelope,
@@ -181,7 +183,21 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   });
   session = initialSession;
 
-  permissionHandler = new AgyPermissionHandler(session);
+  const notifySession = (kind: SessionNotificationKind, data: Record<string, unknown>) => {
+    try {
+      api.push().sendSessionNotification({
+        kind,
+        metadata: session.getMetadata(),
+        data: { ...data, sessionId: session.sessionId, provider: 'agy' },
+      });
+    } catch (error) {
+      logger.debug('[agy] Failed to send session notification:', error);
+    }
+  };
+
+  permissionHandler = new AgyPermissionHandler(session, (requestId, tool) => {
+    notifySession('permission', { requestId, tool, type: 'permission_request' });
+  });
   permissionHandler.reset('Previous CLI process exited before responding');
   permissionHandler.setPermissionMode(initialPermissionMode);
 
@@ -205,6 +221,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   let shouldExit = false;
   let abortController = new AbortController();
   let thinking = false;
+  let abortCount = 0;
 
   let displayedModel = initialModel;
   // Last model/effort selection received from the app (message meta). Unlike the
@@ -292,7 +309,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     const store = AgyQuotaStore.getInstance();
     const effectiveQuota = quota ?? store.getQuota();
     if (effectiveQuota?.contextWindow) {
-      const activeConversationId = metadata.agyConversationId || initialConversationId;
+      const activeConversationId = metadata.agyConversationId;
       const usageEnv = buildUsageEnvelopeFromContextWindow(
         effectiveQuota.contextWindow,
         displayedModel,
@@ -429,6 +446,9 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
 
   async function handleAbort() {
     log('Abort requested');
+    // Mark cancellation before awaiting the backend: it may resolve the turn
+    // while cancel() itself is still settling (notably the SDK bridge).
+    abortCount += 1;
     permissionHandler.abortAll();
     try {
       await backend.cancel(sessionTag);
@@ -461,6 +481,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         if (waitSignal.aborted) continue;
         break;
       }
+      const abortCountAtTurnStart = abortCount;
 
       if (batch.mode.permissionMode) {
         backend.setPermissionMode(batch.mode.permissionMode);
@@ -626,14 +647,21 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         log(`Generated session title: "${title}"`);
       }
 
+      if (abortCountAtTurnStart !== abortCount) continue;
       sendEnvelopes(sessionManager.startTurn());
       try {
         await backend.sendPrompt(process.cwd(), promptToSend);
-        sendEnvelopes(sessionManager.endTurn('completed'));
+        if (abortCountAtTurnStart === abortCount) {
+          sendEnvelopes(sessionManager.endTurn('completed'));
+          notifySession('done', { type: 'ready' });
+        } else {
+          sendEnvelopes(sessionManager.endTurn('cancelled'));
+        }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         log(`Turn ended: ${msg}`);
-        sendEnvelopes(sessionManager.endTurn('failed'));
+        const cancelled = abortCountAtTurnStart !== abortCount || error instanceof AgyTurnCancelledError;
+        sendEnvelopes(sessionManager.endTurn(cancelled ? 'cancelled' : 'failed'));
       }
       quotaStore.loadFromFile();
       thinking = false;

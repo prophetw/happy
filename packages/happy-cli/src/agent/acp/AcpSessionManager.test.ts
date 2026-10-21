@@ -232,7 +232,25 @@ describe('AcpSessionManager tool mapping', () => {
     expect(end.ev.t).toBe('tool-call-end');
     if (start.ev.t === 'tool-call-start' && end.ev.t === 'tool-call-end') {
       expect(end.ev.call).toBe(start.ev.call);
+      expect(end.ev.result).toBe(JSON.stringify({ ok: true }));
     }
+  });
+
+  it.each([
+    ['line 1\nline 2', 'line 1\nline 2'],
+    ['', ''],
+    [0, '0'],
+    [false, 'false'],
+    [null, undefined],
+    [undefined, undefined],
+  ])('serializes tool output without dropping falsy values: %j', (result, expected) => {
+    const mapper = new AcpSessionManager();
+    mapper.startTurn();
+    const [end] = mapper.mapMessage({ type: 'tool-result', callId: 'call-1', toolName: 'run_command', result });
+    expect(end.ev).toEqual({
+      t: 'tool-call-end', call: expect.any(String),
+      ...(expected !== undefined ? { result: expected } : {}),
+    });
   });
 
   it('creates distinct call ids for multiple tool calls', () => {

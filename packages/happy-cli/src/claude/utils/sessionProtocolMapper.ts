@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import type { RawJSONLines } from '@/claude/types';
+import type { RawJSONLines } from '../types';
 import {
     createEnvelope,
     type SessionEnvelope,
@@ -482,6 +482,19 @@ function toToolArgs(input: unknown): Record<string, unknown> {
     return { input };
 }
 
+function toolResultText(content: unknown): string | undefined {
+    if (typeof content === 'string') {
+        return content;
+    }
+    if (Array.isArray(content)) {
+        return content
+            .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+            .map((block) => block.text)
+            .join('\n');
+    }
+    return content == null ? undefined : JSON.stringify(content);
+}
+
 export function closeClaudeTurnWithStatus(
     state: ClaudeSessionProtocolState,
     status: SessionTurnEndStatus,
@@ -684,9 +697,12 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
                         maybeEmitSubagentStop(state, turnId, sessionSubagentForToolResult, envelopes);
                     }
                 }
+                const result = toolResultText(block.content);
                 envelopes.push(createEnvelope('agent', {
                     t: 'tool-call-end',
                     call: block.tool_use_id,
+                    ...(result !== undefined ? { result } : {}),
+                    isError: block.is_error === true,
                 }, { turn: turnId, subagent }));
                 continue;
             }

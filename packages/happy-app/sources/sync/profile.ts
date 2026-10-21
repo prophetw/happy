@@ -7,9 +7,11 @@ import * as z from 'zod';
 export const GitHubProfileSchema = z.object({
     id: z.number(),
     login: z.string(),
-    name: z.string(),
+    // The server stores and forwards the raw GitHub OAuth profile, where
+    // name/email are null for users without public values — accept null.
+    name: z.string().nullable(),
     avatar_url: z.string(),
-    email: z.string().optional(),
+    email: z.string().nullable().optional(),
     bio: z.string().nullable()
 });
 

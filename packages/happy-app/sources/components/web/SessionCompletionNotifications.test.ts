@@ -45,21 +45,33 @@ vi.mock('@/utils/sessionUtils', () => ({ getSessionName: (session: Session) => s
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/sync/storage', async () => {
     const { create } = await import('zustand');
-    return { storage: create(() => ({
+    const store = create(() => ({
         sessions: {} as Record<string, Session>, unreadSessionIds: new Set<string>(),
         archivingSessionIds: new Set<string>(), currentViewingSessionId: null as string | null,
+        isDataReady: true, localSettings: { desktopNotificationsEnabled: false },
+        setCurrentViewingSession: (id: string | null) => storage.setState({ currentViewingSessionId: id }),
         markSessionRead: (id: string) => {
             const next = new Set(storage.getState().unreadSessionIds);
             next.delete(id);
             storage.setState({ unreadSessionIds: next });
         },
-    })) };
+    }));
+    return { storage: store, useLocalSetting: (name: 'desktopNotificationsEnabled') => store(state => state.localSettings[name]) };
 });
 
 import { storage } from '@/sync/storage';
 import { SessionCompletionNotifications } from './SessionCompletionNotifications';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { WebTabStatus } from './WebTabStatus';
+
+const desktopNotifications: TestNotification[] = [];
+class TestNotification {
+    static permission: NotificationPermission = 'granted';
+    static requestPermission = vi.fn();
+    close = vi.fn();
+    onclick: ((event: Event) => void) | null = null;
+    constructor(public title: string, public options: NotificationOptions) { desktopNotifications.push(this); }
+}
 
 function session(id: string, thinking = false): Session {
     return {
@@ -93,12 +105,119 @@ beforeEach(() => {
     mocks.updateFavicon.mockReset();
     mocks.resetFavicon.mockReset();
     vi.stubGlobal('document', new EventTarget());
-    vi.stubGlobal('window', new EventTarget());
-    storage.setState({ sessions: { a: session('a'), b: session('b') }, unreadSessionIds: new Set(), archivingSessionIds: new Set(), currentViewingSessionId: null });
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { isSecureContext: true, focus: vi.fn() }));
+    vi.stubGlobal('Notification', TestNotification);
+    TestNotification.permission = 'granted';
+    TestNotification.requestPermission.mockReset();
+    desktopNotifications.length = 0;
+    storage.setState({ sessions: { a: session('a'), b: session('b') }, unreadSessionIds: new Set(), archivingSessionIds: new Set(), currentViewingSessionId: null,
+        isDataReady: true, localSettings: { ...storage.getState().localSettings, desktopNotificationsEnabled: false },
+    });
     const original = console.error;
     vi.spyOn(console, 'error').mockImplementation((message: unknown, ...args: unknown[]) => {
         if (typeof message === 'string' && message.startsWith('react-test-renderer is deprecated')) return;
         original(message, ...args);
+    });
+});
+
+describe('desktop completion notifications', () => {
+    function enable() {
+        mocks.foreground = false;
+        storage.setState({ localSettings: { ...storage.getState().localSettings, desktopNotificationsEnabled: true } });
+    }
+
+    it('notifies once per background turn, opens the right session and closes after reading', () => {
+        enable();
+        render();
+        update({ unreadSessionIds: new Set(['a']) });
+        expect(desktopNotifications).toHaveLength(1);
+        const notification = desktopNotifications[0];
+        expect(notification.title).toBe('Happy · status.completed');
+        expect(notification.options).toMatchObject({ body: 'Title a', tag: 'happy-completed-a', data: { sessionId: 'a' } });
+        update({ sessions: { ...storage.getState().sessions } });
+        press('status.dismissCompletion');
+        expect(desktopNotifications).toHaveLength(1);
+        act(() => notification.onclick!(new Event('click', { cancelable: true })));
+        expect(window.focus).toHaveBeenCalled();
+        expect(mocks.navigate).toHaveBeenCalledWith('a');
+        update({ unreadSessionIds: new Set() });
+        expect(notification.close).toHaveBeenCalled();
+        update({ unreadSessionIds: new Set(['a']) });
+        expect(desktopNotifications).toHaveLength(2);
+        expect(TestNotification.requestPermission).not.toHaveBeenCalled();
+    });
+
+    it('claims the clicked destination before focus so another unread conversation stays unread', () => {
+        enable();
+        render();
+        update({ currentViewingSessionId: 'b', unreadSessionIds: new Set(['b']) });
+        update({ unreadSessionIds: new Set(['b', 'a']) });
+        vi.mocked(window.focus).mockImplementation(() => {
+            const state = storage.getState();
+            if (state.currentViewingSessionId) state.markSessionRead(state.currentViewingSessionId);
+        });
+        act(() => desktopNotifications[1].onclick!(new Event('click', { cancelable: true })));
+        expect(storage.getState().currentViewingSessionId).toBe('a');
+        expect(storage.getState().unreadSessionIds).toEqual(new Set(['b']));
+        expect(mocks.navigate).toHaveBeenCalledWith('a');
+    });
+
+    it('does not replay old results when enabled, or notify for results received in the foreground', () => {
+        render();
+        update({ unreadSessionIds: new Set(['a']) });
+        mocks.foreground = false;
+        update({ localSettings: { ...storage.getState().localSettings, desktopNotificationsEnabled: true } });
+        expect(desktopNotifications).toHaveLength(0);
+        mocks.foreground = true;
+        update({ unreadSessionIds: new Set(['a', 'b']) });
+        mocks.foreground = false;
+        update({ sessions: { ...storage.getState().sessions } });
+        expect(desktopNotifications).toHaveLength(0);
+        update({ unreadSessionIds: new Set(['a']) });
+        update({ unreadSessionIds: new Set(['a', 'b']) });
+        expect(desktopNotifications).toHaveLength(1);
+    });
+
+    it('does not replay completion history restored during initial account sync', () => {
+        enable();
+        storage.setState({ isDataReady: false });
+        render();
+        update({ isDataReady: true, unreadSessionIds: new Set(['a']) });
+        expect(desktopNotifications).toHaveLength(0);
+        update({ unreadSessionIds: new Set(['a', 'b']) });
+        expect(desktopNotifications).toHaveLength(1);
+    });
+
+    it('keeps page indicators working when permission is denied or notification construction fails', () => {
+        enable();
+        TestNotification.permission = 'denied';
+        render();
+        update({ unreadSessionIds: new Set(['a']) });
+        expect(cards()).toHaveLength(1);
+        expect(desktopNotifications).toHaveLength(0);
+        TestNotification.permission = 'granted';
+        vi.stubGlobal('Notification', class {
+            static permission = 'granted';
+            constructor() { throw new TypeError('unsupported constructor'); }
+        });
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        update({ unreadSessionIds: new Set(['a', 'b']) });
+        expect(cards()).toHaveLength(2);
+        expect(warning).toHaveBeenCalled();
+    });
+
+    it('closes outstanding notifications when disabled or logged out', () => {
+        enable();
+        render();
+        update({ unreadSessionIds: new Set(['a']) });
+        update({ localSettings: { ...storage.getState().localSettings, desktopNotificationsEnabled: false } });
+        expect(desktopNotifications[0].close).toHaveBeenCalled();
+        update({ unreadSessionIds: new Set() });
+        update({ localSettings: { ...storage.getState().localSettings, desktopNotificationsEnabled: true } });
+        update({ unreadSessionIds: new Set(['b']) });
+        mocks.authenticated = false;
+        act(() => tree!.update(React.createElement(SessionCompletionNotifications)));
+        expect(desktopNotifications[1].close).toHaveBeenCalled();
     });
 });
 

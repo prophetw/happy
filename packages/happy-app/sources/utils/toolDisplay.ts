@@ -13,6 +13,7 @@ const TERMINAL_TOOL_NAMES = new Set([
     'execute',
     'exec_command',
     'run_terminal_command',
+    'run_command',
     'write_stdin',
 ]);
 
@@ -36,6 +37,7 @@ const READ_TOOL_NAMES = new Set([
     'LS',
     'ls',
     'read_file',
+    'view_file',
     'read_agent_history',
     'view_image',
     'get_provider_usage',
@@ -178,7 +180,7 @@ export function getToolSummaryDetail(tool: Pick<ToolCall, 'name' | 'input' | 'de
         return terminalCommand;
     }
 
-    const filePath = tool.input?.file_path ?? tool.input?.target_file;
+    const filePath = tool.input?.file_path ?? tool.input?.target_file ?? tool.input?.AbsolutePath;
     if (typeof filePath === 'string' && filePath.trim().length > 0) {
         return filePath.trim();
     }
@@ -264,7 +266,7 @@ export function getTerminalToolCommand(tool: Pick<ToolCall, 'name' | 'input'>): 
         }
     }
 
-    const directCommand = stringifyToolCommand(tool.input?.command ?? tool.input?.cmd);
+    const directCommand = stringifyToolCommand(tool.input?.command ?? tool.input?.cmd ?? tool.input?.CommandLine);
     if (directCommand) {
         return directCommand;
     }
