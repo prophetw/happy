@@ -17,10 +17,10 @@ import { GitLineChanges } from './GitLineChanges';
 import { getRepoPath, isWorktreePath } from '@/utils/worktreePaths';
 
 // Tall enough to span the name and branch lines together.
-const HEADER_AVATAR_SIZE = 30;
+const HEADER_AVATAR_SIZE = Platform.OS === 'web' ? 28 : 30;
 // Roughly 70% of the composer attachment "+": same feel, less presence in a
 // list header. hitSlop keeps the touch target comfortable.
-const ADD_BUTTON_SIZE = 30;
+const ADD_BUTTON_SIZE = Platform.OS === 'web' ? 26 : 30;
 const ADD_ICON_SIZE = 18;
 
 interface ProjectGroupProps {
@@ -124,6 +124,12 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
                         <GitLineChanges changes={changes} />
                     </View>
                 </View>
+                {Platform.OS === 'web' && (
+                    <View style={styles.sessionCount}>
+                        <Ionicons name="chatbubble-outline" size={10} color={theme.colors.textSecondary} />
+                        <Text style={styles.sessionCountText}>{workspace.sessions.length}</Text>
+                    </View>
+                )}
                 <Pressable
                     onPress={handleNewSession}
                     hitSlop={12}
@@ -152,10 +158,15 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         backgroundColor: 'transparent',
-        marginBottom: 4,
+        marginBottom: Platform.select({ web: 8, default: 4 }),
+        gap: Platform.select({ web: 8, default: 0 }),
     },
     section: {
-        backgroundColor: 'transparent',
+        backgroundColor: Platform.select({ web: theme.colors.surface, default: 'transparent' }),
+        borderRadius: Platform.select({ web: 10, default: 0 }),
+        borderWidth: Platform.select({ web: 1, default: 0 }),
+        borderColor: theme.colors.divider,
+        overflow: Platform.select({ web: 'hidden', default: 'visible' }),
     },
     // Pulled toward the screen edges: the "+" sits so its center shares an x
     // with the status dot inside the card rows below (see
@@ -164,10 +175,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingTop: 12,
+        paddingTop: Platform.select({ web: 8, default: 12 }),
         paddingBottom: Platform.select({ ios: 6, default: 8 }),
-        paddingLeft: Platform.select({ ios: 20, default: 16 }),
-        paddingRight: Platform.select({ ios: 26, default: 22 }),
+        paddingLeft: Platform.select({ web: 8, ios: 20, default: 16 }),
+        paddingRight: Platform.select({ web: 8, ios: 26, default: 22 }),
         gap: 8,
     },
     headerText: {
@@ -175,12 +186,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     title: {
-        color: theme.colors.groupped.sectionTitle,
-        fontSize: Platform.select({ ios: 13, default: 14 }),
-        lineHeight: Platform.select({ ios: 18, default: 20 }),
+        color: Platform.select({ web: theme.colors.text, default: theme.colors.groupped.sectionTitle }),
+        fontSize: Platform.select({ web: 13, ios: 13, default: 14 }),
+        lineHeight: Platform.select({ web: 18, ios: 18, default: 20 }),
         letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
         fontWeight: Platform.select({ ios: 'normal', default: '500' }),
-        ...Typography.default('regular'),
+        ...Typography.default(Platform.OS === 'web' ? 'semiBold' : 'regular'),
     },
     branchLine: {
         flexDirection: 'row',
@@ -190,7 +201,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     branchText: {
         flexShrink: 1,
         minWidth: 0,
-        fontSize: 12,
+        fontSize: Platform.select({ web: 11, default: 12 }),
         lineHeight: 16,
         color: theme.colors.textSecondary,
         ...Typography.default('regular'),
@@ -208,18 +219,29 @@ const stylesheet = StyleSheet.create((theme) => ({
     addButtonPressed: {
         opacity: 0.5,
     },
+    sessionCount: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        borderRadius: 10,
+        backgroundColor: theme.colors.surfaceHighest,
+    },
+    sessionCountText: {
+        fontSize: 10,
+        lineHeight: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default('regular'),
+    },
     workspaceCard: {
         backgroundColor: theme.colors.surface,
-        marginHorizontal: Platform.select({ ios: 16, default: 12 }),
-        marginBottom: 8,
-        borderRadius: Platform.select({ web: 16, default: 18 }),
+        marginHorizontal: Platform.select({ web: 0, ios: 16, default: 12 }),
+        marginBottom: Platform.select({ web: 0, default: 8 }),
+        borderRadius: Platform.select({ web: 0, default: 18 }),
         borderWidth: Platform.select({ web: 0, default: StyleSheet.hairlineWidth }),
+        borderTopWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
         overflow: 'hidden',
-        shadowColor: Platform.select({ web: theme.colors.shadow.color, default: 'transparent' }),
-        shadowOffset: { width: 0, height: 0.33 },
-        shadowOpacity: Platform.select({ web: theme.colors.shadow.opacity, default: 0 }),
-        shadowRadius: 0,
-        elevation: Platform.select({ web: 1, default: 0 }),
     },
 }));

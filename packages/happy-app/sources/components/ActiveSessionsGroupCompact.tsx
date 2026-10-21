@@ -470,10 +470,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // Session row styles
     sessionRow: {
-        height: 56,
+        height: Platform.select({ web: 44, default: 56 }),
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
+        paddingHorizontal: Platform.select({ web: 10, default: 16 }),
         // Solid, and the same color the card behind it paints: the row is the
         // thing that slides during the archive swipe, so it must cover the red
         // action underneath the way the flat list's rows do — a transparent
@@ -496,7 +496,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     sessionTitle: {
-        fontSize: 15,
+        fontSize: Platform.select({ web: 13, default: 15 }),
         flex: 1,
         ...Typography.default('regular'),
     },

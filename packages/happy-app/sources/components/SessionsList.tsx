@@ -4,6 +4,7 @@ import { Text } from '@/components/StyledText';
 import { usePathname, useRouter } from 'expo-router';
 import { SessionListViewItem, SessionRowData, useAllMachines, useSetting, useSettingMutable } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { type SessionState, formatLastSeen, vibingMessages } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
 import { ActiveSessionsGroupCompact } from './ActiveSessionsGroupCompact';
@@ -28,11 +29,23 @@ import { t } from '@/text';
 import { SessionShortcutHintBadge } from './ShortcutHints';
 import { ProviderIcon } from './ProviderIcon';
 import { buildSessionProjectDisplayGroups } from '@/utils/sessionDisplayOrder';
+import { isMachineOnline } from '@/utils/machineUtils';
+
+const MACHINE_ACCENT_COLORS = ['#3B82F6', '#8B5CF6', '#14B8A6', '#D97706'];
 
 type SessionListDisplayItem = SessionListViewItem | {
     type: 'machine-header';
     machineId: string | null;
     machineName: string;
+    accentColor: string;
+    online: boolean | null;
+    projectCount: number;
+    sessionCount: number;
+} | {
+    type: 'machine-project';
+    item: Extract<SessionListViewItem, { type: 'project' }>;
+    accentColor: string;
+    last: boolean;
 } | {
     type: 'archive-toggle';
     hidden: boolean;
@@ -128,6 +141,77 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         marginRight: 4,
         ...Typography.default('regular'),
+    },
+    // Continue the device outline across list cells so projects stay virtualized.
+    webMachineFrame: {
+        marginHorizontal: 10,
+        backgroundColor: theme.colors.surfaceHigh,
+        borderLeftWidth: 1,
+        borderRightWidth: 1,
+    },
+    webMachineHeaderFrame: {
+        marginTop: 8,
+        borderTopWidth: 1,
+        borderTopLeftRadius: 14,
+        borderTopRightRadius: 14,
+        overflow: 'hidden',
+    },
+    webMachineHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        padding: 10,
+        minHeight: 64,
+    },
+    webMachineHeaderPressed: {
+        backgroundColor: theme.colors.surfaceRipple,
+    },
+    webMachineIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    webMachineHeading: {
+        flex: 1,
+        minWidth: 0,
+        gap: 4,
+    },
+    webMachineName: {
+        fontSize: 14,
+        lineHeight: 18,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+    },
+    webMachineMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+    },
+    webMachineStatusDot: {
+        width: 5,
+        height: 5,
+        borderRadius: 3,
+    },
+    webMachineSummary: {
+        flex: 1,
+        fontSize: 11,
+        lineHeight: 14,
+        color: theme.colors.textSecondary,
+        ...Typography.default('regular'),
+    },
+    webMachineProject: {
+        paddingHorizontal: 7,
+    },
+    webMachineProjectLast: {
+        borderBottomWidth: 1,
+        borderBottomLeftRadius: 14,
+        borderBottomRightRadius: 14,
+        paddingBottom: 2,
+        marginBottom: 8,
+        overflow: 'hidden',
     },
     projectGroup: {
         paddingHorizontal: 16,
@@ -273,9 +357,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-const MachineHeader = React.memo(({ machineId, machineName }: {
+const MachineHeader = React.memo(({ machineId, machineName, accentColor, online, projectCount, sessionCount }: {
     machineId: string | null;
     machineName: string;
+    accentColor: string;
+    online: boolean | null;
+    projectCount: number;
+    sessionCount: number;
 }) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -286,6 +374,43 @@ const MachineHeader = React.memo(({ machineId, machineName }: {
             router.navigate(`/machine/${machineId}` as any);
         }
     }, [machineId, router]);
+
+    if (Platform.OS === 'web') {
+        const statusColor = online ? theme.colors.status.connected : theme.colors.textSecondary;
+        return (
+            <View style={[styles.webMachineFrame, styles.webMachineHeaderFrame, { borderColor: `${accentColor}55` }]}>
+                <LinearGradient
+                    colors={[`${accentColor}${theme.dark ? '26' : '18'}`, `${accentColor}00`]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                >
+                    <Pressable
+                        onPress={handlePress}
+                        disabled={!machineId}
+                        accessibilityRole={machineId ? 'button' : undefined}
+                        style={({ pressed }) => [styles.webMachineHeader, pressed && styles.webMachineHeaderPressed]}
+                    >
+                        <View style={[styles.webMachineIcon, { backgroundColor: `${accentColor}22`, borderColor: `${accentColor}66` }]}>
+                            <Ionicons name="desktop-outline" size={20} color={accentColor} />
+                        </View>
+                        <View style={styles.webMachineHeading}>
+                            <Text style={styles.webMachineName} numberOfLines={1}>{machineName}</Text>
+                            <View style={styles.webMachineMeta}>
+                                <View style={[styles.webMachineStatusDot, { backgroundColor: statusColor }]} />
+                                <Text style={styles.webMachineSummary} numberOfLines={1}>
+                                    <Text style={{ color: statusColor }}>
+                                        {online === null ? t('status.unknown') : online ? t('status.online') : t('status.offline')}
+                                    </Text>
+                                    {` · ${projectCount} ${t('sidebar.projects')} · ${sessionCount} ${t('tabs.sessions')}`}
+                                </Text>
+                            </View>
+                        </View>
+                        {machineId && <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />}
+                    </Pressable>
+                </LinearGradient>
+            </View>
+        );
+    }
 
     return (
         <Pressable
@@ -332,7 +457,7 @@ export function SessionsList({
     // is offered back through the home filter menu for people who organized
     // around it.
     const flatSessionList = useSetting('sessionListGrouping') !== 'project';
-    const machines = useAllMachines();
+    const machines = useAllMachines({ includeOffline: Platform.OS === 'web' });
     const pathname = usePathname();
     const isTablet = useIsTablet();
     // Selection is derived once from pathname so the data array stays stable
@@ -407,14 +532,24 @@ export function SessionsList({
             return [...groupedRows, ...archiveToggle, ...archivedRows];
         }
 
-        const hierarchy = machineGroups.flatMap<SessionListDisplayItem>((group) => [
-            {
+        const machinesById = new Map(machines.map((machine) => [machine.id, machine]));
+        const hierarchy = machineGroups.flatMap<SessionListDisplayItem>((group, groupIndex) => {
+            const accentColor = MACHINE_ACCENT_COLORS[groupIndex % MACHINE_ACCENT_COLORS.length];
+            const machine = group.machineId ? machinesById.get(group.machineId) : null;
+            return [{
                 type: 'machine-header',
                 machineId: group.machineId,
                 machineName: group.machineName,
-            },
-            ...group.projects,
-        ]);
+                accentColor,
+                online: machine ? isMachineOnline(machine) : null,
+                projectCount: group.projects.length,
+                sessionCount: group.projects.reduce((count, item) => count + item.project.sessionCount, 0),
+            }, ...group.projects.map<SessionListDisplayItem>((item, index) => (
+                Platform.OS === 'web'
+                    ? { type: 'machine-project', item, accentColor, last: index === group.projects.length - 1 }
+                    : item
+            ))];
+        });
         const legacyItems = groupedRows.filter((item) => (
             item.type !== 'project' && item.type !== 'projects-header'
         ));
@@ -432,6 +567,7 @@ export function SessionsList({
         switch (item.type) {
             case 'bots': return 'bots';
             case 'machine-header': return `machine-header-${JSON.stringify(item.machineId)}`;
+            case 'machine-project': return `project-${item.item.source}-${item.item.project.machineId ?? 'unknown'}-${item.item.project.id}`;
             case 'archive-toggle': return 'archive-toggle';
             case 'flat-session': return `flat-session-${item.row.session.id}`;
             case 'header': return `header-${item.title}-${index}`;
@@ -466,7 +602,23 @@ export function SessionsList({
                     <MachineHeader
                         machineId={item.machineId}
                         machineName={item.machineName}
+                        accentColor={item.accentColor}
+                        online={item.online}
+                        projectCount={item.projectCount}
+                        sessionCount={item.sessionCount}
                     />
+                );
+
+            case 'machine-project':
+                return (
+                    <View style={[
+                        styles.webMachineFrame,
+                        styles.webMachineProject,
+                        item.last && styles.webMachineProjectLast,
+                        { borderColor: `${item.accentColor}55` },
+                    ]}>
+                        <ProjectGroup project={item.item.project} selectedSessionId={selectedSessionId} />
+                    </View>
                 );
 
             case 'flat-session':
