@@ -623,16 +623,9 @@ export class CodexAppServerClient {
                 });
             }
 
-            // Async questions also use final_answer, but the turn keeps running.
-            if (item.phase === 'final_answer' && item.delivery !== 'async' && this.pendingTurnCompletion
-                && this.isSessionThreadNotification(params)) {
-                this.emitRawTurnCompletion(
-                    this.extractTurnId(params),
-                    'completed',
-                    null,
-                    `${method}:final_answer`,
-                );
-            }
+            // Completing a message (including final_answer) does not end the turn:
+            // Codex can consume steering input and continue under the same turn ID.
+            // Only turn lifecycle notifications may clear the active turn.
             return true;
         }
 

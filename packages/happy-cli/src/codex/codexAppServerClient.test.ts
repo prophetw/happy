@@ -1576,6 +1576,13 @@ describe('CodexAppServerClient sandbox integration', () => {
                                 },
                             },
                         });
+                        pushJsonLine(stdout, {
+                            method: 'turn/completed',
+                            params: {
+                                threadId: 'thread-raw-3',
+                                turn: { id: 'turn-raw-3', status: 'completed' },
+                            },
+                        });
                     }, 0);
                 }
             },
@@ -1936,10 +1943,22 @@ describe('CodexAppServerClient sandbox integration', () => {
         }
     });
 
-    it('keeps an async final-answer question pending while the same turn continues executing tools', async () => {
+    it.each([
+        { delivery: undefined, status: 'completed' },
+        { delivery: null, status: 'completed' },
+        { delivery: 'async', status: 'completed' },
+        { delivery: undefined, status: 'failed' },
+        { delivery: undefined, status: 'interrupted' },
+    ] as const)('keeps a final answer with delivery=$delivery pending until turn status is $status', async ({ delivery, status }) => {
+        const requests: MockRpcMessage[] = [];
+        const message = delivery === 'async' ? {
+            text: 'Which model should I use?',
+            questions: [{ title: 'Which model should I use?', options: ['Current model'] }],
+        } : { text: 'Current work is complete.' };
         const proc = createMockProcess({
             pid: 3008,
             onRequest: (msg, stdout) => {
+                requests.push(msg);
                 if (msg.method === 'thread/start' && msg.id != null) {
                     pushJsonLine(stdout, { id: msg.id, result: {
                         thread: { id: 'thread-async', path: '/tmp/thread-async' },
@@ -1958,15 +1977,17 @@ describe('CodexAppServerClient sandbox integration', () => {
                     pushJsonLine(stdout, { method: 'item/completed', params: {
                         threadId: 'thread-async', turnId: 'turn-async',
                         item: {
-                            type: 'agentMessage', id: 'question-async', text: 'Which model should I use?',
-                            phase: 'final_answer', delivery: 'async',
-                            questions: [{ title: 'Which model should I use?', options: ['Current model'] }],
+                            type: 'agentMessage', id: 'question-async', ...message,
+                            phase: 'final_answer', delivery,
                         },
                     } });
                     pushJsonLine(stdout, { method: 'item/started', params: {
                         threadId: 'thread-async', turnId: 'turn-async',
                         item: { type: 'commandExecution', id: 'command-async', command: 'pwd', cwd: '/tmp/project' },
                     } });
+                }
+                if (msg.method === 'turn/steer' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: { turnId: 'turn-async' } });
                 }
             },
         });
@@ -1975,7 +1996,18 @@ describe('CodexAppServerClient sandbox integration', () => {
         const { CodexAppServerClient } = await import('./codexAppServerClient');
         const client = new CodexAppServerClient();
         const events: Array<Record<string, unknown>> = [];
-        client.setEventHandler((msg) => events.push(msg as Record<string, unknown>));
+        let state: CodexTurnState = { currentTurnId: null };
+        const sessionLifecycle: string[] = [];
+        client.setEventHandler((msg) => {
+            events.push(msg as Record<string, unknown>);
+            const mapped = mapCodexMcpMessageToSessionEnvelopes(msg as Record<string, unknown>, state);
+            state = mapped;
+            for (const envelope of mapped.envelopes) {
+                if (envelope.ev.t === 'turn-start' || envelope.ev.t === 'turn-end') {
+                    sessionLifecycle.push(envelope.ev.t);
+                }
+            }
+        });
 
         await client.connect();
         try {
@@ -1990,8 +2022,8 @@ describe('CodexAppServerClient sandbox integration', () => {
             expect(events).toEqual(expect.arrayContaining([
                 expect.objectContaining({ type: 'task_started', turn_id: 'turn-async' }),
                 expect.objectContaining({
-                    type: 'agent_message', message: 'Which model should I use?', delivery: 'async',
-                    questions: [{ title: 'Which model should I use?', options: ['Current model'] }],
+                    type: 'agent_message', message: message.text, delivery,
+                    ...(delivery === 'async' ? { questions: message.questions } : {}),
                     thread_id: 'thread-async', turn_id: 'turn-async', item_id: 'question-async',
                 }),
                 expect.objectContaining({ type: 'exec_command_begin', callId: 'thread-async:command-async' }),
@@ -1999,20 +2031,30 @@ describe('CodexAppServerClient sandbox integration', () => {
             expect(events.filter((event) => event.type === 'task_complete')).toHaveLength(0);
             expect(onSettled).not.toHaveBeenCalled();
             expect(client.turnId).toBe('turn-async');
+            expect(sessionLifecycle).toEqual(['turn-start']);
+            expect(state.currentTurnId).not.toBeNull();
+            expect(await client.steerTurn('Continue with HTTP verification')).toBe(true);
+            expect(requests.filter((request) => request.method === 'turn/start')).toHaveLength(1);
+            expect(requests.find((request) => request.method === 'turn/steer')?.params)
+                .toMatchObject({ threadId: 'thread-async', expectedTurnId: 'turn-async' });
 
             pushJsonLine(proc.stdout, { method: 'turn/completed', params: {
-                threadId: 'thread-async', turn: { id: 'turn-async', status: 'completed' },
+                threadId: 'thread-async', turn: { id: 'turn-async', status },
             } });
-            await expect(turn).resolves.toEqual({ aborted: false });
-            expect(onSettled).toHaveBeenCalledExactlyOnceWith({ aborted: false });
-            expect(events.filter((event) => event.type === 'task_complete')).toHaveLength(1);
+            const aborted = status === 'interrupted';
+            await expect(turn).resolves.toEqual({ aborted });
+            expect(onSettled).toHaveBeenCalledExactlyOnceWith({ aborted });
+            expect(events.filter((event) => event.type === 'task_complete' || event.type === 'turn_aborted'))
+                .toEqual([expect.objectContaining({ type: aborted ? 'turn_aborted' : 'task_complete', status })]);
             expect(client.turnId).toBeNull();
+            expect(sessionLifecycle).toEqual(['turn-start', 'turn-end']);
+            expect(state.currentTurnId).toBeNull();
         } finally {
             await client.disconnect();
         }
     });
 
-    it('falls back to final answer completion when raw turn/completed is missing', async () => {
+    it('waits for thread idle when raw turn/completed is missing', async () => {
         const proc = createMockProcess({
             pid: 3002,
             onRequest: (msg, stdout) => {
@@ -2083,7 +2125,18 @@ describe('CodexAppServerClient sandbox integration', () => {
             sandbox: 'danger-full-access',
         });
 
-        await expect(client.sendTurnAndWait('say hi')).resolves.toEqual({ aborted: false });
+        const onSettled = vi.fn();
+        const turn = client.sendTurnAndWait('say hi');
+        void turn.then(onSettled);
+        await waitFor(() => events.some((event) => event.type === 'agent_message'));
+        expect(onSettled).not.toHaveBeenCalled();
+        expect(client.turnId).toBe('turn-raw-2');
+
+        pushJsonLine(proc.stdout, {
+            method: 'thread/status/changed',
+            params: { threadId: 'thread-raw-2', status: { type: 'idle' } },
+        });
+        await expect(turn).resolves.toEqual({ aborted: false });
         expect(events).toEqual(expect.arrayContaining([
             expect.objectContaining({ type: 'task_started', turn_id: 'turn-raw-2' }),
             expect.objectContaining({ type: 'agent_message', message: 'still works' }),
