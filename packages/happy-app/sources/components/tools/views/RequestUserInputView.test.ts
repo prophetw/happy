@@ -31,10 +31,10 @@ let renderer: any;
 beforeAll(() => { (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; });
 afterEach(() => { if (renderer) act(() => renderer.unmount()); vi.clearAllMocks(); });
 
-function renderQuestion() {
+function renderQuestion(allowCustom?: boolean | null) {
     mocks.communication = {
         id: 'async-question', kind: 'form', status: 'pending', isBlocking: false,
-        questions: [{ id: 'choice', header: 'Color', question: 'Which color?', options: [{ label: 'Blue' }], allowCustom: true }],
+        questions: [{ id: 'choice', header: 'Color', question: 'Which color?', options: [{ label: 'Blue' }], allowCustom }],
     };
     // A turn can already have finished while this question is still pending.
     const tool = { name: 'request_user_input', state: 'completed', callId: 'async-question' } as ToolViewProps['tool'];
@@ -42,6 +42,18 @@ function renderQuestion() {
 }
 
 describe('Codex question card', () => {
+    it.each([undefined, null, true])('accepts custom text with allowCustom=%s', async allowCustom => {
+        renderQuestion(allowCustom);
+        act(() => renderer.root.findByType('TextInput').props.onChangeText('Green'));
+        await act(async () => { await renderer.root.findAllByType('TouchableOpacity').at(-1).props.onPress(); });
+        expect(mocks.answer).toHaveBeenCalledExactlyOnceWith('session', 'async-question', { choice: { options: [], custom: 'Green' } }, 'form');
+    });
+
+    it('hides custom input when it is explicitly disabled', () => {
+        renderQuestion(false);
+        expect(renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    });
+
     it('allows a choice to be submitted after the generation turn completed', async () => {
         renderQuestion();
         const buttons = () => renderer.root.findAllByType('TouchableOpacity');

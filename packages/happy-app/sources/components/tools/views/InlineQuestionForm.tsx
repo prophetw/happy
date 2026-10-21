@@ -171,7 +171,7 @@ export const InlineQuestionForm = React.memo<InlineQuestionFormProps>((props) =>
                                         </TouchableOpacity>
                                     );
                                 })}
-                                {question.allowCustom && (
+                                {question.allowCustom !== false && (
                                     <TextInput
                                         accessibilityLabel={t('agentQuestion.ownAnswer')}
                                         placeholder={t('agentQuestion.ownAnswerPlaceholder')}
