@@ -36,7 +36,7 @@ import {
 } from './sessionEnvironment';
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode, spawnWebhookTimeoutMs } from './spawnModeArgs';
-import { hasPersistedProcessConflict, isPidAlive, machineBootTimeMs } from './sessionLiveness';
+import { hasPersistedProcessConflict, isPersistedSessionStopped, isPidAlive, machineBootTimeMs } from './sessionLiveness';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -200,6 +200,26 @@ export async function startDaemon(): Promise<void> {
     }
     if (Object.keys(persisted).length > 0) {
       logger.debug(`[DAEMON RUN] Loaded ${Object.keys(persisted).length} persisted sessions from disk`);
+    }
+
+    // Reconcile before accepting local webhooks or remote resumes: a new owner
+    // must not race an old owner's deactivation. Keep metadata and keys intact
+    // so the inactive session can still be resumed.
+    const api = await ApiClient.create(credentials);
+    const stoppedSessionIds = Object.entries(persisted)
+      .filter(([, session]) => session.metadata?.machineId === machineId && isPersistedSessionStopped(session, bootTimeMs))
+      .map(([id]) => id);
+    for (let offset = 0; offset < stoppedSessionIds.length; offset += 5) {
+      const results = await Promise.all(stoppedSessionIds.slice(offset, offset + 5).map(async (id) => {
+        const deactivated = await api.deactivateSession(id);
+        if (!deactivated) {
+          logger.warn(`[DAEMON RUN] Could not deactivate stopped session ${id}; falling back to server heartbeat timeout`);
+        }
+        return deactivated;
+      }));
+      // Bound offline startup to one batch of HTTP timeouts, even with a long
+      // session history. The existing server timeout handles anything left.
+      if (results.some(result => !result)) break;
     }
 
     // Session spawning awaiter system
@@ -1027,9 +1047,6 @@ export async function startDaemon(): Promise<void> {
       httpPort: controlPort,
       startedAt: Date.now()
     };
-
-    // Create API client
-    const api = await ApiClient.create(credentials);
 
     // Get or create machine
     const machine = await api.getOrCreateMachine({

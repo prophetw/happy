@@ -81,6 +81,41 @@ describe('Api server error handling', () => {
         api = await ApiClient.create(mockCredential);
     });
 
+    describe('deactivateSession', () => {
+        it('only changes presence through the existing archive endpoint', async () => {
+            mockPost.mockResolvedValue({ status: 200 });
+
+            await expect(api.deactivateSession('stopped-session')).resolves.toBe(true);
+
+            expect(mockPost).toHaveBeenCalledWith(
+                expect.stringContaining('/v1/sessions/stopped-session/archive'),
+                {},
+                expect.objectContaining({
+                    headers: expect.objectContaining({ Authorization: 'Bearer fake-token' }),
+                    timeout: 3000,
+                }),
+            );
+        });
+
+        it('treats an already deleted session as inactive so startup can reconcile later sessions', async () => {
+            mockPost.mockRejectedValue({ response: { status: 404 } });
+
+            await expect(api.deactivateSession('deleted-session')).resolves.toBe(true);
+        });
+
+        it.each([401, 403, 500])('reports an unsuccessful deactivation on HTTP %s', async (status) => {
+            mockPost.mockRejectedValue({ response: { status } });
+
+            await expect(api.deactivateSession('stopped-session')).resolves.toBe(false);
+        });
+
+        it('reports an unsuccessful deactivation when offline', async () => {
+            mockPost.mockRejectedValue({ code: 'ETIMEDOUT' });
+
+            await expect(api.deactivateSession('stopped-session')).resolves.toBe(false);
+        });
+    });
+
     describe('getOrCreateSession', () => {
         it('should return null when Happy server is unreachable (ECONNREFUSED)', async () => {
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

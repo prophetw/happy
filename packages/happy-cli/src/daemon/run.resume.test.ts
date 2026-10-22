@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   access: vi.fn(),
   persistSession: vi.fn(),
+  deactivateSession: vi.fn(),
   logger: { debug: vi.fn(), debugLargeJson: vi.fn(), warn: vi.fn() },
 }));
 
@@ -54,6 +55,7 @@ vi.mock('./controlServer', () => ({ startDaemonControlServer: async (options: an
   return { port: 0, stop: vi.fn() };
 } }));
 vi.mock('@/api/api', () => ({ ApiClient: { create: async () => ({
+  deactivateSession: mocks.deactivateSession,
   getOrCreateMachine: async () => ({ id: 'machine-1' }),
   machineSyncClient: () => ({
     setRPCHandlers: (handlers: any) => { mocks.handlers = handlers; },
@@ -80,6 +82,9 @@ describe('daemon resume fallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.persisted = {};
+    mocks.children = null;
+    mocks.handlers = null;
+    mocks.deactivateSession.mockReset().mockResolvedValue(true);
     mocks.tmuxAvailable = false;
     mocks.tmuxSpawn.mockResolvedValue({ success: true, pid: 12345, sessionId: 'test-window' });
     mocks.persistSession.mockReset();
@@ -379,9 +384,98 @@ describe('daemon resume fallback', () => {
   it('allows a pre-reboot persisted record even if that PID now exists', async () => {
     mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt: 1 } };
     await boot();
+    expect(mocks.deactivateSession).toHaveBeenCalledExactlyOnceWith('old-session');
     expect(await mocks.handlers.resumeSession('old-session')).toMatchObject({ type: 'success' });
     expect(mocks.spawn.mock.calls.length).toBe(1);
     expect(vi.mocked(process.kill).mock.calls.length).toBe(0);
+  });
+
+  it('deactivates a same-boot session only when its process is confirmed gone', async () => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt: Date.now() } };
+    vi.mocked(process.kill).mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+
+    await boot();
+
+    expect(mocks.deactivateSession).toHaveBeenCalledExactlyOnceWith('old-session');
+    expect(vi.mocked(process.kill).mock.calls).toEqual([[12344, 0]]);
+    expect(mocks.persistSession).not.toHaveBeenCalled();
+  });
+
+  it.each(['alive', 'EPERM', 'EACCES', 'unknown'])('keeps a same-boot session when its process is %s', async (status) => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt: Date.now() } };
+    if (status !== 'alive') {
+      vi.mocked(process.kill).mockImplementation(() => { throw Object.assign(new Error('probe failed'), { code: status }); });
+    }
+
+    await boot();
+
+    expect(mocks.deactivateSession).not.toHaveBeenCalled();
+    expect(vi.mocked(process.kill).mock.calls).toEqual([[12344, 0]]);
+  });
+
+  it.each(['other-machine', undefined])('does not deactivate persisted sessions belonging to %s', async (machineId) => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, machineId, hostPid: 12344 }, savedAt: 1 } };
+
+    await boot();
+
+    expect(mocks.deactivateSession).not.toHaveBeenCalled();
+    expect(process.kill).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, NaN, Infinity, 0, -1])('does not infer a reboot from an invalid savedAt (%s)', async (savedAt) => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt } };
+
+    await boot();
+
+    expect(mocks.deactivateSession).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 0, -1, 1.5])('does not infer process death from an invalid same-boot PID (%s)', async (hostPid) => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid }, savedAt: Date.now() } };
+
+    await boot();
+
+    expect(mocks.deactivateSession).not.toHaveBeenCalled();
+    expect(process.kill).not.toHaveBeenCalled();
+  });
+
+  it('finishes startup reconciliation before accepting local or remote session operations', async () => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt: 1 } };
+    let complete!: (result: boolean) => void;
+    mocks.deactivateSession.mockReturnValue(new Promise<boolean>((resolve) => { complete = resolve; }));
+
+    const starting = boot();
+    await vi.waitFor(() => expect(mocks.deactivateSession).toHaveBeenCalled());
+    expect(mocks.children).toBeNull();
+    expect(mocks.handlers).toBeNull();
+    complete(true);
+    await starting;
+    expect(mocks.handlers).not.toBeNull();
+  });
+
+  it('keeps startup and resume available when the server cannot deactivate an old session', async () => {
+    mocks.persisted = { 'old-session': { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt: 1 } };
+    mocks.deactivateSession.mockResolvedValue(false);
+
+    await boot();
+
+    expect(mocks.deactivateSession).toHaveBeenCalledExactlyOnceWith('old-session');
+    expect(mocks.logger.warn).toHaveBeenCalledWith(expect.stringContaining('old-session'));
+    expect(mocks.persistSession).not.toHaveBeenCalled();
+    expect(await mocks.handlers.resumeSession('old-session')).toMatchObject({ type: 'success' });
+  });
+
+  it('bounds offline reconciliation attempts when there are many persisted sessions', async () => {
+    mocks.persisted = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [
+      `old-${i}`, { ...fallback, metadata: { ...metadata, hostPid: 12344 }, savedAt: 1 },
+    ]));
+    mocks.deactivateSession.mockResolvedValue(false);
+
+    await boot();
+
+    expect(mocks.deactivateSession.mock.calls.length).toBeLessThan(20);
+    expect(mocks.handlers).not.toBeNull();
+    expect(mocks.persistSession).not.toHaveBeenCalled();
   });
 
   it('prevents a fresh archive from starting a second real owner before the first exits', async () => {
@@ -477,6 +571,7 @@ describe('daemon resume fallback', () => {
 
       mocks.persisted = { 'old-session': { ...fallback, metadata: { ...codexMetadata, hostPid: owners[1].pid }, savedAt: Date.now() } };
       await boot();
+      expect(mocks.deactivateSession).not.toHaveBeenCalled();
       expect(await mocks.handlers.resumeSession('old-session')).toMatchObject({ type: 'error', errorMessage: expect.stringContaining('ownership cannot be verified') });
       expect(owners).toHaveLength(2);
       await finishOwner(owners[1]);

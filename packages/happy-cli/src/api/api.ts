@@ -413,6 +413,8 @@ export class ApiClient {
    * fallback for the socket-based session-end signal: even if the
    * socket emit doesn't drain before the process exits, the HTTP
    * response confirms the deactivate landed.
+   * Already deleted sessions also count as inactive during daemon startup
+   * reconciliation, so old local records do not block the remaining cleanup.
    */
   async deactivateSession(sessionId: string): Promise<boolean> {
     try {
@@ -429,6 +431,9 @@ export class ApiClient {
       );
       return response.status >= 200 && response.status < 300;
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return true;
+      }
       logger.debug('[API] deactivateSession failed:', error);
       return false;
     }
