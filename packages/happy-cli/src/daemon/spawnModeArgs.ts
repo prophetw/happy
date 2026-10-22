@@ -41,12 +41,16 @@ export function appendDaemonSpawnModeArgs(
  */
 export const DEFAULT_SPAWN_STARTUP_TIMEOUT_MS = 15_000;
 /**
- * Slow-harness window: covers the harness's own backend round-trips plus CLI
- * startup, staying inside the app's 50s RPC timeout.
+ * Slow-harness window: covers backend round-trips plus CLI startup. Session
+ * startup RPCs have a 50s relay deadline and a 70s app deadline (with reconnect).
  */
 export const SLOW_SPAWN_STARTUP_TIMEOUT_MS = 45_000;
 
 export function spawnWebhookTimeoutMs(agent: string, resuming: boolean): number {
+  // Claude registers its machine, resolves settings, and creates the Happy
+  // session before reporting readiness. Slow startup must not look like a
+  // failed launch while the child continues and becomes usable moments later.
+  if (agent === 'claude') return SLOW_SPAWN_STARTUP_TIMEOUT_MS;
   // Antigravity's startup — machine registration plus session creation
   // round-trips — has overrun the default 15s window in the wild. The child
   // keeps starting either way, so an early timeout answers the app with a

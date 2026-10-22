@@ -65,6 +65,7 @@ vi.mock('@/api/api', () => ({ ApiClient: { create: async () => ({
 }) } }));
 
 import { startDaemon } from './run';
+import { SLOW_SPAWN_STARTUP_TIMEOUT_MS } from './spawnModeArgs';
 
 const dataKey = new Uint8Array(32).fill(1);
 const metadata = { path: '/project', machineId: 'machine-1', flavor: 'claude', claudeSessionId: 'claude-old' };
@@ -135,6 +136,32 @@ describe('daemon resume fallback', () => {
     expect(completed).toBe(false);
     mocks.webhook('happy-resumed', { ...metadata, flavor: 'codex', codexThreadId: 'native-thread', hostPid: 12345 });
     expect(await spawning).toEqual({ type: 'success', sessionId: 'happy-resumed' });
+  });
+
+  it.each([
+    { mode: 'regular', resuming: false },
+    { mode: 'tmux', resuming: false },
+    { mode: 'regular', resuming: true },
+    { mode: 'tmux', resuming: true },
+  ])('allows a slow Claude startup in $mode mode (resuming: $resuming)', async ({ mode, resuming }) => {
+    vi.useFakeTimers();
+    await boot();
+    mocks.tmuxAvailable = mode === 'tmux';
+    mocks.spawn.mockReturnValue({ pid: 12345, on: vi.fn() });
+    let completed = false;
+    const spawning = mocks.handlers.spawnSession({
+      directory: '/project', agent: 'claude',
+      ...(resuming ? { resumeClaudeSessionId: 'claude-old' } : {}),
+      environmentVariables: { TMUX_SESSION_NAME: 'test-session' },
+    }).then((result: unknown) => { completed = true; return result; });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(completed).toBe(false);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(completed).toBe(false);
+    mocks.webhook('happy-claude', { ...metadata, hostPid: 12345 });
+    expect(await spawning).toEqual({ type: 'success', sessionId: 'happy-claude' });
+    expect(mocks.children()).toHaveLength(1);
   });
 
   it('resumes an untracked old session across fresh daemon boots without listing sessions', async () => {
@@ -263,7 +290,9 @@ describe('daemon resume fallback', () => {
     await boot();
     mocks.spawn.mockReturnValue({ pid: 12345, on: vi.fn() });
     const first = mocks.handlers.resumeSession('old-session', { fallback });
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(SLOW_SPAWN_STARTUP_TIMEOUT_MS - 1);
+    expect(mocks.logger.debug).not.toHaveBeenCalledWith(expect.stringContaining('Session webhook timeout'));
+    await vi.advanceTimersByTimeAsync(1);
     expect(await first).toMatchObject({ type: 'error', errorMessage: expect.stringContaining('timeout') });
     expect(await mocks.handlers.resumeSession('old-session', { fallback })).toMatchObject({ type: 'error' });
     expect(mocks.spawn.mock.calls.length).toBe(1);
@@ -283,7 +312,7 @@ describe('daemon resume fallback', () => {
     await boot();
     expect(await mocks.handlers.resumeSession('old-session', { fallback })).toMatchObject({ type: 'error', errorMessage: expect.stringContaining('ownership cannot be verified') });
     expect(mocks.spawn.mock.calls.length).toBe(1);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(SLOW_SPAWN_STARTUP_TIMEOUT_MS);
     expect(await first).toMatchObject({ type: 'error' });
   });
 

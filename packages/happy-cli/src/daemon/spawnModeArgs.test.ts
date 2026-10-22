@@ -58,9 +58,12 @@ describe('spawn webhook timeout', () => {
     expect(spawnWebhookTimeoutMs('codex', false)).toBe(DEFAULT_SPAWN_STARTUP_TIMEOUT_MS);
   });
 
+  it('gives Claude the slow window for both new sessions and resumes', () => {
+    expect(spawnWebhookTimeoutMs('claude', false)).toBe(SLOW_SPAWN_STARTUP_TIMEOUT_MS);
+    expect(spawnWebhookTimeoutMs('claude', true)).toBe(SLOW_SPAWN_STARTUP_TIMEOUT_MS);
+  });
+
   it('keeps other harnesses on the default window', () => {
-    expect(spawnWebhookTimeoutMs('claude', false)).toBe(DEFAULT_SPAWN_STARTUP_TIMEOUT_MS);
-    expect(spawnWebhookTimeoutMs('claude', true)).toBe(DEFAULT_SPAWN_STARTUP_TIMEOUT_MS);
     expect(spawnWebhookTimeoutMs('gemini', false)).toBe(DEFAULT_SPAWN_STARTUP_TIMEOUT_MS);
   });
 });

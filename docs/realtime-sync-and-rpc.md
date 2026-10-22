@@ -57,6 +57,14 @@ The server uses room membership as the source of truth for who currently owns an
 6. The target runs the handler through `RpcHandlerManager` and acks the result.
 7. If the target disappears mid-call, the server fails the call instead of waiting for the full timeout.
 
+Session startup uses separate deadlines: the daemon waits up to 45 seconds for
+Claude's readiness webhook (new sessions and resumes), the relay allows 50 seconds
+for `spawn-happy-session` and `resume-happy-session`, and the app allows 70 seconds
+including the relay's 15-second daemon reconnect grace window. Ordinary RPCs keep
+their 30-second relay and 50-second app deadlines. A startup timeout does not kill
+the child; a late webhook can still register the session. These startup deadlines
+must be updated together to prevent an outer timeout from cutting off the launch.
+
 This is how Happy does point-to-point control traffic on top of the same transport used for normal realtime sync.
 
 ## Current Sharp Edges

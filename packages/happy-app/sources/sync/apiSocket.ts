@@ -53,6 +53,8 @@ export type SyncSocketListener = (state: SyncSocketState) => void;
 // Comfortably past the server's worst honest case: a 15s wait for a
 // reconnecting daemon to rejoin the room, then a 30s call.
 const RPC_ACK_TIMEOUT_MS = 50_000;
+// Session startup: 15s daemon reconnect grace + 50s relay call + transport margin.
+const SESSION_STARTUP_RPC_ACK_TIMEOUT_MS = 70_000;
 
 /**
  * Runs one step of an RPC and, if it throws, says which step that was.
@@ -176,9 +178,9 @@ class ApiSocket {
      * The server answers every rpc-call it hears, but an emit made while the
      * socket is down is buffered by socket.io and its ack never arrives, so a
      * bare emitWithAck waits for the rest of the app's life. The server's own
-     * budget is a 15s grace window for a reconnecting daemon plus a 30s call,
-     * so past that the call is not slow — it is gone, and the caller deserves
-     * to hear so.
+     * budget includes a 15s daemon reconnect grace window, then a 30s ordinary
+     * call or a 50s session startup call. Bound the app's wait beyond that so
+     * a buffered request cannot leave the caller waiting forever.
      */
     private async rpcCall(method: string, params: unknown): Promise<any> {
         // disconnect() nulls the socket, so this is a state a caller can really
@@ -188,8 +190,9 @@ class ApiSocket {
         if (!socket) {
             throw new Error('Not connected to the server');
         }
+        const isSessionStartup = method.endsWith(':spawn-happy-session') || method.endsWith(':resume-happy-session');
         return await socket
-            .timeout(RPC_ACK_TIMEOUT_MS)
+            .timeout(isSessionStartup ? SESSION_STARTUP_RPC_ACK_TIMEOUT_MS : RPC_ACK_TIMEOUT_MS)
             .emitWithAck('rpc-call', { method, params })
             .catch(() => {
                 throw new Error('The computer did not respond');
