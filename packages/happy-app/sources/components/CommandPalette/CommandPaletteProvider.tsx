@@ -6,7 +6,7 @@ import { CommandPalette } from './CommandPalette';
 import { Command } from './types';
 import { useGlobalKeyboard } from '@/hooks/useGlobalKeyboard';
 import { useAuth } from '@/auth/AuthContext';
-import { storage, useAllMachines } from '@/sync/storage';
+import { storage, useAllMachines, useLocalSetting, useSetting } from '@/sync/storage';
 import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { ShortcutHintsProvider } from '@/components/ShortcutHints';
@@ -27,7 +27,9 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     const sessions = storage(useShallow((state) => state.sessions));
     const commandPaletteEnabled = storage(useShallow((state) => state.localSettings.commandPaletteEnabled));
     const sessionListViewData = useVisibleSessionListViewData();
-    const machines = useAllMachines();
+    const machines = useAllMachines({ includeOffline: Platform.OS === 'web' });
+    const sessionListGrouping = useSetting('sessionListGrouping');
+    const collapsedMachineIds = useLocalSetting('collapsedMachineIds');
     const navigateToSession = useNavigateToSession();
     const preferredModifier = useMemo(() => getPreferredShortcutModifier(
         typeof navigator === 'undefined' ? undefined : navigator
@@ -37,7 +39,8 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         sessionListViewData,
         machines,
         t('status.unknown'),
-    ), [machines, sessionListViewData]);
+        Platform.OS === 'web' && sessionListGrouping === 'project' ? collapsedMachineIds : [],
+    ), [collapsedMachineIds, machines, sessionListGrouping, sessionListViewData]);
 
     // Define available commands
     const commands = useMemo((): Command[] => {

@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Pressable, FlatList, NativeScrollEvent, NativeSyntheticEvent, Platform } from 'react-native';
 import { Text } from '@/components/StyledText';
 import { usePathname, useRouter } from 'expo-router';
-import { SessionListViewItem, SessionRowData, useAllMachines, useSetting, useSettingMutable } from '@/sync/storage';
+import { SessionListViewItem, SessionRowData, storage, useAllMachines, useLocalSetting, useSetting, useSettingMutable } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { type SessionState, formatLastSeen, vibingMessages } from '@/utils/sessionUtils';
@@ -41,6 +41,7 @@ type SessionListDisplayItem = SessionListViewItem | {
     online: boolean | null;
     projectCount: number;
     sessionCount: number;
+    collapsed: boolean;
 } | {
     type: 'machine-project';
     item: Extract<SessionListViewItem, { type: 'project' }>;
@@ -162,6 +163,28 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 10,
         padding: 10,
         minHeight: 64,
+    },
+    webMachineHeaderCollapsed: {
+        borderBottomWidth: 1,
+        borderBottomLeftRadius: 14,
+        borderBottomRightRadius: 14,
+        marginBottom: 8,
+    },
+    webMachineDetails: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 44,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        borderRadius: 8,
+    },
+    webMachineToggle: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     webMachineHeaderPressed: {
         backgroundColor: theme.colors.surfaceRipple,
@@ -357,13 +380,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-const MachineHeader = React.memo(({ machineId, machineName, accentColor, online, projectCount, sessionCount }: {
+const MachineHeader = React.memo(({ machineId, machineName, accentColor, online, projectCount, sessionCount, collapsed, onToggle }: {
     machineId: string | null;
     machineName: string;
     accentColor: string;
     online: boolean | null;
     projectCount: number;
     sessionCount: number;
+    collapsed: boolean;
+    onToggle: (machineId: string | null) => void;
 }) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -378,35 +403,55 @@ const MachineHeader = React.memo(({ machineId, machineName, accentColor, online,
     if (Platform.OS === 'web') {
         const statusColor = online ? theme.colors.status.connected : theme.colors.textSecondary;
         return (
-            <View style={[styles.webMachineFrame, styles.webMachineHeaderFrame, { borderColor: `${accentColor}55` }]}>
+            <View style={[
+                styles.webMachineFrame,
+                styles.webMachineHeaderFrame,
+                collapsed && styles.webMachineHeaderCollapsed,
+                { borderColor: `${accentColor}55` },
+            ]}>
                 <LinearGradient
                     colors={[`${accentColor}${theme.dark ? '26' : '18'}`, `${accentColor}00`]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                 >
-                    <Pressable
-                        onPress={handlePress}
-                        disabled={!machineId}
-                        accessibilityRole={machineId ? 'button' : undefined}
-                        style={({ pressed }) => [styles.webMachineHeader, pressed && styles.webMachineHeaderPressed]}
-                    >
-                        <View style={[styles.webMachineIcon, { backgroundColor: `${accentColor}22`, borderColor: `${accentColor}66` }]}>
-                            <Ionicons name="desktop-outline" size={20} color={accentColor} />
-                        </View>
-                        <View style={styles.webMachineHeading}>
-                            <Text style={styles.webMachineName} numberOfLines={1}>{machineName}</Text>
-                            <View style={styles.webMachineMeta}>
-                                <View style={[styles.webMachineStatusDot, { backgroundColor: statusColor }]} />
-                                <Text style={styles.webMachineSummary} numberOfLines={1}>
-                                    <Text style={{ color: statusColor }}>
-                                        {online === null ? t('status.unknown') : online ? t('status.online') : t('status.offline')}
-                                    </Text>
-                                    {` · ${projectCount} ${t('sidebar.projects')} · ${sessionCount} ${t('tabs.sessions')}`}
-                                </Text>
+                    <View style={styles.webMachineHeader}>
+                        <Pressable
+                            onPress={handlePress}
+                            disabled={!machineId}
+                            accessibilityRole={machineId ? 'button' : undefined}
+                            style={({ pressed }) => [styles.webMachineDetails, pressed && styles.webMachineHeaderPressed]}
+                        >
+                            <View style={[styles.webMachineIcon, { backgroundColor: `${accentColor}22`, borderColor: `${accentColor}66` }]}>
+                                <Ionicons name="desktop-outline" size={20} color={accentColor} />
                             </View>
-                        </View>
-                        {machineId && <Ionicons name="chevron-forward" size={14} color={theme.colors.textSecondary} />}
-                    </Pressable>
+                            <View style={styles.webMachineHeading}>
+                                <Text style={styles.webMachineName} numberOfLines={1}>{machineName}</Text>
+                                <View style={styles.webMachineMeta}>
+                                    <View style={[styles.webMachineStatusDot, { backgroundColor: statusColor }]} />
+                                    <Text style={styles.webMachineSummary} numberOfLines={1}>
+                                        <Text style={{ color: statusColor }}>
+                                            {online === null ? t('status.unknown') : online ? t('status.online') : t('status.offline')}
+                                        </Text>
+                                        {` · ${projectCount} ${t('sidebar.projects')} · ${sessionCount} ${t('tabs.sessions')}`}
+                                    </Text>
+                                </View>
+                            </View>
+                        </Pressable>
+                        <Pressable
+                            onPress={() => onToggle(machineId)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${machineName} · ${t('sidebar.projects')}`}
+                            aria-expanded={!collapsed}
+                            hitSlop={4}
+                            style={({ pressed }) => [
+                                styles.webMachineToggle,
+                                { backgroundColor: `${accentColor}22` },
+                                pressed && styles.webMachineHeaderPressed,
+                            ]}
+                        >
+                            <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={14} color={accentColor} />
+                        </Pressable>
+                    </View>
                 </LinearGradient>
             </View>
         );
@@ -457,6 +502,15 @@ export function SessionsList({
     // is offered back through the home filter menu for people who organized
     // around it.
     const flatSessionList = useSetting('sessionListGrouping') !== 'project';
+    const collapsedMachineIds = useLocalSetting('collapsedMachineIds');
+    const toggleMachine = React.useCallback((machineId: string | null) => {
+        const current = storage.getState().localSettings.collapsedMachineIds;
+        storage.getState().applyLocalSettings({
+            collapsedMachineIds: current.includes(machineId)
+                ? current.filter((id) => id !== machineId)
+                : [...current, machineId],
+        });
+    }, []);
     const machines = useAllMachines({ includeOffline: Platform.OS === 'web' });
     const pathname = usePathname();
     const isTablet = useIsTablet();
@@ -536,6 +590,12 @@ export function SessionsList({
         const hierarchy = machineGroups.flatMap<SessionListDisplayItem>((group, groupIndex) => {
             const accentColor = MACHINE_ACCENT_COLORS[groupIndex % MACHINE_ACCENT_COLORS.length];
             const machine = group.machineId ? machinesById.get(group.machineId) : null;
+            const collapsed = Platform.OS === 'web' && collapsedMachineIds.includes(group.machineId);
+            const projects = collapsed ? [] : group.projects.map<SessionListDisplayItem>((item, index) => (
+                Platform.OS === 'web'
+                    ? { type: 'machine-project', item, accentColor, last: index === group.projects.length - 1 }
+                    : item
+            ));
             return [{
                 type: 'machine-header',
                 machineId: group.machineId,
@@ -544,17 +604,14 @@ export function SessionsList({
                 online: machine ? isMachineOnline(machine) : null,
                 projectCount: group.projects.length,
                 sessionCount: group.projects.reduce((count, item) => count + item.project.sessionCount, 0),
-            }, ...group.projects.map<SessionListDisplayItem>((item, index) => (
-                Platform.OS === 'web'
-                    ? { type: 'machine-project', item, accentColor, last: index === group.projects.length - 1 }
-                    : item
-            ))];
+                collapsed,
+            }, ...projects];
         });
         const legacyItems = groupedRows.filter((item) => (
             item.type !== 'project' && item.type !== 'projects-header'
         ));
         return [...legacyItems, ...hierarchy, ...archiveToggle, ...archivedRows];
-    }, [flatSessionList, hasArchivedSessions, hideArchivedSessions, machines, sourceData]);
+    }, [collapsedMachineIds, flatSessionList, hasArchivedSessions, hideArchivedSessions, machines, sourceData]);
 
     // Early return if no data yet
     if (!data) {
@@ -606,6 +663,8 @@ export function SessionsList({
                         online={item.online}
                         projectCount={item.projectCount}
                         sessionCount={item.sessionCount}
+                        collapsed={item.collapsed}
+                        onToggle={toggleMachine}
                     />
                 );
 
@@ -717,7 +776,7 @@ export function SessionsList({
                     />
                 );
         }
-    }, [selectedSessionId, data, flatSessionList]);
+    }, [selectedSessionId, data, flatSessionList, toggleMachine]);
 
 
     // Remove this section as we'll use FlatList for all items now
@@ -736,7 +795,7 @@ export function SessionsList({
     // Footer removed - all sessions now shown inline
 
     return (
-        <View style={[styles.container, flatSessionList && styles.containerFlat]}>
+        <View testID="sessions-list" style={[styles.container, flatSessionList && styles.containerFlat]}>
             <View style={styles.contentContainer}>
                 <FlatList
                     data={data}

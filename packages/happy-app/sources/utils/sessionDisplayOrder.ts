@@ -134,6 +134,7 @@ export function getSessionShortcutIdsInDisplayOrder(
     data: readonly SessionListViewItem[] | null,
     machines: readonly SessionDisplayMachine[],
     unknownText: string,
+    collapsedMachineIds: readonly (string | null)[] = [],
 ): string[] {
     if (!data) {
         return [];
@@ -145,6 +146,7 @@ export function getSessionShortcutIdsInDisplayOrder(
     }
     const projectGroups = buildSessionProjectDisplayGroups(data, machines, unknownText);
     projectGroups.forEach((machineGroup) => {
+        if (collapsedMachineIds.includes(machineGroup.machineId)) return;
         machineGroup.projects.forEach((item) => {
             item.project.workspaces.forEach((workspace) => {
                 workspace.sessions.forEach((session) => sessionIds.push(session.id));

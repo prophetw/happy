@@ -199,4 +199,33 @@ describe('session display order', () => {
             'Zulu project',
         ]);
     });
+
+    it('assigns shortcut numbers to expanded devices before applying the nine-session limit', () => {
+        const project = (machineId: string | null, sessions: SessionRowData[]): SessionListViewItem => ({
+            type: 'project',
+            source: 'happy',
+            project: {
+                id: `project-${machineId}`,
+                name: 'project',
+                machineId,
+                activeCount: sessions.length,
+                sessionCount: sessions.length,
+                workspaces: [{ id: '', name: null, sessions }],
+            },
+        });
+        const hidden = Array.from({ length: 9 }, (_, index) => session(`hidden-${index}`, 'machine-a', '/project'));
+        const data: SessionListViewItem[] = [
+            project('machine-a', hidden),
+            project('machine-z', [session('visible', 'machine-z', '/project')]),
+            project(null, [session('unknown', '', '/project')]),
+            { type: 'session', session: session('archived', 'machine-a', '/project') },
+        ];
+
+        expect(getSessionShortcutIdsInDisplayOrder(data, machines, 'Unknown', ['machine-a', null]))
+            .toEqual(['visible', 'archived']);
+        expect(getSessionShortcutIdsInDisplayOrder(data, machines, 'Unknown', ['machine-a', 'machine-z', null]))
+            .toEqual(['archived']);
+        expect(getSessionShortcutIdsInDisplayOrder(data, machines, 'Unknown'))
+            .toEqual(hidden.map((item) => item.id));
+    });
 });
