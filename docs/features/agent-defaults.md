@@ -61,6 +61,8 @@ Claude 模型选择器使用宿主机配置，移除了固定的 Fable / Opus / 
 
 目录读取 `ANTHROPIC_MODEL`、`model`、`ANTHROPIC_DEFAULT_OPUS_MODEL` / `SONNET_MODEL` / `HAIKU_MODEL`，并遵守 `availableModels` 的限制。使用 `CLAUDE_CONFIG_DIR` 指定的位置；模型别名会使用宿主机的映射，保留配置的上下文后缀。只发布模型字段，不发布 API Key、Token 或服务地址。目录表示本机配置，未调用网关 `/v1/models` 验证可用性。
 
+配置了 `modelPicker`（例如 cc-switch 聚合模式）时，目录还会读取其中的 `options`，保留顺序、`label` 和 `description`，并将原始 `model` 作为选择时发送的模型 ID。`replaceBuiltInOptions: true` 时，使用聚合列表替换原有目录；未设置时追加不重复的条目。条目仍受 `availableModels` 限制；没有可用聚合条目时保留原目录。与 Claude Code 一致，`modelPicker` 仅接受用户、SDK / flag 和 managed 来源，使用最高优先级的整份配置，忽略项目和本地来源；managed 配置优先。Web 默认项继续使用 `default` 表示不覆盖宿主机选择。
+
 会话创建后按工作目录重新读取项目和本地设置，通过会话 `models` 元数据发布，并在 SDK 初始化时更新 `currentModelCode`。默认选项显示配置的实际模型；选择它时新建会话不传 `--model`，已有会话发送 `meta.model = null` 清除覆盖。新建会话时，保存的旧模型若不在该机器目录中，回退到默认配置；已有会话保留显示目录外的当前模型，并允许手动切回默认配置。已有进程需加载新版 CLI 后才能发布目录。
 
 ## 关键数据结构
@@ -110,6 +112,7 @@ pnpm test -- modelModeOptions.test.ts
 
 ## 变更记录
 
+- **2026-10-22** 补齐 `modelPicker` 目录读取，使 cc-switch 聚合模式的全部模型、名称和描述可同步到 Happy 的机器和会话选择器。
 - **2026-10-21** Claude 模型改为跟随宿主机配置，通过机器和会话元数据显示实际模型，默认不覆盖 Claude Code 的模型选择。
 - **2026-08-28** 将 Claude 默认模型从 `claude-opus-5` 调整为 `claude-sonnet-5`，以降低默认首 token 延迟和整体生成耗时，同时保留 5 代模型的能力水平。
 - **之前** Claude 默认使用 `opus`（Opus 4.8），后随 5 代模型上线改为 `claude-opus-5`。
