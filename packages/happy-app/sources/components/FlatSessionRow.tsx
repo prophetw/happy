@@ -9,6 +9,7 @@ import { Avatar } from './Avatar';
 import { StatusDot } from './StatusDot';
 import { SessionStatusBadge } from './SessionStatusBadge';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
+import { SessionSelectedRail, sessionSelectedBackgroundColor } from './SessionSelectedRail';
 import { SessionShortcutHintBadge } from './ShortcutHints';
 import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
 import { useSessionActionAlert, useSessionArchiveAction } from '@/hooks/useSessionQuickActions';
@@ -137,6 +138,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
             {...sessionPressHandlers}
             {...menuProps}
         >
+            {selected && <SessionSelectedRail />}
             <View style={[styles.avatar, faded && styles.avatarFaded]}>
                 <Avatar
                     bot={!!session.botId}
@@ -293,7 +295,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: flatListBackgroundColor(theme),
     },
     rowSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: sessionSelectedBackgroundColor(theme),
     },
     avatar: {
         width: AVATAR_SIZE,

@@ -16,6 +16,7 @@ import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
+import { SessionSelectedRail, sessionSelectedBackgroundColor } from './SessionSelectedRail';
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
 import { sessionKill } from '@/sync/ops';
 import { isWorktreePath, getRepoPath, getWorktreeName } from '@/utils/worktree';
@@ -307,11 +308,13 @@ export const CompactSessionRow = React.memo(({ session, selected, showBorder }: 
             {...sessionPressHandlers}
             {...menuProps}
         >
+            {selected && <SessionSelectedRail />}
             <View style={styles.sessionContent}>
                 <View style={styles.sessionTitleRow}>
                     <Text
                         style={[
                             styles.sessionTitle,
+                            selected && styles.sessionTitleSelected,
                             status.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected
                         ]}
                         numberOfLines={2}
@@ -485,7 +488,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderBottomColor: theme.colors.divider,
     },
     sessionRowSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: sessionSelectedBackgroundColor(theme),
+    },
+    sessionTitleSelected: {
+        ...Typography.default('semiBold'),
     },
     sessionContent: {
         flex: 1,

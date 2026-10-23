@@ -689,14 +689,22 @@ type UsageRowProps = {
     weekPercent: number | null;
     /** Prebuilt "Session — 32% · resets 6 PM" rows for the week popup. */
     usageMenuOptions: NativeSettingsMenuOption[];
+    /** The live model and effort pick, named the way the pickers name them. */
+    modelLabel?: string | null;
+    effortLabel?: string | null;
 };
 
 // Sits under the composer card, right-aligned with the effort label: week
-// quota and the context gauge. Each opens its own detail view.
+// quota and the context gauge. Each opens its own detail view. On web the
+// model and effort the chat is actually running with sit on the left of the
+// same line, because there the composer hides them behind the gear.
 const AgentInputUsageRow = React.memo(function AgentInputUsageRow(p: UsageRowProps) {
     const { theme } = useUnistyles();
     const [showPreciseContext, setShowPreciseContext] = React.useState(false);
-    if (!p.contextStatus && p.weekPercent == null) {
+    const modelEffortText = Platform.OS === 'web'
+        ? [p.modelLabel, p.effortLabel].filter(Boolean).join(' · ')
+        : '';
+    if (!p.contextStatus && p.weekPercent == null && !modelEffortText) {
         return null;
     }
     const weekText = p.weekPercent != null ? (
@@ -716,6 +724,23 @@ const AgentInputUsageRow = React.memo(function AgentInputUsageRow(p: UsageRowPro
             paddingTop: 6,
             minHeight: 18,
         }}>
+            {modelEffortText ? (
+                <Text
+                    numberOfLines={1}
+                    accessibilityLabel={modelEffortText}
+                    style={{
+                        flexShrink: 1,
+                        minWidth: 0,
+                        fontSize: 11,
+                        color: theme.colors.textSecondary,
+                        // Pushes the quota and context readouts to the edge.
+                        marginRight: 'auto',
+                        ...Typography.default(),
+                    }}
+                >
+                    {modelEffortText}
+                </Text>
+            ) : null}
             {weekText && (
                 p.usageMenuOptions.length > 0 ? (
                     <NativeSettingsMenu
@@ -2287,6 +2312,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         contextStatus={contextStatus}
                         weekPercent={weekPercent}
                         usageMenuOptions={usageMenuOptions}
+                        modelLabel={props.zenMode ? null : props.modelMode?.name}
+                        effortLabel={props.zenMode ? null : props.effortLevel?.name}
                     />
                 </AnimatedFade>
             </View>

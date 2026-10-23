@@ -24,6 +24,7 @@ import { HomeListHeader } from './HomeListHeader';
 import { layout } from './layout';
 import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
+import { SessionSelectedRail, sessionSelectedBackgroundColor } from './SessionSelectedRail';
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
 import { t } from '@/text';
 import { SessionShortcutHintBadge } from './ShortcutHints';
@@ -293,7 +294,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: 12,
     },
     sessionItemSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: sessionSelectedBackgroundColor(theme),
     },
     sessionContent: {
         flex: 1,
@@ -903,6 +904,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
             {...sessionPressHandlers}
             {...menuProps}
         >
+            {selected && <SessionSelectedRail />}
             <View style={styles.avatarContainer}>
                 <Avatar bot={!!session.botId} id={session.avatarId} size={48} monochrome={!status.isConnected} flavor={session.flavor} clientId={session.clientId} imageUrl={session.avatarUri} thumbhash={session.avatarThumbhash} badgeLocation="sessionList" />
                 {session.hasDraft && (
