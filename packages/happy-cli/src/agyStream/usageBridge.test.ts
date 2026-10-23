@@ -25,6 +25,15 @@ describe('resolveAgyModelContextWindow', () => {
 });
 
 describe('buildAgyUsageEnvelope', () => {
+  it('does not expose cumulative session totals as current context usage', () => {
+    const summary = { agy_usage_scope: 'session', input_tokens: 2100, output_tokens: 200 };
+    expect(buildAgyUsageEnvelope(summary)).toBeNull();
+    const previous = buildAgyUsageEnvelope({ input_tokens: 1100, output_tokens: 100 })!;
+    const envelope = buildAgyUsageEnvelope(summary, undefined, previous.usage);
+    expect(envelope?.usage).toEqual(previous.usage);
+    expect(envelope?.usage?.input_tokens).toBe(1100);
+  });
+
   it('returns null if no token information is present', () => {
     expect(buildAgyUsageEnvelope({})).toBeNull();
     expect(buildAgyUsageEnvelope({ irrelevant: 'value' })).toBeNull();
@@ -83,6 +92,23 @@ describe('buildAgyUsageEnvelope', () => {
 });
 
 describe('buildUsageEnvelopeFromContextWindow', () => {
+  it('prefers current request usage to session totals without mixing output counts', () => {
+    const envelope = buildUsageEnvelopeFromContextWindow({
+      conversationId: 'active',
+      totalInputTokens: 50000,
+      totalOutputTokens: 9000,
+      contextWindowSize: 200000,
+      currentUsage: { inputTokens: 1000, outputTokens: 50, cacheReadInputTokens: 200, cacheCreationInputTokens: 100 },
+    }, 'Claude', 'active');
+    expect(envelope?.usage).toEqual({
+      input_tokens: 1000, output_tokens: 50, cache_read_input_tokens: 200,
+      cache_creation_input_tokens: 100, context_window: 200000,
+    });
+    expect(buildUsageEnvelopeFromContextWindow({
+      conversationId: 'active', currentUsage: { inputTokens: 0 }, totalOutputTokens: 9000,
+    }, undefined, 'active')?.usage).toMatchObject({ input_tokens: 0, output_tokens: 0 });
+  });
+
   it('builds a service envelope from statusline contextWindow when conversationId matches', () => {
     const envelope = buildUsageEnvelopeFromContextWindow(
       {

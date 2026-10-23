@@ -80,11 +80,11 @@ describe('StreamJsonParser', () => {
     expect(messages).toEqual([
       { type: 'model-output', textDelta: 'Chunk 1' },
       { type: 'model-output', textDelta: 'Chunk 2' },
-      { type: 'token-count', total_tokens: 100, agy_usage_scope: 'turn' },
+      { type: 'token-count', total_tokens: 100, agy_usage_scope: 'session' },
     ]);
   });
 
-  it('preserves final usage duration without treating step snapshots as turn totals', () => {
+  it('preserves the step identity and distinguishes session totals from step usage', () => {
     const messages: AgentMessage[] = [];
     const parser = new StreamJsonParser({ onMessage: (msg) => messages.push(msg) });
     parser.feed(JSON.stringify({
@@ -96,8 +96,8 @@ describe('StreamJsonParser', () => {
       result: { status: 'SUCCESS', duration_seconds: 3.5, usage: { output_tokens: 92 } },
     }) + '\n');
     expect(messages).toEqual([
-      { type: 'token-count', output_tokens: 92 },
-      { type: 'token-count', output_tokens: 92, agy_usage_scope: 'turn', duration_seconds: 3.5 },
+      { type: 'token-count', output_tokens: 92, agy_usage_scope: 'step', agy_step_index: 1 },
+      { type: 'token-count', output_tokens: 92, agy_usage_scope: 'session', duration_seconds: 3.5 },
     ]);
   });
 

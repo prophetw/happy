@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { AgySdkBackend } from './AgySdkBackend';
+import { AgyTokenSpeedTracker } from './tokenSpeed';
 import type { SpawnFn } from './AgyBackend';
 import type { AgentMessage } from '@/agent/core/AgentBackend';
 
@@ -27,6 +28,35 @@ function makeFakeSdkChild() {
 }
 
 describe('AgySdkBackend', () => {
+  it('uses each completed SDK response count without subtracting previous turns', async () => {
+    const { child, stdout } = makeFakeSdkChild();
+    const backend = new AgySdkBackend({ cwd: '/work', permissionMode: 'default', spawnFn: vi.fn(() => child) as unknown as SpawnFn });
+    let now = 0;
+    const tracker = new AgyTokenSpeedTracker(() => now);
+    backend.onMessage((message) => {
+      if (message.type === 'token-count') tracker.update(message);
+    });
+    const startup = backend.startSession();
+    stdout.emit('data', '{"event":"ready","conversation_id":"sdk-speed"}\n');
+    await startup;
+
+    try {
+      for (const count of [100, 150, 150, 50, 0, 80]) {
+        tracker.startTurn();
+        const turn = backend.sendPrompt('/work', 'Next task');
+        now += 2000;
+        stdout.emit('data', JSON.stringify({ event: 'token_count', input_tokens: 1000, output_tokens: count }) + '\n');
+        stdout.emit('data', '{"event":"turn_complete","status":"SUCCESS"}\n');
+        await turn;
+        tracker.finishTurn();
+        expect(tracker.tokensPerSecond).toBe(count > 0 ? count / 2 : undefined);
+        now += 10000;
+      }
+    } finally {
+      await backend.dispose();
+    }
+  });
+
   it.each(['CANCELED', 'CANCELLED'])('preserves a %s result and accepts the next SDK turn', async (status) => {
     const { child, stdout } = makeFakeSdkChild();
     const backend = new AgySdkBackend({ cwd: '/work', permissionMode: 'default', spawnFn: vi.fn(() => child) as unknown as SpawnFn });

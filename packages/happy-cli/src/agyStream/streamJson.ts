@@ -5,7 +5,7 @@
  * (NDJSON) events during headless execution:
  *   - `init`: announces the conversation ID, tools, permission mode, and cwd.
  *   - `step_update`: stream events for responses, tool calls, tool results, thinking, and usage.
- *   - `result`: final turn summary with status ('SUCCESS' | 'ERROR' | 'CANCELED'), duration, and usage.
+ *   - `result`: turn status ('SUCCESS' | 'ERROR' | 'CANCELED') with cumulative conversation duration and usage.
  *
  * This module provides a streaming NDJSON chunk parser that turns raw stdout bytes into
  * structured Happy AgentMessage events.
@@ -174,6 +174,8 @@ export class StreamJsonParser {
       this.options.onMessage?.({
         type: 'token-count',
         ...step.usage,
+        agy_usage_scope: 'step',
+        agy_step_index: step.step_index,
       });
     }
 
@@ -229,7 +231,7 @@ export class StreamJsonParser {
       this.options.onMessage?.({
         type: 'token-count',
         ...result.usage,
-        agy_usage_scope: 'turn',
+        agy_usage_scope: 'session',
         ...(result.duration_seconds !== undefined ? { duration_seconds: result.duration_seconds } : {}),
       });
     }

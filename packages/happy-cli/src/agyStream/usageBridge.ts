@@ -45,13 +45,18 @@ export function pickTokenCount(message: Record<string, unknown>, keys: string[])
 }
 
 /**
- * Converts a raw token-count message or step.usage / result.usage into a
- * usage-only SessionEnvelope that Happy clients consume to update contextSize.
+ * Converts request usage into a context snapshot. Session summaries reuse the
+ * latest context counts: cumulative consumption is not current context size.
  */
 export function buildAgyUsageEnvelope(
   message: Record<string, unknown>,
   currentModel?: string,
+  currentUsage?: SessionUsage,
 ): SessionEnvelope | null {
+  if (message.agy_usage_scope === 'session') {
+    return currentUsage ? createEnvelope('agent', { t: 'service', text: '' }, { usage: { ...currentUsage } }) : null;
+  }
+
   const input = pickTokenCount(message, [
     'input_tokens',
     'inputTokens',
@@ -152,8 +157,11 @@ export function buildUsageEnvelopeFromContextWindow(
     return null;
   }
 
-  const inputTokens = contextWindow.totalInputTokens;
-  const outputTokens = contextWindow.totalOutputTokens ?? 0;
+  const currentUsage = contextWindow.currentUsage;
+  const inputTokens = currentUsage?.inputTokens ?? contextWindow.totalInputTokens;
+  const outputTokens = currentUsage?.inputTokens !== undefined
+    ? currentUsage.outputTokens ?? 0
+    : contextWindow.totalOutputTokens ?? 0;
   if (inputTokens === undefined && contextWindow.contextWindowSize === undefined) {
     return null;
   }

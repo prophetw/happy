@@ -165,9 +165,12 @@ describe('AGY session push notifications', () => {
   }
 
   it('reports turn speed, preserves it through statusline snapshots, and resets it for the next turn', async () => {
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
     mocks.backend.sendPrompt.mockImplementationOnce(async () => {
-      emit({ type: 'token-count', output_tokens: 100 });
-      emit({ type: 'token-count', agy_usage_scope: 'turn', output_tokens: 100, duration_seconds: 2 });
+      now += 2000;
+      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 500, output_tokens: 100 });
+      emit({ type: 'token-count', agy_usage_scope: 'session', input_tokens: 50000, output_tokens: 1100, duration_seconds: 2000 });
     });
     await start();
     mocks.createBackend.mock.calls[0][0].onConversationId('speed-conversation');
@@ -176,7 +179,7 @@ describe('AGY session push notifications', () => {
     const usageEnvelopes = () => session.sendSessionProtocolMessage.mock.calls
       .map(([envelope]) => envelope).filter((envelope) => envelope.usage);
     expect(usageEnvelopes().at(-1)).toMatchObject({
-      ev: { t: 'service', text: '' }, usage: { output_tokens: 100, output_tokens_per_second: 50 },
+      ev: { t: 'service', text: '' }, usage: { input_tokens: 500, output_tokens: 100, output_tokens_per_second: 50 },
     });
     expect(usageEnvelopes().at(-1)?.turn).toBeUndefined();
 
@@ -194,6 +197,64 @@ describe('AGY session push notifications', () => {
     await send('Second task without output counts');
     await vi.waitFor(() => expect(turnStatuses()).toHaveLength(2));
     expect(usageEnvelopes().at(-1)?.usage.output_tokens_per_second).toBeUndefined();
+  });
+
+  it('preserves known context for summary-only turns and clears it with /clear', async () => {
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    mocks.backend.sendPrompt.mockImplementationOnce(async () => {
+      now += 2000;
+      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 1100, output_tokens: 100 });
+      emit({ type: 'token-count', agy_usage_scope: 'session', input_tokens: 2100, output_tokens: 1100 });
+    });
+    await start();
+    const usageEnvelopes = () => session.sendSessionProtocolMessage.mock.calls
+      .map(([envelope]) => envelope).filter((envelope) => envelope.usage);
+    await send('First');
+    await vi.waitFor(() => expect(turnStatuses()).toHaveLength(1));
+    expect(usageEnvelopes().at(-1)?.usage).toMatchObject({ input_tokens: 1100, output_tokens: 100, output_tokens_per_second: 50 });
+
+    mocks.backend.sendPrompt.mockImplementationOnce(async () => {
+      now += 2000;
+      emit({ type: 'token-count', agy_usage_scope: 'session', input_tokens: 9000, output_tokens: 1200 });
+    });
+    await send('Summary only');
+    await vi.waitFor(() => expect(turnStatuses()).toHaveLength(2));
+    expect(usageEnvelopes().at(-1)?.usage).toMatchObject({ input_tokens: 1100, output_tokens: 100, output_tokens_per_second: 50 });
+
+    const readyCount = session.sendSessionEvent.mock.calls.length;
+    await send('/clear');
+    await vi.waitFor(() => expect(session.sendSessionEvent.mock.calls.length).toBeGreaterThan(readyCount));
+    const count = usageEnvelopes().length;
+    mocks.backend.sendPrompt.mockImplementationOnce(async () => {
+      now += 2000;
+      emit({ type: 'token-count', agy_usage_scope: 'session', input_tokens: 50000, output_tokens: 2000 });
+    });
+    await send('Unknown context after clear');
+    await vi.waitFor(() => expect(turnStatuses()).toHaveLength(3));
+    expect(usageEnvelopes()).toHaveLength(count);
+  });
+
+  it('keeps the latest statusline context when a partial turn ends without a result', async () => {
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    await start();
+    mocks.createBackend.mock.calls[0][0].onConversationId('partial-turn');
+    const syncQuota = mocks.quota.subscribe.mock.calls[0][0];
+    mocks.backend.sendPrompt.mockImplementationOnce(async () => {
+      now += 1000;
+      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 1000, output_tokens: 100 });
+      syncQuota({ updatedAt: Date.now(), contextWindow: {
+        conversationId: 'partial-turn', totalInputTokens: 50000,
+        currentUsage: { inputTokens: 2000, outputTokens: 100 },
+      } });
+      now += 1000;
+      throw new Error('Connection dropped');
+    });
+    await send('Partial output');
+    await vi.waitFor(() => expect(turnStatuses()).toEqual(['failed']));
+    const envelopes = session.sendSessionProtocolMessage.mock.calls.map(([envelope]) => envelope).filter((envelope) => envelope.usage);
+    expect(envelopes.at(-1)?.usage).toMatchObject({ input_tokens: 2000, output_tokens: 100, output_tokens_per_second: 50 });
   });
 
   it.each([undefined, 'cli', 'sdk'] as const)('sends one server-routed push per successful turn (engine %s)', async (engine) => {

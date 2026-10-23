@@ -22,7 +22,7 @@ import { render, type Instance as InkInstance } from 'ink';
 import { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/apiSession';
 import { AcpSessionManager } from '@/agent/acp/AcpSessionManager';
-import type { SessionEnvelope } from '@slopus/happy-wire';
+import { createEnvelope, type SessionEnvelope } from '@slopus/happy-wire';
 import { logger } from '@/ui/logger';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { Credentials, readSettings } from '@/persistence';
@@ -287,9 +287,10 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   };
 
   const tokenSpeed = new AgyTokenSpeedTracker();
-  let lastTokenUsage: Record<string, unknown> | undefined;
+  let lastContextUsage: SessionEnvelope['usage'];
   const sendUsageEnvelope = (envelope: SessionEnvelope | null) => {
     if (!envelope) return;
+    lastContextUsage = envelope.usage;
     const rate = tokenSpeed.tokensPerSecond;
     sendEnvelopes([rate !== undefined && envelope.usage
       ? { ...envelope, usage: { ...envelope.usage, output_tokens_per_second: rate } }
@@ -302,9 +303,8 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     }
 
     if (msg.type === 'token-count') {
-      lastTokenUsage = msg;
       tokenSpeed.update(msg);
-      const usageEnv = buildAgyUsageEnvelope(msg as Record<string, unknown>, displayedModel);
+      const usageEnv = buildAgyUsageEnvelope(msg as Record<string, unknown>, displayedModel, lastContextUsage);
       sendUsageEnvelope(usageEnv);
     } else if (msg.type === 'model-output' && msg.textDelta) {
       messageBuffer.addMessage(msg.textDelta, 'assistant');
@@ -544,7 +544,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         cancelActiveTitleSync = null;
         backend.reset();
         tokenSpeed.reset();
-        lastTokenUsage = undefined;
+        lastContextUsage = undefined;
         permissionHandler.reset();
         delete metadata.agyConversationId;
         delete metadata.summary;
@@ -691,7 +691,6 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
       if (abortCountAtTurnStart !== abortCount) continue;
       sendEnvelopes(sessionManager.startTurn());
       tokenSpeed.startTurn();
-      lastTokenUsage = undefined;
       try {
         await backend.sendPrompt(process.cwd(), promptToSend);
         if (abortCountAtTurnStart === abortCount) {
@@ -724,8 +723,8 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         sendEnvelopes(sessionManager.endTurn(cancelled ? 'cancelled' : 'failed'));
       } finally {
         tokenSpeed.finishTurn();
-        if (lastTokenUsage && tokenSpeed.tokensPerSecond !== undefined) {
-          sendUsageEnvelope(buildAgyUsageEnvelope(lastTokenUsage, displayedModel));
+        if (lastContextUsage && tokenSpeed.tokensPerSecond !== undefined) {
+          sendUsageEnvelope(createEnvelope('agent', { t: 'service', text: '' }, { usage: lastContextUsage }));
         }
       }
       quotaStore.loadFromFile();

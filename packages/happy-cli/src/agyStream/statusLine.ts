@@ -478,7 +478,7 @@ export function parseStatusLineQuota(rawQuotaOrPayload: any, now = Date.now()): 
       (typeof rawQuotaOrPayload.session_id === 'string' ? rawQuotaOrPayload.session_id : undefined) ||
       (typeof rawQuotaOrPayload.sessionId === 'string' ? rawQuotaOrPayload.sessionId : undefined);
 
-    if (totalInput !== undefined || totalOutput !== undefined || windowSize !== undefined || usedPct !== undefined) {
+    if (totalInput !== undefined || totalOutput !== undefined || windowSize !== undefined || usedPct !== undefined || currentUsage?.inputTokens !== undefined) {
       contextWindow = {
         conversationId,
         sessionId,

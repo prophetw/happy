@@ -21,12 +21,17 @@ App 与 CLI 都需要包含本功能；旧 CLI 或没有速度字段的历史消
   重复用量事件不会累加 token；结束后冻结耗时，迟到的最终用量仍使用该结束时间。
   未知基线、计数器回退或缺少计时依据时隐藏该回合的速度，下一回合可重新开始统计。
 - **agy 默认 stream-json 引擎**：由于 agy 持续进程的 `result.usage.output_tokens` 与 `result.duration_seconds`
-  为整场会话轨迹的累计值（包含空闲停顿），速度跟踪器按每轮基线差值 `output_tokens - baseline`（或当轮 step 输出增量）
-  计算单轮输出 token；当提供方 `duration_seconds` 显著超出当轮单调时钟耗时时，判定为会话累计寿命并自动回退为当前回合
-  `sendPrompt` 起止的实际单调时钟耗时。**SDK 引擎**使用该次 `response.usage.output_tokens`
-  和相同的本地回合计时。状态栏上下文快照保留本回合的有效速度，新回合与 `/clear` 重置统计；
-  恢复会话时不把历史用量计入当前回合。缺少输出计数时隐藏，不从字符数或配额百分比估算。
-  旧 `legacy` 引擎尚未接入。
+  为整场会话轨迹的累计值（耗时包含空闲停顿），速度按每轮基线差值 `output_tokens - baseline` 计算输出 token，
+  始终使用本轮 `sendPrompt` 起止的单调时钟耗时，不采用提供方累计 duration。
+  内部用量事件显式区分 `session`（stream-json result）、`step` 和 `turn`（SDK response）。
+  恢复会话的首轮若没有历史基线，使用当轮 step 输出；按 `step_index` 保存最新快照，重复上报不累加。
+  缺少最终 result 会使下一轮基线失效，再通过当轮 step 或新的 result 建立基线；
+  无可靠计数、基线未知且没有 step、计数器回退或耗时无效时隐藏速度，不把历史 token 算入当前轮。
+  **SDK 引擎**直接使用该次 `response.usage.output_tokens` 和本地回合计时，不扣除上一轮用量。
+  上下文占用使用最近一次请求或状态栏快照，状态栏优先采用 `current_usage`；
+  累计 result 仅更新速度，不能覆盖上下文大小。尚无上下文快照时不为发送速度而编造用量。
+  结束时在最新上下文快照上附加最终速度。新回合清除速度，`/clear` 同时重置基线和上下文快照。
+  不从字符数或配额百分比估算输出 token；旧 `legacy` 引擎尚未接入。
 
 未提供速度、非正或非有限速度不显示；有效值保留一位小数，低于 `0.1` 显示 `<0.1 tok/s`。
 同轮后续没有速度字段的用量更新会清除该轮旧值，不影响其他轮次；清空会话会重建 Codex 计时器。
@@ -48,7 +53,8 @@ App 与 CLI 都需要包含本功能；旧 CLI 或没有速度字段的历史消
 ## 验证
 
 - CLI：`utils/tokenSpeed.test.ts`、Claude/Codex 的 `tokenSpeed.test.ts`，以及既有 converter / mapper 测试。
-- agy：`agyStream/tokenSpeed.test.ts`、stream-json / SDK 事件映射与 runner 用量桥接测试。
+- agy：`agyStream/tokenSpeed.test.ts` 通过真实解析器重放多轮、恢复、重复 step、缺少 result 与计数器回退；
+  SDK 测试串联桥接事件与速度计算，runner / 用量桥接测试验证上下文不被累计值覆盖和 `/clear` 重置。
 - App：`sync/tokenSpeed.test.ts` 验证归一化、逐轮速度归属、历史分页、迟到用量、排队输入、异常值与无空白行；
   `components/MessageView.test.ts` 验证速度与耗时、复制按钮位于同一回复底部；
   `components/usage/OutputTokenSpeed.test.ts` 验证显示、隐藏与说明点击。

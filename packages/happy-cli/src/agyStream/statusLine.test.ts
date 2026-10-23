@@ -214,6 +214,17 @@ describe('parseStatusLinePayload', () => {
       usedPercentage: 9.05,
     });
   });
+
+  it('retains a current_usage context snapshot without cumulative totals', () => {
+    const parsed = parseStatusLinePayload(JSON.stringify({
+      conversation_id: 'active',
+      context_window: { current_usage: { input_tokens: 1000, output_tokens: 50, cache_read_input_tokens: 200 } },
+    }));
+    expect(parsed?.quota?.contextWindow).toMatchObject({
+      conversationId: 'active',
+      currentUsage: { inputTokens: 1000, outputTokens: 50, cacheReadInputTokens: 200 },
+    });
+  });
 });
 
 describe('AgyQuotaStore', () => {

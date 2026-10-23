@@ -1,37 +1,170 @@
 import { describe, expect, it } from 'vitest';
+import { StreamJsonParser } from './streamJson';
 import { AgyTokenSpeedTracker } from './tokenSpeed';
 
+function streamTracker() {
+  let now = 0;
+  const tracker = new AgyTokenSpeedTracker(() => now);
+  const parser = new StreamJsonParser({
+    onMessage: (message) => {
+      if (message.type === 'token-count') tracker.update(message);
+    },
+  });
+  const feed = (event: unknown) => parser.feed(JSON.stringify(event) + '\n');
+  return {
+    tracker,
+    setTime: (time: number) => { now = time; },
+    step: (index: number, output: number, state = 'DONE') => feed({
+      event: 'step_update',
+      step_update: { step_index: index, state, step_type: 'agent_response', usage: { output_tokens: output } },
+    }),
+    result: (output: number, duration = 2000) => feed({
+      event: 'result',
+      result: { status: 'SUCCESS', duration_seconds: duration, usage: { output_tokens: output } },
+    }),
+  };
+}
+
 describe('AgyTokenSpeedTracker', () => {
-  it('uses the provider turn duration and does not sum step or repeated summaries', () => {
-    let now = 1000;
-    const tracker = new AgyTokenSpeedTracker(() => now);
+  it('uses local turn time even when cumulative duration looks realistic', () => {
+    const { tracker, setTime, step, result } = streamTracker();
     tracker.startTurn();
-    now = 11000;
-    tracker.update({ output_tokens: 200 });
-    expect(tracker.tokensPerSecond).toBeUndefined();
-    const summary = { agy_usage_scope: 'turn', output_tokens: 100, duration_seconds: 2 };
-    tracker.update(summary);
-    tracker.update(summary);
-    expect(tracker.tokensPerSecond).toBe(50);
-    now += 1000;
+    setTime(2000);
+    step(1, 100);
+    result(100, 2);
     tracker.finishTurn();
     expect(tracker.tokensPerSecond).toBe(50);
-    tracker.update({ ...summary, output_tokens: 9999 });
+
+    tracker.startTurn();
+    setTime(4000);
+    step(2, 100);
+    result(200, 4);
+    result(200, 4);
+    tracker.finishTurn();
     expect(tracker.tokensPerSecond).toBe(50);
   });
 
-  it('uses monotonic full-turn elapsed time for SDK usage, then freezes it', () => {
-    let now = 1000;
-    const tracker = new AgyTokenSpeedTracker(() => now);
+  it('excludes idle time and conversation age from subsequent turns', () => {
+    const { tracker, setTime, step, result } = streamTracker();
     tracker.startTurn();
-    now = 3000;
-    tracker.update({ agy_usage_scope: 'turn', output_tokens: 100 });
+    setTime(2000);
+    step(1, 100);
+    result(100);
+    tracker.finishTurn();
+
+    setTime(100000);
+    tracker.startTurn();
+    setTime(108000);
+    step(2, 424);
+    setTime(139000);
+    step(3, 3035);
+    result(3559, 2067.26);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBeCloseTo(3459 / 39);
+  });
+
+  it('reconstructs a resumed turn from unique step snapshots, including updated counts', () => {
+    const { tracker, setTime, step, result } = streamTracker();
+    tracker.startTurn();
+    setTime(2000);
+    step(11, 20, 'ACTIVE');
+    step(11, 20, 'ACTIVE');
+    step(11, 40);
+    step(11, 40);
+    step(12, 60);
+    result(1100);
+    result(1100);
+    tracker.finishTurn();
     expect(tracker.tokensPerSecond).toBe(50);
-    now = 5000;
+
+    setTime(10000);
+    tracker.startTurn();
+    setTime(12000);
+    result(1150);
     tracker.finishTurn();
     expect(tracker.tokensPerSecond).toBe(25);
-    now = 15000;
+  });
+
+  it('hides an unknown resume baseline and uses that result as the next baseline', () => {
+    const { tracker, setTime, result } = streamTracker();
+    tracker.startTurn();
+    setTime(2000);
+    result(1100);
     tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBeUndefined();
+
+    tracker.startTurn();
+    setTime(4000);
+    result(1200);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBe(50);
+  });
+
+  it.each([true, false])('invalidates the baseline after a missing result (next turn has steps: %s)', (hasSteps) => {
+    const { tracker, setTime, step, result } = streamTracker();
+    tracker.startTurn();
+    setTime(2000);
+    step(1, 100);
+    result(100);
+    tracker.finishTurn();
+
+    tracker.startTurn();
+    setTime(4000);
+    step(2, 50);
+    step(2, 50);
+    // A cancelled/crashed process can exit without a final result.
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBe(25);
+
+    tracker.startTurn();
+    setTime(6000);
+    if (hasSteps) step(3, 100);
+    result(250);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBe(hasSteps ? 50 : undefined);
+
+    tracker.startTurn();
+    setTime(8000);
+    result(350);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBe(50);
+  });
+
+  it.each([0, 20])('hides a counter reset to %s and establishes a fresh baseline', (resetTotal) => {
+    const { tracker, setTime, step, result } = streamTracker();
+    tracker.startTurn();
+    setTime(2000);
+    step(1, 100);
+    result(100);
+    tracker.finishTurn();
+
+    tracker.startTurn();
+    setTime(4000);
+    step(2, resetTotal);
+    result(resetTotal);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBeUndefined();
+
+    tracker.startTurn();
+    setTime(6000);
+    result(resetTotal + 100);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBe(50);
+  });
+
+  it('includes trailing work in local timing, freezes completion, and ignores late usage', () => {
+    const { tracker, setTime, step, result } = streamTracker();
+    tracker.startTurn();
+    setTime(2000);
+    step(1, 100);
+    result(100, 1);
+    expect(tracker.tokensPerSecond).toBe(50);
+    setTime(4000);
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBe(25);
+    setTime(10000);
+    tracker.finishTurn();
+    result(9999);
     expect(tracker.tokensPerSecond).toBe(25);
     tracker.startTurn();
     expect(tracker.tokensPerSecond).toBeUndefined();
@@ -39,112 +172,39 @@ describe('AgyTokenSpeedTracker', () => {
     expect(tracker.tokensPerSecond).toBeUndefined();
   });
 
-  it.each([undefined, 0, -1, NaN, Infinity, '100'])('hides invalid output counts (%s)', (output_tokens) => {
-    const tracker = new AgyTokenSpeedTracker(() => 1000);
+  it.each([undefined, null, -1, NaN, Infinity, '100', 1.5, Number.MAX_SAFE_INTEGER + 1])('hides invalid counts (%s)', (output_tokens) => {
+    let now = 0;
+    const tracker = new AgyTokenSpeedTracker(() => now);
     tracker.startTurn();
-    tracker.update({ agy_usage_scope: 'turn', output_tokens, duration_seconds: 2 });
+    now = 2000;
+    tracker.update({ agy_usage_scope: 'turn', output_tokens });
+    tracker.finishTurn();
     expect(tracker.tokensPerSecond).toBeUndefined();
   });
 
-  it('ignores historical summaries and clears speed on reset', () => {
-    const tracker = new AgyTokenSpeedTracker(() => 1000);
-    const summary = { agy_usage_scope: 'turn', output_tokens: 100, duration_seconds: 2 };
-    tracker.update(summary);
-    expect(tracker.tokensPerSecond).toBeUndefined();
+  it('does not invent a duration when no local time has elapsed', () => {
+    const tracker = new AgyTokenSpeedTracker(() => 0);
     tracker.startTurn();
-    tracker.update(summary);
+    tracker.update({ agy_usage_scope: 'turn', output_tokens: 100, duration_seconds: 2 });
+    tracker.finishTurn();
+    expect(tracker.tokensPerSecond).toBeUndefined();
+  });
+
+  it('ignores historical summaries and clears the cumulative baseline on reset', () => {
+    const { tracker, setTime, step, result } = streamTracker();
+    result(1000);
+    tracker.startTurn();
+    setTime(2000);
+    step(1, 100);
+    result(1100);
+    tracker.finishTurn();
     expect(tracker.tokensPerSecond).toBe(50);
     tracker.reset();
-    tracker.update(summary);
     expect(tracker.tokensPerSecond).toBeUndefined();
-  });
-
-  it('correctly calculates per-turn token speed across multi-turn sessions with cumulative counts', () => {
-    let now = 1000;
-    const tracker = new AgyTokenSpeedTracker(() => now);
-
-    // Turn 1: 100 tokens produced in 2s
     tracker.startTurn();
-    now = 3000;
-    tracker.update({ output_tokens: 100 });
-    tracker.update({ agy_usage_scope: 'turn', output_tokens: 100, duration_seconds: 2 });
-    expect(tracker.tokensPerSecond).toBe(50); // 100 / 2
+    setTime(4000);
+    result(1200);
     tracker.finishTurn();
-
-    // User pauses for 30s before Turn 2
-    now = 33000;
-
-    // Turn 2: produces 150 tokens in 3s (cumulative total 250)
-    tracker.startTurn();
-    now = 36000;
-    tracker.update({ output_tokens: 150 });
-    tracker.update({ agy_usage_scope: 'turn', output_tokens: 250, duration_seconds: 3 });
-    expect(tracker.tokensPerSecond).toBe(50); // (250 - 100) / 3 = 150 / 3 = 50, NOT 250 / 3
-    tracker.finishTurn();
-  });
-
-  it('rejects cumulative conversation uptime duration and falls back to turn elapsed time', () => {
-    let now = 10000;
-    const tracker = new AgyTokenSpeedTracker(() => now);
-
-    // Session has been alive for 34.5 minutes (2067s).
-    // The current turn took 39 seconds (10000ms -> 49000ms).
-    // It produced 3459 tokens (delta between 15718 and baseline 12259).
-    // Prior baseline is 12259.
-    tracker.startTurn();
-    now = 12000;
-    tracker.update({ output_tokens: 12259 });
-    tracker.update({ agy_usage_scope: 'turn', output_tokens: 12259, duration_seconds: 2000 });
-    tracker.finishTurn();
-
-    // Now the active turn:
-    now = 100000;
-    tracker.startTurn();
-    // Step 1: 424 tokens
-    now = 108000;
-    tracker.update({ output_tokens: 424 });
-    // Step 2: 3035 tokens
-    now = 139000; // elapsed = 39s
-    tracker.update({ output_tokens: 3035 });
-
-    // Result arrives with cumulative trajectory uptime (2067.26s) and total (15718)
-    tracker.update({
-      agy_usage_scope: 'turn',
-      output_tokens: 15718,
-      duration_seconds: 2067.26,
-    });
-    tracker.finishTurn();
-
-    // Should use 39s turn elapsed time, NOT 2067s conversation age!
-    // 3459 tokens / 39s ≈ 88.69 tok/s
-    expect(tracker.tokensPerSecond).toBeCloseTo(3459 / 39, 1);
-  });
-
-  it('reconstructs baseline on resumed sessions using in-turn step outputs', () => {
-    let now = 1000;
-    const tracker = new AgyTokenSpeedTracker(() => now);
-
-    // Resumed session without prior local baseline:
-    tracker.startTurn();
-    // Turn produces 4 tokens in step
-    now = 2000;
-    tracker.update({ output_tokens: 4 });
-    // agy reports cumulative total 97 for the conversation
-    now = 3000; // elapsed = 2s
-    tracker.update({ agy_usage_scope: 'turn', output_tokens: 97 });
-    tracker.finishTurn();
-
-    // 4 tokens / 2s = 2 tok/s, baseline established as 97 - 4 = 93
-    expect(tracker.tokensPerSecond).toBe(2);
-
-    // Next turn produces 10 tokens
-    now = 10000;
-    tracker.startTurn();
-    now = 12000; // elapsed = 2s
-    tracker.update({ agy_usage_scope: 'turn', output_tokens: 107 });
-    tracker.finishTurn();
-
-    // (107 - 97) / 2 = 10 / 2 = 5 tok/s
-    expect(tracker.tokensPerSecond).toBe(5);
+    expect(tracker.tokensPerSecond).toBeUndefined();
   });
 });

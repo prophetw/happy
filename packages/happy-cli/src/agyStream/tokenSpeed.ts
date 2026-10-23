@@ -1,5 +1,10 @@
 import { outputTokensPerSecond } from '@/utils/tokenSpeed';
 
+function outputCount(message: Record<string, unknown>): number | undefined {
+  const value = message.output_tokens ?? message.outputTokens;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 /** Tracks per-turn token speed for agy stream-json and SDK engines. */
 export class AgyTokenSpeedTracker {
   private inTurn = false;
@@ -7,9 +12,9 @@ export class AgyTokenSpeedTracker {
   private completedAt: number | undefined;
   private baseline: number | undefined;
   private latestCumulativeTotal: number | undefined;
-  private stepOutputTokens = 0;
+  private readonly stepOutputs = new Map<number, number>();
   private turnOutputTokens: number | undefined;
-  private durationMs: number | undefined;
+  private invalid = false;
   private rate: number | undefined;
 
   constructor(private readonly now: () => number = () => performance.now()) {}
@@ -19,53 +24,45 @@ export class AgyTokenSpeedTracker {
     this.startedAt = this.now();
     this.completedAt = undefined;
     this.baseline = this.latestCumulativeTotal;
-    this.stepOutputTokens = 0;
+    // Only a final session summary can establish the next turn's baseline.
+    // A missing result must not leave the previous turn's total in place.
+    this.latestCumulativeTotal = undefined;
+    this.stepOutputs.clear();
     this.turnOutputTokens = undefined;
-    this.durationMs = undefined;
+    this.invalid = false;
     this.rate = undefined;
   }
 
   update(message: Record<string, unknown>): void {
     if (!this.inTurn || this.startedAt === undefined) return;
 
-    if (message.agy_usage_scope !== 'turn') {
-      const stepOut = message.output_tokens ?? message.outputTokens;
-      if (typeof stepOut === 'number' && Number.isSafeInteger(stepOut) && stepOut > 0) {
-        this.stepOutputTokens += stepOut;
+    const count = outputCount(message);
+    if (message.agy_usage_scope === 'step') {
+      const index = message.agy_step_index;
+      if (typeof index === 'number' && Number.isSafeInteger(index) && index >= 0 && count !== undefined) {
+        // step_update carries a snapshot, not an additional token delta.
+        this.stepOutputs.set(index, count);
       }
       return;
     }
 
-    const rawTotal = message.output_tokens ?? message.outputTokens;
-    if (typeof rawTotal !== 'number' || !Number.isFinite(rawTotal) || rawTotal <= 0) {
-      this.turnOutputTokens = undefined;
-      this.rate = undefined;
-      return;
-    }
-
-    if (this.baseline !== undefined && rawTotal >= this.baseline) {
-      this.turnOutputTokens = rawTotal - this.baseline;
-      this.latestCumulativeTotal = rawTotal;
-    } else if (this.baseline === undefined) {
-      if (this.stepOutputTokens > 0 && rawTotal >= this.stepOutputTokens) {
-        this.turnOutputTokens = this.stepOutputTokens;
-        this.baseline = rawTotal - this.stepOutputTokens;
+    if (message.agy_usage_scope === 'session') {
+      if (count === undefined) {
+        this.latestCumulativeTotal = undefined;
+        this.invalid = true;
       } else {
-        this.turnOutputTokens = rawTotal;
-        this.baseline = 0;
+        const previous = this.latestCumulativeTotal ?? this.baseline;
+        if (previous !== undefined && count < previous) this.invalid = true;
+        // Keep a reset counter for the next turn, but hide this ambiguous span.
+        this.latestCumulativeTotal = count;
       }
-      this.latestCumulativeTotal = rawTotal;
+    } else if (message.agy_usage_scope === 'turn') {
+      // The SDK bridge reports this chat call's usage, without session history.
+      this.turnOutputTokens = count;
+      if (count === undefined) this.invalid = true;
     } else {
-      // Counter reset or non-cumulative per-turn counts (e.g. SDK engine)
-      this.turnOutputTokens = rawTotal;
-      this.baseline = 0;
-      this.latestCumulativeTotal = rawTotal;
+      return;
     }
-
-    const seconds = message.duration_seconds;
-    this.durationMs = typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
-      ? seconds * 1000
-      : undefined;
 
     this.updateRate();
   }
@@ -73,9 +70,6 @@ export class AgyTokenSpeedTracker {
   finishTurn(): void {
     if (!this.inTurn || this.startedAt === undefined) return;
     this.completedAt = this.now();
-    if (this.turnOutputTokens === undefined && this.stepOutputTokens > 0) {
-      this.turnOutputTokens = this.stepOutputTokens;
-    }
     this.updateRate();
     this.inTurn = false;
   }
@@ -90,34 +84,35 @@ export class AgyTokenSpeedTracker {
     this.completedAt = undefined;
     this.baseline = undefined;
     this.latestCumulativeTotal = undefined;
-    this.stepOutputTokens = 0;
+    this.stepOutputs.clear();
     this.turnOutputTokens = undefined;
-    this.durationMs = undefined;
+    this.invalid = false;
     this.rate = undefined;
   }
 
-  private updateRate(): void {
-    if (this.startedAt === undefined) {
-      this.rate = undefined;
-      return;
+  private outputTokens(): number | undefined {
+    if (this.invalid) return undefined;
+    if (this.turnOutputTokens !== undefined) return this.turnOutputTokens;
+    if (this.latestCumulativeTotal !== undefined && this.baseline !== undefined) {
+      return this.latestCumulativeTotal - this.baseline;
     }
-    const elapsedMs = Math.max(0, (this.completedAt ?? this.now()) - this.startedAt);
-    const providerMs = typeof this.durationMs === 'number' && Number.isFinite(this.durationMs) && this.durationMs > 0
-      ? this.durationMs
-      : undefined;
 
-    // A valid turn duration reported by the provider cannot be orders of magnitude larger
-    // than the actual wall-clock elapsed time of the turn. In agy stream-json, duration_seconds
-    // is the cumulative age of the conversation from inception (or process uptime), which can be
-    // hundreds or thousands of seconds across multiple turns.
-    const isRealisticProviderDuration = providerMs !== undefined
-      && (elapsedMs === 0 || providerMs <= elapsedMs * 1.5 + 2000);
+    const steps = Array.from(this.stepOutputs.values()).reduce((sum, count) => sum + count, 0);
+    if (this.stepOutputs.size === 0 || !Number.isSafeInteger(steps)) return undefined;
+    if (this.latestCumulativeTotal !== undefined) {
+      // A resumed turn has no starting total. Use only its unique step counts.
+      return steps <= this.latestCumulativeTotal ? steps : undefined;
+    }
+    return this.completedAt !== undefined ? steps : undefined;
+  }
 
-    const durationMs = isRealisticProviderDuration
-      ? providerMs!
-      : Math.max(1, elapsedMs);
-
-    this.rate = outputTokensPerSecond(this.turnOutputTokens, durationMs);
+  private updateRate(): void {
+    // stream-json duration_seconds is conversation age, even when it happens
+    // to be close to this turn's duration. Both engines use the local span.
+    this.rate = this.startedAt === undefined ? undefined : outputTokensPerSecond(
+      this.outputTokens(),
+      (this.completedAt ?? this.now()) - this.startedAt,
+    );
   }
 }
 
