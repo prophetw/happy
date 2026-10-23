@@ -20,9 +20,10 @@ App 与 CLI 都需要包含本功能；旧 CLI 或没有速度字段的历史消
   首次恢复旧线程时，用首个事件的 `total - last` 建立历史基线；后续回合沿用上一份总量。
   重复用量事件不会累加 token；结束后冻结耗时，迟到的最终用量仍使用该结束时间。
   未知基线、计数器回退或缺少计时依据时隐藏该回合的速度，下一回合可重新开始统计。
-- **agy 默认 stream-json 引擎**：使用同一份 `result.usage.output_tokens / result.duration_seconds`，
-  在回合结束时更新；不累加重复的 step 用量与最终汇总。缺少有效提供方耗时时，使用当前回合
-  `sendPrompt` 起止的单调时钟耗时。**SDK 引擎**使用该次 `response.usage.output_tokens`
+- **agy 默认 stream-json 引擎**：由于 agy 持续进程的 `result.usage.output_tokens` 与 `result.duration_seconds`
+  为整场会话轨迹的累计值（包含空闲停顿），速度跟踪器按每轮基线差值 `output_tokens - baseline`（或当轮 step 输出增量）
+  计算单轮输出 token；当提供方 `duration_seconds` 显著超出当轮单调时钟耗时时，判定为会话累计寿命并自动回退为当前回合
+  `sendPrompt` 起止的实际单调时钟耗时。**SDK 引擎**使用该次 `response.usage.output_tokens`
   和相同的本地回合计时。状态栏上下文快照保留本回合的有效速度，新回合与 `/clear` 重置统计；
   恢复会话时不把历史用量计入当前回合。缺少输出计数时隐藏，不从字符数或配额百分比估算。
   旧 `legacy` 引擎尚未接入。
