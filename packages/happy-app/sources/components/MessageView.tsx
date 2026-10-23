@@ -18,6 +18,7 @@ import { parseLocalCommandMessage, isUserSlashCommandEcho } from './parseLocalCo
 import { resolveUserMessageBubbleColor } from '@/utils/userMessageBubbleColor';
 import { LongPressCopyable } from './LongPressCopyable';
 import { formatMessageTimestamp, formatTurnDuration } from '@/utils/messageTimestamp';
+import { OutputTokenSpeed } from './usage/OutputTokenSpeed';
 
 
 export const MessageView = React.memo((props: {
@@ -298,6 +299,7 @@ function AgentTextBlock(props: {
             <Text style={styles.agentMetaText}>{metaText}</Text>
           </View>
         ) : null}
+        <OutputTokenSpeed tokensPerSecond={props.message.tokensPerSecond} />
       </View>
     </View>
   );

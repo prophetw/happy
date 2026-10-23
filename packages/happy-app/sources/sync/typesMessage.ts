@@ -86,6 +86,8 @@ export type AgentTextMessage = {
     turn?: string;
     text: string;
     isThinking?: boolean;
+    /** Average output throughput of this reply's turn, from its usage snapshots. */
+    tokensPerSecond?: number;
     meta?: MessageMeta;
 }
 

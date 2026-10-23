@@ -586,8 +586,8 @@ export const en: TranslationStructure = {
         },
         context: {
             outputSpeed: ({ speed }: { speed: string }) => `Avg ${speed} tok/s`,
-            outputSpeedTitle: "Average output speed",
-            outputSpeedDescription: "Output tokens divided by the agent’s measured elapsed time, including waiting and tool execution. Updates when usage is reported.",
+            outputSpeedTitle: "Average output speed for this turn",
+            outputSpeedDescription: "Output tokens reported for this agent turn divided by its measured elapsed time, including waiting and tool execution. This is not the average for the whole conversation or the model’s generation-only speed.",
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} context`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% week`,

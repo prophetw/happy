@@ -22,6 +22,7 @@ vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/sync/sync', () => ({ sync: { sendMessage: vi.fn() } }));
+vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/sync/storage', () => ({ useSetting: () => 'default' }));
 vi.mock('@/utils/userMessageBubbleColor', () => ({ resolveUserMessageBubbleColor: () => ({}) }));
 vi.mock('@/utils/messageTimestamp', () => ({
@@ -157,6 +158,21 @@ describe('agent text block', () => {
         const all = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
         expect(all).toContain('message.timestamp');
         expect(all.join('')).not.toContain('message.duration');
+    });
+
+    it('places this turn’s output speed next to duration and copy in the reply footer', () => {
+        const renderer = render({ ...agentBase, tokensPerSecond: 50 }, undefined, { durationMs: 4800 });
+        const speed = renderer.root.findAllByType('Text')
+            .find((node: any) => node.props.children === 'agentInput.context.outputSpeed')!;
+        expect(speed).toBeDefined();
+        const footer = renderer.root.findByProps({ accessibilityLabel: 'agentInput.context.outputSpeed' }).parent.parent;
+        expect(footer.findAllByType('Text').map((node: any) => node.props.children))
+            .toContain('message.duration · message.timestamp');
+        expect(footer.findByProps({ accessibilityLabel: 'common.copy' })).toBeDefined();
+    });
+
+    it('omits speed for historical replies without a usage sample', () => {
+        expect(labels(render(agentBase))).not.toContain('agentInput.context.outputSpeed');
     });
 
     it('timestamps the reply with the turn completion time, not the text block time', () => {

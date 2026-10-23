@@ -4,7 +4,6 @@ import * as React from 'react';
 import { Keyboard, View, Platform, Text, ActivityIndicator, Pressable, TouchableWithoutFeedback, LayoutChangeEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { AgentInputAttachmentStrip } from './AgentInputAttachmentStrip';
-import { OutputTokenSpeed, formatTokenSpeed } from './usage/OutputTokenSpeed';
 import type { AttachmentPreview } from '@/sync/attachmentTypes';
 import { generateThumbhash } from '@/utils/thumbhash';
 import { layout } from './layout';
@@ -104,7 +103,6 @@ interface AgentInputProps {
     usageData?: {
         inputTokens: number;
         outputTokens: number;
-        tokensPerSecond?: number;
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
@@ -687,19 +685,18 @@ function ContextGaugeIcon(props: { percent: number }) {
 }
 
 type UsageRowProps = {
-    tokensPerSecond?: number;
     contextStatus: { percent: number; detailText: string; color: string } | null;
     weekPercent: number | null;
     /** Prebuilt "Session — 32% · resets 6 PM" rows for the week popup. */
     usageMenuOptions: NativeSettingsMenuOption[];
 };
 
-// Sits under the composer card, right-aligned with the effort label: output
-// speed, week quota, and the context gauge. Each opens its own detail view.
+// Sits under the composer card, right-aligned with the effort label: week
+// quota and the context gauge. Each opens its own detail view.
 const AgentInputUsageRow = React.memo(function AgentInputUsageRow(p: UsageRowProps) {
     const { theme } = useUnistyles();
     const [showPreciseContext, setShowPreciseContext] = React.useState(false);
-    if (!p.contextStatus && p.weekPercent == null && formatTokenSpeed(p.tokensPerSecond) === null) {
+    if (!p.contextStatus && p.weekPercent == null) {
         return null;
     }
     const weekText = p.weekPercent != null ? (
@@ -719,7 +716,6 @@ const AgentInputUsageRow = React.memo(function AgentInputUsageRow(p: UsageRowPro
             paddingTop: 6,
             minHeight: 18,
         }}>
-            <OutputTokenSpeed tokensPerSecond={p.tokensPerSecond} />
             {weekText && (
                 p.usageMenuOptions.length > 0 ? (
                     <NativeSettingsMenu
@@ -2288,7 +2284,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                 <AnimatedFade visible={props.showStatusDetails !== false}>
                     <AgentInputUsageRow
-                        tokensPerSecond={props.usageData?.tokensPerSecond}
                         contextStatus={contextStatus}
                         weekPercent={weekPercent}
                         usageMenuOptions={usageMenuOptions}

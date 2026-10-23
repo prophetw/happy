@@ -116,6 +116,7 @@ import { createTracer, traceMessages, TracerState } from "./reducerTracer";
 import { AgentState, TodoItem, TodoItemsSchema } from "../storageTypes";
 import { MessageMeta } from "../typesMessageMeta";
 import { parseMessageAsEvent } from "./messageToEvent";
+import { buildAgentTurnTokenSpeedByMessageId, type OutputSpeedSample } from "@/utils/agentTurnTokenSpeed";
 
 type ReducerMessage = {
     id: string;
@@ -125,6 +126,7 @@ type ReducerMessage = {
     role: 'user' | 'agent';
     text: string | null;
     isThinking?: boolean;
+    tokensPerSecond?: number;
     event: AgentEvent | null;
     tool: ToolCall | null;
     meta?: MessageMeta;
@@ -177,6 +179,7 @@ export type ReducerState = {
     unmatchedAckServerIds: Map<string, string>; // local id -> server message id
     sidechains: Map<string, ReducerMessage[]>;
     tracerState: TracerState; // Tracer state for sidechain processing
+    outputSpeedSamples: Map<string, OutputSpeedSample>;
     latestTodos?: {
         todos: TodoItem[];
         timestamp: number;
@@ -204,6 +207,7 @@ export function createReducer(): ReducerState {
         sidechains: new Map(),
         pendingReceipts: new Map(),
         unmatchedAckServerIds: new Map(),
+        outputSpeedSamples: new Map(),
         tracerState: createTracer()
     }
 };
@@ -907,6 +911,11 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             // Process usage data if present
             if (msg.usage) {
                 processUsageData(state, msg.usage, msg.createdAt);
+                state.outputSpeedSamples.set(msg.id, {
+                    createdAt: msg.createdAt,
+                    turn: msg.turn,
+                    tokensPerSecond: msg.usage.output_tokens_per_second,
+                });
             }
 
             // Process text and thinking content (tool calls handled in Phase 2)
@@ -1338,6 +1347,31 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         }
     }
 
+    // Usage-only events stay invisible, but must update the matching reply,
+    // including when usage or older history arrives after the text itself.
+    const speedSamples = Array.from(state.outputSpeedSamples.values());
+    if (speedSamples.some((sample) => sample.tokensPerSecond !== undefined)) {
+        const rows = Array.from(state.messages.values()).map((message) => ({
+            id: message.id,
+            kind: message.role === 'user' ? 'user-text' : message.text !== null ? 'agent-text' : 'agent-event',
+            createdAt: message.createdAt,
+            sortAt: message.sortAt,
+            pending: message.pending,
+            sendError: message.sendError,
+            turn: message.turn,
+            text: message.text ?? undefined,
+            isThinking: message.isThinking,
+        })).sort((a, b) => (b.sortAt ?? b.createdAt) - (a.sortAt ?? a.createdAt));
+        const speeds = buildAgentTurnTokenSpeedByMessageId(rows, speedSamples);
+        for (const message of state.messages.values()) {
+            const speed = speeds.get(message.id);
+            if (message.tokensPerSecond !== speed) {
+                message.tokensPerSecond = speed;
+                changed.add(message.id);
+            }
+        }
+    }
+
     //
     // Collect changed messages (only root-level messages)
     //
@@ -1438,6 +1472,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
             kind: 'agent-text',
             text: reducerMsg.text,
             ...(reducerMsg.isThinking && { isThinking: true }),
+            ...(reducerMsg.tokensPerSecond !== undefined && { tokensPerSecond: reducerMsg.tokensPerSecond }),
             ...(reducerMsg.turn !== undefined && { turn: reducerMsg.turn }),
             meta: reducerMsg.meta
         };

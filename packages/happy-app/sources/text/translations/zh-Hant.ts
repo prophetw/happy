@@ -568,8 +568,8 @@ export const zhHant: TranslationStructure = {
         },
         context: {
             outputSpeed: ({ speed }: { speed: string }) => `平均 ${speed} tok/s`,
-            outputSpeedTitle: "平均輸出速度",
-            outputSpeedDescription: "輸出 token 數除以 Agent 統計區間的總耗時，包含等待與工具執行。數值隨用量回報更新。",
+            outputSpeedTitle: "本輪平均輸出速度",
+            outputSpeedDescription: "本輪 Agent 回報的輸出 token 數除以對應統計區間的總耗時，包含等待與工具執行。它不是整個對話的平均速度，也不是模型純生成階段的速度。",
             detailContext: ({ used, total }: { used: string; total: string }) => `上下文 ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `上下文 ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `本週 ${percent}%`,
