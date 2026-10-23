@@ -43,6 +43,10 @@ import { createAgyBackend } from './createAgyBackend';
 import { DEFAULT_AGY_MODEL } from './constants';
 import { discoverAgyModels, resolveAgyModelSelection } from './discoverModels';
 import { extractSessionTitle } from './title';
+import {
+  readAgyConversationTitle,
+  scheduleAgyTitleSync,
+} from './conversationSummary';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { fetchAgyUsage, formatAgyUsageMarkdown, formatAgyUsageTerminal } from './usage';
 import {
@@ -137,6 +141,14 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
 
   if (initialConversationId) {
     metadata.agyConversationId = initialConversationId;
+    const initialDbTitle = readAgyConversationTitle(initialConversationId, { log });
+    if (initialDbTitle) {
+      metadata.summary = {
+        text: initialDbTitle,
+        updatedAt: Date.now(),
+      };
+      log(`Restored session title from agy DB: "${initialDbTitle}"`);
+    }
   }
 
   // Check for session reconnection env vars (set by daemon for resume-in-place)
@@ -247,6 +259,18 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
           agyConversationId: cid,
         }));
         log(`Persisted agy conversation ID to session metadata: ${cid}`);
+      }
+      const existingDbTitle = readAgyConversationTitle(cid, { log });
+      if (existingDbTitle && existingDbTitle !== metadata.summary?.text) {
+        metadata.summary = {
+          text: existingDbTitle,
+          updatedAt: Date.now(),
+        };
+        session.updateMetadata((currentMetadata) => ({
+          ...currentMetadata,
+          summary: metadata.summary,
+        }));
+        log(`Synced model-generated session title from agy DB: "${existingDbTitle}"`);
       }
     },
   });
@@ -479,6 +503,8 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     await handleAbort();
   });
 
+  let cancelActiveTitleSync: (() => void) | null = null;
+
   try {
     await backend.startSession();
     log('Backend ready');
@@ -514,6 +540,8 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
       const specialCommand = parseSpecialCommand(batch.message);
       if (specialCommand.type === 'clear') {
         log('Handling /clear command - resetting agy session');
+        cancelActiveTitleSync?.();
+        cancelActiveTitleSync = null;
         backend.reset();
         tokenSpeed.reset();
         lastTokenUsage = undefined;
@@ -669,6 +697,23 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         if (abortCountAtTurnStart === abortCount) {
           sendEnvelopes(sessionManager.endTurn('completed'));
           notifySession('done', { type: 'ready' });
+
+          const activeConversationId = metadata.agyConversationId || backend.getConversationId();
+          if (activeConversationId) {
+            cancelActiveTitleSync?.();
+            cancelActiveTitleSync = scheduleAgyTitleSync({
+              conversationId: activeConversationId,
+              session,
+              getCurrentTitle: () => metadata.summary?.text,
+              onTitleUpdated: (newTitle) => {
+                metadata.summary = {
+                  text: newTitle,
+                  updatedAt: Date.now(),
+                };
+              },
+              log,
+            });
+          }
         } else {
           sendEnvelopes(sessionManager.endTurn('cancelled'));
         }
@@ -689,6 +734,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
       session.sendSessionEvent({ type: 'ready' });
     }
   } finally {
+    cancelActiveTitleSync?.();
     clearInterval(keepAliveInterval);
     reconnectionHandle?.cancel();
 

@@ -94,6 +94,7 @@ vi.mock('./imageInput', () => ({
 import { PushNotificationClient } from '@/api/pushNotifications';
 import { runStreamJsonAgy } from './runStreamJsonAgy';
 import { AgyTurnCancelledError } from './types';
+import * as conversationSummary from './conversationSummary';
 
 describe('AGY session push notifications', () => {
   let session: ReturnType<typeof mocks.makeSession>;
@@ -323,5 +324,29 @@ describe('AGY session push notifications', () => {
     mocks.push.mockImplementationOnce(() => { throw new Error('Push client unavailable'); });
     await send('Second task');
     await vi.waitFor(() => expect(turnStatuses()).toEqual(['completed', 'completed']));
+  });
+
+  it('synchronizes model-generated title on conversation confirmation and schedules post-turn sync', async () => {
+    const readSpy = vi.spyOn(conversationSummary, 'readAgyConversationTitle')
+      .mockReturnValue('Model-Generated Task Title');
+    const scheduleSpy = vi.spyOn(conversationSummary, 'scheduleAgyTitleSync')
+      .mockReturnValue(() => {});
+
+    await start();
+    mocks.createBackend.mock.calls[0][0].onConversationId('cid-with-title');
+
+    expect(session.updateMetadata).toHaveBeenCalledWith(expect.any(Function));
+    const updater = session.updateMetadata.mock.calls.at(-1)![0];
+    const updated = updater({ summary: { text: 'Old title', updatedAt: 0 } });
+    expect(updated.summary.text).toBe('Model-Generated Task Title');
+
+    await send('New user turn');
+    await vi.waitFor(() => expect(turnStatuses()).toEqual(['completed']));
+    expect(scheduleSpy).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: 'cid-with-title',
+    }));
+
+    readSpy.mockRestore();
+    scheduleSpy.mockRestore();
   });
 });
