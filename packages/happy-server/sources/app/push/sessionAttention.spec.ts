@@ -17,6 +17,14 @@ import { recordSessionAttention, getAttentionBadgeCount, markAttentionPushDelive
 beforeEach(() => { state.record = null; state.conflicts = 0; vi.clearAllMocks(); });
 
 describe('durable session attention', () => {
+    it('keeps a newer successful turn ahead of an old failure and retains error codes on delivery', async () => {
+        await recordSessionAttention('u', 's', 'failed', 'failed:3:1', 'serverOverloaded');
+        await markAttentionPushDelivered('u', 's', 'failed:3:1');
+        expect(JSON.parse(Buffer.from(state.record!.value).toString())).toMatchObject({ errorCode: 'serverOverloaded' });
+        await recordSessionAttention('u', 's', 'done', 'done:7:1');
+        expect(await recordSessionAttention('u', 's', 'failed', 'failed:3:1')).toEqual({ created: false, shouldNotify: false });
+        expect(JSON.parse(Buffer.from(state.record!.value).toString())).toMatchObject({ kind: 'done', seq: 7 });
+    });
     it('records delivery metadata before push, counts unread, and preserves read on retries', async () => {
         expect(await recordSessionAttention('u', 's', 'done', 'done:3:1')).toEqual({ created: true, shouldNotify: true });
         const record = JSON.parse(Buffer.from(state.record!.value).toString());

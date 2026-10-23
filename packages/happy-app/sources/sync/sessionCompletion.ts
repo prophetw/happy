@@ -9,9 +9,13 @@ function workState(session: Session) {
 
 /** Disconnects and unanswered blocking questions are not completed turns. */
 export function didSessionCompleteTurn(previous: Session, next: Session): boolean {
+    if (workState(next) !== 'waiting' || next.lastTurnStatus === 'cancelled') return false;
+    if (next.lastTurnStatus && (next.lastTurnStatus !== previous.lastTurnStatus || next.lastTurnSeq !== previous.lastTurnSeq)) return true;
+    // Codex supplies explicit turn outcomes. Idle presence alone cannot tell
+    // success from a failed request, a lost transport, or a cancellation.
+    if (next.metadata?.flavor === 'codex') return false;
     const before = workState(previous);
-    return (before === 'thinking' || before === 'permission_required' || before === 'input_required')
-        && workState(next) === 'waiting';
+    return before === 'thinking' || before === 'permission_required' || before === 'input_required';
 }
 
 export function selectCompletedSessionIds(state: {

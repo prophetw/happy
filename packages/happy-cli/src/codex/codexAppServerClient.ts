@@ -712,7 +712,18 @@ export class CodexAppServerClient {
                 req.reject(new Error(`Codex process exited (code=${code}) while waiting for ${req.method}`));
                 this.pending.delete(id);
             }
-            // Resolve pending turn completion (treat as abort)
+            // An unexpected exit is a failed turn, not a user cancellation.
+            if (this.pendingTurnCompletion) {
+                const turnId = this.pendingTurnCompletion.turnId ?? this._turnId;
+                if (turnId) this.completedTurnIds.add(turnId);
+                this.eventHandler?.({
+                    type: 'turn_aborted', status: 'failed',
+                    ...(turnId ? { turn_id: turnId } : {}),
+                    error: { message: `Codex process exited (code=${code}, signal=${signal})`, codexErrorInfo: 'transportError' },
+                });
+                this._turnId = null;
+            }
+            // Keep the aborted return value for callers; the event carries the reason.
             this.resolvePendingTurn(true);
         });
 

@@ -331,6 +331,10 @@ describe('CodexAppServerClient sandbox integration', () => {
                 expect(requests.filter((msg) => msg.method === 'turn/interrupt')).toHaveLength(1);
             } else {
                 proc.emit('exit', 1, null);
+                expect(events).toHaveBeenCalledWith(expect.objectContaining({
+                    type: 'turn_aborted', status: 'failed',
+                    error: expect.objectContaining({ codexErrorInfo: 'transportError' }),
+                }));
             }
             await pendingTurn;
             expect(onSettled).toHaveBeenCalledExactlyOnceWith({ aborted: ending !== 'completion' });

@@ -88,6 +88,7 @@ export type SessionTurnEndStatus = z.infer<typeof sessionTurnEndStatusSchema>;
 export const sessionTurnEndEventSchema = z.object({
   t: z.literal('turn-end'),
   status: sessionTurnEndStatusSchema,
+  errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional(),
 });
 
 export const sessionStopEventSchema = z.object({

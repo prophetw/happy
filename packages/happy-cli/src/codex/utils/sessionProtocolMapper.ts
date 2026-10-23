@@ -11,6 +11,7 @@ import {
 } from '@slopus/happy-wire';
 import type { Thread, ThreadItem, ThreadTurn } from '../codexAppServerTypes';
 import { stripHappySystemBlocks } from '../codexPrompt';
+import { getCodexTurnOutcome } from '../codexTurnOutcome';
 import type { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 
 export type CodexTurnState = {
@@ -913,34 +914,6 @@ function patchDescription(changes: unknown): string {
     return `Applying patch to ${fileCount} files`;
 }
 
-function pickTurnEndStatus(message: Record<string, unknown>, type: unknown): TurnEndStatus {
-    const rawStatus = message.status;
-    if (rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'cancelled') {
-        return rawStatus;
-    }
-    if (rawStatus === 'canceled') {
-        return 'cancelled';
-    }
-
-    // Abort events are treated as cancelled unless they explicitly look like failures.
-    if (type === 'turn_aborted') {
-        const reason = message.reason;
-        const error = message.error;
-        if ((typeof reason === 'string' && /(fail|error)/i.test(reason))
-            || (typeof error === 'string' && error.length > 0)
-            || (error !== undefined && error !== null && typeof error === 'object')) {
-            return 'failed';
-        }
-        return 'cancelled';
-    }
-
-    if (message.error !== undefined && message.error !== null) {
-        return 'failed';
-    }
-
-    return 'completed';
-}
-
 export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unknown>, state: CodexTurnState): CodexMapperResult {
     const speed = state.tokenSpeedTracker?.observe(message);
     const result = mapCodexMcpMessageToSessionEnvelopesInner(message, state);
@@ -1040,7 +1013,7 @@ function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unkno
                 ...emitSubagentStops(lifecycleOpts, startedSubagents, activeSubagents),
                 createEnvelope('agent', {
                     t: 'turn-end',
-                    status: pickTurnEndStatus(message, type),
+                    ...getCodexTurnOutcome(message),
                 }, lifecycleOpts),
             ],
         };

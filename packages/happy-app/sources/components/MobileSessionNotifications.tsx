@@ -124,7 +124,7 @@ function AttentionRow({ item }: { item: MobileAttentionItem }) {
             <Ionicons name={item.status === 'completed' ? 'checkmark-circle' : 'alert-circle'} size={22} color={color} />
             <View style={styles.rowText}>
                 <Text style={styles.title} numberOfLines={2}>{item.name}</Text>
-                <Text style={[styles.label, { color: theme.dark ? color : item.status === 'completed' ? '#187A33' : item.status === 'failed' ? '#B42318' : '#995700' }]}>{label}</Text>
+                <Text style={[styles.label, { color: theme.dark ? color : item.status === 'completed' ? '#187A33' : item.status === 'failed' ? '#B42318' : '#995700' }]}>{label}{item.status === 'failed' && item.errorCode ? ` (${item.errorCode})` : ''}</Text>
             </View>
         </>
     );

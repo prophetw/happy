@@ -19,7 +19,7 @@ import { isMachineOnline } from '@/utils/machineUtils';
 import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
 import { resolveSessionState, type SessionState } from './sessionState';
 import { didSessionCompleteTurn } from './sessionCompletion';
-import { mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecords } from './sessionAttention';
+import { getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecords } from './sessionAttention';
 import { isWebTabActive } from './webTabTitle';
 import { getSessionActivityAt } from '@/utils/sessionActivity';
 import { applySettings, Settings } from "./settings";
@@ -799,7 +799,7 @@ export const storage = create<StorageState>()((set, get) => {
             let sessionAttention = state.sessionAttention;
             for (const session of sessions) {
                 const merged = mergedSessions[session.id];
-                if (merged) merged.attentionKind = merged.lastTurnStatus === 'failed' ? 'failed' : sessionAttention[session.id]?.kind ?? merged.attentionKind;
+                if (merged) merged.attentionKind = getSessionAttentionKind(merged, sessionAttention[session.id]);
             }
             // A new turn supersedes the previous result. Only a transition to
             // idle (not a disconnect or blocking question) marks work complete.
@@ -809,7 +809,7 @@ export const storage = create<StorageState>()((set, get) => {
                 if (!oldSession) return;
                 const newSession = mergedSessions[session.id];
                 if (!newSession) return;
-                if (newSession.thinking && unreadSessionIds.has(session.id)) {
+                if ((newSession.thinking || newSession.lastTurnStatus === 'cancelled') && unreadSessionIds.has(session.id)) {
                     unreadSessionIds = new Set(unreadSessionIds);
                     unreadSessionIds.delete(session.id);
                     const record = sessionAttention[session.id];
@@ -1668,11 +1668,16 @@ export const storage = create<StorageState>()((set, get) => {
             const sessions = { ...state.sessions };
             for (const [id, incoming] of Object.entries(records)) {
                 let record = mergeAttentionRecord(sessionAttention[id], incoming);
+                // Old failures may arrive after a retry has already started or finished.
+                if (record.seq !== undefined && sessions[id]?.lastTurnSeq !== undefined && record.seq < sessions[id].lastTurnSeq!) {
+                    sessionAttention[id] = readAttentionRecord(record);
+                    continue;
+                }
                 if (sessions[id]?.lastTurnStatus === 'cancelled' && record.kind === 'done') record = readAttentionRecord(record);
                 if (state.appIsActive && isWebTabActive() && state.currentViewingSessionId === id) record = readAttentionRecord(record);
                 sessionAttention[id] = record;
                 if (record.read) unreadSessionIds.delete(id); else unreadSessionIds.add(id);
-                if (sessions[id]) sessions[id] = { ...sessions[id], attentionKind: sessions[id].lastTurnStatus === 'failed' ? 'failed' : record.kind };
+                if (sessions[id]) sessions[id] = { ...sessions[id], attentionKind: getSessionAttentionKind(sessions[id], record) };
             }
             return { sessionAttention, unreadSessionIds, sessions, sessionListViewData: buildSessionListViewData(sessions, unreadSessionIds, state.machines, state.archivingSessionIds, state.projects) };
         }),

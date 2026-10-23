@@ -7,6 +7,18 @@ import {
 } from '../utils/sessionProtocolMapper';
 
 describe('mapCodexMcpMessageToSessionEnvelopes', () => {
+    it.each([
+        ['serverOverloaded', 'serverOverloaded'],
+        [{ streamDisconnected: { httpStatusCode: 502 } }, 'streamDisconnected'],
+        [undefined, 'unknown'],
+    ])('preserves the provider failure type %j in the turn-end event', (codexErrorInfo, errorCode) => {
+        const result = mapCodexMcpMessageToSessionEnvelopes({
+            type: 'task_complete', status: 'failed',
+            error: { message: 'Request failed.', codexErrorInfo },
+        }, { currentTurnId: 'turn-1' });
+        expect(result.envelopes.at(-1)?.ev).toEqual({ t: 'turn-end', status: 'failed', errorCode });
+    });
+
     it('keeps replies visible across repeated continuations without task_started', () => {
         let state = mapCodexMcpMessageToSessionEnvelopes({ type: 'task_started' }, { currentTurnId: null });
         const turns = new Set([state.currentTurnId]);

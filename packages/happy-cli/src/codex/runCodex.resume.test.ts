@@ -8,8 +8,12 @@ const mocks = vi.hoisted(() => ({
     notifyStarted: vi.fn(),
     notifyFailed: vi.fn(),
     waitForMessage: vi.fn(),
+    sendTurn: vi.fn(),
+    notify: vi.fn(),
+    eventHandler: null as null | ((event: any) => void),
     session: {
         sessionId: 'happy-resumed',
+        getMetadata: vi.fn(() => null),
         onUserMessage: vi.fn(),
         onFileEvent: vi.fn(),
         keepAlive: vi.fn(),
@@ -45,6 +49,7 @@ vi.mock('@/utils/serverConnectionErrors', () => ({ connectionState: { setBackend
 vi.mock('@/utils/MessageQueue2', () => ({
     MessageQueue2: class {
         waitForMessagesAndGetAsString = mocks.waitForMessage;
+        size = () => 0;
     },
 }));
 vi.mock('@/claude/utils/startHappyServer', () => ({
@@ -57,13 +62,16 @@ vi.mock('./codexAppServerClient', () => ({
         resumeThread = mocks.resumeThread;
         disconnect = mocks.disconnect;
         setApprovalHandler = vi.fn();
-        setEventHandler = vi.fn();
+        threadId = 'native-thread';
+        hasActiveThread = () => true;
+        sendTurnAndWait = mocks.sendTurn;
+        setEventHandler = (handler: (event: any) => void) => { mocks.eventHandler = handler; };
         setUserInputHandler = vi.fn();
     },
 }));
 vi.mock('./utils/permissionHandler', () => ({ CodexPermissionHandler: class { reset = vi.fn(); } }));
-vi.mock('./utils/reasoningProcessor', () => ({ ReasoningProcessor: class {} }));
-vi.mock('./utils/diffProcessor', () => ({ DiffProcessor: class {} }));
+vi.mock('./utils/reasoningProcessor', () => ({ ReasoningProcessor: class { abort = vi.fn(); } }));
+vi.mock('./utils/diffProcessor', () => ({ DiffProcessor: class { reset = vi.fn(); } }));
 vi.mock('./codexSkills', () => ({ discoverCodexSkillCommands: async () => [] }));
 
 import { runCodex } from './runCodex';
@@ -76,7 +84,7 @@ describe('Codex resume startup readiness', () => {
         vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', '');
         vi.stubEnv('HAPPY_FORK_CODEX_THREAD_ID', '');
         mocks.createApi.mockResolvedValue({
-            push: () => ({ sendSessionNotification: vi.fn() }),
+            push: () => ({ sendSessionNotification: mocks.notify }),
             getOrCreateMachine: vi.fn().mockResolvedValue({}),
             getOrCreateSession: vi.fn().mockResolvedValue({
                 id: 'happy-resumed',
@@ -91,6 +99,7 @@ describe('Codex resume startup readiness', () => {
         mocks.notifyStarted.mockResolvedValue({ status: 'ok' });
         mocks.notifyFailed.mockResolvedValue({ status: 'ok' });
         mocks.waitForMessage.mockResolvedValue(null);
+        mocks.sendTurn.mockReset();
     });
 
     afterEach(() => vi.unstubAllEnvs());
@@ -139,5 +148,49 @@ describe('Codex resume startup readiness', () => {
         expect(mocks.notifyStarted).toHaveBeenCalledOnce();
         expect(mocks.resumeThread).not.toHaveBeenCalled();
         expect(mocks.notifyFailed).not.toHaveBeenCalled();
+    });
+
+    it('sends failure with its type, then success for a successful retry', async () => {
+        const batch = { message: 'Continue', mode: { permissionMode: 'yolo', model: 'gpt-6.1-sol' }, hash: 'test', isolate: false };
+        mocks.waitForMessage.mockResolvedValueOnce(batch).mockResolvedValueOnce(batch);
+        mocks.sendTurn.mockImplementationOnce(async () => {
+            mocks.eventHandler!({ type: 'task_started', turn_id: 'failed-turn' });
+            mocks.eventHandler!({ type: 'task_complete', status: 'failed', error: {
+                message: 'Selected model is at capacity. Please try a different model.', codexErrorInfo: 'serverOverloaded',
+            } });
+            return { aborted: false };
+        }).mockImplementationOnce(async () => {
+            mocks.eventHandler!({ type: 'task_started', turn_id: 'retry-turn' });
+            mocks.eventHandler!({ type: 'task_complete', status: 'completed' });
+            return { aborted: false };
+        });
+        await runCodex({ credentials, startedBy: 'daemon' });
+        expect(mocks.notify.mock.calls.map(([event]) => event.kind)).toEqual(['failed', 'done']);
+        expect(mocks.notify.mock.calls[0][0].data.errorCode).toBe('serverOverloaded');
+    });
+
+    it('does not send a success notification for a user cancellation', async () => {
+        mocks.waitForMessage.mockResolvedValueOnce({ message: 'Continue', mode: { permissionMode: 'yolo' }, hash: 'test', isolate: false });
+        mocks.sendTurn.mockImplementationOnce(async () => {
+            mocks.eventHandler!({ type: 'task_started' });
+            mocks.eventHandler!({ type: 'turn_aborted' });
+            return { aborted: true };
+        });
+        await runCodex({ credentials, startedBy: 'daemon' });
+        expect(mocks.notify).not.toHaveBeenCalled();
+    });
+
+    it('marks an unexpected exception as failure and closes the active UI turn', async () => {
+        mocks.waitForMessage.mockResolvedValueOnce({ message: 'Continue', mode: { permissionMode: 'yolo' }, hash: 'test', isolate: false });
+        mocks.sendTurn.mockImplementationOnce(async () => {
+            mocks.eventHandler!({ type: 'task_started' });
+            throw new Error('Codex app-server exited unexpectedly');
+        });
+        await runCodex({ credentials, startedBy: 'daemon' });
+        expect(mocks.notify).toHaveBeenCalledOnce();
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ kind: 'failed', data: expect.objectContaining({ errorCode: 'executionError' }) }));
+        expect(mocks.session.sendSessionProtocolMessage).toHaveBeenCalledWith(expect.objectContaining({
+            ev: { t: 'turn-end', status: 'failed', errorCode: 'executionError' },
+        }));
     });
 });

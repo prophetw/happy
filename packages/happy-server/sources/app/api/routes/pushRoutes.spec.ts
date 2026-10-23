@@ -10,7 +10,7 @@ const {
     resetState
 } = vi.hoisted(() => {
     const state = {
-        sessions: [] as Array<{ id: string; accountId: string }>,
+        sessions: [] as Array<{ id: string; accountId: string; seq: number; agentStateVersion: number }>,
         tokens: [] as Array<{ id: string; token: string }>,
         // Sockets the presence check sees, as socket.data shapes.
         sockets: [] as Array<{ data: Record<string, unknown> }>,
@@ -57,6 +57,7 @@ vi.mock('@/app/push/sessionAttention', () => ({ recordSessionAttention: vi.fn(as
 // and emit paths are swallowed.
 import { eventRouter } from "@/app/events/eventRouter";
 import { pushRoutes } from "./pushRoutes";
+import { recordSessionAttention } from '@/app/push/sessionAttention';
 
 function stubIo() {
     const room = {
@@ -98,7 +99,7 @@ describe('POST /v1/sessions/:sessionId/push-event', () => {
 
     beforeEach(async () => {
         resetState();
-        state.sessions.push({ id: SESSION, accountId: USER });
+        state.sessions.push({ id: SESSION, accountId: USER, seq: 3, agentStateVersion: 1 });
         state.tokens.push({ id: 'tok-1', token: 'ExponentPushToken[aaa]' });
         eventRouter.init(stubIo());
         app = await buildApp();
@@ -114,6 +115,16 @@ describe('POST /v1/sessions/:sessionId/push-event', () => {
         expect(res.statusCode).toBe(200);
         expect(res.json()).toMatchObject({ success: true, result: 'sent', tokens: 1 });
         expect(state.sent).toHaveLength(1);
+    });
+
+    it('accepts a failed turn and persists its type for in-app reminders', async () => {
+        const res = await app.inject({ method: 'POST', url: `/v1/sessions/${SESSION}/push-event`, payload: {
+            kind: 'failed', title: 'Execution failed (serverOverloaded)', body: 'session title', data: { errorCode: 'serverOverloaded' },
+        } });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ result: 'sent' });
+        expect(recordSessionAttention).toHaveBeenCalledWith(USER, SESSION, 'failed', expect.any(String), 'serverOverloaded');
+        expect(state.sent[0]).toMatchObject({ title: 'Execution failed (serverOverloaded)', data: { kind: 'failed', errorCode: 'serverOverloaded' } });
     });
 
     it('sends when the phone is backgrounded while a coding session is live', async () => {

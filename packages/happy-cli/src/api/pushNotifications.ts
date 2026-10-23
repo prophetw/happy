@@ -11,7 +11,7 @@ export interface PushToken {
     updatedAt: number
 }
 
-export type SessionNotificationKind = 'done' | 'permission' | 'question'
+export type SessionNotificationKind = 'done' | 'permission' | 'question' | 'failed'
 
 function getSessionTitle(metadata: Metadata | null | undefined): string {
     const summaryText = metadata?.summary?.text?.trim()
@@ -48,6 +48,8 @@ export function getSessionNotificationTitle(
     switch (kind) {
         case 'done':
             return "It's ready!"
+        case 'failed':
+            return 'Execution failed'
         case 'permission':
             return 'Permission request'
         case 'question':
@@ -256,7 +258,10 @@ export class PushNotificationClient {
         metadata: Metadata | null | undefined
         data?: Record<string, any>
     }): void {
-        const { title, body } = getSessionNotificationCopy(params.kind, params.metadata)
+        const copy = getSessionNotificationCopy(params.kind, params.metadata)
+        const title = params.kind === 'failed' && typeof params.data?.errorCode === 'string'
+            ? `${copy.title} (${params.data.errorCode})` : copy.title
+        const { body } = copy
         const sessionTitle = getSessionNotificationBody(params.metadata)
         const url = getSessionNotificationUrl(params.data)
         const payloadData = {

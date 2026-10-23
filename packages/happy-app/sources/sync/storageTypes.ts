@@ -437,6 +437,9 @@ export type SessionComposerPatch = Partial<Pick<Session,
 export interface Session {
     attentionKind?: 'done' | 'permission' | 'question' | 'failed';
     lastTurnStatus?: 'completed' | 'failed' | 'cancelled';
+    lastTurnErrorCode?: string;
+    /** Session message sequence of the latest turn lifecycle event. */
+    lastTurnSeq?: number;
     id: string,
     avatarDescriptor?: SessionAvatarDescriptor | null,
     avatar?: ProjectAvatar | null,

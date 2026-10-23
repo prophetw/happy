@@ -20,6 +20,10 @@ describe('attention event reconciliation', () => {
         expect(mergeAttentionRecord(pending, record({ version: 1 }))).toMatchObject({ kind: 'failed', pendingEvent: true, version: 1 });
         expect(mergeAttentionRecord(pending, record({ seq: 2, eventId: 'done:2:1', version: 2 }))).toMatchObject({ kind: 'done', read: false });
     });
+    it('does not let an older turn with a newer KV version replace a newer result', () => {
+        expect(mergeAttentionRecord(record({ seq: 7, eventId: 'done:7:1' }), record({ kind: 'failed', seq: 3, eventId: 'failed:3', version: 1 })))
+            .toMatchObject({ kind: 'done', seq: 7, version: 1, pendingEvent: true });
+    });
     it('rejects malformed optional metadata without replacing valid session state', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         expect(decodeAttentionItem({ key: 'session-attention-v1:s', value: 'invalid', version: 0 })).toBeNull();

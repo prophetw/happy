@@ -11,6 +11,7 @@ export interface MobileAttentionItem {
     status: Exclude<SessionAttentionStatus, 'running'>;
     eventId: string;
     at: number;
+    errorCode?: string;
 }
 
 export function selectMobileSessionAttention(state: {
@@ -26,7 +27,8 @@ export function selectMobileSessionAttention(state: {
         const record = state.sessionAttention[session.id];
         const status = getSessionAttentionStatus(resolveSessionState({ agentState: session.agentState, thinking: session.thinking, isOnline: true }), state.unreadSessionIds.has(session.id), session.attentionKind ?? record?.kind);
         if (!status || status === 'running') continue;
-        items.push({ id: session.id, name: getSessionName(session), status, eventId: record?.eventId ?? `${session.id}:${status}`, at: record?.at ?? session.updatedAt });
+        items.push({ id: session.id, name: getSessionName(session), status, eventId: record?.eventId ?? `${session.id}:${status}`, at: record?.at ?? session.updatedAt,
+            ...(status === 'failed' ? { errorCode: session.lastTurnErrorCode ?? record?.errorCode } : {}) });
     }
     return items.sort((a, b) => Number(a.status === 'completed') - Number(b.status === 'completed') || b.at - a.at);
 }

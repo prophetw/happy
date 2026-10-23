@@ -6,7 +6,7 @@ import { log } from '@/utils/log';
 // Account KV namespace for delivery metadata only. No titles, messages or credentials.
 export const SESSION_ATTENTION_PREFIX = 'session-attention-v1:';
 export type AttentionKind = 'done' | 'permission' | 'question' | 'failed';
-const valueSchema = z.object({ kind: z.enum(['done', 'permission', 'question', 'failed']), eventId: z.string(), read: z.boolean(), at: z.number(), seq: z.number().optional(), pushDelivered: z.boolean().optional() });
+const valueSchema = z.object({ kind: z.enum(['done', 'permission', 'question', 'failed']), eventId: z.string(), read: z.boolean(), at: z.number(), seq: z.number().optional(), pushDelivered: z.boolean().optional(), errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional() });
 
 function readValue(value: Uint8Array | null | undefined) {
     if (!value) return null;
@@ -14,15 +14,16 @@ function readValue(value: Uint8Array | null | undefined) {
     catch { log({ module: 'push', level: 'warn' }, 'Ignoring invalid session attention metadata'); return null; }
 }
 
-export async function recordSessionAttention(userId: string, sessionId: string, kind: AttentionKind, eventId: string) {
+export async function recordSessionAttention(userId: string, sessionId: string, kind: AttentionKind, eventId: string, errorCode?: string) {
     const key = SESSION_ATTENTION_PREFIX + sessionId;
     for (let attempt = 0; attempt < 5; attempt++) {
         const current = await db.userKVStore.findUnique({ where: { accountId_key: { accountId: userId, key } } });
         const previous = readValue(current?.value);
         if (previous?.eventId === eventId) return { created: false, shouldNotify: !previous.read && !previous.pushDelivered };
         const seq = Number(eventId.split(':')[1]);
+        if (previous?.seq !== undefined && previous.seq > seq) return { created: false, shouldNotify: false };
         if (kind === 'done' && previous?.kind === 'failed' && previous.seq === seq) return { created: false, shouldNotify: false };
-        const value = Buffer.from(JSON.stringify({ kind, eventId, seq, at: Date.now(), read: false })).toString('base64');
+        const value = Buffer.from(JSON.stringify({ kind, eventId, seq, at: Date.now(), read: false, ...(kind === 'failed' && errorCode ? { errorCode } : {}) })).toString('base64');
         const result = await kvMutate({ uid: userId }, [{ key, value, version: current?.version ?? -1 }]);
         if (result.success) return { created: true, shouldNotify: true };
     }

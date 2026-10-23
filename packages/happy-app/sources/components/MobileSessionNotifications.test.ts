@@ -64,6 +64,15 @@ beforeEach(() => {
 afterEach(() => { act(() => tree.unmount()); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('iOS in-app session reminders', () => {
+    it('shows the provider error type and then a success banner after retrying', () => {
+        update({ sessions: { a: session('a', { attentionKind: 'failed', lastTurnErrorCode: 'serverOverloaded' }) }, unreadSessionIds: new Set(['a']) });
+        expect(JSON.stringify(tree.toJSON())).toContain('serverOverloaded');
+        expect(mocks.haptic).toHaveBeenLastCalledWith('error');
+        update({ sessions: { a: session('a', { thinking: true }) }, unreadSessionIds: new Set() });
+        update({ sessions: { a: session('a', { attentionKind: 'done', lastTurnStatus: 'completed' }) }, unreadSessionIds: new Set(['a']) });
+        expect(mocks.haptic).toHaveBeenLastCalledWith('success');
+        expect(JSON.stringify(tree.toJSON())).not.toContain('serverOverloaded');
+    });
     it('uses one haptic and a temporary banner while the summary remains until the result is read', () => {
         update({ sessions: { a: session('a') }, unreadSessionIds: new Set(['a']) });
         expect(mocks.haptic).toHaveBeenCalledOnce();

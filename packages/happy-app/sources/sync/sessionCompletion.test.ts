@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+import { ApiUpdateContainerSchema } from './apiTypes';
+import { normalizeRawMessage } from './typesRaw';
 import type { AgentState, Session } from './storageTypes';
 import { didSessionCompleteTurn, selectCompletedSessionIds } from './sessionCompletion';
 import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
@@ -81,7 +85,7 @@ describe('session completion', () => {
 
 describe('completion state through the real session store', () => {
     beforeEach(() => {
-        storage.setState({ sessions: {}, machines: {}, unreadSessionIds: new Set(), archivingSessionIds: new Set(), currentViewingSessionId: null });
+        storage.setState({ sessions: {}, machines: {}, unreadSessionIds: new Set(), sessionAttention: {}, archivingSessionIds: new Set(), currentViewingSessionId: null, appIsActive: true });
     });
 
     function apply(patch: Partial<Session>) {
@@ -110,6 +114,84 @@ describe('completion state through the real session store', () => {
         storage.getState().setCurrentViewingSession('a');
         apply({ thinking: false });
         expect(storage.getState().unreadSessionIds.size).toBe(0);
+    });
+
+    it('keeps a successful retry successful after heartbeats and delayed failure metadata', () => {
+        apply({ thinking: true });
+        apply({ thinking: false, lastTurnStatus: 'failed' });
+        storage.getState().applySessionAttention({ a: {
+            kind: 'failed', eventId: 'failed:3', seq: 3, at: 10, read: false, version: 0,
+        } });
+        apply({ thinking: true, lastTurnStatus: undefined });
+        apply({ thinking: false, lastTurnStatus: 'completed', lastTurnSeq: 5 });
+        apply({ thinking: false }); // Presence refresh before the done push arrives.
+        expect(storage.getState().sessions.a.attentionKind).toBe('done');
+        storage.getState().applySessionAttention({ a: {
+            kind: 'failed', eventId: 'failed:3', seq: 3, at: 10, read: false, version: 1,
+        } });
+        expect(selectMobileSessionAttention({ ...storage.getState(), appIsActive: false }))
+            .toEqual([expect.objectContaining({ status: 'completed' })]);
+    });
+
+    it('waits for a Codex outcome instead of showing success when thinking stops', () => {
+        apply({ metadata: { flavor: 'codex' } as Session['metadata'], thinking: true });
+        apply({ thinking: false });
+        expect(storage.getState().unreadSessionIds.has('a')).toBe(false);
+        apply({ lastTurnStatus: 'failed', lastTurnSeq: 3, lastTurnErrorCode: 'serverOverloaded' });
+        expect(selectMobileSessionAttention({ ...storage.getState(), appIsActive: false }))
+            .toEqual([expect.objectContaining({ status: 'failed', errorCode: 'serverOverloaded' })]);
+        apply({ thinking: true, lastTurnStatus: undefined, lastTurnSeq: 4 });
+        apply({ thinking: false });
+        expect(storage.getState().unreadSessionIds.has('a')).toBe(false);
+        apply({ lastTurnStatus: 'completed', lastTurnSeq: 5 });
+        expect(selectCompletedSessionIds(storage.getState())).toEqual(['a']);
+    });
+
+    it('clears an inferred completion when a cancellation arrives late', () => {
+        apply({ thinking: true });
+        apply({ thinking: false });
+        apply({ lastTurnStatus: 'cancelled' });
+        expect(storage.getState().unreadSessionIds.has('a')).toBe(false);
+    });
+
+    it('replays failed and successful wire turns through the real sync handler and store', async () => {
+        // Match the receipt transport tests: run production methods while replacing
+        // only the native shell, socket, and encryption boundary.
+        const parsed = ts.createSourceFile('sync.ts', readFileSync(new URL('./sync.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
+        const klass = parsed.statements.find((node): node is ts.ClassDeclaration => ts.isClassDeclaration(node) && node.name?.text === 'Sync')!;
+        const methods = klass.members.filter(member => member.name && ['handleUpdate', 'publishSessionFailure'].includes(member.name.getText(parsed)))
+            .map(member => member.getText(parsed)).join('\n');
+        const Harness = new Function('ApiUpdateContainerSchema', 'normalizeRawMessage', 'storage',
+            ts.transpile(`class Sync { ${methods} }; return Sync;`, { target: ts.ScriptTarget.ES2022 }))(
+            ApiUpdateContainerSchema, normalizeRawMessage, storage,
+        );
+        const sync = new Harness();
+        Object.assign(sync, {
+            encryption: { getSessionEncryption: () => ({ decryptMessage: async (message: any) => ({ ...message, content: JSON.parse(message.content.c) }) }) },
+            applySessions: storage.getState().applySessions, sessionLastSeq: new Map(),
+            getMessagesSync: () => ({ invalidate() {} }), onSessionDataUpdated() {},
+        });
+        apply({ thinking: false });
+        const send = (seq: number, ev: Record<string, unknown>) => sync.handleUpdate({
+            id: `update-${seq}`, seq, createdAt: seq,
+            body: { t: 'new-message', sid: 'a', message: {
+                id: `message-${seq}`, seq, localId: null, createdAt: seq, updatedAt: seq,
+                content: { t: 'encrypted', c: JSON.stringify({ role: 'session', content: {
+                    id: `event-${seq}`, time: seq, role: 'agent', turn: 'turn', ev,
+                } }) },
+            } },
+        });
+        await send(2, { t: 'turn-start' });
+        await send(3, { t: 'turn-end', status: 'failed', errorCode: 'serverOverloaded' });
+        expect(selectMobileSessionAttention({ ...storage.getState(), appIsActive: false }))
+            .toEqual([expect.objectContaining({ status: 'failed', errorCode: 'serverOverloaded' })]);
+        await send(4, { t: 'turn-start' });
+        await send(5, { t: 'turn-end', status: 'completed' });
+        apply({ thinking: false });
+        await send(3, { t: 'turn-end', status: 'failed', errorCode: 'serverOverloaded' });
+        expect(storage.getState().sessions.a).toMatchObject({ lastTurnStatus: 'completed', lastTurnSeq: 5 });
+        expect(selectMobileSessionAttention({ ...storage.getState(), appIsActive: false }))
+            .toEqual([expect.objectContaining({ status: 'completed' })]);
     });
 
     it.each(['hidden', 'unfocused'])('queues the open conversation when its browser tab is %s', (background) => {

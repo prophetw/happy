@@ -345,14 +345,16 @@ class Sync {
         }
     };
 
-    private publishSessionFailure = async (sessionId: string, seq: number, at: number) => {
+    private publishSessionFailure = async (sessionId: string, seq: number, at: number, errorCode?: string) => {
         const state = storage.getState();
         const previous = state.sessionAttention[sessionId];
         if (previous?.seq !== undefined && previous.seq > seq) return;
+        if (previous?.kind === 'failed' && previous.seq === seq) return;
         state.applySessionAttention({ [sessionId]: {
             kind: 'failed', eventId: `failed:${seq}`, seq, at,
             read: state.appIsActive && state.currentViewingSessionId === sessionId,
             version: previous?.version ?? -1, pendingEvent: true,
+            ...(errorCode ? { errorCode } : {}),
         } });
     };
 
@@ -1485,6 +1487,8 @@ class Sync {
             thinking: s.active ? (current[s.id]?.thinking ?? false) : false,
             thinkingAt: s.active ? (current[s.id]?.thinkingAt ?? 0) : 0,
             lastTurnStatus: current[s.id]?.lastTurnStatus,
+            lastTurnErrorCode: current[s.id]?.lastTurnErrorCode,
+            lastTurnSeq: current[s.id]?.lastTurnSeq,
         })));
         this.projectsSync.invalidate();
         log.log(`📥 fetchSessions completed - processed ${decryptedSessions.length} sessions`);
@@ -2752,7 +2756,9 @@ class Sync {
                             type?: string;
                             data?: {
                                 type?: string;
-                                ev?: { t?: string; status?: string };
+                                status?: string;
+                                error?: unknown;
+                                ev?: { t?: string; status?: string; errorCode?: string };
                             }
                         }
                     } | null;
@@ -2780,21 +2786,26 @@ class Sync {
 
                     // Update session
                     const session = storage.getState().sessions[updateData.body.sid];
-                    if (session) {
+                    if (session && (!(isTaskComplete || isTaskStarted) || updateData.body.message.seq > (session.lastTurnSeq ?? -1))) {
+                        const turnStatus = rawContent?.content?.data?.ev?.status ?? rawContent?.content?.data?.status;
+                        const failed = turnStatus === 'failed' || (rawContent?.content?.data?.error != null);
+                        const errorCode = rawContent?.content?.data?.ev?.errorCode;
                         this.applySessions([{
                             ...session,
                             updatedAt: updateData.createdAt,
                             seq: updateData.seq,
                             // Update thinking state based on task lifecycle events
-                            ...(isTaskComplete ? { thinking: false, lastTurnStatus: dataType === 'turn_aborted' || rawContent?.content?.data?.ev?.status === 'cancelled'
-                                ? 'cancelled' as const : rawContent?.content?.data?.ev?.status === 'failed' ? 'failed' as const : 'completed' as const } : {}),
-                            ...(isTaskStarted ? { thinking: true, lastTurnStatus: undefined } : {})
+                            ...(isTaskComplete ? { thinking: false, lastTurnSeq: updateData.body.message.seq,
+                                lastTurnStatus: failed ? 'failed' as const : dataType === 'turn_aborted' || ['cancelled', 'canceled', 'interrupted', 'aborted'].includes(turnStatus ?? '')
+                                    ? 'cancelled' as const : 'completed' as const,
+                                lastTurnErrorCode: failed ? errorCode : undefined } : {}),
+                            ...(isTaskStarted ? { thinking: true, lastTurnSeq: updateData.body.message.seq, lastTurnStatus: undefined, lastTurnErrorCode: undefined } : {})
                         }])
-                        if (sessionEventType === 'turn-end' && rawContent?.content?.data?.ev?.status === 'failed') {
-                            void this.publishSessionFailure(session.id, updateData.body.message.seq, decrypted.createdAt)
+                        if (isTaskComplete && failed) {
+                            void this.publishSessionFailure(session.id, updateData.body.message.seq, decrypted.createdAt, errorCode)
                                 .catch(error => console.error('Failed to sync session failure status', error));
                         }
-                    } else {
+                    } else if (!session) {
                         // Fetch sessions again if we don't have this session
                         this.fetchSessions();
                     }

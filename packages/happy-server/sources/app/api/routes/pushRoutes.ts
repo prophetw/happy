@@ -93,7 +93,7 @@ export function pushRoutes(app: Fastify) {
                 sessionId: z.string()
             }),
             body: z.object({
-                kind: z.enum(['done', 'permission', 'question']),
+                kind: z.enum(['done', 'permission', 'question', 'failed']),
                 title: z.string().min(1).max(200),
                 body: z.string().min(1).max(500),
                 data: z.record(z.string(), z.unknown()).optional()
@@ -129,7 +129,8 @@ export function pushRoutes(app: Fastify) {
         }
 
         const eventId = `${kind}:${session.seq}:${session.agentStateVersion}`;
-        const recorded = await recordSessionAttention(userId, sessionId, kind, eventId);
+        const errorCode = kind === 'failed' && typeof data?.errorCode === 'string' && /^[a-zA-Z][a-zA-Z0-9_]{0,79}$/.test(data.errorCode) ? data.errorCode : undefined;
+        const recorded = await recordSessionAttention(userId, sessionId, kind, eventId, errorCode);
         if (!recorded.shouldNotify) return reply.send({ success: true, result: 'suppressed', reason: 'duplicate-session-event' });
 
         // Fan out the event to user's connected clients (web tabs use this to

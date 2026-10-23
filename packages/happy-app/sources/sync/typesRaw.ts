@@ -98,6 +98,7 @@ const sessionStartEventSchema = z.object({
 const sessionTurnEndEventSchema = z.object({
     t: z.literal('turn-end'),
     status: z.enum(['completed', 'failed', 'cancelled']),
+    errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional(),
 });
 
 const sessionStopEventSchema = z.object({

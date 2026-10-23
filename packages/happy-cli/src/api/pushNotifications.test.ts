@@ -19,6 +19,9 @@ function makeMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('getSessionNotificationTitle', () => {
+    it('uses a failure title for failed turns', () => {
+        expect(getSessionNotificationTitle('failed')).toBe('Execution failed');
+    });
     it('maps done notifications to a ready title', () => {
         expect(getSessionNotificationTitle('done')).toBe("It's ready!");
     });

@@ -7,6 +7,7 @@ import { CodexPermissionHandler } from './utils/permissionHandler';
 import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
+import { createEnvelope } from '@slopus/happy-wire';
 import { execSync } from 'node:child_process';
 import { logger } from '@/ui/logger';
 import { Credentials, readSettings } from '@/persistence';
@@ -37,6 +38,7 @@ import {
 import { resumeExistingThread } from './resumeExistingThread';
 import { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 import { emitReadyIfIdle } from './emitReadyIfIdle';
+import { getCodexTurnOutcome, type CodexTurnOutcome } from './codexTurnOutcome';
 import { isCodexClearText } from './codexClearCommand';
 import { deliverCodexUserInput } from './codexUserInput';
 import { CodexCommunicationHandler } from './utils/communicationHandler';
@@ -360,6 +362,7 @@ export async function runCodex(opts: {
     });
     session.onUserMessage(handleUserMessage);
     let thinking = false;
+    let turnOutcome: CodexTurnOutcome | null = null;
     let currentTurnId: string | null = null;
     let tokenSpeedTracker = new CodexTokenSpeedTracker();
     let codexStartedSubagents = new Set<string>();
@@ -377,14 +380,18 @@ export async function runCodex(opts: {
 
     const sendReady = () => {
         session.sendSessionEvent({ type: 'ready' });
+    };
+    const notifyTurnOutcome = () => {
+        if (!turnOutcome || turnOutcome.status === 'cancelled') return;
         try {
             api.push().sendSessionNotification({
-                kind: 'done',
+                kind: turnOutcome.status === 'failed' ? 'failed' : 'done',
                 metadata: session.getMetadata(),
                 data: {
                     sessionId: session.sessionId,
-                    type: 'ready',
+                    type: turnOutcome.status === 'failed' ? 'error' : 'ready',
                     provider: 'codex',
+                    ...(turnOutcome.errorCode ? { errorCode: turnOutcome.errorCode } : {}),
                 }
             });
         } catch (pushError) {
@@ -773,6 +780,7 @@ export async function runCodex(opts: {
         }
 
         if (msg.type === 'task_started') {
+            turnOutcome = null;
             if (!thinking) {
                 logger.debug('thinking started');
                 thinking = true;
@@ -780,6 +788,7 @@ export async function runCodex(opts: {
             }
         }
         if (msg.type === 'task_complete' || msg.type === 'turn_aborted') {
+            turnOutcome = getCodexTurnOutcome(msg);
             if (thinking) {
                 logger.debug('thinking completed');
                 thinking = false;
@@ -994,6 +1003,7 @@ export async function runCodex(opts: {
                 messageBuffer.addMessage(message.message, 'user');
             }
 
+            turnOutcome = null;
             try {
                 // Map permission mode to approval policy and sandbox.
                 // With app-server, these are per-turn — no restart needed on mode change.
@@ -1066,6 +1076,7 @@ export async function runCodex(opts: {
                 }
 
                 if (result.aborted) {
+                    turnOutcome ??= { status: 'cancelled' };
                     // Turn was aborted (user abort or permission cancel).
                     // UI handling already done by the event handler (turn_aborted).
                     logger.debug('[Codex] Turn aborted');
@@ -1073,8 +1084,14 @@ export async function runCodex(opts: {
             } catch (error) {
                 // Only actual errors reach here (process crash, connection failure, etc.)
                 logger.warn('Error in codex session:', error);
-                messageBuffer.addMessage('Process exited unexpectedly', 'status');
-                session.sendSessionEvent({ type: 'message', message: 'Process exited unexpectedly' });
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                messageBuffer.addMessage(`Codex error: ${errorMessage}`, 'status');
+                session.sendSessionEvent({ type: 'message', message: `Codex error: ${errorMessage}` });
+                turnOutcome = { status: 'failed', errorCode: 'executionError' };
+                if (currentTurnId) {
+                    session.sendSessionProtocolMessage(createEnvelope('agent', { t: 'turn-end', ...turnOutcome }, { turn: currentTurnId }));
+                    currentTurnId = null;
+                }
             } finally {
                 // Reset permission handler, reasoning processor, and diff processor
                 permissionHandler.reset();
@@ -1083,12 +1100,16 @@ export async function runCodex(opts: {
                 activeTurnPermissionMode = undefined;
                 thinking = false;
                 session.keepAlive(thinking, 'remote');
+                // The push endpoint derives its sequence from persisted messages.
+                // Persist the outcome before recording its attention event.
+                if (turnOutcome && !shouldExit) await session.flush();
                 emitReadyIfIdle({
                     pending,
                     queueSize: () => messageQueue.size(),
                     shouldExit,
                     hasPendingQuestions: communicationHandler?.hasPendingQuestions(),
                     sendReady,
+                    notify: notifyTurnOutcome,
                 });
                 logActiveHandles('after-turn');
             }

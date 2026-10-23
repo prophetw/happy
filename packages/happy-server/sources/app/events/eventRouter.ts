@@ -206,7 +206,7 @@ export type EphemeralEvent = {
 } | {
     type: 'session-event';
     sessionId: string;
-    kind: 'done' | 'permission' | 'question';
+    kind: 'done' | 'permission' | 'question' | 'failed';
     title: string;
     body: string;
     timestamp: number;
@@ -617,7 +617,7 @@ export function buildMachineStatusEphemeral(machineId: string, online: boolean):
  * Emitted alongside the mobile push so other clients (e.g. web) can surface a
  * tab-title counter or inline indicator without parsing every encrypted message.
  */
-export function buildSessionEventEphemeral(sessionId: string, kind: 'done' | 'permission' | 'question', title: string, body: string): EphemeralPayload {
+export function buildSessionEventEphemeral(sessionId: string, kind: 'done' | 'permission' | 'question' | 'failed', title: string, body: string): EphemeralPayload {
     return {
         type: 'session-event',
         sessionId,
