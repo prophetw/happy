@@ -15,6 +15,9 @@
 - 执行原生构建、TestFlight 提交、OTA 或其他发布前，完整阅读
   `.agents/skills/release/SKILL.md`。其中上游专用的仓库、账号、主线和发布目标，
   以本文件的个人配置与发布检查为准，不照搬上游默认值。
+- 同一会话中已读且未变化的规则与技能文档无需逐轮重读；同一次发布的最终源码、配置
+  与依赖未变时复用验证结果和已有授权。每次实际发布仍执行当次 fetch、项目身份、
+  渠道映射与最近 OTA 的远端核验。
 - `DEPLOY.md` 中旧 worktree 路径、未提交的个人配置、固定 runtime 等记录是历史信息，
   使用前核实当前代码和环境。个人发布配置应可复现，不能只靠某个旧目录的未提交修改。
 - 用户要求修改文档，不代表授权构建、发布、提交商店或重启运行中的服务。
@@ -50,12 +53,13 @@
 “preview prophet” / “prophetw preview” 指下面的个人项目与渠道，
 不是名为 `prophet` 的 Git 分支或 EAS channel。
 下表是当前发布约定：Git 来源统一为个人 `main`；Expo 身份依据既有发布记录
-（最近核对到 2026-10-21），每次发布仍要核验实际目标。
+（最近核对到 2026-10-23），每次发布仍要核验实际目标。
 
 | 项目 | 个人发布约定 |
 | --- | --- |
 | Git 来源 | 个人 `main`，与 `fork/main` 一致 |
 | Expo owner / slug | `prophetwayen` / `happy`（`@prophetwayen/happy`） |
+| EAS project ID | `1d018bd8-34db-4b57-a0a9-61f24671153e` |
 | App variant | `APP_ENV=preview` |
 | EAS environment | `preview` |
 | EAS channel | `preview` |
@@ -63,18 +67,25 @@
 | iOS bundle identifier | `com.prophetwayen.happy.preview` |
 | 已有原生 runtime | `21`，以手机安装包和构建记录为准 |
 
-个人 EAS project ID、Apple team ID、App Store Connect app ID 尚未在已提交配置中确认，
-发布前从个人项目 / 已有构建核验，不猜测、不从 update ID 推导。
+上述 project ID 已通过 `eas project:info` 和
+[2026-10-23 个人 OTA 记录](https://expo.dev/accounts/prophetwayen/projects/happy/updates/f23f8391-afa6-4770-b3a4-05cb6b951c01)
+交叉核验，可直接用于后续发布的身份检查，无需重新搜索旧目录或历史会话。
+Apple team ID、App Store Connect app ID 仍须在原生构建 / 提交前从个人项目核验；
+不猜测、不从 update ID 推导。
 仓库根目录的 `app.json` / `eas.json` 也不能作为手机 App 的身份依据；
-Expo / EAS 命令在 `packages/happy-app` 下执行。
+不要将其中的 project ID 作为候选去试探发布目标。Expo / EAS 命令在
+`packages/happy-app` 下执行。
 
-`packages/happy-app/app.config.js` 仍包含上游默认值，个人发布必须显式配置并检查：
+`packages/happy-app/app.config.js` 仍包含上游默认值，个人发布终端必须显式设置以下
+非敏感身份变量，并检查最终配置：
 
-- `EXPO_OWNER=prophetwayen`
-- `EAS_PROJECT_ID`：已核验的 `@prophetwayen/happy` project ID
-- `EXPO_UPDATES_URL=https://u.expo.dev/<同一个个人 project ID>`
-- `EXPO_IOS_BUNDLE_ID_PREVIEW=com.prophetwayen.happy.preview`
-- `APP_ENV=preview`
+```bash
+export EXPO_OWNER=prophetwayen
+export EAS_PROJECT_ID=1d018bd8-34db-4b57-a0a9-61f24671153e
+export EXPO_UPDATES_URL=https://u.expo.dev/1d018bd8-34db-4b57-a0a9-61f24671153e
+export EXPO_IOS_BUNDLE_ID_PREVIEW=com.prophetwayen.happy.preview
+export APP_ENV=preview
+```
 
 检查 `expo config` 的最终 owner、slug、project ID、updates URL、bundle identifier 和
 runtime，并用 `eas project:info` 核对目标。只输出必要的非敏感身份信息。
@@ -147,6 +158,43 @@ EAS 发布成功与手机已经接收分别报告；真机未验证时明确说�
 
 回滚应使用个人项目的 EAS 回滚 / 重发机制，明确恢复的版本、原生兼容性和受影响渠道。
 不能直接从旧源码重发而忽略之后已经上线的其他功能。
+
+### 执行顺序与耗时控制（2026-10-23 实操经验）
+
+按“确定最终源码 → 准备发布目录和依赖 → 一次预检 → 发布 → 回读”执行。
+第 4 节检查仍全部适用；减少重复探索，不省略发布条件。
+
+1. **先明确 Git 授权和最终 SHA。** 核对本任务文件及暂存清单，需要提交 / 推送授权时，
+   在改动与目标可审阅后一次集中确认。已有当次授权不因切换目录或跨消息再次询问。
+   只发布 OTA 时不顺带更新 CLI；只改文档不执行构建、发布或 daemon 重启。
+2. **优先复用干净的发布 clone。** 在该目录 fetch `fork/main`，确认 `main`、HEAD、
+   `fork/main` 一致且无未跟踪文件。没有合适目录才新建隔离 clone，保留原工作区的其他改动。
+   复用依赖时只处理该 checkout 实际存在的 workspace；不要遍历复制旧目录里所有
+   `packages/*/node_modules`，其中可能有未提交的历史包目录。
+3. **在 App 检查前准备共享包产物。** `happy-wire` 的包入口和类型声明指向 `dist`，
+   新 clone 不包含这些被忽略的构建产物，仅复用 `node_modules` 不够。
+   `dist` 缺失或共享包源码变化时，先在仓库根运行
+   `pnpm --filter @slopus/happy-wire run build`，再运行 App 类型检查。
+   避免先让整次 typecheck 因缺少共享包入口失败，再补构建、重跑。
+4. **先确认身份，再并行查询元数据。** 用第 3 节固定身份完成 `eas project:info` 和
+   最终 `expo config` 核验，通过后再并行查渠道映射与最近 OTA。预检期间每项查一次即可，
+   不在每条命令前重查同一项目。最近发布提交必须从本次远端记录读取，不把本文链接
+   当作永久发布基线；原生兼容性按该提交到最终 SHA 的实际差异判断。
+5. **复用验证结果，避免重复构建。** 同一最终源码及依赖下已通过的相关测试无需因为
+   “进入发布阶段”重跑。常规 OTA 的 App 类型检查和 changelog 一致性各检查一次；
+   更换依赖环境或修复失败后再重跑对应检查。CLI 的 Vitest global setup 会触发 build，
+   调用前看清测试入口；`eas update` 会自行导出 JS 包，不提前重复 `expo export`。
+6. **限制 EAS 输出。** `channel:view --json` 可包含完整 manifest、资源列表和签名 URL；
+   先在本机解析，只输出渠道 / 分支映射、来源 SHA、平台、runtime、environment 和必要身份。
+   `update:list` 用 `--limit 1`；发布后结合 `update:view <group-id> --json` 核对真实提交。
+   不反复打印完整配置、环境变量值、manifest 或资源清单，也不为裁剪输出重复发送同一查询。
+7. **区分平台耗时和失败。** 打包、上传、项目指纹计算需要等待；
+   “Computing the project fingerprints is taking longer than expected” 本身不是失败。
+   正常等待并给出阶段进展，不为加速跳过指纹、类型检查或干净工作树要求。
+8. **CLI 更新单独做最小闭环。** 用户同时要求更新 CLI 时，先确认 `happy` 的实际路径。
+   已指向本仓库且依赖未变时，构建一次、顺序停止 / 启动 daemon、核验 PID 与实际
+   `dist/index.mjs` 路径即可，不重复 `npm link`。源码更新可能保持相同版本号，
+   不能仅凭版本号认定已更新；已有会话进程不会因此热替换代码，新会话使用新构建。
 
 ## 6. 原生构建与 TestFlight
 
