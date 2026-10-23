@@ -11,9 +11,11 @@ import {
 } from '@slopus/happy-wire';
 import type { Thread, ThreadItem, ThreadTurn } from '../codexAppServerTypes';
 import { stripHappySystemBlocks } from '../codexPrompt';
+import type { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 
 export type CodexTurnState = {
     currentTurnId: string | null;
+    tokenSpeedTracker?: CodexTokenSpeedTracker;
     startedSubagents?: Set<string>;
     activeSubagents?: Set<string>;
     providerSubagentToSessionSubagent?: Map<string, string>;
@@ -940,7 +942,25 @@ function pickTurnEndStatus(message: Record<string, unknown>, type: unknown): Tur
 }
 
 export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unknown>, state: CodexTurnState): CodexMapperResult {
+    const speed = state.tokenSpeedTracker?.observe(message);
     const result = mapCodexMcpMessageToSessionEnvelopesInner(message, state);
+    if (speed) {
+        if (message.type === 'token_count') {
+            for (const envelope of result.envelopes) {
+                if (envelope.usage && speed.tokensPerSecond !== undefined) {
+                    envelope.usage.output_tokens_per_second = speed.tokensPerSecond;
+                }
+            }
+        } else {
+            const usage = pickTokenUsage(speed.usage);
+            if (usage) {
+                result.envelopes.push(createEnvelope('agent', { t: 'service', text: '' }, {
+                    usage: { ...usage, ...(speed.tokensPerSecond !== undefined
+                        ? { output_tokens_per_second: speed.tokensPerSecond } : {}) },
+                }));
+            }
+        }
+    }
     ensureCodexEnvelopeTurn(result);
     return result;
 }

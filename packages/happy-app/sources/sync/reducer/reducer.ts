@@ -184,6 +184,7 @@ export type ReducerState = {
     latestUsage?: {
         inputTokens: number;
         outputTokens: number;
+        tokensPerSecond?: number;
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
@@ -276,6 +277,7 @@ export type ReducerResult = {
     usage?: {
         inputTokens: number;
         outputTokens: number;
+        tokensPerSecond?: number;
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
@@ -1365,6 +1367,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         usage: state.latestUsage ? {
             inputTokens: state.latestUsage.inputTokens,
             outputTokens: state.latestUsage.outputTokens,
+            ...(state.latestUsage.tokensPerSecond !== undefined ? { tokensPerSecond: state.latestUsage.tokensPerSecond } : {}),
             cacheCreation: state.latestUsage.cacheCreation,
             cacheRead: state.latestUsage.cacheRead,
             contextSize: state.latestUsage.contextSize,
@@ -1384,12 +1387,16 @@ function allocateId() {
 }
 
 function processUsageData(state: ReducerState, usage: UsageData, timestamp: number) {
-    // Only update if this is newer than the current latest usage
-    if (!state.latestUsage || timestamp > state.latestUsage.timestamp) {
+    // Equal timestamps retain arrival order: final usage can follow a token
+    // update in the same millisecond. Older history must not replace it.
+    if (!state.latestUsage || timestamp >= state.latestUsage.timestamp) {
         const contextWindow = readPositiveTokenCount(usage.context_window);
+        const tokensPerSecond = usage.output_tokens_per_second;
         state.latestUsage = {
             inputTokens: usage.input_tokens,
             outputTokens: usage.output_tokens,
+            ...(typeof tokensPerSecond === 'number' && Number.isFinite(tokensPerSecond) && tokensPerSecond > 0
+                ? { tokensPerSecond } : {}),
             cacheCreation: usage.cache_creation_input_tokens || 0,
             cacheRead: usage.cache_read_input_tokens || 0,
             contextSize: (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0) + usage.input_tokens,

@@ -558,6 +558,9 @@ export const ja: TranslationStructure = {
             badgePlan: 'プラン',
         },
         context: {
+            outputSpeed: ({ speed }: { speed: string }) => `平均 ${speed} tok/s`,
+            outputSpeedTitle: "平均出力速度",
+            outputSpeedDescription: "出力トークン数をエージェントの計測時間で割った値です。待機とツール実行の時間を含み、使用量の報告時に更新されます。",
             detailContext: ({ used, total }: { used: string; total: string }) => `コンテキスト ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `コンテキスト ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `週 ${percent}%`,

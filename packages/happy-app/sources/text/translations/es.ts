@@ -557,6 +557,9 @@ export const es: TranslationStructure = {
             badgePlan: 'Planificación',
         },
         context: {
+            outputSpeed: ({ speed }: { speed: string }) => `Media ${speed} tok/s`,
+            outputSpeedTitle: "Velocidad media de salida",
+            outputSpeedDescription: "Tokens de salida divididos por el tiempo medido del agente, incluidas las esperas y la ejecución de herramientas. Se actualiza al recibir datos de uso.",
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de contexto`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% contexto`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% semana`,

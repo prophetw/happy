@@ -13,6 +13,7 @@ const usageDataSchema = z.object({
     cache_creation_input_tokens: z.number().optional(),
     cache_read_input_tokens: z.number().optional(),
     output_tokens: z.number(),
+    output_tokens_per_second: z.number().positive().optional().catch(undefined),
     context_window: z.number().optional(),
     service_tier: z.string().optional(),
 }).passthrough();

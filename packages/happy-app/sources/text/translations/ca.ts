@@ -557,6 +557,9 @@ export const ca: TranslationStructure = {
             badgePlan: 'Planificació',
         },
         context: {
+            outputSpeed: ({ speed }: { speed: string }) => `Mitjana ${speed} tok/s`,
+            outputSpeedTitle: "Velocitat mitjana de sortida",
+            outputSpeedDescription: "Tokens de sortida dividits pel temps mesurat de l’agent, incloses les esperes i l’execució d’eines. S’actualitza en rebre dades d’ús.",
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de context`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% setmana`,

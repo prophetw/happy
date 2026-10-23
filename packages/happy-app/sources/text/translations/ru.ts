@@ -573,6 +573,9 @@ export const ru: TranslationStructure = {
             badgePlan: 'Планирование',
         },
         context: {
+            outputSpeed: ({ speed }: { speed: string }) => `В среднем ${speed} tok/s`,
+            outputSpeedTitle: "Средняя скорость вывода",
+            outputSpeedDescription: "Число выходных токенов, делённое на измеренное время агента, включая ожидание и выполнение инструментов. Обновляется при получении данных об использовании.",
             detailContext: ({ used, total }: { used: string; total: string }) => `Контекст ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% контекста`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% за неделю`,

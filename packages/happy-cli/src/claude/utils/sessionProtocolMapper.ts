@@ -544,8 +544,10 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
     if (message.type === 'system') {
         if (message.subtype === 'happy_context_usage') {
             const usage = UsageSchema.safeParse(message.usage);
-            if (usage.success && typeof usage.data.context_window === 'number'
-                && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0) {
+            if (usage.success && ((typeof usage.data.context_window === 'number'
+                && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0)
+                || (typeof usage.data.output_tokens_per_second === 'number'
+                    && Number.isFinite(usage.data.output_tokens_per_second) && usage.data.output_tokens_per_second > 0))) {
                 envelopes.push(createEnvelope('agent', { t: 'service', text: '' }, {
                     turn: state.currentTurnId ?? undefined,
                     usage: { ...usage.data, service_tier: usage.data.service_tier ?? undefined },

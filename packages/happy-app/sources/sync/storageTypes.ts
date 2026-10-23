@@ -474,6 +474,7 @@ export interface Session {
     latestUsage?: {
         inputTokens: number;
         outputTokens: number;
+        tokensPerSecond?: number;
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;

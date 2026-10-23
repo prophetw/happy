@@ -15,6 +15,7 @@ import type {
 import { UsageSchema, type RawJSONLines } from '@/claude/types'
 import type { PermissionResponseLookup } from './permissionHandler'
 import { readTranscriptUsage } from './readTranscriptUsage'
+import { outputTokensPerSecond } from '@/utils/tokenSpeed'
 
 /**
  * Context for converting SDK messages to log format
@@ -290,15 +291,17 @@ export class SDKToLogConverter {
                 const latestMainMessage = this.latestMainMessage
                 this.latestMainMessage = null
                 const usage = UsageSchema.safeParse(this.withContextWindow(this.withFinalUsage(latestMainMessage))?.usage)
-                if (usage.success && typeof usage.data.context_window === 'number'
-                    && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0) {
+                const tokensPerSecond = outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_ms)
+                if (usage.success && (tokensPerSecond !== undefined || (typeof usage.data.context_window === 'number'
+                    && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0))) {
                     // A system snapshot avoids replaying chat text and avoids
                     // charging the same assistant usage a second time.
                     logMessage = {
                         ...baseFields,
                         type: 'system',
                         subtype: 'happy_context_usage',
-                        usage: usage.data,
+                        usage: { ...usage.data, ...(tokensPerSecond !== undefined
+                            ? { output_tokens_per_second: tokensPerSecond } : {}) },
                     }
                 }
                 break

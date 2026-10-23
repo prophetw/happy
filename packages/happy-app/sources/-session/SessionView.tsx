@@ -1049,6 +1049,7 @@ export function SessionViewLoaded({
         return {
             inputTokens: source.inputTokens,
             outputTokens: source.outputTokens,
+            tokensPerSecond: source.tokensPerSecond,
             cacheCreation: source.cacheCreation,
             cacheRead: source.cacheRead,
             contextSize: source.contextSize,

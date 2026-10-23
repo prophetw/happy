@@ -35,6 +35,7 @@ import {
     mapCodexProcessorMessageToSessionEnvelopes,
 } from './utils/sessionProtocolMapper';
 import { resumeExistingThread } from './resumeExistingThread';
+import { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 import { emitReadyIfIdle } from './emitReadyIfIdle';
 import { isCodexClearText } from './codexClearCommand';
 import { deliverCodexUserInput } from './codexUserInput';
@@ -360,6 +361,7 @@ export async function runCodex(opts: {
     session.onUserMessage(handleUserMessage);
     let thinking = false;
     let currentTurnId: string | null = null;
+    let tokenSpeedTracker = new CodexTokenSpeedTracker();
     let codexStartedSubagents = new Set<string>();
     let codexActiveSubagents = new Set<string>();
     let codexProviderSubagentToSessionSubagent = new Map<string, string>();
@@ -833,6 +835,7 @@ export async function runCodex(opts: {
         if (msg.type !== 'turn_diff' && (!isReasoningEvent || isForwardableSubagentReasoning)) {
             const mapped = mapCodexMcpMessageToSessionEnvelopes(msg, {
                 currentTurnId,
+                tokenSpeedTracker: isSubagentScopedEvent ? undefined : tokenSpeedTracker,
                 startedSubagents: codexStartedSubagents,
                 activeSubagents: codexActiveSubagents,
                 providerSubagentToSessionSubagent: codexProviderSubagentToSessionSubagent,
@@ -956,6 +959,7 @@ export async function runCodex(opts: {
                 logger.debug('[Codex] Handling /clear command - resetting Codex thread state');
                 client.clearThreadState();
                 currentTurnId = null;
+                tokenSpeedTracker = new CodexTokenSpeedTracker();
                 codexStartedSubagents = new Set<string>();
                 codexActiveSubagents = new Set<string>();
                 codexProviderSubagentToSessionSubagent = new Map<string, string>();

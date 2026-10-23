@@ -568,6 +568,9 @@ export const zhHans: TranslationStructure = {
             badgePlan: '计划',
         },
         context: {
+            outputSpeed: ({ speed }: { speed: string }) => `平均 ${speed} tok/s`,
+            outputSpeedTitle: "平均输出速度",
+            outputSpeedDescription: "输出 token 数除以 Agent 统计区间的总耗时，包含等待和工具执行。数值随用量上报更新。",
             detailContext: ({ used, total }: { used: string; total: string }) => `上下文 ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `上下文 ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `本周 ${percent}%`,
