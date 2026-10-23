@@ -2,8 +2,14 @@
  * Tests for SDK to Log converter
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { SDKToLogConverter, convertSDKToLog } from './sdkToLogConverter'
+import { RawJSONLinesSchema } from '../types'
+import { mapClaudeLogMessageToSessionEnvelopes } from './sessionProtocolMapper'
+import { getProjectPath } from './path'
 import type { SDKMessage, SDKUserMessage, SDKAssistantMessage, SDKSystemMessage, SDKResultMessage } from '@/claude/sdk'
 
 describe('SDKToLogConverter', () => {
@@ -267,6 +273,90 @@ describe('SDKToLogConverter', () => {
             expect((opus as any)?.message.usage.context_window).toBe(1_000_000)
         })
 
+        it.each([
+            ['ccs-claude-kimi--k3[1m]', 'k3'],
+            ['ccs-claude-kimi-3--glm-5.3[1M]', 'glm-5.3'],
+            ['claude-opus-4-8[1m]', 'claude-opus-4-8'],
+        ])('should match reported model %s to response model %s', (reported, model) => {
+            converter.convert(resultReporting({ [reported]: { contextWindow: 1_000_000 } }))
+
+            const logMessage = converter.convert(assistantWithUsage(model))
+
+            expect((logMessage as any)?.message.usage.context_window).toBe(1_000_000)
+        })
+
+        it('should not borrow the window of an unrelated model', () => {
+            converter.convert(resultReporting({ 'ccs-claude-kimi--k3[1m]': { contextWindow: 1_000_000 } }))
+
+            const logMessage = converter.convert(assistantWithUsage('glm-5.3'))
+
+            expect((logMessage as any)?.message.usage).not.toHaveProperty('context_window')
+        })
+
+        it('should not guess between conflicting windows for the same response model', () => {
+            converter.convert(resultReporting({
+                'ccs-claude-first--k3[1m]': { contextWindow: 1_000_000 },
+                'ccs-claude-second--k3': { contextWindow: 200_000 },
+            }))
+
+            const logMessage = converter.convert(assistantWithUsage('k3'))
+
+            expect((logMessage as any)?.message.usage).not.toHaveProperty('context_window')
+        })
+
+        it('should publish the first turn context without replaying text or using cumulative tokens', () => {
+            const assistant = assistantWithUsage('k3')
+            assistant.message.usage.cache_read_input_tokens = 39_424
+            const first = converter.convert(assistant)!
+            const state = { currentTurnId: null as string | null }
+            state.currentTurnId = mapClaudeLogMessageToSessionEnvelopes(first, state).currentTurnId
+            const result = resultReporting({ 'ccs-claude-kimi--k3[1m]': { contextWindow: 1_000_000 } })
+            ;(result as any).usage = { input_tokens: 400_000, output_tokens: 5000 }
+
+            const notification = converter.convert(result)
+
+            expect(notification?.type).toBe('system')
+            const mapped = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse(notification), state)
+            expect(mapped.currentTurnId).toBe(state.currentTurnId)
+            expect(mapped.envelopes).toHaveLength(1)
+            expect(mapped.envelopes[0]).toMatchObject({
+                role: 'agent',
+                ev: { t: 'service', text: '' },
+                usage: {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    cache_read_input_tokens: 39_424,
+                    context_window: 1_000_000,
+                },
+            })
+            expect(converter.convert(result)).toBeNull()
+        })
+
+        it('should keep the main context when a subagent reports usage last', () => {
+            converter.convert(assistantWithUsage('k3'))
+            converter.convert({
+                ...assistantWithUsage('claude-haiku-4-5'),
+                parent_tool_use_id: 'tool-subagent',
+            } as SDKAssistantMessage)
+
+            const notification = converter.convert(resultReporting({
+                'ccs-claude-kimi--k3[1m]': { contextWindow: 1_000_000 },
+                'claude-haiku-4-5': { contextWindow: 200_000 },
+            }))
+
+            expect(notification?.usage).toMatchObject({ context_window: 1_000_000 })
+            expect(notification?.isSidechain).toBe(false)
+        })
+
+        it('should not publish usage from a previous session', () => {
+            converter.convert(assistantWithUsage('k3'))
+            converter.updateSessionId('new-session')
+
+            expect(converter.convert(resultReporting({
+                'ccs-claude-kimi--k3[1m]': { contextWindow: 1_000_000 },
+            }))).toBeNull()
+        })
+
         it('should ignore unusable window values', () => {
             converter.convert(resultReporting({ 'claude-opus-4-8': { contextWindow: 0 } }))
 
@@ -284,6 +374,95 @@ describe('SDKToLogConverter', () => {
             } as unknown as SDKAssistantMessage)
 
             expect((logMessage as any)?.message).not.toHaveProperty('usage')
+        })
+    })
+
+    describe('Final transcript usage', () => {
+        const sessionId = '11111111-2222-4333-8444-555555555555'
+        let directory: string
+        let transcriptPath: string
+        const finalUsage = { input_tokens: 395, cache_read_input_tokens: 37_888, output_tokens: 10 }
+
+        beforeEach(() => {
+            directory = mkdtempSync(join(tmpdir(), 'happy-transcript-usage-'))
+            vi.stubEnv('CLAUDE_CONFIG_DIR', directory)
+            const project = getProjectPath(context.cwd)
+            mkdirSync(project, { recursive: true })
+            transcriptPath = join(project, `${sessionId}.jsonl`)
+            converter.updateSessionId(sessionId)
+        })
+
+        afterEach(() => {
+            vi.unstubAllEnvs()
+            rmSync(directory, { recursive: true, force: true })
+        })
+
+        it.each([
+            ['deepseek-v4.1-flash-1017', { input_tokens: 0, output_tokens: 0 }],
+            ['glm-5.3', { input_tokens: 0, output_tokens: 0 }],
+            ['deepseek-v4.1-flash-1017', undefined],
+        ])('recovers %s final usage when its SDK usage is %j', (model, usage) => {
+            const assistant = {
+                type: 'assistant', parent_tool_use_id: null,
+                message: { id: 'msg-current', role: 'assistant', model, content: [], usage },
+            } as unknown as SDKAssistantMessage
+            writeFileSync(transcriptPath, JSON.stringify({
+                type: 'assistant', sessionId, isSidechain: false,
+                message: { ...assistant.message, usage: finalUsage },
+            }) + '\n')
+            converter.convert(assistant)
+
+            const snapshot = converter.convert({
+                type: 'result', session_id: sessionId,
+                modelUsage: { [`ccs-claude-ali--${model}[1m]`]: { contextWindow: 1_000_000 } },
+                usage: { input_tokens: 500_000, output_tokens: 1000 },
+            } as unknown as SDKResultMessage)
+
+            expect(snapshot?.usage).toMatchObject({ ...finalUsage, context_window: 1_000_000 })
+            expect(snapshot?.type).toBe('system')
+        })
+
+        it('does not borrow previous responses or subagent usage for a zero-usage reply', () => {
+            writeFileSync(transcriptPath, [
+                { type: 'assistant', sessionId, message: { id: 'msg-previous', usage: finalUsage } },
+                { type: 'assistant', sessionId, isSidechain: true, message: { id: 'msg-current', usage: finalUsage } },
+            ].map(entry => JSON.stringify(entry)).join('\n') + '\n')
+            converter.convert({
+                type: 'assistant', message: {
+                    id: 'msg-current', role: 'assistant', model: 'glm-5.3', content: [],
+                    usage: { input_tokens: 0, output_tokens: 0 },
+                },
+            } as unknown as SDKAssistantMessage)
+
+            const snapshot = converter.convert({
+                type: 'result', session_id: sessionId,
+                modelUsage: { 'ccs-claude-ali--glm-5.3[1m]': { contextWindow: 1_000_000 } },
+            } as unknown as SDKResultMessage)
+
+            expect(snapshot?.usage).toMatchObject({ input_tokens: 0, output_tokens: 0 })
+        })
+
+        it('waits for final usage written just after the result event', async () => {
+            const assistant = {
+                type: 'assistant', message: {
+                    id: 'msg-delayed', role: 'assistant', model: 'deepseek-v4.1-flash-1017', content: [],
+                    usage: { input_tokens: 0, output_tokens: 0 },
+                },
+            } as unknown as SDKAssistantMessage
+            converter.convert(assistant)
+            const write = setTimeout(() => writeFileSync(transcriptPath, JSON.stringify({
+                type: 'assistant', sessionId, message: { ...assistant.message, usage: finalUsage },
+            }) + '\n'), 20)
+            try {
+                await converter.waitForFinalUsage()
+                const snapshot = converter.convert({
+                    type: 'result', session_id: sessionId,
+                    modelUsage: { 'ccs-claude-ali--deepseek-v4.1-flash-1017[1m]': { contextWindow: 1_000_000 } },
+                } as unknown as SDKResultMessage)
+                expect(snapshot?.usage).toMatchObject({ ...finalUsage, context_window: 1_000_000 })
+            } finally {
+                clearTimeout(write)
+            }
         })
     })
 

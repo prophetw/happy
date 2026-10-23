@@ -121,7 +121,9 @@ export class OutgoingMessageQueue {
             
             // Send if not already sent
             if (!item.sent) {
-                if (item.logMessage.type !== 'system') {
+                // SDK system chatter is local-only; the internal context
+                // snapshot must reach the protocol mapper and the client.
+                if (item.logMessage.type !== 'system' || item.logMessage.subtype === 'happy_context_usage') {
                     this.sendFunction(item.logMessage);
                 }
                 item.sent = true;

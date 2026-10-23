@@ -131,6 +131,34 @@ describe('mapClaudeLogMessageToSessionEnvelopes', () => {
         expect(textEnvelope?.usage?.service_tier).toBeUndefined();
     });
 
+    it('forwards a context snapshot without starting a turn or emitting chat text', () => {
+        const result = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'system',
+            uuid: 'context-snapshot',
+            subtype: 'happy_context_usage',
+            usage: { input_tokens: 432, output_tokens: 388, context_window: 1_000_000, service_tier: null },
+        }), { currentTurnId: null });
+
+        expect(result.currentTurnId).toBeNull();
+        expect(result.envelopes).toHaveLength(1);
+        expect(result.envelopes[0]).toMatchObject({
+            ev: { t: 'service', text: '' },
+            usage: { input_tokens: 432, output_tokens: 388, context_window: 1_000_000 },
+        });
+        expect(result.envelopes[0].usage?.service_tier).toBeUndefined();
+    });
+
+    it.each([
+        { subtype: 'init', usage: { input_tokens: 432, output_tokens: 388 } },
+        { subtype: 'happy_context_usage', usage: { input_tokens: 'invalid', output_tokens: 388 } },
+    ])('ignores unrelated or invalid system usage: %j', ({ subtype, usage }) => {
+        const result = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse({
+            type: 'system', uuid: 'other-system', subtype, usage,
+        }), { currentTurnId: null });
+
+        expect(result.envelopes).toEqual([]);
+    });
+
     it('maps tool use and tool result blocks to tool-call lifecycle', () => {
         const usage = {
             input_tokens: 900,

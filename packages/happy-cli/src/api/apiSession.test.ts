@@ -3,6 +3,7 @@ import { ApiSessionClient } from './apiSession';
 import { decodeBase64, decrypt, decryptBlob, encodeBase64, encrypt } from './encryption';
 import type { Update } from './types';
 import { logger } from '@/ui/logger';
+import { SDKToLogConverter } from '@/claude/utils/sdkToLogConverter';
 
 const {
     mockIo,
@@ -462,6 +463,47 @@ describe('ApiSessionClient v3 messages API migration', () => {
             }
         });
         expect(typeof (sessionUser as any).content.time).toBe('number');
+    });
+
+    it('sends the first cc-switch context snapshot without reporting assistant usage twice', async () => {
+        const client = new ApiSessionClient('fake-token', session);
+        const reportUsage = vi.spyOn(client, 'sendUsageData');
+        mockAxiosPost.mockResolvedValue({ data: { messages: [] } });
+        const converter = new SDKToLogConverter({
+            sessionId: session.id, cwd: '/tmp', gitBranch: 'main',
+        });
+        const assistant = converter.convert({
+            type: 'assistant',
+            message: {
+                role: 'assistant', model: 'k3', content: [{ type: 'text', text: 'done' }],
+                usage: { input_tokens: 432, cache_read_input_tokens: 39_424, output_tokens: 388 },
+            },
+        } as any)!;
+        client.sendClaudeSessionMessage(assistant);
+        const snapshot = converter.convert({
+            type: 'result',
+            modelUsage: { 'ccs-claude-kimi--k3[1m]': { contextWindow: 1_000_000 } },
+            usage: { input_tokens: 400_000, output_tokens: 5000 },
+        } as any)!;
+        expect(snapshot).not.toBeNull();
+        client.sendClaudeSessionMessage(snapshot);
+        client.closeClaudeSessionTurn();
+
+        await waitForCheck(() => {
+            expect(mockAxiosPost).toHaveBeenCalled();
+            expect((client as any).pendingOutbox).toHaveLength(0);
+        });
+        const envelopes = mockAxiosPost.mock.calls.flatMap(([, payload]) => payload.messages.map((message: any) => {
+            const decoded = decrypt(session.encryptionKey, session.encryptionVariant, decodeBase64(message.content)) as any;
+            return decoded.content;
+        }));
+        expect(envelopes.filter(envelope => envelope.ev.t === 'text')).toHaveLength(1);
+        expect(envelopes.find(envelope => envelope.ev.t === 'service')).toMatchObject({
+            usage: { input_tokens: 432, cache_read_input_tokens: 39_424, output_tokens: 388, context_window: 1_000_000 },
+        });
+        expect(reportUsage).toHaveBeenCalledTimes(1);
+        expect(mockSocket.emit.mock.calls.filter(([event]: [string]) => event === 'usage-report')).toHaveLength(1);
+        await client.close();
     });
 
     it('uploads local Claude transcript image blocks and sends file before user text', async () => {

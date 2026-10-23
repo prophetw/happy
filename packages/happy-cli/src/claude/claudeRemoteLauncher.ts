@@ -136,11 +136,21 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     // Handle messages
     let ongoingToolCalls = new Map<string, { parentToolCallId: string | null }>();
     let notifiedQuestionToolCalls = new Set<string>();
+    let resultProcessing: Promise<void> = Promise.resolve();
 
     function onMessage(message: SDKMessage) {
 
         // Write to message log
         formatClaudeMessageForInk(message, messageBuffer);
+
+        if (message.type === 'result') {
+            resultProcessing = (async () => {
+                await sdkToLogConverter.waitForFinalUsage();
+                const snapshot = sdkToLogConverter.convert(message);
+                if (snapshot) messageQueue.enqueue(snapshot);
+            })();
+            return;
+        }
 
         // Track active tool calls
         if (message.type === 'assistant') {
@@ -430,10 +440,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         session.clearSessionId();
                     },
                     onReady: async (status) => {
-                        // Assistant messages are queued until the next tick. Deliver
-                        // them before closing an auth-failed turn, or the close can
-                        // run before the mapper has even opened that turn.
-                        if (status === 'failed') await messageQueue.flush();
+                        await resultProcessing;
+                        // Deliver queued assistant output and the context snapshot
+                        // before closing the turn and notifying the client.
+                        await messageQueue.flush();
                         session.client.closeClaudeSessionTurn(status ?? 'completed');
                         if (status !== 'failed' && !pending && session.queue.size() === 0) {
                             session.api.push().sendSessionNotification({
@@ -482,6 +492,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
                 // Flush any remaining messages in the queue
                 logger.debug('[remote]: flushing message queue');
+                await resultProcessing;
                 await messageQueue.flush();
                 messageQueue.destroy();
                 logger.debug('[remote]: message queue flushed');

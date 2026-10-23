@@ -98,9 +98,14 @@ Implemented in:
 | `user` plain string (non-sidechain) | `turn-end(completed)` (if open), then emit both `user:text` (legacy) and `session:text` (migration shadow copy) |
 | `user` plain string (sidechain) | `agent:start` (once) then `agent:text` (`subagent` set to session cuid2) |
 | `system` | ignored for protocol output |
+| internal `system` with `subtype = "happy_context_usage"` | empty `agent:service` carrying a context usage snapshot; no chat row |
 | `summary` | ignored for protocol output (metadata update only) |
 
 Notes:
+- Remote context usage: the SDK reports `modelUsage[model].contextWindow` at turn end. The converter matches that reported capacity to assistant models, including cc-switch routing IDs such as `ccs-claude-kimi--k3[1m]` whose response model is `k3`. Exact names take priority; conflicting alias capacities remain unknown. Capacity is never inferred from the routing suffix.
+- At turn end the converter emits an internal context snapshot using the last main assistant's input/cache/output token counts and the reported capacity. It does not use cumulative result token counts or subagent usage. The mapper forwards it through the existing empty service event so the first completed turn can update the context indicator without replaying text or sending another billable `usage-report`. Ordinary system messages remain ignored. Local transcript ingestion does not receive SDK result metadata and is unchanged.
+- The outgoing queue explicitly forwards `happy_context_usage` while filtering other system messages. The remote launcher flushes queued output and the snapshot before emitting `turn-end` and the completion notification.
+- Some compatible providers (observed with Ali DeepSeek) send zero or missing usage in SDK assistant events but write final counts to Claude's JSONL transcript. At turn end, these placeholders are recovered from the last 1 MiB of that session's transcript, matching the exact response message ID and excluding sidechains. The launcher waits up to 250 ms for a delayed transcript write before completing the turn. Unrelated responses and cumulative result usage are never used as replacements.
 - Tool result strings are forwarded unchanged, including empty strings. Text-block arrays are joined with newlines; other non-null result values are JSON-serialized. Missing or null content leaves `result` unset. This applies to local transcripts, remote SDK messages, and sidechain tools.
 - Turn starts lazily on first agent output in a turn (`turn-start` envelope created when needed).
 - `turn` values in emitted protocol envelopes are cuid2 (examples below use `tA` shorthand for readability).

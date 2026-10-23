@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import type { RawJSONLines } from '../types';
+import { UsageSchema, type RawJSONLines } from '../types';
 import {
     createEnvelope,
     type SessionEnvelope,
@@ -542,6 +542,16 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
     }
 
     if (message.type === 'system') {
+        if (message.subtype === 'happy_context_usage') {
+            const usage = UsageSchema.safeParse(message.usage);
+            if (usage.success && typeof usage.data.context_window === 'number'
+                && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0) {
+                envelopes.push(createEnvelope('agent', { t: 'service', text: '' }, {
+                    turn: state.currentTurnId ?? undefined,
+                    usage: { ...usage.data, service_tier: usage.data.service_tier ?? undefined },
+                }));
+            }
+        }
         return {
             currentTurnId: state.currentTurnId,
             envelopes,
