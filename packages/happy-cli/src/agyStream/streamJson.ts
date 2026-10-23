@@ -229,6 +229,8 @@ export class StreamJsonParser {
       this.options.onMessage?.({
         type: 'token-count',
         ...result.usage,
+        agy_usage_scope: 'turn',
+        ...(result.duration_seconds !== undefined ? { duration_seconds: result.duration_seconds } : {}),
       });
     }
 

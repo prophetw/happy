@@ -56,6 +56,7 @@ import { downloadAgyFileEventAttachment } from './attachmentEvents';
 import { formatAgyPromptWithAttachments, prepareAgyImageAttachments } from './imageInput';
 import { AgyPermissionHandler } from './permissionHandler';
 import { AgyTurnCancelledError } from './types';
+import { AgyTokenSpeedTracker } from './tokenSpeed';
 import { AgyQuotaStore, type AgyStatusLineQuota } from './statusLine';
 import {
   buildAgyUsageEnvelope,
@@ -261,16 +262,26 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     }
   };
 
+  const tokenSpeed = new AgyTokenSpeedTracker();
+  let lastTokenUsage: Record<string, unknown> | undefined;
+  const sendUsageEnvelope = (envelope: SessionEnvelope | null) => {
+    if (!envelope) return;
+    const rate = tokenSpeed.tokensPerSecond;
+    sendEnvelopes([rate !== undefined && envelope.usage
+      ? { ...envelope, usage: { ...envelope.usage, output_tokens_per_second: rate } }
+      : envelope]);
+  };
+
   const onBackendMessage = (msg: AgentMessage) => {
     if (verbose) {
       log(`Backend message: ${JSON.stringify(msg).slice(0, 200)}`);
     }
 
     if (msg.type === 'token-count') {
+      lastTokenUsage = msg;
+      tokenSpeed.update(msg);
       const usageEnv = buildAgyUsageEnvelope(msg as Record<string, unknown>, displayedModel);
-      if (usageEnv) {
-        sendEnvelopes([usageEnv]);
-      }
+      sendUsageEnvelope(usageEnv);
     } else if (msg.type === 'model-output' && msg.textDelta) {
       messageBuffer.addMessage(msg.textDelta, 'assistant');
     } else if (msg.type === 'tool-call') {
@@ -315,9 +326,9 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         displayedModel,
         activeConversationId,
       );
-      if (usageEnv) {
-        sendEnvelopes([usageEnv]);
-      }
+      // Statusline snapshots update context counts without clearing the last
+      // speed measured for this conversation.
+      sendUsageEnvelope(usageEnv);
     }
     const limits = buildAgyUsageLimits(effectiveQuota, displayedModel);
     if (limits && limits.windows.length > 0) {
@@ -504,6 +515,8 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
       if (specialCommand.type === 'clear') {
         log('Handling /clear command - resetting agy session');
         backend.reset();
+        tokenSpeed.reset();
+        lastTokenUsage = undefined;
         permissionHandler.reset();
         delete metadata.agyConversationId;
         delete metadata.summary;
@@ -649,6 +662,8 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
 
       if (abortCountAtTurnStart !== abortCount) continue;
       sendEnvelopes(sessionManager.startTurn());
+      tokenSpeed.startTurn();
+      lastTokenUsage = undefined;
       try {
         await backend.sendPrompt(process.cwd(), promptToSend);
         if (abortCountAtTurnStart === abortCount) {
@@ -662,6 +677,11 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         log(`Turn ended: ${msg}`);
         const cancelled = abortCountAtTurnStart !== abortCount || error instanceof AgyTurnCancelledError;
         sendEnvelopes(sessionManager.endTurn(cancelled ? 'cancelled' : 'failed'));
+      } finally {
+        tokenSpeed.finishTurn();
+        if (lastTokenUsage && tokenSpeed.tokensPerSecond !== undefined) {
+          sendUsageEnvelope(buildAgyUsageEnvelope(lastTokenUsage, displayedModel));
+        }
       }
       quotaStore.loadFromFile();
       thinking = false;

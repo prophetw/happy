@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage } from '@/agent/core';
+import type { AgyStatusLineQuota } from './statusLine';
 
 const mocks = vi.hoisted(() => {
   const metadata = { path: '/work/project', flavor: 'agy', summary: { text: 'AGY task', updatedAt: 1 } };
@@ -50,7 +51,8 @@ const mocks = vi.hoisted(() => {
     createBackend: vi.fn<(...args: any[]) => any>(),
     prepareImages: vi.fn<(...args: any[]) => Promise<any>>(),
     quota: {
-      loadFromFile: vi.fn(), getQuota: vi.fn(() => null), subscribe: vi.fn(() => vi.fn()),
+      loadFromFile: vi.fn(), getQuota: vi.fn<() => AgyStatusLineQuota | null>(() => null),
+      subscribe: vi.fn((_callback: (quota: AgyStatusLineQuota) => void) => vi.fn()),
     },
   };
 });
@@ -84,9 +86,6 @@ vi.mock('./usage', () => ({
   formatAgyUsageMarkdown: vi.fn(() => 'Usage'), formatAgyUsageTerminal: vi.fn(),
 }));
 vi.mock('./statusLine', () => ({ AgyQuotaStore: { getInstance: () => mocks.quota } }));
-vi.mock('./usageBridge', () => ({
-  buildAgyUsageEnvelope: vi.fn(), buildUsageEnvelopeFromContextWindow: vi.fn(), buildAgyUsageLimits: vi.fn(),
-}));
 vi.mock('./imageInput', () => ({
   prepareAgyImageAttachments: mocks.prepareImages,
   formatAgyPromptWithAttachments: vi.fn((text: string) => text),
@@ -163,6 +162,38 @@ describe('AGY session push notifications', () => {
     const onMessage = session.onUserMessage.mock.calls[0][0];
     await onMessage({ content: { text }, meta: {} });
   }
+
+  it('reports turn speed, preserves it through statusline snapshots, and resets it for the next turn', async () => {
+    mocks.backend.sendPrompt.mockImplementationOnce(async () => {
+      emit({ type: 'token-count', output_tokens: 100 });
+      emit({ type: 'token-count', agy_usage_scope: 'turn', output_tokens: 100, duration_seconds: 2 });
+    });
+    await start();
+    mocks.createBackend.mock.calls[0][0].onConversationId('speed-conversation');
+    await send('First task');
+    await vi.waitFor(() => expect(turnStatuses()).toEqual(['completed']));
+    const usageEnvelopes = () => session.sendSessionProtocolMessage.mock.calls
+      .map(([envelope]) => envelope).filter((envelope) => envelope.usage);
+    expect(usageEnvelopes().at(-1)).toMatchObject({
+      ev: { t: 'service', text: '' }, usage: { output_tokens: 100, output_tokens_per_second: 50 },
+    });
+    expect(usageEnvelopes().at(-1)?.turn).toBeUndefined();
+
+    const syncQuota = mocks.quota.subscribe.mock.calls[0][0];
+    const quota = {
+      updatedAt: Date.now(),
+      contextWindow: { conversationId: 'speed-conversation', totalInputTokens: 500, totalOutputTokens: 100 },
+    };
+    syncQuota(quota);
+    expect(usageEnvelopes().at(-1)?.usage.output_tokens_per_second).toBe(50);
+    mocks.backend.sendPrompt.mockImplementationOnce(async () => {
+      syncQuota(quota);
+      emit({ type: 'token-count', input_tokens: 500 });
+    });
+    await send('Second task without output counts');
+    await vi.waitFor(() => expect(turnStatuses()).toHaveLength(2));
+    expect(usageEnvelopes().at(-1)?.usage.output_tokens_per_second).toBeUndefined();
+  });
 
   it.each([undefined, 'cli', 'sdk'] as const)('sends one server-routed push per successful turn (engine %s)', async (engine) => {
     await start(engine);

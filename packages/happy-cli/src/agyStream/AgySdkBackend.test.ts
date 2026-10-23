@@ -96,6 +96,10 @@ describe('AgySdkBackend', () => {
     stdout.emit('data', '{"event":"turn_complete","status":"SUCCESS","conversation_id":"sdk-conv-100"}\n');
 
     await expect(turn1).resolves.toBeUndefined();
+    expect(messages).toContainEqual({
+      type: 'token-count', agy_usage_scope: 'turn',
+      input_tokens: 10, output_tokens: 5, thinking_tokens: 0,
+    });
     expect(messages.filter((m) => m.type === 'model-output')).toEqual([
       { type: 'model-output', textDelta: 'Hi ' },
       { type: 'model-output', textDelta: 'there!' },

@@ -288,6 +288,8 @@ export class AgySdkBackend implements AgentBackend {
       case 'token_count': {
         this.emit({
           type: 'token-count',
+          // The bridge emits response.usage once for the completed chat call.
+          agy_usage_scope: 'turn',
           input_tokens: event.input_tokens || 0,
           output_tokens: event.output_tokens || 0,
           thinking_tokens: event.thinking_tokens || 0,

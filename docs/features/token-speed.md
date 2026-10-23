@@ -19,13 +19,19 @@ App 与 CLI 都需要包含本功能；旧 CLI 或没有速度字段的历史消
   首次恢复旧线程时，用首个事件的 `total - last` 建立历史基线；后续回合沿用上一份总量。
   重复用量事件不会累加 token；结束后冻结耗时，迟到的最终用量仍使用该结束时间。
   未知基线、计数器回退或缺少计时依据时隐藏该回合的速度，下一回合可重新开始统计。
+- **agy 默认 stream-json 引擎**：使用同一份 `result.usage.output_tokens / result.duration_seconds`，
+  在回合结束时更新；不累加重复的 step 用量与最终汇总。缺少有效提供方耗时时，使用当前回合
+  `sendPrompt` 起止的单调时钟耗时。**SDK 引擎**使用该次 `response.usage.output_tokens`
+  和相同的本地回合计时。状态栏上下文快照保留本回合的有效速度，新回合与 `/clear` 重置统计；
+  恢复会话时不把历史用量计入当前回合。缺少输出计数时隐藏，不从字符数或配额百分比估算。
+  旧 `legacy` 引擎尚未接入。
 
 未提供速度、非正或非有限速度不显示；有效值保留一位小数，低于 `0.1` 显示 `<0.1 tok/s`。
 后续没有速度字段的用量更新会清除旧值；清空会话会重建 Codex 计时器。
 
 ## 数据链路
 
-1. CLI 的 `utils/tokenSpeed.ts` 计算速度；Claude converter 与 Codex mapper 将结果附加到
+1. CLI 的 `utils/tokenSpeed.ts` 计算速度；Claude converter、Codex mapper 与 agy runner 将结果附加到
    现有 usage 快照的可选字段 `output_tokens_per_second`。
 2. 继续使用空文本 `service` 用量事件。Codex 保持无 turn 的兼容格式，旧 App 不会多出空白消息。
 3. App 的 `typesRaw.ts` 验证速度字段，异常值只丢弃速度，不影响其余上下文用量。
@@ -35,6 +41,7 @@ App 与 CLI 都需要包含本功能；旧 CLI 或没有速度字段的历史消
 ## 验证
 
 - CLI：`utils/tokenSpeed.test.ts`、Claude/Codex 的 `tokenSpeed.test.ts`，以及既有 converter / mapper 测试。
+- agy：`agyStream/tokenSpeed.test.ts`、stream-json / SDK 事件映射与 runner 用量桥接测试。
 - App：`sync/tokenSpeed.test.ts` 验证归一化、用量存储、异常值与无空白行；
   `components/usage/OutputTokenSpeed.test.ts` 验证显示、隐藏与说明点击。
 - App 与 CLI TypeScript 检查。
