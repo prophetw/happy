@@ -140,6 +140,18 @@ describe('POST /v1/sessions/:sessionId/push-event', () => {
         expect(state.sent).toHaveLength(1);
     });
 
+    it('sends an intervention with sound and high priority even while a UI is watching', async () => {
+        state.sockets.push({ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: SESSION } });
+        const res = await app.inject({ method: 'POST', url: `/v1/sessions/${SESSION}/push-event`, payload: {
+            kind: 'intervention', title: 'Action required on your computer', body: 'session title',
+            data: { requestId: 'request-1', type: 'human_intervention' },
+        } });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ result: 'sent' });
+        expect(recordSessionAttention).toHaveBeenCalledWith(USER, SESSION, 'intervention', expect.any(String), undefined);
+        expect(state.sent[0]).toMatchObject({ priority: 'high', sound: 'default', data: { kind: 'intervention', sessionId: SESSION, requestId: 'request-1' } });
+    });
+
     it('suppresses and says so when a UI client is viewing this conversation', async () => {
         state.sockets.push({ data: { clientType: 'user-scoped', appState: 'active', viewingSessionId: SESSION } });
         const res = await postPushEvent(app);

@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { decodeAttentionItem, encodeAttentionValue, mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecord } from './sessionAttention';
+import { decodeAttentionItem, encodeAttentionValue, getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecord } from './sessionAttention';
+import type { Session } from './storageTypes';
 
 const record = (patch: Partial<SessionAttentionRecord> = {}): SessionAttentionRecord => ({ kind: 'done', eventId: 'done:1:1', seq: 1, at: 10, read: false, version: 0, ...patch });
 
 describe('attention event reconciliation', () => {
+    it('does not announce the paused turn as completed when its intervention is acknowledged', () => {
+        const paused = { attentionKind: 'intervention', lastTurnStatus: 'completed', agentState: { humanIntervention: null } } as Session;
+        expect(getSessionAttentionKind(paused, record({ kind: 'intervention' }))).toBe('intervention');
+        expect(getSessionAttentionKind({ ...paused, attentionKind: 'done' }, record({ kind: 'done' }))).toBe('done');
+    });
     it('synchronizes only event metadata and strips local retry fields from the wire value', () => {
         const value = encodeAttentionValue(record({ pendingRead: true }));
         expect(decodeAttentionItem({ key: 'session-attention-v1:s', value, version: 2 })).toEqual(['s', record({ version: 2 })]);

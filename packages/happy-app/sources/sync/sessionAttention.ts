@@ -6,7 +6,7 @@ import type { Session } from './storageTypes';
 
 export const SESSION_ATTENTION_PREFIX = 'session-attention-v1:';
 export const AttentionValueSchema = z.object({
-    kind: z.enum(['done', 'permission', 'question', 'failed']),
+    kind: z.enum(['done', 'permission', 'question', 'failed', 'intervention']),
     eventId: z.string().min(1), at: z.number().finite(), read: z.boolean(), seq: z.number().optional(),
     pushDelivered: z.boolean().optional(),
     errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional(),
@@ -16,6 +16,10 @@ export type SessionAttentionRecord = z.infer<typeof AttentionValueSchema> & { ve
 export type SessionAttentionRecords = Record<string, SessionAttentionRecord>;
 
 export function getSessionAttentionKind(session: Session, record: SessionAttentionRecord | undefined): AttentionKind | undefined {
+    if (session.agentState?.humanIntervention) return 'intervention';
+    // Clearing the local blocker is not a completed turn. Keep it neutral until
+    // the follow-up produces a new result or a different durable notification.
+    if (session.attentionKind === 'intervention' && (!record || record.kind === 'intervention')) return 'intervention';
     if (session.lastTurnStatus === 'failed') return 'failed';
     if (session.lastTurnStatus === 'completed') return 'done';
     return record?.kind ?? session.attentionKind;

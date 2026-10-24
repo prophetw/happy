@@ -21,6 +21,7 @@ export interface PushMessage {
     sound?: 'default' | null;
     badge?: number;
     channelId?: string;
+    priority?: 'default' | 'normal' | 'high';
 }
 
 export interface PushTicket {

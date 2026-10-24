@@ -38,6 +38,12 @@ function agentState({
 }
 
 describe('resolveSessionState', () => {
+    it('keeps a local intervention ahead of thinking and other requests', () => {
+        const state = agentState({ permission: true, communication: true });
+        state.humanIntervention = { id: 'local-1', kind: 'sudo', instructions: 'Use the local terminal', createdAt: 1 };
+        expect(resolveSessionState({ agentState: state, thinking: true, isOnline: true })).toBe('intervention_required');
+        expect(resolveSessionState({ agentState: state, thinking: true, isOnline: false })).toBe('disconnected');
+    });
     it('keeps working while a non-blocking question is pending and leaves it answerable when idle', () => {
         const state = agentState({ communication: true });
         state.communications!.question.isBlocking = false;

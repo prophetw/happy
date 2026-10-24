@@ -157,6 +157,7 @@ class ClaudeQueryDriver {
     async start(): Promise<void> {
         const fakeSessionClient = {
             sessionId: 'claude-integration-test',
+            rpcHandlerManager: { registerHandler() {}, unregisterHandler() {} },
             sendClaudeSessionMessage: (message: unknown) => {
                 if (
                     message

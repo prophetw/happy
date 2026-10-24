@@ -13,7 +13,8 @@
  * Suppression requires an active UI explicitly viewing this conversation,
  * unless the user has chosen to always notify their phone. A foreground
  * home page or another conversation must not suppress mobile notifications.
- * Anything short of that proof sends, because a missed push is far more
+ * Human intervention events always notify the phone, including when a UI is
+ * viewing the session. Anything short of that proof sends, because a missed push is far more
  * costly than a redundant one. See eventRouter.hasActiveUiClient.
  *
  * Every path reports a PushOutcome so callers can tell "delivered" from
@@ -63,7 +64,8 @@ async function fetchTokensAndSend(params: {
             sound: 'default' as const,
             threadId: params.sessionId,
             badge: params.badge,
-            channelId: params.channelId
+            channelId: params.channelId,
+            ...(params.data.kind === 'intervention' ? { priority: 'high' as const } : {})
         }))
     );
 
@@ -110,7 +112,7 @@ export async function dispatchSessionEventPush(params: {
 
     try {
         try {
-            if (await isUserActive(userId, sessionId)) {
+            if (data?.kind !== 'intervention' && await isUserActive(userId, sessionId)) {
                 log({ module: 'push' }, `Suppressed session-event push for user ${userId} session ${sessionId}: user active`);
                 return { result: 'suppressed', reason: 'active-ui-client' };
             }

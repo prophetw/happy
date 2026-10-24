@@ -108,6 +108,7 @@ export const en: TranslationStructure = {
 
 
     status: {
+        interventionRequired: 'waiting for local action',
         connected: 'connected',
         connecting: 'connecting',
         disconnected: 'disconnected',
@@ -125,6 +126,21 @@ export const en: TranslationStructure = {
         viewConversation: 'Open conversation',
         dismissCompletion: 'Dismiss completion notification',
         failed: 'Failed',
+    },
+
+    humanIntervention: {
+        computer: ({ host }: { host: string }) => `Act on the computer running this session: ${host}`,
+        thisComputer: 'Act on the computer running this session.',
+        sudo: 'Enter the sudo password in that computer’s terminal.',
+        uac: 'Confirm the Windows UAC prompt on that computer.',
+        manual: 'Complete the local action described below.',
+        hint: 'Keep passwords on your computer. After confirmation, the agent checks the actual result before continuing.',
+        continue: 'Handled, continue',
+        cancel: 'Cancel task',
+        later: 'Remind me later',
+        sending: 'Sending…',
+        sendFailed: 'Could not send your response. Check the connection and try again.',
+        offline: 'This session is offline. Reconnect it before responding.',
     },
 
     sessionNotifications: {

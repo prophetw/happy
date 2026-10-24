@@ -56,6 +56,12 @@ export class RpcHandlerManager {
         }
     }
 
+    /** Invoke a local harness action; idle/local harnesses may not register it. */
+    async invokeHandlerIfRegistered(method: string, data: unknown): Promise<unknown> {
+        const handler = this.handlers.get(this.getPrefixedMethod(method));
+        return handler ? await handler(data) : undefined;
+    }
+
     /**
      * Handle an incoming RPC request
      * @param request - The RPC request data

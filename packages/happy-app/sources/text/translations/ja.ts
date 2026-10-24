@@ -85,6 +85,7 @@ export const ja: TranslationStructure = {
     },
 
     status: {
+        interventionRequired: 'waiting for local action',
         connected: '接続済み',
         connecting: '接続中',
         disconnected: '切断済み',
@@ -103,6 +104,8 @@ export const ja: TranslationStructure = {
         dismissCompletion: '完了通知を閉じる',
         failed: 'Failed',
     },
+
+    humanIntervention: en.humanIntervention,
 
     sessionNotifications: {
         title: 'Task notifications',

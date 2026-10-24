@@ -11,7 +11,7 @@ export interface PushToken {
     updatedAt: number
 }
 
-export type SessionNotificationKind = 'done' | 'permission' | 'question' | 'failed'
+export type SessionNotificationKind = 'done' | 'permission' | 'question' | 'failed' | 'intervention'
 
 function getSessionTitle(metadata: Metadata | null | undefined): string {
     const summaryText = metadata?.summary?.text?.trim()
@@ -46,6 +46,8 @@ export function getSessionNotificationTitle(
     kind: SessionNotificationKind
 ): string {
     switch (kind) {
+        case 'intervention':
+            return 'Action required on your computer';
         case 'done':
             return "It's ready!"
         case 'failed':

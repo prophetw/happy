@@ -25,6 +25,23 @@ function createSessionMock() {
 }
 
 describe('CodexPermissionHandler', () => {
+    it.each(['request_human_intervention', 'happy__request_human_intervention', 'mcp__happy__request_human_intervention'])(
+        'allows %s to report a blocker without another approval prompt', async tool => {
+            const { session, getState } = createSessionMock();
+            const handler = new CodexPermissionHandler(session as any);
+            await expect(handler.handleToolCall('request-1', tool, { kind: 'sudo', instructions: 'Use the local terminal' })).resolves.toEqual({ decision: 'approved' });
+            expect(getState().requests).toBeUndefined();
+        },
+    );
+
+    it('does not allow a different tool that merely contains the intervention tool name', async () => {
+        const { session, getState } = createSessionMock();
+        const handler = new CodexPermissionHandler(session as any);
+        const pending = handler.handleToolCall('other-1', 'request_human_intervention_and_run_command', {});
+        expect(getState().requests['other-1']).toBeDefined();
+        handler.abortAll();
+        await expect(pending).resolves.toEqual({ decision: 'abort' });
+    });
     it('auto-approves the safe change_title tool', async () => {
         const { session, getState } = createSessionMock();
         const handler = new CodexPermissionHandler(session as any);

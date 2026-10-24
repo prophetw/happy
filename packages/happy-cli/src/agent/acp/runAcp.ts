@@ -1,3 +1,4 @@
+import { HUMAN_INTERVENTION_INSTRUCTION } from '@/utils/humanInterventionPrompt';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { ApiClient } from '@/api/api';
@@ -45,6 +46,7 @@ const CHANGE_TITLE_INSTRUCTION = [
   'Based on this conversation, call the change_title tool from the happy MCP server',
   'to set a short chat session title that represents the current task.',
   'If the chat idea changes dramatically, call this tool again to update the title.',
+  HUMAN_INTERVENTION_INSTRUCTION,
 ].join(' ');
 
 /**
@@ -469,7 +471,7 @@ class GenericAcpPermissionHandler extends BasePermissionHandler implements AcpPe
     // agent-facing tool name is agent-specific (dsh: mcp__happy__change_title,
     // others: happy__change_title / change_title), so any of the spellings
     // counts — same set as the agy engine's auto-approve list.
-    if (isChangeTitleTool(toolName)) {
+    if (isChangeTitleTool(toolName) || new Set(['request_human_intervention', 'happy__request_human_intervention', 'mcp__happy__request_human_intervention']).has(toolName)) {
       logger.debug(`${this.logPrefix} Auto-approving title change: ${toolName} (${toolCallId})`);
       return { decision: 'approved' };
     }
@@ -606,7 +608,7 @@ export async function runAcp(opts: {
   // names the session once and is never nagged about it again.
   let changeTitleInstructionSent = false;
 
-  const happyServer = await startHappyServer(session);
+  const happyServer = await startHappyServer(session, api.push());
   const mcpServers = {
     happy: {
       command: join(projectPath(), 'bin', 'happy-mcp.mjs'),

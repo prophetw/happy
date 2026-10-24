@@ -137,7 +137,7 @@ interface SessionMessages {
 
 // Display-only row data — all primitives, cheap to deep-equal
 export interface SessionRowData {
-    attentionKind?: 'done' | 'permission' | 'question' | 'failed';
+    attentionKind?: 'done' | 'permission' | 'question' | 'failed' | 'intervention';
     botId?: string | null;
     botUsername?: string | null;
     id: string;

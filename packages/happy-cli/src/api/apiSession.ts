@@ -804,11 +804,11 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
-    private enqueueMessage(content: unknown, invalidate: boolean = true) {
+    private enqueueMessage(content: unknown, invalidate: boolean = true, localId: string = randomUUID()) {
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
         this.pendingOutbox.push({
             content: encrypted,
-            localId: randomUUID()
+            localId
         });
         if (invalidate) {
             this.sendSync.invalidate();
@@ -961,6 +961,20 @@ export class ApiSessionClient extends EventEmitter {
         this.enqueueMessage(content);
     }
 
+    /** Publish a user action through the normal durable inbox, preserving modes. */
+    async sendUserAction(text: string, localId: string): Promise<void> {
+        if (this.closed) throw new Error('Session is closed');
+        this.enqueueMessage({ role: 'user', content: { type: 'text', text }, meta: { sentFrom: 'human-intervention' } }, false, localId);
+        await this.sendSync.invalidateAndAwait();
+        if (this.closed || this.pendingOutbox.some(message => message.localId === localId)) {
+            throw new Error('Could not deliver the user action');
+        }
+    }
+
+    getAgentState(): AgentState | null {
+        return this.agentState;
+    }
+
     sendSessionEvent(event: {
         type: 'switch', mode: 'local' | 'remote'
     } | {
@@ -1081,7 +1095,7 @@ export class ApiSessionClient extends EventEmitter {
      */
     updateAgentState(handler: (metadata: AgentState) => AgentState) {
         logger.debugLargeJson('Updating agent state', this.agentState);
-        this.agentStateLock.inLock(async () => {
+        return this.agentStateLock.inLock(async () => {
             await backoff(async () => {
                 let updated = handler(this.agentState || {});
                 const generation = this.relayGeneration;

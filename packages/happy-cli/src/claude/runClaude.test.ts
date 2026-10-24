@@ -149,6 +149,7 @@ async function startRemoteRunClaudeHarness(opts: {
         close: vi.fn(async () => {}),
     };
     const api = {
+        push: () => ({ sendSessionNotification: vi.fn() }),
         getOrCreateMachine: vi.fn(async () => ({})),
         getOrCreateSession: vi.fn(async () => ({
             id: 'happy-session-1',
@@ -313,6 +314,7 @@ describe('runClaude remote JSONL scanner', () => {
             close: vi.fn(async () => {}),
         };
         const api = {
+            push: () => ({ sendSessionNotification: vi.fn() }),
             getOrCreateMachine: vi.fn(async () => ({})),
             getOrCreateSession: vi.fn(async () => ({
                 id: 'happy-session-1',
@@ -422,6 +424,7 @@ describe('runClaude remote JSONL scanner', () => {
             close: vi.fn(async () => {}),
         };
         const api = {
+            push: () => ({ sendSessionNotification: vi.fn() }),
             getOrCreateMachine: vi.fn(async () => ({})),
             getOrCreateSession: vi.fn(async () => ({
                 id: 'happy-session-1',

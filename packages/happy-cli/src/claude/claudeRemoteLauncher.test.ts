@@ -40,6 +40,7 @@ function fixture() {
             sessionId: 'fixture-happy-session',
             rpcHandlerManager: { registerHandler: (name: string, handler: () => Promise<void>) => handlers.set(name, handler) },
             getMetadata: () => ({}),
+            getAgentState: vi.fn(() => ({} as { humanIntervention?: unknown })),
             sendSessionEvent: vi.fn(),
             sendClaudeSessionMessage: vi.fn((message) => {
                 const mapped = mapClaudeLogMessageToSessionEnvelopes(message, state);
@@ -102,6 +103,14 @@ describe('claudeRemoteLauncher provider auth', () => {
 
 describe('claudeRemoteLauncher context usage', () => {
     beforeEach(() => { vi.mocked(claudeRemote).mockReset(); });
+
+    it('does not announce completion when the turn yielded for a local intervention', async () => {
+        const { session, notification, stop } = fixture();
+        session.client.getAgentState.mockReturnValue({ humanIntervention: { id: 'local-1' } });
+        vi.mocked(claudeRemote).mockImplementation(async opts => { await opts.onReady(); stop(); });
+        await claudeRemoteLauncher(session as any);
+        expect(notification).not.toHaveBeenCalled();
+    });
 
     it('delivers the cc-switch context snapshot through the real queue before completing the turn', async () => {
         const { session, envelopes, stop } = fixture();

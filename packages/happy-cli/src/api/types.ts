@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Update, UpdateMachineBody } from '@slopus/happy-wire';
 import { UsageSchema } from '@/claude/types'
 import type { SandboxConfig } from '@/persistence'
+import type { HumanIntervention, HumanInterventionReply } from '@slopus/happy-wire';
 
 export {
   SessionMessageContentSchema,
@@ -424,6 +425,8 @@ export type AgentGoalStatus = {
 );
 
 export type AgentState = {
+  humanIntervention?: HumanIntervention | null;
+  completedHumanIntervention?: HumanInterventionReply | null;
   communications?: Record<string, AgentCommunication>
   completedCommunications?: Record<string, AgentCommunication & {
     completedAt: number;

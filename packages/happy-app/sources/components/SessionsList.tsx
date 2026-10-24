@@ -834,6 +834,7 @@ const STATUS_CONFIG: Record<SessionState, { color: string; dotColor: string; isP
     waiting: { color: '#34C759', dotColor: '#34C759', isPulsing: false, isConnected: true },
     permission_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
     input_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
+    intervention_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
 };
 
 const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }: {
@@ -847,7 +848,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
     const sessionPressHandlers = useSessionPressHandlers(session.id);
     const [actionsAnchor, setActionsAnchor] = React.useState<SessionActionsAnchor | null>(null);
     const baseStatus = STATUS_CONFIG[session.state];
-    const needsUserAction = session.state === 'permission_required' || session.state === 'input_required';
+    const needsUserAction = session.state === 'permission_required' || session.state === 'input_required' || session.state === 'intervention_required';
     // User action stays orange and pulsing even when the request also marked the session unread.
     const status = session.hasUnread && !needsUserAction
         ? { ...baseStatus, color: '#007AFF', dotColor: '#007AFF', isPulsing: false, isConnected: baseStatus.isConnected }
@@ -857,7 +858,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
         return vibingMessages[Math.floor(Math.random() * vibingMessages.length)].toLowerCase() + '…';
     }, [session.state]);
 
-    const statusText = session.state === 'input_required'
+    const statusText = session.state === 'intervention_required' ? t('status.interventionRequired') : session.state === 'input_required'
         ? t('status.inputRequired')
         : session.state === 'permission_required'
             ? t('status.permissionRequired')

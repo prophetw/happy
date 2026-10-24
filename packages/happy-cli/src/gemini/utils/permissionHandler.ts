@@ -63,6 +63,9 @@ export class GeminiPermissionHandler extends BasePermissionHandler {
             'change_title',
             'happy__change_title',
             'mcp__happy__change_title',
+            'request_human_intervention',
+            'happy__request_human_intervention',
+            'mcp__happy__request_human_intervention',
             'GeminiReasoning',
             'CodexReasoning',
             'think',
@@ -71,7 +74,7 @@ export class GeminiPermissionHandler extends BasePermissionHandler {
         // Tool-call IDs auto-approve when they exactly match one of these
         // values or start with `<name>-` (Gemini CLI format, e.g.
         // `change_title-1765385846663`). Substring was a bypass vector.
-        const alwaysAutoApproveIdPrefixes: readonly string[] = ['change_title', 'save_memory'];
+        const alwaysAutoApproveIdPrefixes: readonly string[] = ['change_title', 'save_memory', 'request_human_intervention'];
 
         // Check by tool name
         if (alwaysAutoApproveNames.has(toolName)) {

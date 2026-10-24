@@ -1,3 +1,4 @@
+import { HUMAN_INTERVENTION_INSTRUCTION } from '@/utils/humanInterventionPrompt';
 import { trimIdent } from "@/utils/trimIdent";
 import { shouldIncludeCoAuthoredBy } from "./claudeSettings";
 
@@ -31,8 +32,8 @@ export const systemPrompt = (() => {
   const includeCoAuthored = shouldIncludeCoAuthoredBy();
   
   if (includeCoAuthored) {
-    return BASE_SYSTEM_PROMPT + '\n\n' + CO_AUTHORED_CREDITS;
+    return BASE_SYSTEM_PROMPT + '\n\n' + HUMAN_INTERVENTION_INSTRUCTION + '\n\n' + CO_AUTHORED_CREDITS;
   } else {
-    return BASE_SYSTEM_PROMPT;
+    return BASE_SYSTEM_PROMPT + '\n\n' + HUMAN_INTERVENTION_INSTRUCTION;
   }
 })();

@@ -302,6 +302,7 @@ export async function runGemini(opts: {
 
   const sendReady = () => {
     session.sendSessionEvent({ type: 'ready' });
+    if (session.getAgentState()?.humanIntervention) return;
     try {
       api.push().sendSessionNotification({
         kind: 'done',
@@ -502,7 +503,7 @@ export async function runGemini(opts: {
   // Start Happy MCP server and create Gemini backend
   //
 
-  const happyServer = await startHappyServer(session);
+  const happyServer = await startHappyServer(session, api.push());
   const bridgeCommand = join(projectPath(), 'bin', 'happy-mcp.mjs');
   const mcpServers = {
     happy: {

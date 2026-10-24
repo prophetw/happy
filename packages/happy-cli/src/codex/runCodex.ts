@@ -383,6 +383,7 @@ export async function runCodex(opts: {
     };
     const notifyTurnOutcome = () => {
         if (!turnOutcome || turnOutcome.status === 'cancelled') return;
+        if (turnOutcome.status === 'completed' && session.getAgentState()?.humanIntervention) return;
         try {
             api.push().sendSessionNotification({
                 kind: turnOutcome.status === 'failed' ? 'failed' : 'done',
@@ -866,7 +867,7 @@ export async function runCodex(opts: {
     });
 
     // Start Happy MCP server (HTTP) and prepare STDIO bridge config for Codex
-    const happyServer = await startHappyServer(session);
+    const happyServer = await startHappyServer(session, api.push());
     // Launch the bridge via `node <path>` (rather than relying on the .mjs shebang)
     // so it works on Windows, where Windows can't execute shebang scripts directly.
     // codex would otherwise fail to start the MCP server, the change_title tool would

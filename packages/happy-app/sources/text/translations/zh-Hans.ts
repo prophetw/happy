@@ -95,6 +95,7 @@ export const zhHans: TranslationStructure = {
 
 
     status: {
+        interventionRequired: '等待人工处理',
         connected: '已连接',
         connecting: '连接中',
         disconnected: '已断开',
@@ -112,6 +113,21 @@ export const zhHans: TranslationStructure = {
         viewConversation: '点击查看对话',
         dismissCompletion: '关闭完成通知',
         failed: '执行失败',
+    },
+
+    humanIntervention: {
+        computer: ({ host }: { host: string }) => `请在运行此会话的电脑上操作：${host}`,
+        thisComputer: '请在运行此会话的电脑上操作。',
+        sudo: '请在该电脑的终端中输入 sudo 密码。',
+        uac: '请在该电脑上确认 Windows UAC 授权弹窗。',
+        manual: '请完成下面说明的本机操作。',
+        hint: '密码只在电脑上输入。确认后，agent 会检查实际结果，再继续执行。',
+        continue: '已处理，继续',
+        cancel: '取消任务',
+        later: '稍后处理',
+        sending: '正在发送…',
+        sendFailed: '回复发送失败，请检查连接后重试。',
+        offline: '此会话已离线，请重新连接后再处理。',
     },
 
     sessionNotifications: {

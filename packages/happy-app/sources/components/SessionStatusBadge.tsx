@@ -10,14 +10,14 @@ import { getSessionAttentionStatus, SESSION_ATTENTION_COLORS } from '@/utils/ses
 import { StatusDot } from './StatusDot';
 
 /** A steady colour plus text makes the state readable without watching a pulse. */
-export const SessionStatusBadge = React.memo(({ state, hasUnread, kind }: { state: SessionState; hasUnread: boolean; kind?: 'done' | 'permission' | 'question' | 'failed' }) => {
+export const SessionStatusBadge = React.memo(({ state, hasUnread, kind }: { state: SessionState; hasUnread: boolean; kind?: 'done' | 'permission' | 'question' | 'failed' | 'intervention' }) => {
     const { theme } = useUnistyles();
     const status = getSessionAttentionStatus(state, hasUnread, kind);
     if (!status) return null;
     const color = SESSION_ATTENTION_COLORS[status];
     const textColor = theme.dark ? color
         : status === 'completed' ? '#187A33' : status === 'running' ? '#0066CC' : status === 'failed' ? '#B42318' : '#995700';
-    const label = status === 'permission_required' ? t('status.permissionRequired')
+    const label = status === 'intervention_required' ? t('status.interventionRequired') : status === 'permission_required' ? t('status.permissionRequired')
         : status === 'input_required' ? t('status.inputRequired')
             : status === 'running' ? t('status.running') : status === 'failed' ? t('status.failed') : t('status.completed');
 

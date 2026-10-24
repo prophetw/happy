@@ -1011,6 +1011,14 @@ export async function sessionAbort(sessionId: string): Promise<void> {
     });
 }
 
+/** Acknowledges local handling; it never supplies a password or approves a tool. */
+export async function sessionReplyHumanIntervention(sessionId: string, id: string, status: 'resolved' | 'cancelled'): Promise<void> {
+    const response = await apiSocket.sessionRPC<{ success?: boolean; error?: string }, { id: string; status: 'resolved' | 'cancelled' }>(
+        sessionId, 'human-intervention', { id, status },
+    );
+    if (response?.success !== true) throw new Error(response?.error ?? 'Could not send the intervention response');
+}
+
 /**
  * Puts a picture already uploaded to the session's attachment store onto the
  * bot behind a Happy Agent session. The agent downloads it by ref the way it

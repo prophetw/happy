@@ -5,8 +5,8 @@ import { log } from '@/utils/log';
 
 // Account KV namespace for delivery metadata only. No titles, messages or credentials.
 export const SESSION_ATTENTION_PREFIX = 'session-attention-v1:';
-export type AttentionKind = 'done' | 'permission' | 'question' | 'failed';
-const valueSchema = z.object({ kind: z.enum(['done', 'permission', 'question', 'failed']), eventId: z.string(), read: z.boolean(), at: z.number(), seq: z.number().optional(), pushDelivered: z.boolean().optional(), errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional() });
+export type AttentionKind = 'done' | 'permission' | 'question' | 'failed' | 'intervention';
+const valueSchema = z.object({ kind: z.enum(['done', 'permission', 'question', 'failed', 'intervention']), eventId: z.string(), read: z.boolean(), at: z.number(), seq: z.number().optional(), pushDelivered: z.boolean().optional(), errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional() });
 
 function readValue(value: Uint8Array | null | undefined) {
     if (!value) return null;

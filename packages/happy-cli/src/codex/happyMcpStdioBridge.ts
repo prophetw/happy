@@ -1,7 +1,7 @@
 /**
  * Happy MCP STDIO Bridge
  *
- * Minimal STDIO MCP server exposing a single tool `change_title`.
+ * STDIO MCP server exposing title management and human intervention requests.
  * On invocation it forwards the tool call to an existing Happy HTTP MCP server
  * using the StreamableHTTPClientTransport.
  *
@@ -16,6 +16,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
+import { HumanInterventionInputSchema } from '@slopus/happy-wire';
 
 function parseArgs(argv: string[]): { url: string | null } {
   let url: string | null = null;
@@ -63,7 +64,7 @@ async function main() {
     version: '1.0.0',
   });
 
-  // Register the single tool and forward to HTTP MCP
+  // Forward Happy tools to the session's HTTP MCP server.
   server.registerTool(
     'change_title',
     {
@@ -89,6 +90,18 @@ async function main() {
       }
     }
   );
+
+  server.registerTool('request_human_intervention', {
+    description: 'Strongly notify the user of a confirmed local action such as a sudo password prompt or UAC. Include concrete instructions, never secrets. End the turn after reporting and wait for the user follow-up.',
+    inputSchema: HumanInterventionInputSchema.shape,
+  }, async (args) => {
+    try {
+      const client = await ensureHttpClient();
+      return await client.callTool({ name: 'request_human_intervention', arguments: args }) as any;
+    } catch (error) {
+      return { content: [{ type: 'text' as const, text: `Failed to request human intervention: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  });
 
   // Start STDIO transport
   const stdio = new StdioServerTransport();

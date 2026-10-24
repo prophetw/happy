@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RigBotSchema } from '@slopus/happy-wire';
+import { RigBotSchema, HumanInterventionSchema, HumanInterventionReplySchema } from '@slopus/happy-wire';
 import type { SessionAvatarDescriptor } from './sessionAvatarTypes';
 import type { ProjectAvatar } from './projectTypes';
 
@@ -370,6 +370,8 @@ export type AgentQuestionAnswer = z.infer<typeof AgentQuestionAnswerSchema>;
 export type CompletedAgentCommunication = z.infer<typeof CompletedAgentCommunicationSchema>;
 
 export const AgentStateSchema = z.object({
+    humanIntervention: HumanInterventionSchema.nullish().catch(undefined),
+    completedHumanIntervention: HumanInterventionReplySchema.nullish().catch(undefined),
     controlledByUser: z.boolean().nullish(),
     // Ephemeral runtime state. A malformed snapshot must not invalidate
     // permission requests or the rest of the agent state.
@@ -435,7 +437,7 @@ export type SessionComposerPatch = Partial<Pick<Session,
 >>;
 
 export interface Session {
-    attentionKind?: 'done' | 'permission' | 'question' | 'failed';
+    attentionKind?: 'done' | 'permission' | 'question' | 'failed' | 'intervention';
     lastTurnStatus?: 'completed' | 'failed' | 'cancelled';
     lastTurnErrorCode?: string;
     /** Session message sequence of the latest turn lifecycle event. */

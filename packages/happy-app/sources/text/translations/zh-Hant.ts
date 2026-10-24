@@ -94,6 +94,7 @@ export const zhHant: TranslationStructure = {
     },
 
     status: {
+        interventionRequired: '等待人工處理',
         connected: '已連線',
         connecting: '連線中',
         disconnected: '已中斷連線',
@@ -112,6 +113,8 @@ export const zhHant: TranslationStructure = {
         dismissCompletion: '關閉完成通知',
         failed: '執行失敗',
     },
+
+    humanIntervention: en.humanIntervention,
 
     sessionNotifications: {
         title: '任務提醒',

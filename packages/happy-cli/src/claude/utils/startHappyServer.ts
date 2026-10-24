@@ -14,8 +14,11 @@ import { z } from "zod";
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/apiSession";
 import { randomUUID } from "node:crypto";
+import { HumanInterventionInputSchema } from '@slopus/happy-wire';
+import type { PushNotificationClient } from '@/api/pushNotifications';
+import { HumanInterventionHandler } from './humanIntervention';
 
-function createMcpServer(handler: (title: string) => Promise<{ success: boolean; error?: string }>): McpServer {
+function createMcpServer(handler: (title: string) => Promise<{ success: boolean; error?: string }>, intervention: HumanInterventionHandler): McpServer {
     const mcp = new McpServer({
         name: "Happy MCP",
         version: "1.0.0",
@@ -54,10 +57,21 @@ function createMcpServer(handler: (title: string) => Promise<{ success: boolean;
         }
     });
 
+    mcp.registerTool('request_human_intervention', {
+        description: 'Notify the user that work is blocked by a confirmed local OS action (sudo password, Windows UAC, or another manual step). Do not include passwords or secrets. After calling, end the turn and wait for the user follow-up.',
+        inputSchema: HumanInterventionInputSchema.shape,
+    }, async (args) => {
+        try {
+            return { content: [{ type: 'text' as const, text: JSON.stringify(await intervention.request(args)) }] };
+        } catch (error) {
+            return { content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }], isError: true };
+        }
+    });
+
     return mcp;
 }
 
-export async function startHappyServer(client: ApiSessionClient) {
+export async function startHappyServer(client: ApiSessionClient, push?: Pick<PushNotificationClient, 'sendSessionNotification'>) {
     logger.debug(`[happyMCP] server:start sessionId=${client.sessionId}`);
 
     const handler = async (title: string) => {
@@ -74,8 +88,9 @@ export async function startHappyServer(client: ApiSessionClient) {
         }
     };
 
+    const intervention = new HumanInterventionHandler(client, push);
     const server = createServer(async (req, res) => {
-        const mcp = createMcpServer(handler);
+        const mcp = createMcpServer(handler, intervention);
         try {
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined
@@ -106,9 +121,10 @@ export async function startHappyServer(client: ApiSessionClient) {
 
     return {
         url: baseUrl.toString(),
-        toolNames: ['change_title'],
+        toolNames: ['change_title', 'request_human_intervention'],
         stop: () => {
             logger.debug(`[happyMCP] server:stop sessionId=${client.sessionId}`);
+            intervention.dispose();
             server.close();
         }
     }

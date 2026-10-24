@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     session: {
         sessionId: 'happy-resumed',
         getMetadata: vi.fn(() => null),
+        getAgentState: vi.fn(() => ({} as { humanIntervention?: unknown })),
         onUserMessage: vi.fn(),
         onFileEvent: vi.fn(),
         keepAlive: vi.fn(),
@@ -81,6 +82,7 @@ const credentials = { token: 'test-token', encryption: { type: 'legacy' as const
 describe('Codex resume startup readiness', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.session.getAgentState.mockReturnValue({});
         vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', '');
         vi.stubEnv('HAPPY_FORK_CODEX_THREAD_ID', '');
         mocks.createApi.mockResolvedValue({
@@ -175,6 +177,18 @@ describe('Codex resume startup readiness', () => {
             mocks.eventHandler!({ type: 'task_started' });
             mocks.eventHandler!({ type: 'turn_aborted' });
             return { aborted: true };
+        });
+        await runCodex({ credentials, startedBy: 'daemon' });
+        expect(mocks.notify).not.toHaveBeenCalled();
+    });
+
+    it('does not announce completion while a local intervention remains pending', async () => {
+        mocks.session.getAgentState.mockReturnValue({ humanIntervention: { id: 'local-1' } });
+        mocks.waitForMessage.mockResolvedValueOnce({ message: 'Continue', mode: { permissionMode: 'yolo' }, hash: 'test', isolate: false });
+        mocks.sendTurn.mockImplementationOnce(async () => {
+            mocks.eventHandler!({ type: 'task_started', turn_id: 'waiting-turn' });
+            mocks.eventHandler!({ type: 'task_complete', status: 'completed' });
+            return { aborted: false };
         });
         await runCodex({ credentials, startedBy: 'daemon' });
         expect(mocks.notify).not.toHaveBeenCalled();

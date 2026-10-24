@@ -83,6 +83,7 @@ export const pt: TranslationStructure = {
 
 
     status: {
+        interventionRequired: 'waiting for local action',
         connected: 'conectado',
         connecting: 'conectando',
         disconnected: 'desconectado',
@@ -101,6 +102,8 @@ export const pt: TranslationStructure = {
         dismissCompletion: 'Fechar notificação de conclusão',
         failed: 'Failed',
     },
+
+    humanIntervention: en.humanIntervention,
 
     sessionNotifications: {
         title: 'Task notifications',

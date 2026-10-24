@@ -430,6 +430,7 @@ export const ru: TranslationStructure = {
 
 
     status: {
+        interventionRequired: 'waiting for local action',
         connected: 'подключено',
         connecting: 'подключение',
         disconnected: 'отключено',
@@ -448,6 +449,8 @@ export const ru: TranslationStructure = {
         dismissCompletion: 'Закрыть уведомление о завершении',
         failed: 'Failed',
     },
+
+    humanIntervention: en.humanIntervention,
 
     sessionNotifications: {
         title: 'Task notifications',

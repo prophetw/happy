@@ -348,6 +348,22 @@ describe('ApiSessionClient v3 messages API migration', () => {
         });
     });
 
+    it('durably publishes an encrypted intervention response with a stable id and no mode override', async () => {
+        const client = new ApiSessionClient('fake-token', session);
+        mockAxiosPost.mockResolvedValueOnce({ data: { messages: [{ id: 'msg-1', seq: 1, localId: 'intervention-1' }] } });
+        await client.sendUserAction('Check the local result before continuing.', 'intervention-1');
+        const payload = mockAxiosPost.mock.calls[0][1];
+        expect(payload.messages[0].localId).toBe('intervention-1');
+        const content = decrypt(session.encryptionKey, session.encryptionVariant, decodeBase64(payload.messages[0].content));
+        expect(content).toEqual({ role: 'user', content: { type: 'text', text: 'Check the local result before continuing.' }, meta: { sentFrom: 'human-intervention' } });
+        const received = vi.fn();
+        client.onUserMessage(received);
+        emitSocketEvent('update', createNewMessageUpdate(1, payload.messages[0].content));
+        expect(received).toHaveBeenCalledWith(content);
+        await client.close();
+        await expect(client.sendUserAction('Never sent', 'closed')).rejects.toThrow('closed');
+    });
+
     it('accumulates multiple pending outbox messages into one follow-up batch', async () => {
         const client = new ApiSessionClient('fake-token', session);
 

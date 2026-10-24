@@ -245,7 +245,7 @@ export const ApiEphemeralMachineActivityUpdateSchema = z.object({
 export const ApiEphemeralSessionEventUpdateSchema = z.object({
     type: z.literal('session-event'),
     sessionId: z.string(),
-    kind: z.enum(['done', 'permission', 'question', 'failed']),
+    kind: z.enum(['done', 'permission', 'question', 'failed', 'intervention']),
     title: z.string(),
     body: z.string(),
     timestamp: z.number(),
