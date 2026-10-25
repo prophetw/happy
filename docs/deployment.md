@@ -737,10 +737,43 @@ printf 'Web: %s/happy/\nRelay: %s\nSource: %s\n' \
 ### 2. 开发机：构建一次、验证并导出静态包
 
 builder 会安装依赖、构建 `happy-wire` 并执行 `expo export --platform web`。
-类型检查与 changelog 一致性在该构建环境中进行，无需再在宿主机安装一套依赖。
-任意检查失败立即停止；不要继续上传或修改网关。
+该精简镜像只包含 App 和 wire，不包含 App 测试引用的 CLI 源码及完整测试依赖，
+因此完整 App 类型检查与 changelog 一致性必须在发布 clone 中执行。
+可设置 `WEB_DEPENDENCIES_FROM=/home/dev/code/happy` 复用已验证且依赖清单一致的
+本机依赖；未设置时在发布 clone 安装依赖。任意检查失败立即停止，不上传或修改网关。
 
 ```bash
+if [ -n "${WEB_DEPENDENCIES_FROM:-}" ]; then
+  python3 - "$WEB_DEPENDENCIES_FROM" "$WEB_RELEASE_DIR" <<'PY'
+import pathlib, sys
+source, release = map(pathlib.Path, sys.argv[1:])
+manifests = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
+manifests += [str(p.relative_to(release)) for p in (release / 'packages').glob('*/package.json')]
+for relative in manifests:
+    if (source / relative).read_bytes() != (release / relative).read_bytes():
+        raise SystemExit('STOP: dependency manifest differs: ' + relative)
+directories = [release] + [p for p in (release / 'packages').iterdir() if (p / 'package.json').is_file()]
+for directory in directories:
+    installed = source / directory.relative_to(release) / 'node_modules'
+    link = directory / 'node_modules'
+    if installed.is_dir():
+        if link.exists() or link.is_symlink():
+            raise SystemExit('STOP: inspect existing node_modules: ' + str(link))
+        link.symlink_to(installed, target_is_directory=True)
+PY
+else
+  pnpm install --frozen-lockfile
+fi
+pnpm --filter @slopus/happy-wire run build
+(
+  cd packages/happy-app
+  pnpm exec tsc --noEmit --incremental false
+  WEB_CHANGELOG_BEFORE=$(sha256sum sources/changelog/changelog.json)
+  pnpm exec tsx sources/scripts/parseChangelog.ts
+  test "$WEB_CHANGELOG_BEFORE" = "$(sha256sum sources/changelog/changelog.json)"
+)
+test -z "$(git status --porcelain=v1 -uall)"
+
 docker build "${WEB_BUILD_ARGS[@]}" --target builder \
   --label "org.opencontainers.image.revision=$WEB_SHA" \
   -t "$WEB_BUILD_IMAGE" .
@@ -765,10 +798,6 @@ assert(!scripts.some(x => x.startsWith('/_expo/')), 'Unprefixed entry bundle');
 assert(fs.statSync('dist/canvaskit.wasm').isFile());
 console.log({ baseUrl: config.experiments.baseUrl, source: config.extra.app.buildCommitSha });
 JS
-pnpm typecheck
-WEB_CHANGELOG_BEFORE=$(sha256sum sources/changelog/changelog.json)
-pnpm exec tsx sources/scripts/parseChangelog.ts
-test "$WEB_CHANGELOG_BEFORE" = "$(sha256sum sources/changelog/changelog.json)"
 SH
 
 test -z "$(git status --porcelain=v1 -uall)"
