@@ -922,6 +922,7 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
             for (const envelope of result.envelopes) {
                 if (envelope.usage && speed.tokensPerSecond !== undefined) {
                     envelope.usage.output_tokens_per_second = speed.tokensPerSecond;
+                    envelope.usage.output_tokens_per_second_scope = 'model_request';
                 }
             }
         } else {
@@ -929,7 +930,7 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
             if (usage) {
                 result.envelopes.push(createEnvelope('agent', { t: 'service', text: '' }, {
                     usage: { ...usage, ...(speed.tokensPerSecond !== undefined
-                        ? { output_tokens_per_second: speed.tokensPerSecond } : {}) },
+                        ? { output_tokens_per_second: speed.tokensPerSecond, output_tokens_per_second_scope: 'model_request' } : {}) },
                 }));
             }
         }

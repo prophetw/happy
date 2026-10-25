@@ -62,6 +62,8 @@ export class SDKToLogConverter {
     private sidechainLastUUID = new Map<string, string>();
     private contextWindowByModel = new Map<string, number>();
     private latestMainMessage: SDKAssistantMessage['message'] | null = null;
+    private mainResponseIds = new Set<string>();
+    private sawSidechainResponse = false;
 
     constructor(
         context: Omit<ConversionContext, 'parentUuid'>,
@@ -83,6 +85,8 @@ export class SDKToLogConverter {
         if (sessionId !== this.context.sessionId) {
             this.latestMainMessage = null
             this.contextWindowByModel.clear()
+            this.mainResponseIds.clear()
+            this.sawSidechainResponse = false
         }
         this.context.sessionId = sessionId
     }
@@ -95,6 +99,8 @@ export class SDKToLogConverter {
         this.context.parentUuid = null
         this.latestMainMessage = null
         this.contextWindowByModel.clear()
+        this.mainResponseIds.clear()
+        this.sawSidechainResponse = false
     }
 
     private contextWindowForModel(model: string): number | undefined {
@@ -236,6 +242,9 @@ export class SDKToLogConverter {
                 const assistantMsg = sdkMessage as SDKAssistantMessage
                 if (!parentToolUseId && !(assistantMsg as any).isSidechain) {
                     this.latestMainMessage = assistantMsg.message
+                    if (assistantMsg.message.id) this.mainResponseIds.add(assistantMsg.message.id)
+                } else {
+                    this.sawSidechainResponse = true
                 }
                 logMessage = {
                     ...baseFields,
@@ -291,7 +300,17 @@ export class SDKToLogConverter {
                 const latestMainMessage = this.latestMainMessage
                 this.latestMainMessage = null
                 const usage = UsageSchema.safeParse(this.withContextWindow(this.withFinalUsage(latestMainMessage))?.usage)
-                const tokensPerSecond = outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_ms)
+                // API duration and main-loop usage need the same request scope.
+                // Multi-request, subagent and mixed-model results are ambiguous;
+                // keep context usage, but do not manufacture a model speed.
+                const singleRequest = resultMsg.subtype === 'success' && !resultMsg.is_error
+                    && resultMsg.num_turns === 1 && this.mainResponseIds.size === 1
+                    && !this.sawSidechainResponse && Object.keys(resultMsg.modelUsage ?? {}).length <= 1
+                    && usage.success && usage.data.output_tokens === resultMsg.usage?.output_tokens
+                const tokensPerSecond = singleRequest
+                    ? outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_api_ms) : undefined
+                this.mainResponseIds.clear()
+                this.sawSidechainResponse = false
                 if (usage.success && (tokensPerSecond !== undefined || (typeof usage.data.context_window === 'number'
                     && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0))) {
                     // A system snapshot avoids replaying chat text and avoids
@@ -301,7 +320,7 @@ export class SDKToLogConverter {
                         type: 'system',
                         subtype: 'happy_context_usage',
                         usage: { ...usage.data, ...(tokensPerSecond !== undefined
-                            ? { output_tokens_per_second: tokensPerSecond } : {}) },
+                            ? { output_tokens_per_second: tokensPerSecond, output_tokens_per_second_scope: 'model_request' } : {}) },
                     }
                 }
                 break

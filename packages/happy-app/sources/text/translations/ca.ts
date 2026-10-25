@@ -560,9 +560,9 @@ export const ca: TranslationStructure = {
             badgePlan: 'Planificació',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Mitjana ${speed} tok/s`,
-            outputSpeedTitle: "Velocitat mitjana de sortida",
-            outputSpeedDescription: "Tokens de sortida dividits pel temps mesurat de l’agent, incloses les esperes i l’execució d’eines. S’actualitza en rebre dades d’ús.",
+            outputSpeed: ({ speed }: { speed: string }) => `Model ${speed} tok/s`,
+            outputSpeedTitle: "Velocitat mostrejada del model",
+            outputSpeedDescription: "Tokens de sortida dividits pel temps de les respostes del model amb mesurament fiable. La mostra pot incloure només la primera resposta. Inclou processament d’entrada, espera de la petició, raonament i transferència; exclou eines i espera d’aprovació. Codex també inclou la preparació local del prompt. S’ometen les respostes sense temps fiable.",
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de context`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% setmana`,

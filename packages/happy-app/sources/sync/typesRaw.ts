@@ -14,6 +14,7 @@ const usageDataSchema = z.object({
     cache_read_input_tokens: z.number().optional(),
     output_tokens: z.number(),
     output_tokens_per_second: z.number().positive().optional().catch(undefined),
+    output_tokens_per_second_scope: z.literal('model_request').optional().catch(undefined),
     context_window: z.number().optional(),
     service_tier: z.string().optional(),
 }).passthrough();

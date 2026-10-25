@@ -1,62 +1,57 @@
 # Token 输出速度
 
-Expo App 在每轮最后一条可见 Agent 回复的底部显示 `平均 50.0 tok/s`，
-与复制按钮、耗时和完成时间同行。输入框下方仅保留周用量和上下文占用。
-点击速度可查看统计口径。数值随该轮用量事件更新，各轮独立保留自己的速度。
-App 与 CLI 都需要包含本功能；旧 CLI 或没有速度字段的历史消息不显示速度。
+Expo App 在每轮最后一条可见 Agent 回复的底部显示 `模型 50.0 tok/s`，
+与复制按钮、耗时和完成时间同行。点击速度可查看采样口径。
+输入框下方仅保留周用量和上下文占用，各轮独立保留自己的速度。
 
 ## 统计口径
 
-速度是 **输出 token 数 / 对应统计区间的总耗时（秒）**，包含等待、输入处理和工具执行时间。
-它是该轮 Agent 的平均输出吞吐量，不是整个会话的平均速度，也不能用作模型纯生成阶段的瞬时速度。
-直接使用提供方的输出 token 计数，不将输入和缓存 token 加入分子，也不根据字符数猜测。
+速度用于比较模型响应：**有可靠计时的模型响应输出 token 总数 / 对应响应耗时总和（秒）**。
+只使用提供方实际上报的输出 token，不根据字符数估算，不加入输入或缓存 token。
+包含该响应的输入处理、请求等待、推理和响应传输；工具执行、人工确认等待和后续收尾不进入分母。
+它是采样响应的平均吞吐量，不能解释为纯解码速度或整轮任务效率。
+不同输入长度、推理设置和提供方的 token 口径仍会影响比较。
 
-- **Claude Code 远程模式**：SDK `result.usage.output_tokens / (result.duration_ms / 1000)`。
-  分子与分母来自同一份 SDK result，遵循它的统计范围，可能包含多个请求和子任务。
-  原有上下文用量仍来自最后一条主助手回复，不将 result 的累计 token 写成当前上下文大小。
-  速度在 result 到达后更新；本地终端模式没有 SDK result 时隐藏。
-- **Codex**：以该回合 `total.outputTokens` 相对起点的增量，除以主线程
-  `task_started` 到当前用量事件或回合结束的单调时钟耗时。
-  首次恢复旧线程时，用首个事件的 `total - last` 建立历史基线；后续回合沿用上一份总量。
-  重复用量事件不会累加 token；结束后冻结耗时，迟到的最终用量仍使用该结束时间。
-  未知基线、计数器回退或缺少计时依据时隐藏该回合的速度，下一回合可重新开始统计。
-- **agy 默认 stream-json 引擎**：由于 agy 持续进程的 `result.usage.output_tokens` 与 `result.duration_seconds`
-  为整场会话轨迹的累计值（耗时包含空闲停顿），速度按每轮基线差值 `output_tokens - baseline` 计算输出 token，
-  始终使用本轮 `sendPrompt` 起止的单调时钟耗时，不采用提供方累计 duration。
-  内部用量事件显式区分 `session`（stream-json result）、`step` 和 `turn`（SDK response）。
-  恢复会话的首轮若没有历史基线，使用当轮 step 输出；按 `step_index` 保存最新快照，重复上报不累加。
-  缺少最终 result 会使下一轮基线失效，再通过当轮 step 或新的 result 建立基线；
-  无可靠计数、基线未知且没有 step、计数器回退或耗时无效时隐藏速度，不把历史 token 算入当前轮。
-  **SDK 引擎**直接使用该次 `response.usage.output_tokens` 和本地回合计时，不扣除上一轮用量。
-  上下文占用使用最近一次请求或状态栏快照，状态栏优先采用 `current_usage`；
-  累计 result 仅更新速度，不能覆盖上下文大小。尚无上下文快照时不为发送速度而编造用量。
-  结束时在最新上下文快照上附加最终速度。新回合清除速度，`/clear` 同时重置基线和上下文快照。
-  不从字符数或配额百分比估算输出 token；旧 `legacy` 引擎尚未接入。
+准确性优先于覆盖率：只统计能对应 token 与耗时的完整响应，可能只覆盖本轮首个响应。
+没有可靠计时、边界不明、计数异常或引擎不支持时隐藏，不回退到整轮耗时。
 
+| 引擎 | 采样方式与限制 |
+| --- | --- |
+| Claude Code 远程模式 | 仅在 SDK result 明确为单次主模型请求（`num_turns === 1`）、只观察到一个主响应 ID、没有子任务或多模型混用，并且主响应与 result 的输出计数一致时，使用 `result.usage.output_tokens / (result.duration_api_ms / 1000)`。不使用 `duration_ms`。多请求结果或缺少 API 耗时不显示；本地终端模式没有 SDK result 时不显示。 |
+| Codex | 当前公开协议没有每次模型请求的起点，只采样 `task_started` 到首次完整主助手响应后的有效 `token_count`。这段包含本地提示准备时间。要求当前总量相对已知基线的增量与 `last.outputTokens` 一致；首次恢复时，在已观察到完整新响应后可用 `total - last` 对齐历史。输出前的历史快照只建立基线。工具、权限等待、压缩、重试或未知事件先于用量到达时跳过采样；多个响应、缺少计数或计数回退也跳过。采样后固定数值，后续工具、重复快照、回合结束或迟到用量不会扩大分母。其余请求不推测起点。 |
+| agy stream-json | 只采样 `step_type=agent_response`、`state=DONE` 且同时提供有效 `usage.output_tokens` 和独立 `duration_seconds` 的步骤。按 `step_index` 保存最新快照、去重，再按 token 和耗时加权。工具、reasoning/process 步骤、会话累计 result、没有独立耗时的步骤不参与。旧版 agy 缺少该计时字段时隐藏。 |
+| agy SDK / legacy | 当前没有可确认的逐请求耗时，不显示速度；仍正常传递用量和上下文信息。 |
+
+上下文占用继续使用原有请求或状态栏快照。Claude result 不会把累计 token 写成上下文大小；
+agy 的会话累计 result 也不能覆盖上下文。发送速度时只在已有上下文快照上附加指标，不编造用量。
+
+每个新回合清除当前采样；清空或切换会话时重置采样状态。
+Codex 子线程或旧轮次的用量不会传入主线程采样；审批和提问等带外等待会使尚未完成的首段采样失效。
 未提供速度、非正或非有限速度不显示；有效值保留一位小数，低于 `0.1` 显示 `<0.1 tok/s`。
-同轮后续没有速度字段的用量更新会清除该轮旧值，不影响其他轮次；清空会话会重建 Codex 计时器。
 
-## 数据链路
+## 数据链路与兼容性
 
-1. CLI 的 `utils/tokenSpeed.ts` 计算速度；Claude converter、Codex mapper 与 agy runner 将结果附加到
-   现有 usage 快照的可选字段 `output_tokens_per_second`。
-2. 继续使用空文本 `service` 用量事件。Codex 保持无 turn 的兼容格式，旧 App 不会多出空白消息。
-3. App 的 `typesRaw.ts` 验证速度字段，异常值只丢弃速度，不影响其余上下文用量。
+1. CLI 的 `utils/tokenSpeed.ts`、Claude converter 和 agy tracker 生成采样速度。
+   用量快照同时携带 `output_tokens_per_second` 与 `output_tokens_per_second_scope: "model_request"`。
+2. 复用现有空文本 `service` 用量事件；Codex 和 agy 保持无 turn 的兼容格式，避免旧 App 显示空白消息。
+3. App 的 `typesRaw.ts` 校验速度和 scope；只有 `model_request` scope 会进入展示与存储。
+   旧 CLI、旧历史消息只含整轮吞吐量，没有该标记时隐藏，避免被重新标为模型速度。
+   异常指标不影响其余上下文用量。
 4. reducer 保留不可见用量快照，由 `utils/agentTurnTokenSpeed.ts` 复用 `assignTurns` 的轮次划分，
-   将速度写入对应轮次最后一条可见文本的 `tokensPerSecond`。有 turn ID 时优先精确匹配；
-   旧 CLI 没有 turn ID 时，根据快照之前最近一行的轮次关联。排队或失败的用户消息不切断轮次，
-   没有足够归属信息的快照不显示。历史分页后重新关联，不将最新速度套用到旧回复。
-5. `MessageView` 在回复底部复用 `OutputTokenSpeed` 渲染数值及说明。
-   相同毫秒内按接收顺序应用用量更新，使最终速度快照生效。
-   `latestUsage.tokensPerSecond` 继续保留最近快照供兼容使用，不再传给输入框。
+   将速度写入该轮最后一条可见文本的 `tokensPerSecond`。有 turn ID 时优先精确匹配；
+   旧 CLI 没有 turn ID 时按快照之前最近一行关联。历史分页、迟到快照和排队输入沿用原有归属规则。
+5. `MessageView` 在回复底部复用 `OutputTokenSpeed` 展示；同一毫秒内按接收顺序应用快照。
+   `latestUsage.tokensPerSecond` 继续保留最近有效快照供兼容使用，不传给输入框。
+
+CLI 与 App 都需要包含本次修改；手机更新不会更新电脑上的 CLI 或已有会话进程。
 
 ## 验证
 
-- CLI：`utils/tokenSpeed.test.ts`、Claude/Codex 的 `tokenSpeed.test.ts`，以及既有 converter / mapper 测试。
-- agy：`agyStream/tokenSpeed.test.ts` 通过真实解析器重放多轮、恢复、重复 step、缺少 result 与计数器回退；
-  SDK 测试串联桥接事件与速度计算，runner / 用量桥接测试验证上下文不被累计值覆盖和 `/clear` 重置。
-- App：`sync/tokenSpeed.test.ts` 验证归一化、逐轮速度归属、历史分页、迟到用量、排队输入、异常值与无空白行；
-  `components/MessageView.test.ts` 验证速度与耗时、复制按钮位于同一回复底部；
-  `components/usage/OutputTokenSpeed.test.ts` 验证显示、隐藏与说明点击。
-- App 与 CLI TypeScript 检查。
-- 在线验收时检查 CLI → Relay → App 链路、速度数值与说明，以及无速度字段时的隐藏状态。
+- CLI：用可控事件与时间重放模型响应，再增加一分钟工具执行，验证已采样的模型速度不变。
+  覆盖首次恢复、旧计数、重复上报、迟到用量、计数回退、工具先于用量、未知事件和多响应边界。
+- Claude：验证单请求 API 计时、缺少或无效计时、多请求与计数不匹配时隐藏，以及 converter → mapper 的 scope 透传。
+- agy：通过真实 parser 验证完整响应步骤、独立耗时、重复/更新快照、加权采样、累计 result 排除与 SDK 无计时隐藏；
+  runner 验证采样经状态栏快照保留、新回合清除、上下文不被累计计数覆盖和 `/clear` 重置。
+- App：`sync/tokenSpeed.test.ts` 验证 scope、旧指标隐藏、逐轮归属、分页、迟到用量、排队输入和无空白行；
+  `components/usage/OutputTokenSpeed.test.ts` 与 `components/MessageView.test.ts` 验证显示及说明入口。
+- 真实 CLI → Relay → App 链路与真机表现需另行验收；单元测试不代表已经完成线上验证。

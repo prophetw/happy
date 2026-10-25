@@ -576,9 +576,9 @@ export const ru: TranslationStructure = {
             badgePlan: 'Планирование',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `В среднем ${speed} tok/s`,
-            outputSpeedTitle: "Средняя скорость вывода",
-            outputSpeedDescription: "Число выходных токенов, делённое на измеренное время агента, включая ожидание и выполнение инструментов. Обновляется при получении данных об использовании.",
+            outputSpeed: ({ speed }: { speed: string }) => `Модель ${speed} tok/s`,
+            outputSpeedTitle: "Выборочная скорость модели",
+            outputSpeedDescription: "Выходные токены, делённые на время достоверно измеренных ответов модели. Выборка может включать только первый ответ. Учитывает обработку ввода, ожидание запроса, рассуждение и передачу; исключает инструменты и ожидание подтверждения. Для Codex также учитывается локальная подготовка запроса. Ответы без достоверного времени пропускаются.",
             detailContext: ({ used, total }: { used: string; total: string }) => `Контекст ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% контекста`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% за неделю`,

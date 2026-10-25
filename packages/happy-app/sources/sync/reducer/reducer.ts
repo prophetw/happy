@@ -914,7 +914,8 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                 state.outputSpeedSamples.set(msg.id, {
                     createdAt: msg.createdAt,
                     turn: msg.turn,
-                    tokensPerSecond: msg.usage.output_tokens_per_second,
+                    tokensPerSecond: msg.usage.output_tokens_per_second_scope === 'model_request'
+                        ? msg.usage.output_tokens_per_second : undefined,
                 });
             }
 
@@ -1425,7 +1426,8 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
     // update in the same millisecond. Older history must not replace it.
     if (!state.latestUsage || timestamp >= state.latestUsage.timestamp) {
         const contextWindow = readPositiveTokenCount(usage.context_window);
-        const tokensPerSecond = usage.output_tokens_per_second;
+        const tokensPerSecond = usage.output_tokens_per_second_scope === 'model_request'
+            ? usage.output_tokens_per_second : undefined;
         state.latestUsage = {
             inputTokens: usage.input_tokens,
             outputTokens: usage.output_tokens,

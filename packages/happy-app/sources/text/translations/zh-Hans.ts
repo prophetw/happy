@@ -584,9 +584,9 @@ export const zhHans: TranslationStructure = {
             badgePlan: '计划',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `平均 ${speed} tok/s`,
-            outputSpeedTitle: "本轮平均输出速度",
-            outputSpeedDescription: "本轮 Agent 上报的输出 token 数除以对应统计区间的总耗时，包含等待和工具执行。它不是整个会话的平均速度，也不是模型纯生成阶段的速度。",
+            outputSpeed: ({ speed }: { speed: string }) => `模型 ${speed} tok/s`,
+            outputSpeedTitle: "模型请求采样速度",
+            outputSpeedDescription: "仅统计本轮有可靠计时的模型响应，可能只覆盖首个响应。输出 token 数除以对应响应耗时，包含输入处理、请求等待、推理与响应传输，排除工具执行和人工确认等待。Codex 首段还包含本地提示准备时间。缺少可靠计时的响应不参与统计。",
             detailContext: ({ used, total }: { used: string; total: string }) => `上下文 ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `上下文 ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `本周 ${percent}%`,

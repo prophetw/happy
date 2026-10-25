@@ -176,6 +176,9 @@ export class StreamJsonParser {
         ...step.usage,
         agy_usage_scope: 'step',
         agy_step_index: step.step_index,
+        agy_step_type: step.step_type,
+        agy_step_state: step.state,
+        ...(step.duration_seconds !== undefined ? { duration_seconds: step.duration_seconds } : {}),
       });
     }
 

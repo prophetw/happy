@@ -5,7 +5,7 @@ import { mapCodexMcpMessageToSessionEnvelopes, type CodexTurnState } from '../ut
 afterEach(() => vi.restoreAllMocks());
 
 describe('Codex output speed envelopes', () => {
-    it('carries speed through invisible usage envelopes and measures final tool time', () => {
+    it('carries a model request sample through invisible usage envelopes without adding tool time', () => {
         const clock = vi.spyOn(performance, 'now');
         const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };
         const send = (message: Record<string, unknown>, time: number) => {
@@ -15,6 +15,7 @@ describe('Codex output speed envelopes', () => {
             return result.envelopes;
         };
         send({ type: 'task_started' }, 1000);
+        send({ type: 'agent_message', message: 'Checking the project' }, 2000);
         const sample = send({
             type: 'token_count',
             total: { inputTokens: 1200, outputTokens: 5100 },
@@ -24,10 +25,14 @@ describe('Codex output speed envelopes', () => {
         expect(sample[0].turn).toBeUndefined();
         expect(sample[0].ev).toEqual({ t: 'service', text: '' });
         expect(sample[0].usage?.output_tokens_per_second).toBe(50);
+        expect(sample[0].usage?.output_tokens_per_second_scope).toBe('model_request');
 
-        const final = send({ type: 'task_complete' }, 5000);
+        send({ type: 'exec_command_begin', call_id: 'slow', command: ['sleep', '60'] }, 3000);
+        send({ type: 'exec_command_end', call_id: 'slow', exit_code: 0 }, 63000);
+        const final = send({ type: 'task_complete' }, 64000);
         expect(final.some((envelope) => envelope.ev.t === 'turn-end')).toBe(true);
-        expect(final.at(-1)?.usage?.output_tokens_per_second).toBe(25);
+        expect(final.at(-1)?.usage?.output_tokens_per_second).toBe(50);
+        expect(final.at(-1)?.usage?.output_tokens_per_second_scope).toBe('model_request');
         expect(final.at(-1)?.turn).toBeUndefined();
     });
 });

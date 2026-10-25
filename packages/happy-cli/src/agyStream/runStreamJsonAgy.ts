@@ -293,7 +293,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     lastContextUsage = envelope.usage;
     const rate = tokenSpeed.tokensPerSecond;
     sendEnvelopes([rate !== undefined && envelope.usage
-      ? { ...envelope, usage: { ...envelope.usage, output_tokens_per_second: rate } }
+      ? { ...envelope, usage: { ...envelope.usage, output_tokens_per_second: rate, output_tokens_per_second_scope: 'model_request' } }
       : envelope]);
   };
 

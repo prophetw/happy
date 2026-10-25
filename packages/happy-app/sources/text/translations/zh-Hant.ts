@@ -570,9 +570,9 @@ export const zhHant: TranslationStructure = {
             badgePlan: '計畫',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `平均 ${speed} tok/s`,
-            outputSpeedTitle: "本輪平均輸出速度",
-            outputSpeedDescription: "本輪 Agent 回報的輸出 token 數除以對應統計區間的總耗時，包含等待與工具執行。它不是整個對話的平均速度，也不是模型純生成階段的速度。",
+            outputSpeed: ({ speed }: { speed: string }) => `模型 ${speed} tok/s`,
+            outputSpeedTitle: "模型請求取樣速度",
+            outputSpeedDescription: "僅統計本輪有可靠計時的模型回應，可能只涵蓋首個回應。輸出 token 數除以對應回應耗時，包含輸入處理、請求等待、推理與回應傳輸，排除工具執行和人工確認等待。Codex 首段還包含本機提示準備時間。缺少可靠計時的回應不參與統計。",
             detailContext: ({ used, total }: { used: string; total: string }) => `上下文 ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `上下文 ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `本週 ${percent}%`,

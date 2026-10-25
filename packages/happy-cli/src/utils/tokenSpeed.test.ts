@@ -19,51 +19,101 @@ describe('outputTokensPerSecond', () => {
 });
 
 describe('CodexTokenSpeedTracker', () => {
-    it('excludes historical tokens when the first sample comes from a resumed thread', () => {
+    it('samples the first uninterrupted model response without historical tokens', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 1000);
+        tracker.observe({ type: 'agent_message', message: 'Working' }, 2500);
         expect(tracker.observe(usage(5100, 100), 3000)?.tokensPerSecond).toBe(50);
         expect(tracker.observe(usage(5300, 200), 7000)?.tokensPerSecond).toBe(50);
     });
 
-    it('does not count repeated cumulative notifications twice', () => {
+    it('does not let repeated usage notifications lengthen a measured request', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 900);
         tracker.observe(usage(100), 1000);
-        expect(tracker.observe(usage(100), 2000)?.tokensPerSecond).toBe(50);
+        expect(tracker.observe(usage(100), 2000)?.tokensPerSecond).toBe(100);
     });
 
-    it('includes trailing tool time, freezes on completion, and accepts late usage', () => {
+    it('keeps the sampled speed when a tool takes another minute and usage arrives late', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 1000);
-        tracker.observe(usage(100), 2000);
-        expect(tracker.observe({ type: 'task_complete' }, 5000)?.tokensPerSecond).toBe(25);
-        expect(tracker.observe(usage(200), 9000)?.tokensPerSecond).toBe(50);
-        expect(tracker.observe({ type: 'task_complete' }, 10000)?.tokensPerSecond).toBe(50);
+        tracker.observe({ type: 'agent_message', message: 'Running a command' }, 10000);
+        expect(tracker.observe(usage(1000), 21000)?.tokensPerSecond).toBe(50);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'slow' }, 21000);
+        tracker.observe({ type: 'exec_command_end', call_id: 'slow' }, 81000);
+        expect(tracker.observe({ type: 'task_complete' }, 81000)?.tokensPerSecond).toBe(50);
+        expect(tracker.observe(usage(1200, 200), 90000)?.tokensPerSecond).toBe(50);
     });
 
-    it('uses the previous total as the next turn baseline', () => {
+    it('resets the sample for the next turn and uses its own request duration', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message', message: 'First' }, 900);
         tracker.observe(usage(100), 1000);
         tracker.observe({ type: 'task_complete' }, 2000);
         tracker.observe({ type: 'task_started' }, 10000);
+        tracker.observe({ type: 'agent_message', message: 'Second' }, 12000);
         expect(tracker.observe(usage(400, 300), 13000)?.tokensPerSecond).toBe(100);
     });
 
-    it('hides unknown timing, unknown baselines, and counter resets', () => {
+    it.each(['exec_command_begin', 'mcp_tool_call_begin', 'patch_apply_begin', 'collab_agent_begin',
+        'exec_approval_request', 'request_user_input', 'context_compacted', 'stream_error', 'unknown_future_event'])
+    ('skips a request when %s interrupts its timing before usage', (type) => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message', message: 'Working' }, 1000);
+        tracker.observe({ type }, 2000);
+        expect(tracker.observe(usage(100), 62000)?.tokensPerSecond).toBeUndefined();
+        expect(tracker.observe({ type: 'task_complete' }, 63000)?.tokensPerSecond).toBeUndefined();
+    });
+
+    it('treats a pre-output usage snapshot as history rather than a completed response', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        expect(tracker.observe(usage(5000, 100), 100)?.tokensPerSecond).toBeUndefined();
+        tracker.observe({ type: 'agent_message', message: 'Fresh output' }, 1500);
+        expect(tracker.observe(usage(5100, 100), 2000)?.tokensPerSecond).toBe(50);
+    });
+
+    it('hides a missing request boundary, multiple unobserved requests, and counter resets', () => {
         const tracker = new CodexTokenSpeedTracker();
         expect(tracker.observe(usage(100), 1000)?.tokensPerSecond).toBeUndefined();
         tracker.observe({ type: 'task_started' }, 2000);
+        tracker.observe({ type: 'agent_message', message: 'Reset' }, 2500);
         expect(tracker.observe(usage(50), 3000)?.tokensPerSecond).toBeUndefined();
         expect(tracker.observe(usage(100), 4000)?.tokensPerSecond).toBeUndefined();
         tracker.observe({ type: 'task_started' }, 5000);
-        expect(tracker.observe(usage(200), 6000)?.tokensPerSecond).toBe(100);
+        tracker.observe({ type: 'agent_message', message: 'Recovered' }, 5500);
+        expect(tracker.observe(usage(200, 100), 6000)?.tokensPerSecond).toBe(100);
 
         const unknown = new CodexTokenSpeedTracker();
         unknown.observe({ type: 'task_started' }, 0);
+        unknown.observe({ type: 'agent_message', message: 'Unknown counts' }, 500);
         expect(unknown.observe({ type: 'token_count', total: { outputTokens: 100 } }, 1000)?.tokensPerSecond).toBeUndefined();
         expect(unknown.observe(usage(200, 100), 2000)?.tokensPerSecond).toBeUndefined();
+
+        const missed = new CodexTokenSpeedTracker();
+        missed.observe(usage(1000), 0);
+        missed.observe({ type: 'task_started' }, 1000);
+        missed.observe({ type: 'agent_message', message: 'Two requests' }, 2000);
+        expect(missed.observe(usage(1300, 100), 3000)?.tokensPerSecond).toBeUndefined();
+    });
+
+    it('does not create a sample from usage received after the turn has ended', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 1000);
+        tracker.observe({ type: 'task_complete' }, 2000);
+        expect(tracker.observe(usage(100), 10000)?.tokensPerSecond).toBeUndefined();
+    });
+
+    it('skips multiple completed responses before the first usage instead of guessing their scope', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message', item_id: 'one', message: 'First' }, 1000);
+        tracker.observe({ type: 'agent_message', item_id: 'two', message: 'Second' }, 2000);
+        expect(tracker.observe(usage(5300, 200), 3000)?.tokensPerSecond).toBeUndefined();
     });
 
     it('ignores missing cumulative output counts rather than adding per-response counts', () => {

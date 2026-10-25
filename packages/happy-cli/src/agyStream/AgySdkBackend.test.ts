@@ -28,11 +28,10 @@ function makeFakeSdkChild() {
 }
 
 describe('AgySdkBackend', () => {
-  it('uses each completed SDK response count without subtracting previous turns', async () => {
+  it('does not label SDK turn usage as a measured model request speed', async () => {
     const { child, stdout } = makeFakeSdkChild();
     const backend = new AgySdkBackend({ cwd: '/work', permissionMode: 'default', spawnFn: vi.fn(() => child) as unknown as SpawnFn });
-    let now = 0;
-    const tracker = new AgyTokenSpeedTracker(() => now);
+    const tracker = new AgyTokenSpeedTracker();
     backend.onMessage((message) => {
       if (message.type === 'token-count') tracker.update(message);
     });
@@ -44,13 +43,11 @@ describe('AgySdkBackend', () => {
       for (const count of [100, 150, 150, 50, 0, 80]) {
         tracker.startTurn();
         const turn = backend.sendPrompt('/work', 'Next task');
-        now += 2000;
         stdout.emit('data', JSON.stringify({ event: 'token_count', input_tokens: 1000, output_tokens: count }) + '\n');
         stdout.emit('data', '{"event":"turn_complete","status":"SUCCESS"}\n');
         await turn;
         tracker.finishTurn();
-        expect(tracker.tokensPerSecond).toBe(count > 0 ? count / 2 : undefined);
-        now += 10000;
+        expect(tracker.tokensPerSecond).toBeUndefined();
       }
     } finally {
       await backend.dispose();

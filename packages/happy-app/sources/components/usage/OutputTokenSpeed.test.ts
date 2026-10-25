@@ -7,7 +7,7 @@ vi.hoisted(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true));
 vi.mock('react-native', () => ({ Pressable: 'Pressable', Text: 'Text' }));
 vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { colors: { textSecondary: 'secondary' } } }) }));
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-vi.mock('@/text', () => ({ t: (key: string, values?: { speed: string }) => values ? `平均 ${values.speed} tok/s` : key }));
+vi.mock('@/text', () => ({ t: (key: string, values?: { speed: string }) => values ? `模型 ${values.speed} tok/s` : key }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 
 import { OutputTokenSpeed, formatTokenSpeed } from './OutputTokenSpeed';
@@ -27,9 +27,9 @@ function render(tokensPerSecond?: number) {
 }
 
 describe('OutputTokenSpeed', () => {
-    it('shows tokens per second and explains the average when pressed', () => {
+    it('shows model tokens per second and opens its sampling explanation', () => {
         const renderer = render(50);
-        expect(renderer.root.findByType('Text').props.children).toBe('平均 50.0 tok/s');
+        expect(renderer.root.findByType('Text').props.children).toBe('模型 50.0 tok/s');
         act(() => renderer.root.findByType('Pressable').props.onPress());
         expect(Modal.alert).toHaveBeenCalledWith('agentInput.context.outputSpeedTitle', 'agentInput.context.outputSpeedDescription');
     });

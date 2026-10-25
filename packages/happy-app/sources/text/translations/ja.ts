@@ -561,9 +561,9 @@ export const ja: TranslationStructure = {
             badgePlan: 'プラン',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `平均 ${speed} tok/s`,
-            outputSpeedTitle: "平均出力速度",
-            outputSpeedDescription: "出力トークン数をエージェントの計測時間で割った値です。待機とツール実行の時間を含み、使用量の報告時に更新されます。",
+            outputSpeed: ({ speed }: { speed: string }) => `モデル ${speed} tok/s`,
+            outputSpeedTitle: "モデル応答のサンプリング速度",
+            outputSpeedDescription: "信頼できる計測時間があるモデル応答の出力トークン数を、その所要時間で割ります。最初の応答のみの場合があります。入力処理、リクエスト待機、推論、応答の転送を含み、ツール実行とユーザー承認待ちは除外します。Codex の最初の応答にはローカルでのプロンプト準備も含まれます。計測できない応答は集計しません。",
             detailContext: ({ used, total }: { used: string; total: string }) => `コンテキスト ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `コンテキスト ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `週 ${percent}%`,

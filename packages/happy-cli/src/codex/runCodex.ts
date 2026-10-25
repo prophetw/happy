@@ -593,7 +593,12 @@ export async function runCodex(opts: {
         });
     }, api.push());
     client.setUserInputHandler(
-        (id, params) => communicationHandler!.requestNative(id, params),
+        (id, params) => {
+            if (params.threadId === client.threadId) {
+                tokenSpeedTracker.observe({ type: 'request_user_input' });
+            }
+            return communicationHandler!.requestNative(id, params);
+        },
         id => communicationHandler?.resolveNative(id),
     );
 
@@ -685,6 +690,11 @@ export async function runCodex(opts: {
 
     // Approval handler: routes server → client approval requests to our permission handler
     client.setApprovalHandler(async (params) => {
+        // Approval RPCs can arrive before a tool notification or final usage.
+        // Invalidate an unfinished sample before any user wait can enter it.
+        if (!params.threadId || params.threadId === client.threadId) {
+            tokenSpeedTracker.observe({ type: 'exec_approval_request' });
+        }
         const toolName = params.type === 'exec'
             ? 'CodexBash'
             : params.type === 'patch'

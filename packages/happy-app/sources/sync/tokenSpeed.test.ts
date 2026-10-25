@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { normalizeRawMessage } from './typesRaw';
 import { createReducer, reducer } from './reducer/reducer';
 
-function usageMessage(id: string, time: number, speed?: unknown, turn?: string) {
+function usageMessage(id: string, time: number, speed?: unknown, turn?: string, scope: unknown = 'model_request') {
     return normalizeRawMessage(id, null, time, {
         role: 'session', content: { type: 'session', data: {
             id, time, role: 'agent', turn, ev: { t: 'service', text: '' },
-            usage: { input_tokens: 1200, output_tokens: 50, output_tokens_per_second: speed },
+            usage: { input_tokens: 1200, output_tokens: 50, output_tokens_per_second: speed,
+                ...(scope !== null ? { output_tokens_per_second_scope: scope } : {}) },
         } },
     } as any)!;
 }
@@ -26,6 +27,14 @@ function replySpeed(result: ReturnType<typeof reducer>, text: string) {
 }
 
 describe('output speed normalization and storage', () => {
+    it.each([null, 'turn', 'unknown'])('hides legacy or unrecognized speed scope: %s', (scope) => {
+        const message = usageMessage('legacy', 1000, 50, undefined, scope);
+        const result = reducer(createReducer(), [textMessage('reply', 500, 'agent'), message]);
+        expect(result.usage?.contextSize).toBe(1200);
+        expect(result.usage?.tokensPerSecond).toBeUndefined();
+        expect(replySpeed(result, 'reply')).toBeUndefined();
+    });
+
     it('exposes speed from invisible Claude/Codex usage snapshots without rendering blank rows', () => {
         const state = createReducer();
         const message = usageMessage('speed', 1000, 50);

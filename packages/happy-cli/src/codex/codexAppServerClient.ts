@@ -1614,6 +1614,15 @@ export class CodexAppServerClient {
             return;
         }
         const isLegacyEvent = method === 'codex/event' || method.startsWith('codex/event/');
+        const isUsage = method === 'thread/tokenUsage/updated'
+            || (isLegacyEvent && params?.msg?.type === 'token_count');
+        // Subagent counts and late snapshots from a previous turn cannot be
+        // paired with the parent model response's timing or context window.
+        if (isUsage && (!this.isSessionThreadNotification(params)
+            || !this.isCurrentTurn(this.extractTurnId(params)
+                ?? stringOrNull(params?.msg?.turn_id) ?? stringOrNull(params?.msg?.turnId)))) {
+            return;
+        }
         const isTurnLifecycle = method === 'turn/started' || method === 'turn/completed'
             || method === 'thread/status/changed'
             || (isLegacyEvent && (params?.msg?.type === 'task_started'

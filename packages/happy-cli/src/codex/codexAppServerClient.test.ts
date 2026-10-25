@@ -1191,6 +1191,18 @@ describe('CodexAppServerClient sandbox integration', () => {
     });
 
     it.each([
+        { protocol: 'raw', method: 'thread/tokenUsage/updated', params: {
+            threadId: 'thread-child', turnId: 'turn-child', tokenUsage: { total: { outputTokens: 9000 }, last: { outputTokens: 900 } },
+        } },
+        { protocol: 'raw', method: 'thread/tokenUsage/updated', params: {
+            threadId: 'thread-main', turnId: 'turn-old', tokenUsage: { total: { outputTokens: 9000 }, last: { outputTokens: 900 } },
+        } },
+        { protocol: 'legacy', method: 'codex/event/token_count', params: {
+            conversationId: 'thread-child', msg: { type: 'token_count', total: { outputTokens: 9000 } },
+        } },
+        { protocol: 'legacy', method: 'codex/event/token_count', params: {
+            conversationId: 'thread-main', msg: { type: 'token_count', turn_id: 'turn-old', total: { outputTokens: 9000 } },
+        } },
         { protocol: 'raw', method: 'thread/status/changed', params: { threadId: 'thread-child', status: { type: 'idle' } } },
         { protocol: 'raw', method: 'turn/started', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'inProgress' } } },
         { protocol: 'raw', method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed' } } },
@@ -1299,6 +1311,7 @@ describe('CodexAppServerClient sandbox integration', () => {
             expect(client.turnId).toBe('turn-main');
             expect(sessionLifecycle).toEqual(['turn-start']);
             expect(state.currentTurnId).not.toBeNull();
+            expect(events.filter((event) => event.type === 'token_count')).toEqual([]);
             if (protocol === 'raw') {
                 expect(events).toEqual(expect.arrayContaining([
                     expect.objectContaining({ type: 'exec_command_begin', callId: 'thread-child:child-tool' }),

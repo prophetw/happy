@@ -560,9 +560,9 @@ export const es: TranslationStructure = {
             badgePlan: 'Planificación',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Media ${speed} tok/s`,
-            outputSpeedTitle: "Velocidad media de salida",
-            outputSpeedDescription: "Tokens de salida divididos por el tiempo medido del agente, incluidas las esperas y la ejecución de herramientas. Se actualiza al recibir datos de uso.",
+            outputSpeed: ({ speed }: { speed: string }) => `Modelo ${speed} tok/s`,
+            outputSpeedTitle: "Velocidad muestreada del modelo",
+            outputSpeedDescription: "Tokens de salida divididos por el tiempo de las respuestas del modelo con medición fiable. La muestra puede incluir solo la primera respuesta. Incluye procesamiento de entrada, espera de la solicitud, razonamiento y transferencia; excluye herramientas y espera de aprobación. Codex también incluye la preparación local del prompt. Se omiten respuestas sin tiempos fiables.",
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de contexto`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% contexto`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% semana`,

@@ -89,14 +89,15 @@ describe('StreamJsonParser', () => {
     const parser = new StreamJsonParser({ onMessage: (msg) => messages.push(msg) });
     parser.feed(JSON.stringify({
       event: 'step_update',
-      step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', usage: { output_tokens: 92 } },
+      step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', duration_seconds: 2, usage: { output_tokens: 92 } },
     }) + '\n');
     parser.feed(JSON.stringify({
       event: 'result',
       result: { status: 'SUCCESS', duration_seconds: 3.5, usage: { output_tokens: 92 } },
     }) + '\n');
     expect(messages).toEqual([
-      { type: 'token-count', output_tokens: 92, agy_usage_scope: 'step', agy_step_index: 1 },
+      { type: 'token-count', output_tokens: 92, agy_usage_scope: 'step', agy_step_index: 1,
+        agy_step_type: 'agent_response', agy_step_state: 'DONE', duration_seconds: 2 },
       { type: 'token-count', output_tokens: 92, agy_usage_scope: 'session', duration_seconds: 3.5 },
     ]);
   });

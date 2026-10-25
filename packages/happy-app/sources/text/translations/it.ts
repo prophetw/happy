@@ -558,9 +558,9 @@ export const it: TranslationStructure = {
             badgePlan: 'Pianificazione',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Media ${speed} tok/s`,
-            outputSpeedTitle: "Velocità media di output",
-            outputSpeedDescription: "Token di output divisi per il tempo misurato dell’agente, incluse attese ed esecuzione degli strumenti. Si aggiorna quando viene comunicato l’utilizzo.",
+            outputSpeed: ({ speed }: { speed: string }) => `Modello ${speed} tok/s`,
+            outputSpeedTitle: "Velocità campionata del modello",
+            outputSpeedDescription: "Token di output divisi per il tempo delle risposte del modello misurate in modo affidabile. Il campione può includere solo la prima risposta. Include elaborazione dell’input, attesa della richiesta, ragionamento e trasferimento; esclude strumenti e attesa di approvazione. Codex include anche la preparazione locale del prompt. Le risposte senza tempi affidabili sono omesse.",
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} di contesto`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% contesto`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% settimana`,

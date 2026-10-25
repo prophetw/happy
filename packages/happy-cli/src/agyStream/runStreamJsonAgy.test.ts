@@ -164,12 +164,13 @@ describe('AGY session push notifications', () => {
     await onMessage({ content: { text }, meta: {} });
   }
 
-  it('reports turn speed, preserves it through statusline snapshots, and resets it for the next turn', async () => {
+  it('reports measured model speed, preserves it through statusline snapshots, and resets it for the next turn', async () => {
     let now = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     mocks.backend.sendPrompt.mockImplementationOnce(async () => {
       now += 2000;
-      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 500, output_tokens: 100 });
+      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 500, output_tokens: 100,
+        agy_step_type: 'agent_response', agy_step_state: 'DONE', duration_seconds: 2 });
       emit({ type: 'token-count', agy_usage_scope: 'session', input_tokens: 50000, output_tokens: 1100, duration_seconds: 2000 });
     });
     await start();
@@ -179,7 +180,8 @@ describe('AGY session push notifications', () => {
     const usageEnvelopes = () => session.sendSessionProtocolMessage.mock.calls
       .map(([envelope]) => envelope).filter((envelope) => envelope.usage);
     expect(usageEnvelopes().at(-1)).toMatchObject({
-      ev: { t: 'service', text: '' }, usage: { input_tokens: 500, output_tokens: 100, output_tokens_per_second: 50 },
+      ev: { t: 'service', text: '' }, usage: { input_tokens: 500, output_tokens: 100, output_tokens_per_second: 50,
+        output_tokens_per_second_scope: 'model_request' },
     });
     expect(usageEnvelopes().at(-1)?.turn).toBeUndefined();
 
@@ -204,7 +206,8 @@ describe('AGY session push notifications', () => {
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     mocks.backend.sendPrompt.mockImplementationOnce(async () => {
       now += 2000;
-      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 1100, output_tokens: 100 });
+      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 1100, output_tokens: 100,
+        agy_step_type: 'agent_response', agy_step_state: 'DONE', duration_seconds: 2 });
       emit({ type: 'token-count', agy_usage_scope: 'session', input_tokens: 2100, output_tokens: 1100 });
     });
     await start();
@@ -220,7 +223,8 @@ describe('AGY session push notifications', () => {
     });
     await send('Summary only');
     await vi.waitFor(() => expect(turnStatuses()).toHaveLength(2));
-    expect(usageEnvelopes().at(-1)?.usage).toMatchObject({ input_tokens: 1100, output_tokens: 100, output_tokens_per_second: 50 });
+    expect(usageEnvelopes().at(-1)?.usage).toMatchObject({ input_tokens: 1100, output_tokens: 100 });
+    expect(usageEnvelopes().at(-1)?.usage.output_tokens_per_second).toBeUndefined();
 
     const readyCount = session.sendSessionEvent.mock.calls.length;
     await send('/clear');
@@ -243,7 +247,8 @@ describe('AGY session push notifications', () => {
     const syncQuota = mocks.quota.subscribe.mock.calls[0][0];
     mocks.backend.sendPrompt.mockImplementationOnce(async () => {
       now += 1000;
-      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 1000, output_tokens: 100 });
+      emit({ type: 'token-count', agy_usage_scope: 'step', agy_step_index: 1, input_tokens: 1000, output_tokens: 100,
+        agy_step_type: 'agent_response', agy_step_state: 'DONE', duration_seconds: 2 });
       syncQuota({ updatedAt: Date.now(), contextWindow: {
         conversationId: 'partial-turn', totalInputTokens: 50000,
         currentUsage: { inputTokens: 2000, outputTokens: 100 },
