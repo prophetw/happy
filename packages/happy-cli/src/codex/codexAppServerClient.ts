@@ -629,6 +629,21 @@ export class CodexAppServerClient {
             return true;
         }
 
+        if (method === 'item/started' || method === 'item/completed') {
+            // These native tools have no UI mapping here, but their execution
+            // must still interrupt model timing. Do not silently time a new
+            // or unsupported activity as though it were model generation.
+            if (['mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageGeneration'].includes(item.type)) {
+                const itemId = typeof item.id === 'string' ? item.id : '';
+                this.eventHandler?.({
+                    type: method === 'item/started' ? 'token_speed_tool_begin' : 'token_speed_tool_end',
+                    call_id: itemId ? formatScopedItemKey(stringOrNull(params?.threadId) ?? this._threadId, itemId) : '',
+                });
+            } else if (!['agentMessage', 'reasoning', 'userMessage'].includes(item.type)) {
+                this.eventHandler?.({ type: 'token_speed_unknown_activity' });
+            }
+        }
+
         return method.startsWith('item/');
     }
 

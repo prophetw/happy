@@ -35,6 +35,54 @@ describe('CodexTokenSpeedTracker', () => {
         expect(tracker.observe(usage(100), 2000)?.tokensPerSecond).toBe(100);
     });
 
+    it.each(['exec_command', 'mcp_tool_call', 'patch_apply', 'collab_agent', 'token_speed_tool'])
+    ('recovers after %s runs before usage and excludes its minute of execution', (tool) => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: `${tool}_begin`, call_id: 'slow' }, 1000);
+        expect(tracker.observe(usage(100), 2000)?.tokensPerSecond).toBeUndefined();
+        tracker.observe({ type: `${tool}_end`, call_id: 'slow' }, 61000);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 62000);
+        expect(tracker.observe(usage(200, 100), 63000)?.tokensPerSecond).toBe(50);
+    });
+
+    it('waits for every parallel tool and ignores duplicate usage at the recovery boundary', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'one' }, 1000);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'two' }, 1000);
+        tracker.observe(usage(100), 2000);
+        tracker.observe({ type: 'exec_command_end', call_id: 'one' }, 3000);
+        tracker.observe({ type: 'exec_command_end', call_id: 'two' }, 61000);
+        tracker.observe(usage(100), 61500);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 62000);
+        expect(tracker.observe(usage(200, 100), 63000)?.tokensPerSecond).toBe(50);
+    });
+
+    it('does not guess a start when a new tool begins after the usage checkpoint', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'one' }, 1000);
+        tracker.observe(usage(100), 2000);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'two' }, 3000);
+        tracker.observe({ type: 'exec_command_end', call_id: 'two' }, 4000);
+        tracker.observe({ type: 'exec_command_end', call_id: 'one' }, 61000);
+        tracker.observe({ type: 'agent_message', message: 'Ambiguous request' }, 62000);
+        expect(tracker.observe(usage(200, 100), 63000)?.tokensPerSecond).toBeUndefined();
+    });
+
+    it.each(['exec_approval_request', 'request_user_input', 'context_compacted', 'stream_error', 'unknown_future_event'])
+    ('does not resume across %s even after a tool checkpoint', (type) => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'slow' }, 1000);
+        tracker.observe(usage(100), 2000);
+        tracker.observe({ type }, 3000);
+        tracker.observe({ type: 'exec_command_end', call_id: 'slow' }, 61000);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 62000);
+        expect(tracker.observe(usage(200, 100), 63000)?.tokensPerSecond).toBeUndefined();
+    });
+
     it('keeps the sampled speed when a tool takes another minute and usage arrives late', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 1000);

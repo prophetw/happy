@@ -1,10 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 import { mapCodexMcpMessageToSessionEnvelopes, type CodexTurnState } from '../utils/sessionProtocolMapper';
+import recordedToolBeforeUsage from './fixtures/token-speed-tool-before-usage.json';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('Codex output speed envelopes', () => {
+    it.each([0, 60000])('recovers a captured tool-before-usage turn with %i ms of extra tool time', (extraToolTime) => {
+        const clock = vi.spyOn(performance, 'now');
+        const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };
+        const envelopes = recordedToolBeforeUsage.flatMap(({ at, event }) => {
+            clock.mockReturnValue(at + (at >= 4862 ? extraToolTime : 0));
+            const mapped = mapCodexMcpMessageToSessionEnvelopes(event, state);
+            state.currentTurnId = mapped.currentTurnId;
+            return mapped.envelopes;
+        });
+        const finalUsage = envelopes.filter((envelope) => envelope.usage).at(-1)?.usage;
+        expect(finalUsage?.output_tokens_per_second).toBeCloseTo(422 / 12.259);
+        expect(finalUsage?.output_tokens_per_second_scope).toBe('model_request');
+        expect(envelopes.some((envelope) => envelope.ev.t === 'turn-end')).toBe(true);
+    });
+
     it('carries a model request sample through invisible usage envelopes without adding tool time', () => {
         const clock = vi.spyOn(performance, 'now');
         const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };

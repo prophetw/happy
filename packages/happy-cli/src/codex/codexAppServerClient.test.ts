@@ -254,6 +254,37 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
+    it.each(['mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageGeneration'])
+    ('reports execution boundaries for an otherwise unmapped native %s', async (type) => {
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        const events: Array<Record<string, unknown>> = [];
+        client.setEventHandler((event) => events.push(event));
+        for (const method of ['item/started', 'item/completed']) {
+            (client as any).handleNotification(method, {
+                threadId: 'thread-main', item: { type, id: 'tool-1' },
+            });
+        }
+        expect(events).toEqual([
+            { type: 'token_speed_tool_begin', call_id: 'thread-main:tool-1' },
+            { type: 'token_speed_tool_end', call_id: 'thread-main:tool-1' },
+        ]);
+    });
+
+    it('invalidates timing for native compaction or unknown items while allowing text lifecycle events', async () => {
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        const events: Array<Record<string, unknown>> = [];
+        client.setEventHandler((event) => events.push(event));
+        for (const type of ['agentMessage', 'reasoning', 'userMessage', 'contextCompaction', 'futureActivity']) {
+            (client as any).handleNotification('item/started', { item: { type, id: type } });
+        }
+        expect(events).toEqual([
+            { type: 'token_speed_unknown_activity' },
+            { type: 'token_speed_unknown_activity' },
+        ]);
+    });
+
     it.each([
         ['silent work', 'completion'],
         ['silent work', 'Stop'],

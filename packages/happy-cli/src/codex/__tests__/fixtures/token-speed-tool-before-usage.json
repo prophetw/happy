@@ -1,0 +1,92 @@
+[
+  {
+    "at": 0,
+    "event": {
+      "type": "task_started"
+    }
+  },
+  {
+    "at": 3251,
+    "event": {
+      "type": "agent_message",
+      "item_id": "reply-1",
+      "message": "Captured assistant response",
+      "phase": "commentary"
+    }
+  },
+  {
+    "at": 4859,
+    "event": {
+      "type": "exec_command_begin",
+      "call_id": "call-1"
+    }
+  },
+  {
+    "at": 4862,
+    "event": {
+      "type": "exec_command_end",
+      "call_id": "call-1"
+    }
+  },
+  {
+    "at": 4908,
+    "event": {
+      "type": "token_count",
+      "total": {
+        "totalTokens": 23800,
+        "inputTokens": 23645,
+        "cachedInputTokens": 12288,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 155,
+        "reasoningOutputTokens": 0
+      },
+      "last": {
+        "totalTokens": 23800,
+        "inputTokens": 23645,
+        "cachedInputTokens": 12288,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 155,
+        "reasoningOutputTokens": 0
+      },
+      "modelContextWindow": 475000
+    }
+  },
+  {
+    "at": 17123,
+    "event": {
+      "type": "agent_message",
+      "item_id": "reply-2",
+      "message": "Captured assistant response",
+      "phase": "final_answer"
+    }
+  },
+  {
+    "at": 17167,
+    "event": {
+      "type": "token_count",
+      "total": {
+        "totalTokens": 48299,
+        "inputTokens": 47722,
+        "cachedInputTokens": 35968,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 577,
+        "reasoningOutputTokens": 247
+      },
+      "last": {
+        "totalTokens": 24499,
+        "inputTokens": 24077,
+        "cachedInputTokens": 23680,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 422,
+        "reasoningOutputTokens": 247
+      },
+      "modelContextWindow": 475000
+    }
+  },
+  {
+    "at": 17171,
+    "event": {
+      "type": "task_complete"
+    }
+  }
+]
