@@ -529,11 +529,12 @@ SSH/Docker 命令，没有连接目标服务器；Compose 解析确认项目名�
 
 ## Web：复用现有 HTTPS 域名并挂载到 /happy/
 
-本节是部署命令手册，**尚未向服务器上传产物、修改网关或发布**。
-`/happy` 的源码适配、本地 Web 导出和浏览器复验已通过，保留已说明的警告，详见第 0 节。
-2026-10-24 的只读检查确认：现有 Relay 公网 `/health` 返回 200；
+**2026-10-25 已首次发布到 `/happy/`**，公网 HTTP 与浏览器冒烟检查通过，
+浏览器保留已有路由警告。来源、验证边界与回滚记录见第 0 节的公网发布记录。
+`/happy` 的源码适配、本地 Web 导出和浏览器复验记录也保留在第 0 节。
+部署前 2026-10-24 的只读检查确认：现有 Relay 公网 `/health` 返回 200；
 `99.57` 的 Nginx 正在运行，已有静态目录挂载且加载了 `mime.types`；
-`/happy/` 返回 404，宿主机对应目录尚不存在。执行时仍需核对实际状态。
+当时 `/happy/` 返回 404，宿主机对应目录尚不存在。后续操作仍需核对实际状态。
 
 | 项目 | 本次方案 |
 | --- | --- |
@@ -554,7 +555,8 @@ Relay 的密钥、数据卷和 `/home-relay` 配置不在这些命令的修改�
 ### 0. 源码适配与发布前提
 
 以下子路径适配已写入源码；未设置 `HAPPY_WEB_BASE_PATH` 时继续使用站点根路径。
-**实际发布前仍需将改动按授权提交到 `fork/main`，并通过后续预检；本节不代表已经发布。**
+每次发布都必须从已提交、干净且等于当次 `fork/main` 的个人 `main` 执行，
+通过后续预检。本次已发布版本的来源见下面的公网发布记录。
 
 实现复用 Expo 55 的 `experiments.baseUrl` 和 Babel 的 `EXPO_BASE_URL` 编译常量。
 下面记录配置位置与行为；浏览器业务验收另见第 5 节。
@@ -691,7 +693,53 @@ HAPPY_SUBPATH_EXTENDED=1 \
 ```
 
 扫码授权端为协议模拟，未验证真实手机摄像头、原生 App 内的扫码与确认操作；
-手机尺寸页面仍为 Chromium 窗口模拟。真实 Nginx / HTTPS 和公网部署尚未验证。
+手机尺寸页面仍为 Chromium 窗口模拟。以上为本地验收边界，公网验收记录如下。
+
+#### 2026-10-25 首次公网发布
+
+- 公网入口：<https://szsp.suitbim.com.cn:7100/happy/>。
+- 发布来源：`6ad793da0bc6231b42c4c386f7f075dc06288908`，构建前及上传前均 fetch
+  `fork/main`，确认发布 clone 为干净的个人 `main` 且 HEAD 与远端一致。
+- 版本标识：`20261025T004606Z-6ad793da0bc6`；实际激活时间为
+  `2026-10-25T00:56:09Z`（新加坡时间 08:56）。
+- 静态包 SHA-256：`cef352817fba38dbf7d2110fc10e8c8ce73aca01cf6aeb8a3cf7697d8dab729e`。
+- 当前相对链接：`/root/bim-engine/web/html/happy` →
+  `.happy-releases/20261025T004606Z-6ad793da0bc6`。
+- 配置备份：`/root/bim-engine/script/http.nginx.1.30.1.prod.conf.bak.happy-20261025T004606Z-6ad793da0bc6`。
+  静态包、来源 SHA、空的 `previous-target`（首次发布）与部署元数据保留在
+  `/root/bim-engine/script/happy-web-artifacts/`。回滚本次发布时，第 6 节的
+  `WEB_RUN_ID` 应设为上述版本标识；未在运行中的公网入口执行回滚演练。
+- 验收产物：`.e2e-artifacts/web-release-20261025T004606Z-6ad793da0bc6/`，
+  包含构建日志、`public-http-report.json`、`public-browser-report.json`、
+  `gateway-verification.json` 和关键截图。
+
+完整干净 checkout 的 App 类型检查通过，重新生成 changelog 后与提交版本一致。
+曾尝试在只包含 App / wire 的精简 builder 中执行完整类型检查，因缺少测试引用的
+CLI 源码和测试依赖而失败；已改为在完整发布 clone 中检查，未忽略类型错误，
+也未为此删除测试或放宽 TypeScript 配置。Docker 构建、导出、编译配置及来源 SHA
+核验通过；构建保留 `POSTHOG_API_KEY` 使用 ARG 的提示，本次该参数为空。
+
+公网 HTTP **7 项通过**：308 跳转保留查询参数；入口字节与构建包一致且 HTML 使用
+`no-cache`；设置、恢复账号和会话路径支持直接访问；入口 JS/CSS 与两个 favicon
+的内容和 MIME 正确；WASM 的 MIME、魔数与 SHA-256 正确；缺失的 JS 和图片返回
+真实 404；原 Relay `/health` 返回 200。
+
+公网 Chromium **6 项通过，失败 0，状态 PASS_WITH_WARNINGS**：未注入服务端地址或
+登录凭据的生产入口正常加载；`/home-relay` 上的 WSS 升级及 Engine.IO 握手成功；
+二维码像素解码为有效关联请求，实际编译的 Relay 地址返回 200；直接刷新
+`/happy/restore` 可重新加载二维码；手机尺寸页面无横向溢出；未出现 Page Error、
+Console Error、非预期 HTTP 4xx/5xx、外部请求或资源路径越出前缀。
+唯一浏览器警告仍是已记录的 `dev/masked-progress` 路由不存在。
+网关配置去掉本次新增块后与备份逐字一致，挂载文件 inode 保持不变，Nginx 运行正常。
+
+| 公网关键节点 | 截图 |
+| --- | --- |
+| 实际二维码登录入口 | [查看](https://szsp.suitbim.com.cn:7100/img-bed/images/20a14726-ad18-49a9-b972-23926e64e164.png) |
+| 手机尺寸登录页 | [查看](https://szsp.suitbim.com.cn:7100/img-bed/images/1d4c75d6-6337-4093-a33c-1a6f03baf5ec.png) |
+
+本次公网冒烟没有登录真实个人账号；真实手机扫码确认、该账号在公网与 CLI 的
+加密消息收发、重连和附件上传下载仍未验证。这些业务流程的现有自动化结果来自
+上面的本地临时 Relay 验收；WSS 握手成功不代表已验证登录后的消息收发。
 
 ### 1. 开发机：准备独立发布目录
 
@@ -1012,7 +1060,7 @@ curl --fail --silent --show-error --max-time 15 "$WEB_RELAY_URL/health"
 ```
 
 这些命令仅证明静态资源和 SPA 回退可访问，不能代替登录与业务验收。
-真实浏览器验证须按用户当次授权执行；本地浏览器结果见第 0 节，尚未验收公网部署。
+真实浏览器验证须按用户当次授权执行；本地及首次公网冒烟结果见第 0 节。
 正式验收还需确认：手机扫码关联同一账号、Web 与 CLI 的会话收发、实时连接与重连、
 附件上传下载、已登录后的页面刷新和直接访问会话 URL，以及 Console Error、Toast
 和非预期 4xx/5xx。严重错误未解释前不得报告 PASS。
