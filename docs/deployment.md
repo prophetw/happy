@@ -527,6 +527,515 @@ SSH/Docker 命令，没有连接目标服务器；Compose 解析确认项目名�
 模板中没有实际密钥。配置关系及客户端行为另见
 [自定义 Relay 地址](features/custom-relay-url.md)。
 
+## Web：复用现有 HTTPS 域名并挂载到 /happy/
+
+本节是部署命令手册，**尚未向服务器上传产物、修改网关或发布**。
+`/happy` 的源码适配、本地 Web 导出和浏览器复验已通过，保留已说明的警告，详见第 0 节。
+2026-10-24 的只读检查确认：现有 Relay 公网 `/health` 返回 200；
+`99.57` 的 Nginx 正在运行，已有静态目录挂载且加载了 `mime.types`；
+`/happy/` 返回 404，宿主机对应目录尚不存在。执行时仍需核对实际状态。
+
+| 项目 | 本次方案 |
+| --- | --- |
+| Web 公网入口 | `https://szsp.suitbim.com.cn:7100/happy/` |
+| Relay API 基址 | `https://szsp.suitbim.com.cn:7100/home-relay` |
+| 网关 | `root@192.168.99.57`，容器 `bim-nginx-1.30` |
+| 网关配置 | `/root/bim-engine/script/http.nginx.1.30.1.prod.conf` |
+| Web 静态目录 | 宿主机 `/root/bim-engine/web/html`，容器 `/usr/share/nginx/html` |
+| 版本目录 / 当前版本 | `.happy-releases/<run-id>` / 相对符号链接 `happy` |
+| 构建入口 | `Dockerfile.webapp` 的 `builder` 阶段，内含 pnpm `10.11.0` |
+| 发布源码 | 干净的个人 `main`，等于当次 fetch 后的 `fork/main` |
+
+现有 Nginx 直接提供静态文件；本方案不使用此前候选的 `99.55:8194`。
+Relay 的密钥、数据卷和 `/home-relay` 配置不在这些命令的修改范围内。
+检查时 Relay 的账号策略仍为允许所有账号；若目标是仅个人使用，需在发布前另外
+落实已有账号白名单，不能将目前的配置描述为已完成私人访问限制。
+
+### 0. 源码适配与发布前提
+
+以下子路径适配已写入源码；未设置 `HAPPY_WEB_BASE_PATH` 时继续使用站点根路径。
+**实际发布前仍需将改动按授权提交到 `fork/main`，并通过后续预检；本节不代表已经发布。**
+
+实现复用 Expo 55 的 `experiments.baseUrl` 和 Babel 的 `EXPO_BASE_URL` 编译常量。
+下面记录配置位置与行为；浏览器业务验收另见第 5 节。
+
+在 `packages/happy-app/app.config.js` 的 `expo.experiments` 中保留原配置并增加：
+
+```js
+baseUrl: process.env.HAPPY_WEB_BASE_PATH || '',
+```
+
+在 `Dockerfile.webapp` 的 `builder` 阶段、执行导出之前增加：
+
+```dockerfile
+ARG HAPPY_WEB_BASE_PATH=""
+ENV HAPPY_WEB_BASE_PATH=$HAPPY_WEB_BASE_PATH
+```
+
+在 `packages/happy-app/sources/utils/loadSkia.web.ts` 中指定 WASM 的绝对加载路径。
+Expo 的 Babel preset 会把 `process.env.EXPO_BASE_URL` 替换为上述 `baseUrl`：
+
+```ts
+import { LoadSkia } from '@shopify/react-native-skia/lib/module/web';
+
+export async function loadSkia() {
+    const basePath = process.env.EXPO_BASE_URL || '';
+    await LoadSkia({ locateFile: (file) => `${basePath}/${file}` });
+}
+```
+
+`sources/utils/web/faviconGenerator.ts` 切换普通 / 提醒图标时也使用
+`process.env.EXPO_BASE_URL` 前缀。浏览器验收发现原实现会把 HTML 中正确的图标地址
+覆盖为根路径 `/favicon.ico`；现已修复为 `/happy/favicon.ico` 和
+`/happy/favicon-active.ico`，默认根路径行为保留。
+
+2026-10-24 本地验证记录（开发工作区，未发布）：
+
+- 默认根路径与 `/happy` 的 2 项 Expo 编译回归测试通过，覆盖 WASM 和两种 favicon；
+  现有 Relay 地址配置的 7 项测试通过。
+- 消息解析与命令清单的 35 项相关测试通过；新增回归用例在修复前有 8 项失败，
+  修复后通过，覆盖路径文本、已知命令、元数据前导斜杠和 SDK 命令回显。
+- App 类型检查通过：`pnpm exec tsc --noEmit --incremental false`。
+- 设置 `HAPPY_WEB_BASE_PATH=/happy` 和上述 Relay 地址，执行生产模式的
+  `expo export --platform web` 成功，输出到临时目录。
+- 产物检查确认入口 HTML 的 6 个资源引用均带 `/happy/` 且文件存在；46 个 JS 包中
+  提取出的 572 个字体及图片等资源 URL 均带 `/happy/assets/` 且文件存在；
+  `canvaskit.wasm` 文件头正确，打包后的 Relay 地址与上述目标一致。
+- 导出出现 `@noble/hashes/crypto.js` 未声明于包 `exports` 的警告，Metro 使用文件路径
+  回退后导出成功。本次未修改该依赖。
+- 本地验证使用已有依赖，尚未执行 Docker 构建或公网网关接入。
+
+#### 本地浏览器验收
+
+使用生产导出、真实 Playwright Chromium、临时 PGlite Relay 和当前 CLI 的 API 客户端。
+本地 Node 网关仅监听 `127.0.0.1`，模拟 `/happy/` 静态路由与 `/home-relay/`
+HTTP / WebSocket 代理；账号、密钥和会话均为临时测试数据，外部请求被拦截。
+验证完成后关闭浏览器及本地服务并删除临时数据库，没有连接或修改公网 Relay。
+
+首次验收记录仍保留在 `.e2e-artifacts/web-subpath-2026-10-24T12-25-22-514Z/`。
+当时 8 项通过，但普通消息 `Browser message through /happy and /home-relay`
+被识别为斜杠命令并隐藏，因此报告为 FAILED。
+
+根因是原始文本仅按 `/单词` 的形状识别命令，没有核对会话命令清单。现已复用
+`suggestionCommands.getAllCommands(sessionId)`：只有内置命令、会话 `slashCommands`
+或 `skills` 中的名称才作为原始命令处理，其余文本保留。命令名称支持元数据中的
+前导 `/`；已知命令仍可位于句首、句中或句尾。SDK 明确标注的 `<command-name>`
+回显优先解析，不受原始文本命令清单限制，也不会被参数中的其他命令词覆盖。
+
+修复后复验记录：`.e2e-artifacts/web-subpath-2026-10-24T12-56-06-523Z/`，
+包含 `report.json`、关键截图和服务日志。**结果为 PASS_WITH_WARNINGS，退出码为 0，
+10 项检查通过，失败项为 0。**
+
+原有 8 项继续通过：已登录桌面页面及带前缀 Socket.IO 连接、设置页导航和刷新、
+Web / CLI 加密消息收发及会话刷新、浏览器附件 API 上传下载和二进制字节校验、
+字体 / 图片加载及 WASM 编译、普通 / 提醒 favicon 切换、移动端宽度与布局、
+浏览器错误及网络路径检查。未出现 Page Error、Console Error、非预期 HTTP 4xx/5xx
+或外部请求。
+
+另有 2 项回归检查通过：含 `/happy` 和 `/home-relay` 的普通消息发送后立即可见，
+刷新后仍保留；内置 `/compact`、元数据命令 `/maintain` 和技能 `/fixture-skill`
+使用模拟 SDK 回显验证，刷新后均显示命令标记及参数，没有重复的原始回显。
+
+补充本地验收记录：`.e2e-artifacts/web-subpath-2026-10-24T15-36-31-691Z/`。
+复用同一生产导出，仅扩展验收脚本和文档；**16 项检查通过，失败项为 0，退出码为 0，
+状态为 PASS_WITH_WARNINGS**。新增 6 项检查覆盖：
+
+- 通过真实文件选择器选图、展示预览、移除预览；移除不会发送附件事件。
+- 重新选图并发送，CLI 收到文件和文字，下载解密后的图片字节与原图一致；
+  刷新会话后浏览器重新下载、解密并显示图片。
+- 浏览器强制断网并关闭现有 WebSocket，手机尺寸的首页显示 `disconnected`；
+  CLI 保持连接，离线期间的回复继续写入临时 Relay。
+- 恢复网络后自动重连并补回该回复，页面不刷新、不退出登录、URL 不变；
+  下一条消息只被 CLI 接收一次。
+- 无登录凭据的新浏览器从登录按钮进入 `/happy/restore`，对页面实际渲染的二维码
+  截图做像素解码，确认其包含有效的账号关联请求。
+- 模拟原生手机的授权请求，验证 Web 端轮询、解密和账号恢复；刷新后登录保留，
+  恢复的账号可以打开原会话并与 CLI 收发加密消息。没有向该浏览器注入登录凭据。
+
+其他警告保留在报告中：布局注册了不存在的 `dev/masked-progress` 路由；
+页面导航 / 刷新取消在途请求时出现 `Failed to fetch` warning，事件时间线确认与
+`net::ERR_ABORTED` 同时发生；临时 Relay 收到 SIGTERM 后，超时任务可能在 PGlite
+关闭后查询数据库，产生 `Response from the Engine was empty`。该错误发生在测试清理
+阶段，运行阶段的服务日志未检出错误。测试代理依赖另有 `util._extend` 弃用警告。
+补充验收中曾出现关闭服务超过 10 秒的情况（`15-26-37-718Z` 记录），当次已强制
+终止并确认无残留进程；最新一轮未触发该超时，但数据库关闭错误仍存在。
+脚本现在会等待并确认强制终止后的退出，无法确认时将验收标为 FAILED。
+
+在已安装依赖与 Playwright Chromium 的仓库根目录复跑（可复用同一源码的已有导出，
+仅修改验收脚本时无需重新导出）：
+
+```bash
+WEB_E2E_EXPORT=$(mktemp -d /tmp/happy-web-e2e.XXXXXX)
+(
+  cd packages/happy-app
+  HAPPY_WEB_BASE_PATH=/happy APP_ENV=production NODE_ENV=production \
+    EXPO_PUBLIC_HAPPY_SERVER_URL=https://szsp.suitbim.com.cn:7100/home-relay \
+    pnpm exec expo export --platform web --output-dir "$WEB_E2E_EXPORT"
+)
+HAPPY_SUBPATH_EXPORT_DIR="$WEB_E2E_EXPORT" \
+  pnpm exec node packages/happy-app/scripts/web-subpath.e2e.mjs
+```
+
+上面最后一条命令执行基础 10 项。要执行补充后的 16 项，用下面的命令代替它，
+复用同一 `WEB_E2E_EXPORT`。二维码像素解码使用开源 jsQR `1.4.0`，仅安装到临时目录，
+没有修改项目依赖或 lockfile；浏览器验收期间仍禁止访问外部服务。
+
+```bash
+WEB_QR_DECODER_DIR=$(mktemp -d /tmp/happy-web-e2e-qr-decoder.XXXXXX)
+npm install --prefix "$WEB_QR_DECODER_DIR" --no-package-lock --ignore-scripts \
+  --no-audit --no-fund jsqr@1.4.0
+HAPPY_SUBPATH_EXTENDED=1 \
+  HAPPY_QR_DECODER_MODULE="$WEB_QR_DECODER_DIR/node_modules/jsqr" \
+  HAPPY_SUBPATH_EXPORT_DIR="$WEB_E2E_EXPORT" \
+  pnpm exec node packages/happy-app/scripts/web-subpath.e2e.mjs
+```
+
+扫码授权端为协议模拟，未验证真实手机摄像头、原生 App 内的扫码与确认操作；
+手机尺寸页面仍为 Chromium 窗口模拟。真实 Nginx / HTTPS 和公网部署尚未验证。
+
+### 1. 开发机：准备独立发布目录
+
+先执行 `bash` 进入 Bash；以下开发机代码块在**同一个 Bash 会话**依次执行，保留变量。
+开发机需要 Git、SSH、Docker、Python 3 和 `sha256sum`；Docker daemon 必须可用。
+本机原工作区可能包含其他任务的暂存修改，发布源使用新的独立 clone。
+
+```bash
+set -euo pipefail
+
+WEB_ORIGIN='https://szsp.suitbim.com.cn:7100'
+WEB_RELAY_URL="$WEB_ORIGIN/home-relay"
+WEB_RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
+WEB_RELEASE_DIR="/tmp/happy-web-release-$WEB_RUN_ID"
+
+git clone --origin fork --branch main --single-branch \
+  git@github.com:prophetw/happy.git "$WEB_RELEASE_DIR"
+cd "$WEB_RELEASE_DIR"
+git remote -v
+git fetch fork main
+test "$(git branch --show-current)" = main
+test "$(git rev-parse HEAD)" = "$(git rev-parse fork/main)"
+test -z "$(git status --porcelain=v1 -uall)"
+
+# 适配尚未合入时，在这里停止，不继续构建。
+rg -q '^ARG HAPPY_WEB_BASE_PATH=' Dockerfile.webapp
+
+WEB_SHA=$(git rev-parse HEAD)
+WEB_RUN_ID="$WEB_RUN_ID-${WEB_SHA:0:12}"
+WEB_BUILD_IMAGE="happy-web-builder:$WEB_RUN_ID"
+WEB_BUILD_ARGS=(
+  --platform linux/amd64
+  -f Dockerfile.webapp
+  --build-arg HAPPY_WEB_BASE_PATH=/happy
+  --build-arg "HAPPY_SERVER_URL=$WEB_RELAY_URL"
+  --build-arg "HAPPY_BUILD_COMMIT_SHA=$WEB_SHA"
+  --build-arg "HAPPY_BUILD_COMMIT_TIMESTAMP=$(git show -s --format=%cI HEAD)"
+)
+printf 'Web: %s/happy/\nRelay: %s\nSource: %s\n' \
+  "$WEB_ORIGIN" "$WEB_RELAY_URL" "$WEB_SHA"
+```
+
+### 2. 开发机：构建一次、验证并导出静态包
+
+builder 会安装依赖、构建 `happy-wire` 并执行 `expo export --platform web`。
+类型检查与 changelog 一致性在该构建环境中进行，无需再在宿主机安装一套依赖。
+任意检查失败立即停止；不要继续上传或修改网关。
+
+```bash
+docker build "${WEB_BUILD_ARGS[@]}" --target builder \
+  --label "org.opencontainers.image.revision=$WEB_SHA" \
+  -t "$WEB_BUILD_IMAGE" .
+
+docker run --rm -i --entrypoint sh \
+  -e "EXPECTED_WEB_SHA=$WEB_SHA" \
+  -e "EXPECTED_WEB_RELAY=$WEB_RELAY_URL" \
+  "$WEB_BUILD_IMAGE" -es <<'SH'
+cd /repo/packages/happy-app
+pnpm exec expo config --type public --json > /tmp/happy-web-config.json
+node <<'JS'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync('/tmp/happy-web-config.json', 'utf8'));
+assert.equal(config.experiments.baseUrl, '/happy');
+assert.equal(config.extra.app.buildCommitSha, process.env.EXPECTED_WEB_SHA);
+assert.equal(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL, process.env.EXPECTED_WEB_RELAY);
+const html = fs.readFileSync('dist/index.html', 'utf8');
+const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map(x => x[1]);
+assert(scripts.some(x => x.startsWith('/happy/_expo/')), 'Missing prefixed entry bundle');
+assert(!scripts.some(x => x.startsWith('/_expo/')), 'Unprefixed entry bundle');
+assert(fs.statSync('dist/canvaskit.wasm').isFile());
+console.log({ baseUrl: config.experiments.baseUrl, source: config.extra.app.buildCommitSha });
+JS
+pnpm typecheck
+WEB_CHANGELOG_BEFORE=$(sha256sum sources/changelog/changelog.json)
+pnpm exec tsx sources/scripts/parseChangelog.ts
+test "$WEB_CHANGELOG_BEFORE" = "$(sha256sum sources/changelog/changelog.json)"
+SH
+
+test -z "$(git status --porcelain=v1 -uall)"
+WEB_EXPORT_DIR=$(mktemp -d /tmp/happy-web-export.XXXXXX)
+WEB_EXPORT_CONTAINER=$(docker create "$WEB_BUILD_IMAGE")
+docker cp "$WEB_EXPORT_CONTAINER:/repo/packages/happy-app/dist/." "$WEB_EXPORT_DIR/"
+docker rm "$WEB_EXPORT_CONTAINER"
+WEB_ARCHIVE="/tmp/happy-web-$WEB_RUN_ID.tar.gz"
+tar -C "$WEB_EXPORT_DIR" -czf "$WEB_ARCHIVE" .
+WEB_ARCHIVE_SHA=$(sha256sum "$WEB_ARCHIVE" | awk '{print $1}')
+```
+
+### 3. 开发机 → 网关：上传并切换静态版本
+
+此步开始实际修改服务器文件。后续升级也可重复本步骤；网关路由已正确配置时，
+无需重复添加下一节的 `location`。符号链接必须使用相对路径，目标也在同一个
+静态目录挂载内，才能从 Nginx 容器访问。
+
+```bash
+# 发布前再核对最终源码；构建期间 main 已推进时，停止并重新准备。
+git fetch fork main
+test "$WEB_SHA" = "$(git rev-parse HEAD)"
+test "$WEB_SHA" = "$(git rev-parse fork/main)"
+test -z "$(git status --porcelain=v1 -uall)"
+
+# 后续发布核对当前线上版本的来源，防止发布缺失已上线功能的提交。
+WEB_PREVIOUS_SHA=$(ssh -o BatchMode=yes root@192.168.99.57 python3 - <<'PY'
+import os, pathlib, re
+current = pathlib.Path('/root/bim-engine/web/html/happy')
+records = pathlib.Path('/root/bim-engine/script/happy-web-artifacts')
+if current.is_symlink():
+    target = os.readlink(str(current))
+    if not re.fullmatch(r'\.happy-releases/[A-Za-z0-9-]+', target):
+        raise SystemExit('STOP: inspect the existing happy symlink before deployment.')
+    sha = (records / (pathlib.PurePosixPath(target).name + '.source-sha')).read_text().strip()
+    if not re.fullmatch(r'[0-9a-f]{40}', sha):
+        raise SystemExit('STOP: invalid previous release commit.')
+    print(sha)
+elif current.exists():
+    raise SystemExit('STOP: happy already exists and is not a symlink.')
+PY
+)
+if [ -n "$WEB_PREVIOUS_SHA" ]; then
+  git merge-base --is-ancestor "$WEB_PREVIOUS_SHA" "$WEB_SHA"
+fi
+
+ssh -o BatchMode=yes root@192.168.99.57 \
+  'install -d -m 700 /root/bim-engine/script/happy-web-artifacts'
+scp -o BatchMode=yes "$WEB_ARCHIVE" \
+  "root@192.168.99.57:/root/bim-engine/script/happy-web-artifacts/happy-web-$WEB_RUN_ID.tar.gz"
+
+ssh -o BatchMode=yes root@192.168.99.57 \
+  bash -s -- "$WEB_RUN_ID" "$WEB_ARCHIVE_SHA" "$WEB_SHA" <<'SH'
+set -euo pipefail
+WEB_RUN_ID=$1
+WEB_ARCHIVE_SHA=$2
+WEB_SHA=$3
+WEB_ROOT=/root/bim-engine/web/html
+WEB_RECORDS=/root/bim-engine/script/happy-web-artifacts
+WEB_RELEASE="$WEB_ROOT/.happy-releases/$WEB_RUN_ID"
+cd "$WEB_RECORDS"
+printf '%s  %s\n' "$WEB_ARCHIVE_SHA" "happy-web-$WEB_RUN_ID.tar.gz" | sha256sum -c -
+
+if [ -e "$WEB_ROOT/happy" ] && [ ! -L "$WEB_ROOT/happy" ]; then
+  printf '%s\n' 'STOP: happy is an existing real file/directory; inspect before deployment.' >&2
+  exit 1
+fi
+test ! -e "$WEB_RELEASE"
+install -d -m 755 "$WEB_ROOT/.happy-releases" "$WEB_RELEASE"
+tar --no-same-owner -xzf "happy-web-$WEB_RUN_ID.tar.gz" -C "$WEB_RELEASE"
+test -s "$WEB_RELEASE/index.html"
+test -s "$WEB_RELEASE/canvaskit.wasm"
+find "$WEB_RELEASE" -type d -exec chmod 755 {} +
+find "$WEB_RELEASE" -type f -exec chmod 644 {} +
+printf '%s\n' "$WEB_SHA" > "$WEB_RECORDS/$WEB_RUN_ID.source-sha"
+
+if [ -L "$WEB_ROOT/happy" ]; then
+  readlink "$WEB_ROOT/happy" > "$WEB_RECORDS/$WEB_RUN_ID.previous-target"
+else
+  : > "$WEB_RECORDS/$WEB_RUN_ID.previous-target"
+fi
+ln -s ".happy-releases/$WEB_RUN_ID" "$WEB_ROOT/.happy-$WEB_RUN_ID"
+mv -Tf "$WEB_ROOT/.happy-$WEB_RUN_ID" "$WEB_ROOT/happy"
+readlink "$WEB_ROOT/happy"
+SH
+```
+
+### 4. 首次部署：准备候选 Nginx 配置、检查并热重载
+
+只在现有 `7100 ssl` 的 `server` 中、紧邻 `/home-relay` 添加 `/happy` 路由。
+脚本要求该锚点唯一，已有 `/happy` 配置时会停止；不要反复插入。
+JS/CSS 所在的 `/_expo/`、`/assets/` 和 WASM 缺失时返回真实 404；前端页面路由
+回退到 `/happy/index.html`。入口 HTML 要求浏览器重新验证缓存。
+
+宿主机配置文件直接挂载进容器，写回时保留 inode；不能通过原子重命名替换它。
+先将候选文件复制到容器的同一配置目录并检查，再写入实际文件。
+现有配置包含相对路径 `include mime.types`，候选文件必须也放在 `/etc/nginx/`，
+放到 `/tmp/` 会改变相对 include 的解析位置。
+
+```bash
+ssh -o BatchMode=yes root@192.168.99.57 bash -s -- "$WEB_RUN_ID" <<'SH'
+set -euo pipefail
+umask 077
+WEB_RUN_ID=$1
+WEB_CFG=/root/bim-engine/script/http.nginx.1.30.1.prod.conf
+WEB_BACKUP="$WEB_CFG.bak.happy-$WEB_RUN_ID"
+WEB_CANDIDATE="$WEB_CFG.candidate.happy-$WEB_RUN_ID"
+test ! -e "$WEB_BACKUP"
+cp -p "$WEB_CFG" "$WEB_BACKUP"
+chmod 600 "$WEB_BACKUP"
+
+python3 - "$WEB_BACKUP" "$WEB_CANDIDATE" <<'PY'
+import pathlib, re, sys
+source, candidate = map(pathlib.Path, sys.argv[1:])
+text = source.read_text()
+if re.search(r'location[^\n{]*/happy', text):
+    raise SystemExit('STOP: /happy already has a location; inspect instead of inserting again.')
+anchors = list(re.finditer(r'^([ \t]*)location = /home-relay \{', text, re.M))
+if len(anchors) != 1:
+    raise SystemExit('STOP: expected one existing /home-relay anchor in the HTTPS server.')
+anchor = anchors[0]
+block = r'''# BEGIN HAPPY WEB /happy/
+location = /happy {
+    absolute_redirect off;
+    return 308 /happy/$is_args$args;
+}
+location = /happy/index.html {
+    root /usr/share/nginx/html;
+    add_header Cache-Control "no-cache" always;
+    try_files $uri =404;
+}
+location ^~ /happy/_expo/ {
+    root /usr/share/nginx/html;
+    try_files $uri =404;
+}
+location ^~ /happy/assets/ {
+    root /usr/share/nginx/html;
+    try_files $uri =404;
+}
+location = /happy/canvaskit.wasm {
+    root /usr/share/nginx/html;
+    types { application/wasm wasm; }
+    try_files $uri =404;
+}
+location ^~ /happy/ {
+    root /usr/share/nginx/html;
+    index index.html;
+    try_files $uri $uri/ /happy/index.html;
+}
+# END HAPPY WEB /happy/'''
+block = '\n'.join(anchor.group(1) + line for line in block.splitlines()) + '\n\n'
+candidate.write_text(text[:anchor.start()] + block + text[anchor.start():])
+PY
+
+docker cp "$WEB_CANDIDATE" "bim-nginx-1.30:/etc/nginx/happy-web-$WEB_RUN_ID.conf"
+docker exec bim-nginx-1.30 nginx -t -c "/etc/nginx/happy-web-$WEB_RUN_ID.conf"
+
+python3 - "$WEB_CFG" "$WEB_BACKUP" "$WEB_CANDIDATE" <<'PY'
+import pathlib, sys
+live, backup, candidate = map(pathlib.Path, sys.argv[1:])
+if live.read_bytes() != backup.read_bytes():
+    raise SystemExit('STOP: gateway config changed concurrently; rebuild the candidate.')
+with live.open('wb') as output:
+    output.write(candidate.read_bytes())
+PY
+docker exec bim-nginx-1.30 nginx -t
+docker exec bim-nginx-1.30 nginx -s reload
+SH
+```
+
+任何 Nginx 检查或 reload 失败，停止发布并执行下述回滚；不报告发布成功。
+
+### 5. 开发机：HTTP 验收与浏览器验收边界
+
+```bash
+WEB_CHECK_DIR=$(mktemp -d /tmp/happy-web-check.XXXXXX)
+test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$WEB_ORIGIN/happy")" = 308
+curl --fail --silent --show-error --max-time 30 \
+  "$WEB_ORIGIN/happy/" -o "$WEB_CHECK_DIR/index.html"
+WEB_ENTRY=$(python3 - "$WEB_CHECK_DIR/index.html" <<'PY'
+from html.parser import HTMLParser
+import pathlib, sys
+class Entry(HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        source = dict(attrs).get('src', '')
+        if tag == 'script' and source.startswith('/happy/_expo/'):
+            print(source)
+            raise SystemExit(0)
+Entry().feed(pathlib.Path(sys.argv[1]).read_text())
+raise SystemExit('Missing /happy/_expo/ entry bundle')
+PY
+)
+curl --fail --silent --show-error --max-time 60 \
+  "$WEB_ORIGIN$WEB_ENTRY" -o "$WEB_CHECK_DIR/entry.js"
+curl --fail --silent --show-error --max-time 60 \
+  "$WEB_ORIGIN/happy/canvaskit.wasm" -o "$WEB_CHECK_DIR/canvaskit.wasm"
+python3 - "$WEB_CHECK_DIR/canvaskit.wasm" <<'PY'
+import pathlib, sys
+with pathlib.Path(sys.argv[1]).open('rb') as source:
+    if source.read(4) != b'\x00asm':
+        raise SystemExit('Expected WASM bytes; an HTML fallback is not a valid asset.')
+PY
+curl --fail --silent --show-error --max-time 30 \
+  "$WEB_ORIGIN/happy/settings" -o "$WEB_CHECK_DIR/settings.html"
+cmp "$WEB_CHECK_DIR/index.html" "$WEB_CHECK_DIR/settings.html"
+test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+  "$WEB_ORIGIN/happy/_expo/missing-$WEB_RUN_ID.js")" = 404
+curl --fail --silent --show-error --max-time 15 "$WEB_RELAY_URL/health"
+```
+
+这些命令仅证明静态资源和 SPA 回退可访问，不能代替登录与业务验收。
+真实浏览器验证须按用户当次授权执行；本地浏览器结果见第 0 节，尚未验收公网部署。
+正式验收还需确认：手机扫码关联同一账号、Web 与 CLI 的会话收发、实时连接与重连、
+附件上传下载、已登录后的页面刷新和直接访问会话 URL，以及 Console Error、Toast
+和非预期 4xx/5xx。严重错误未解释前不得报告 PASS。
+
+### 6. 回滚
+
+**Web 版本回滚**：同一开发机 Bash 中执行。每次发布的 `previous-target` 记录上一个
+相对链接。命令要求当前仍是本次发布，避免误撤销别人后来发布的版本；版本目录与
+备份全部保留。首次发布没有上一版时删除的仅是 `happy` 符号链接。
+
+```bash
+ssh -o BatchMode=yes root@192.168.99.57 bash -s -- "$WEB_RUN_ID" <<'SH'
+set -euo pipefail
+WEB_RUN_ID=$1
+WEB_ROOT=/root/bim-engine/web/html
+WEB_RECORDS=/root/bim-engine/script/happy-web-artifacts
+test "$(readlink "$WEB_ROOT/happy")" = ".happy-releases/$WEB_RUN_ID"
+WEB_PREVIOUS=$(cat "$WEB_RECORDS/$WEB_RUN_ID.previous-target")
+if [ -n "$WEB_PREVIOUS" ]; then
+  test -d "$WEB_ROOT/$WEB_PREVIOUS"
+  ln -s "$WEB_PREVIOUS" "$WEB_ROOT/.happy-rollback-$WEB_RUN_ID"
+  mv -Tf "$WEB_ROOT/.happy-rollback-$WEB_RUN_ID" "$WEB_ROOT/happy"
+else
+  rm -- "$WEB_ROOT/happy"
+fi
+SH
+```
+
+**撤销首次添加的网关路由**：仅在第 4 步实际修改过配置时执行。配置后来被其他任务
+修改时停止整份回滚；此时应只撤销 `BEGIN/END HAPPY WEB` 之间的本次路由块，
+重新生成候选文件并检查，不能覆盖其他服务的后续修改。
+
+```bash
+ssh -o BatchMode=yes root@192.168.99.57 bash -s -- "$WEB_RUN_ID" <<'SH'
+set -euo pipefail
+WEB_RUN_ID=$1
+WEB_CFG=/root/bim-engine/script/http.nginx.1.30.1.prod.conf
+python3 - "$WEB_CFG" "$WEB_CFG.bak.happy-$WEB_RUN_ID" \
+  "$WEB_CFG.candidate.happy-$WEB_RUN_ID" <<'PY'
+import pathlib, sys
+live, backup, candidate = map(pathlib.Path, sys.argv[1:])
+current = live.read_bytes()
+if current not in (backup.read_bytes(), candidate.read_bytes()):
+    raise SystemExit('STOP: gateway changed after this release; remove only the HAPPY WEB block.')
+with live.open('wb') as output:
+    output.write(backup.read_bytes())
+PY
+docker exec bim-nginx-1.30 nginx -t
+docker exec bim-nginx-1.30 nginx -s reload
+SH
+```
+
+回滚后重新检查已恢复版本及 `/home-relay/health`。首次发布撤销后，Web 入口应恢复
+到发布前的 404。不能以 HTTP 检查代替会话和附件的实际回归验收。
+
 ## Kubernetes manifests
 Example manifests live in `packages/happy-server/deploy`:
 - `handy.yaml`: Deployment + Service + ExternalSecrets for the server.

@@ -215,7 +215,8 @@ export default {
             }
         },
         experiments: {
-            typedRoutes: true
+            typedRoutes: true,
+            baseUrl: process.env.HAPPY_WEB_BASE_PATH || ''
         },
         extra: {
             router: {

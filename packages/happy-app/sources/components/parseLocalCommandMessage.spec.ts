@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseLocalCommandMessage, isUserSlashCommandEcho } from './parseLocalCommandMessage';
 
+const commands = ['compact', 'clear', 'goal', 'maintain', 'superpowers:brainstorming'];
+
 describe('parseLocalCommandMessage', () => {
     it('hides the local-command caveat wrapper', () => {
         const text = '<local-command-caveat>The user typed a slash command.</local-command-caveat>';
@@ -40,14 +42,14 @@ describe('parseLocalCommandMessage', () => {
     });
 
     it('collapses a raw /goal command to a goal display', () => {
-        expect(parseLocalCommandMessage('  /goal проанализируй проект  ')).toEqual({
+        expect(parseLocalCommandMessage('  /goal проанализируй проект  ', commands)).toEqual({
             kind: 'goal-run',
             goal: 'проанализируй проект',
         });
     });
 
     it('collapses a raw skill slash command to a command display with args', () => {
-        expect(parseLocalCommandMessage('  /superpowers:brainstorming привет давай спланируем что-нибудь  ')).toEqual({
+        expect(parseLocalCommandMessage('  /superpowers:brainstorming привет давай спланируем что-нибудь  ', commands)).toEqual({
             kind: 'command-run',
             commandName: 'superpowers:brainstorming',
             args: 'привет давай спланируем что-нибудь',
@@ -55,7 +57,7 @@ describe('parseLocalCommandMessage', () => {
     });
 
     it('collapses a trailing raw skill slash command to a command display with preceding args', () => {
-        expect(parseLocalCommandMessage('  привет давай /maintain  ')).toEqual({
+        expect(parseLocalCommandMessage('  привет давай /maintain  ', commands)).toEqual({
             kind: 'command-run',
             commandName: 'maintain',
             args: 'привет давай',
@@ -63,7 +65,7 @@ describe('parseLocalCommandMessage', () => {
     });
 
     it('collapses a middle raw skill slash command and preserves surrounding args', () => {
-        expect(parseLocalCommandMessage('  привет /maintain давай  ')).toEqual({
+        expect(parseLocalCommandMessage('  привет /maintain давай  ', commands)).toEqual({
             kind: 'command-run',
             commandName: 'maintain',
             args: 'привет давай',
@@ -109,46 +111,87 @@ describe('parseLocalCommandMessage', () => {
         const text = 'just a normal message';
         expect(parseLocalCommandMessage(text)).toEqual({ kind: 'text', text });
     });
+
+    it.each([
+        'Browser message through /happy and /home-relay',
+        'Inspect /tmp for the exported assets',
+        'The gateway serves /happy',
+        '/happy',
+        '/home-relay is the API base',
+    ])('preserves path text: %s', (text) => {
+        expect(parseLocalCommandMessage(text, commands)).toEqual({ kind: 'text', text });
+        expect(isUserSlashCommandEcho(text, true, commands)).toBe(false);
+    });
+
+    it('preserves raw text until a command is known to the session', () => {
+        const text = 'please /custom-task inspect this';
+        expect(parseLocalCommandMessage(text)).toEqual({ kind: 'text', text });
+        expect(isUserSlashCommandEcho(text, true)).toBe(false);
+        expect(parseLocalCommandMessage(text, ['custom-task'])).toEqual({
+            kind: 'command-run', commandName: 'custom-task', args: 'please inspect this',
+        });
+        expect(isUserSlashCommandEcho(text, true, ['custom-task'])).toBe(true);
+    });
+
+    it('accepts metadata command names with a leading slash', () => {
+        expect(parseLocalCommandMessage('please /maintain this', ['/maintain'])).toEqual({
+            kind: 'command-run', commandName: 'maintain', args: 'please this',
+        });
+    });
+
+    it('finds a registered command after an unrelated path token', () => {
+        expect(parseLocalCommandMessage('check /happy with /maintain', commands)).toEqual({
+            kind: 'command-run', commandName: 'maintain', args: 'check /happy with',
+        });
+    });
+
+    it('uses the SDK wrapper name even when its args mention a different command', () => {
+        const text = '<command-name>/custom-task</command-name><command-args>please /maintain this</command-args>';
+        expect(parseLocalCommandMessage(text, commands)).toEqual({
+            kind: 'command-run', commandName: 'custom-task', args: 'please /maintain this',
+        });
+        expect(isUserSlashCommandEcho(text, true, commands)).toBe(false);
+    });
 });
 
 describe('isUserSlashCommandEcho', () => {
     it('detects a bare command echo with a localId', () => {
-        expect(isUserSlashCommandEcho('/compact', true)).toBe(true);
+        expect(isUserSlashCommandEcho('/compact', true, commands)).toBe(true);
     });
 
     it('detects a command-with-args echo with a localId', () => {
-        expect(isUserSlashCommandEcho('/superpowers:brainstorming make me rich', true)).toBe(true);
+        expect(isUserSlashCommandEcho('/superpowers:brainstorming make me rich', true, commands)).toBe(true);
     });
 
     it('detects a /goal echo with a localId', () => {
-        expect(isUserSlashCommandEcho('/goal проанализируй проект', true)).toBe(true);
+        expect(isUserSlashCommandEcho('/goal проанализируй проект', true, commands)).toBe(true);
     });
 
     it('ignores echoes without a localId (SDK-originated, not user-sent)', () => {
-        expect(isUserSlashCommandEcho('/compact', false)).toBe(false);
+        expect(isUserSlashCommandEcho('/compact', false, commands)).toBe(false);
     });
 
     it('detects a trailing command echo with a localId', () => {
-        expect(isUserSlashCommandEcho('привет давай /maintain', true)).toBe(true);
+        expect(isUserSlashCommandEcho('привет давай /maintain', true, commands)).toBe(true);
     });
 
     it('does not treat the SDK wrapper itself as a raw echo', () => {
         const wrapper =
             '<command-message>x</command-message><command-name>/x</command-name><command-args>a</command-args>';
-        expect(isUserSlashCommandEcho(wrapper, true)).toBe(false);
+        expect(isUserSlashCommandEcho(wrapper, true, commands)).toBe(false);
     });
 
     it('does not match unix-style paths', () => {
-        expect(isUserSlashCommandEcho('/etc/hosts is the file', true)).toBe(false);
-        expect(isUserSlashCommandEcho('/usr/local/bin', true)).toBe(false);
+        expect(isUserSlashCommandEcho('/etc/hosts is the file', true, commands)).toBe(false);
+        expect(isUserSlashCommandEcho('/usr/local/bin', true, commands)).toBe(false);
     });
 
     it('does not match a lone slash or ordinary text', () => {
-        expect(isUserSlashCommandEcho('/', true)).toBe(false);
-        expect(isUserSlashCommandEcho('please run / later', true)).toBe(false);
+        expect(isUserSlashCommandEcho('/', true, commands)).toBe(false);
+        expect(isUserSlashCommandEcho('please run / later', true, commands)).toBe(false);
     });
 
     it('tolerates surrounding whitespace', () => {
-        expect(isUserSlashCommandEcho('  /clear  ', true)).toBe(true);
+        expect(isUserSlashCommandEcho('  /clear  ', true, commands)).toBe(true);
     });
 });

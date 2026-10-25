@@ -15,6 +15,7 @@ import { Option } from './markdown/MarkdownView';
 import { layout } from "./layout";
 import { Typography } from '@/constants/Typography';
 import { parseLocalCommandMessage, isUserSlashCommandEcho } from './parseLocalCommandMessage';
+import { getAllCommands } from '@/sync/suggestionCommands';
 import { resolveUserMessageBubbleColor } from '@/utils/userMessageBubbleColor';
 import { LongPressCopyable } from './LongPressCopyable';
 import { formatMessageTimestamp, formatTurnDuration } from '@/utils/messageTimestamp';
@@ -207,12 +208,16 @@ function UserTextBlock(props: {
   // Codex/Gemini don't reliably emit the <command-*> wrapper, so hiding the
   // echo there would drop the command with nothing to replace it. (Absent
   // flavor == Claude, matching the convention used elsewhere.)
+  const commands = React.useMemo(
+    () => getAllCommands(props.sessionId).map(({ command }) => command),
+    [props.sessionId, props.metadata],
+  );
   const isClaudeFlavor = !props.metadata?.flavor || props.metadata.flavor === 'claude';
-  if (isClaudeFlavor && isUserSlashCommandEcho(props.message.text, props.message.localId != null)) {
+  if (isClaudeFlavor && isUserSlashCommandEcho(props.message.text, props.message.localId != null, commands)) {
     return null;
   }
 
-  const parsed = parseLocalCommandMessage(props.message.displayText || props.message.text);
+  const parsed = parseLocalCommandMessage(props.message.displayText || props.message.text, commands);
   if (parsed.kind === 'caveat') {
     return null;
   }

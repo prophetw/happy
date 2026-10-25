@@ -32,34 +32,28 @@ const COMMAND_ARGS_RE = /<command-args>\s*([\s\S]*?)\s*<\/command-args>/;
 const COMMAND_MESSAGE_RE = /<command-message>[\s\S]*?<\/command-message>/g;
 const COMMAND_NAME_TAG_RE = /<command-name>[\s\S]*?<\/command-name>/g;
 const COMMAND_ARGS_TAG_RE = /<command-args>[\s\S]*?<\/command-args>/g;
-const RAW_SLASH_COMMAND_RE = /^\s*\/([a-zA-Z][\w:-]*)(?:\s+([\s\S]*?))?\s*$/;
-const RAW_SLASH_COMMAND_TOKEN_RE = /(^|\s)\/([a-zA-Z][\w:-]*)(?=$|\s)/;
+const RAW_SLASH_COMMAND_TOKEN_RE = /(^|\s)\/([a-zA-Z][\w:-]*)(?=$|\s)/g;
 const GOAL_STDOUT_RE = /^Goal set:\s*([\s\S]*?)\s*$/i;
 
-function rawSlashCommand(text: string): { commandName: string; args?: string } | undefined {
-    const match = text.match(RAW_SLASH_COMMAND_RE);
-    if (match) {
-        const commandName = match[1].trim();
-        const args = match[2]?.trim();
+function rawSlashCommand(text: string, commands: readonly string[]): { commandName: string; args?: string } | undefined {
+    // Syntax alone cannot distinguish a command from a single-segment path.
+    // Use the same command names the composer offers for this session.
+    const knownCommands = new Set(commands.map(command => command.replace(/^\//, '')));
+    for (const match of text.matchAll(RAW_SLASH_COMMAND_TOKEN_RE)) {
+        if (!knownCommands.has(match[2])) {
+            continue;
+        }
+        const commandStart = match.index + match[1].length;
+        const commandEnd = commandStart + match[2].length + 1;
+        const before = text.slice(0, commandStart).trim();
+        const after = text.slice(commandEnd).trim();
+        const args = [before, after].filter(Boolean).join(' ');
         return {
-            commandName,
+            commandName: match[2],
             args: args && args.length > 0 ? args : undefined,
         };
     }
-
-    const tokenMatch = text.match(RAW_SLASH_COMMAND_TOKEN_RE);
-    if (!tokenMatch || tokenMatch.index === undefined) {
-        return undefined;
-    }
-    const commandStart = tokenMatch.index + tokenMatch[1].length;
-    const commandEnd = commandStart + tokenMatch[2].length + 1;
-    const before = text.slice(0, commandStart).trim();
-    const after = text.slice(commandEnd).trim();
-    const args = [before, after].filter(Boolean).join(' ');
-    return {
-        commandName: tokenMatch[2].trim(),
-        args: args && args.length > 0 ? args : undefined,
-    };
+    return undefined;
 }
 
 function goalFromStdout(text: string): string | undefined {
@@ -68,7 +62,7 @@ function goalFromStdout(text: string): string | undefined {
     return goal && goal.length > 0 ? goal : undefined;
 }
 
-export function parseLocalCommandMessage(text: string): LocalCommandMessage {
+export function parseLocalCommandMessage(text: string, commands: readonly string[] = []): LocalCommandMessage {
     if (CAVEAT_RE.test(text)) {
         return { kind: 'caveat' };
     }
@@ -81,18 +75,6 @@ export function parseLocalCommandMessage(text: string): LocalCommandMessage {
             return { kind: 'goal-confirmation', goal };
         }
         return { kind: 'text', text: stdout };
-    }
-
-    const rawCommand = rawSlashCommand(text);
-    if (rawCommand) {
-        if (rawCommand.commandName.toLowerCase() === 'goal' && rawCommand.args) {
-            return { kind: 'goal-run', goal: rawCommand.args };
-        }
-        return {
-            kind: 'command-run',
-            commandName: rawCommand.commandName,
-            args: rawCommand.args,
-        };
     }
 
     const nameMatch = text.match(COMMAND_NAME_RE);
@@ -127,6 +109,18 @@ export function parseLocalCommandMessage(text: string): LocalCommandMessage {
         return { kind: 'text', text: stripped };
     }
 
+    const rawCommand = rawSlashCommand(text, commands);
+    if (rawCommand) {
+        if (rawCommand.commandName.toLowerCase() === 'goal' && rawCommand.args) {
+            return { kind: 'goal-run', goal: rawCommand.args };
+        }
+        return {
+            kind: 'command-run',
+            commandName: rawCommand.commandName,
+            args: rawCommand.args,
+        };
+    }
+
     return { kind: 'text', text };
 }
 
@@ -144,16 +138,11 @@ export function parseLocalCommandMessage(text: string): LocalCommandMessage {
  * Gated on `hasLocalId` so we only ever hide a message the user actually
  * sent from Happy, never an agent/SDK-originated one.
  */
-export function isUserSlashCommandEcho(text: string, hasLocalId: boolean): boolean {
-    if (!hasLocalId) {
+export function isUserSlashCommandEcho(text: string, hasLocalId: boolean, commands: readonly string[] = []): boolean {
+    // SDK wrappers are authoritative even when their args mention another command.
+    if (!hasLocalId || COMMAND_NAME_RE.test(text)) {
         return false;
     }
-    const trimmed = text.trim();
-    if (!rawSlashCommand(trimmed)) {
-        return false;
-    }
-    // Guard: a real wrapper message also contains <command-name>; never
-    // treat that as a raw echo.
-    const parsed = parseLocalCommandMessage(trimmed);
+    const parsed = parseLocalCommandMessage(text, commands);
     return parsed.kind === 'command-run' || parsed.kind === 'goal-run';
 }
