@@ -759,7 +759,10 @@ for directory in directories:
     if installed.is_dir():
         if link.exists() or link.is_symlink():
             raise SystemExit('STOP: inspect existing node_modules: ' + str(link))
-        link.symlink_to(installed, target_is_directory=True)
+        # 保留真实 node_modules 目录，使仓库的 node_modules/ 忽略规则仍然生效。
+        link.mkdir()
+        for dependency in installed.iterdir():
+            (link / dependency.name).symlink_to(dependency, target_is_directory=dependency.is_dir())
 PY
 else
   pnpm install --frozen-lockfile
