@@ -25,11 +25,16 @@
       }
     },
     "preview": {
+      "environment": "preview",
       "autoIncrement": true,
       "distribution": "internal",
       "channel": "preview",
       "env": {
         "APP_ENV": "preview",
+        "EXPO_OWNER": "prophetwayen",
+        "EAS_PROJECT_ID": "1d018bd8-34db-4b57-a0a9-61f24671153e",
+        "EXPO_UPDATES_URL": "https://u.expo.dev/1d018bd8-34db-4b57-a0a9-61f24671153e",
+        "EXPO_IOS_BUNDLE_ID_PREVIEW": "com.prophetwayen.happy.preview",
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
     },
