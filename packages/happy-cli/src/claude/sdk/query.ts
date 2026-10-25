@@ -3,7 +3,7 @@
  * Maps internal QueryOptions to official SDK Options
  */
 
-import { query as sdkQuery, type Options, type Query } from '@anthropic-ai/claude-agent-sdk'
+import { query as sdkQuery, type Options, type Query, type HookCallback, type HookEvent } from '@anthropic-ai/claude-agent-sdk'
 import type { QueryOptions, QueryPrompt, SDKMessage } from './types'
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { ensureLocalProxyBypass } from '../utils/proxyBypass'
@@ -47,6 +47,21 @@ export function query(params: { prompt: QueryPrompt; options?: QueryOptions }): 
         strictMcpConfig: opts?.strictMcpConfig,
         sessionId: undefined,
         effort: opts?.effort,
+    }
+
+    if (opts?.onTokenSpeedBoundary) {
+        sdkOptions.includePartialMessages = true
+        const observeBoundary: HookCallback = async (input) => {
+            if (!input.agent_id) {
+                opts.onTokenSpeedBoundary!(input.hook_event_name === 'PostToolBatch' ? 'tool-batch-complete' : 'interrupt')
+            }
+            return {}
+        }
+        const events: HookEvent[] = [
+            'PostToolBatch', 'PreToolUse', 'PermissionRequest', 'Elicitation',
+            'PreCompact', 'PreModelSwitch', 'UserPromptSubmit',
+        ]
+        sdkOptions.hooks = Object.fromEntries(events.map(name => [name, [{ hooks: [observeBoundary] }]]))
     }
 
     // Map abort signal -> AbortController

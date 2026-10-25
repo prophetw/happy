@@ -44,6 +44,7 @@ export async function claudeRemote(opts: {
     onSessionFound: (id: string) => void,
     onThinkingChange?: (thinking: boolean) => void,
     onMessage: (message: SDKMessage) => void,
+    onTokenSpeedBoundary?: QueryOptions['onTokenSpeedBoundary'],
     onCompletionEvent?: (message: string) => void,
     onSessionReset?: () => void,
     onSDKMetadata?: (metadata: { tools?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[]; skills?: string[]; currentModelCode?: string }) => void,
@@ -127,6 +128,7 @@ export async function claudeRemote(opts: {
     // Prepare SDK options
     let mode = initial.mode;
     const sdkOptions: QueryOptions = {
+        onTokenSpeedBoundary: opts.onTokenSpeedBoundary,
         cwd: opts.path,
         resume: startFrom ?? undefined,
         mcpServers: opts.mcpServers,
@@ -263,6 +265,12 @@ export async function claudeRemote(opts: {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
 
         for await (const message of response) {
+            if (message.type === 'stream_event') {
+                // Forward only request lifecycle/usage. Content deltas must not
+                // duplicate assistant blocks or flood logs and the relay.
+                if (['message_start', 'message_delta', 'message_stop'].includes(message.event.type)) opts.onMessage(message);
+                continue;
+            }
             const authMessage = claudeProviderAuthMessage(message);
             if (authMessage && !providerAuthFailed) {
                 providerAuthFailed = true;

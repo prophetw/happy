@@ -19,6 +19,7 @@ export { AbortError } from '@anthropic-ai/claude-agent-sdk'
 
 // Alias for backward compatibility
 import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk'
+import type { ClaudeTokenSpeedBoundary } from '../utils/modelRequestTokenSpeed'
 export type CanCallToolCallback = CanUseTool
 export type CanCallToolOptions = Parameters<CanUseTool>[2]
 
@@ -28,6 +29,7 @@ export type CanCallToolOptions = Parameters<CanUseTool>[2]
  * used throughout the codebase. The query() wrapper handles the translation.
  */
 export interface QueryOptions {
+    onTokenSpeedBoundary?: (event: ClaudeTokenSpeedBoundary) => void
     abort?: AbortSignal
     allowedTools?: string[]
     appendSystemPrompt?: string

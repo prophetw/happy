@@ -139,6 +139,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     let resultProcessing: Promise<void> = Promise.resolve();
 
     function onMessage(message: SDKMessage) {
+        if (message.type === 'stream_event') {
+            sdkToLogConverter.convert(message);
+            return;
+        }
 
         // Write to message log
         formatClaudeMessageForInk(message, messageBuffer);
@@ -431,6 +435,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     claudeEnvVars: session.claudeEnvVars,
                     claudeArgs: session.claudeArgs,
                     onMessage,
+                    onTokenSpeedBoundary: event => sdkToLogConverter.observeTokenSpeedBoundary(event),
                     onCompletionEvent: (message: string) => {
                         logger.debug(`[remote]: Completion event: ${message}`);
                         session.client.sendSessionEvent({ type: 'message', message });

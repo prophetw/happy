@@ -16,6 +16,7 @@ import { UsageSchema, type RawJSONLines } from '@/claude/types'
 import type { PermissionResponseLookup } from './permissionHandler'
 import { readTranscriptUsage } from './readTranscriptUsage'
 import { outputTokensPerSecond } from '@/utils/tokenSpeed'
+import { ClaudeModelRequestTokenSpeed, type ClaudeTokenSpeedBoundary } from './modelRequestTokenSpeed'
 
 /**
  * Context for converting SDK messages to log format
@@ -64,6 +65,7 @@ export class SDKToLogConverter {
     private latestMainMessage: SDKAssistantMessage['message'] | null = null;
     private mainResponseIds = new Set<string>();
     private sawSidechainResponse = false;
+    private tokenSpeed = new ClaudeModelRequestTokenSpeed();
 
     constructor(
         context: Omit<ConversionContext, 'parentUuid'>,
@@ -83,10 +85,8 @@ export class SDKToLogConverter {
      */
     updateSessionId(sessionId: string): void {
         if (sessionId !== this.context.sessionId) {
-            this.latestMainMessage = null
             this.contextWindowByModel.clear()
-            this.mainResponseIds.clear()
-            this.sawSidechainResponse = false
+            this.resetRequestMeasurements()
         }
         this.context.sessionId = sessionId
     }
@@ -97,10 +97,19 @@ export class SDKToLogConverter {
     resetParentChain(): void {
         this.lastUuid = null
         this.context.parentUuid = null
-        this.latestMainMessage = null
         this.contextWindowByModel.clear()
+        this.resetRequestMeasurements()
+    }
+
+    private resetRequestMeasurements(): void {
+        this.latestMainMessage = null
         this.mainResponseIds.clear()
         this.sawSidechainResponse = false
+        this.tokenSpeed = new ClaudeModelRequestTokenSpeed()
+    }
+
+    observeTokenSpeedBoundary(event: ClaudeTokenSpeedBoundary): void {
+        this.tokenSpeed.boundary(event)
     }
 
     private contextWindowForModel(model: string): number | undefined {
@@ -147,6 +156,8 @@ export class SDKToLogConverter {
 
     private withFinalUsage(message: any): any {
         if (!message) return message
+        const streamedUsage = typeof message.id === 'string' ? this.tokenSpeed.usageForResponse(message.id) : undefined
+        if (streamedUsage) return { ...message, usage: streamedUsage }
         const usage = UsageSchema.safeParse(message.usage)
         if (usage.success && usage.data.input_tokens + (usage.data.cache_read_input_tokens ?? 0)
             + (usage.data.cache_creation_input_tokens ?? 0) > 0) {
@@ -180,6 +191,9 @@ export class SDKToLogConverter {
      * Convert SDK message to log format
      */
     convert(sdkMessage: SDKMessage): RawJSONLines | null {
+        this.tokenSpeed.observe(sdkMessage)
+        // Streaming deltas are timing input, not additional chat messages.
+        if (sdkMessage.type === 'stream_event') return null
         const uuid = randomUUID()
         const timestamp = new Date().toISOString()
         let parentUuid = this.lastUuid;
@@ -269,8 +283,11 @@ export class SDKToLogConverter {
                 const systemMsg = sdkMessage as SDKSystemMessage
 
                 // System messages with subtype 'init' might update session ID
-                if (systemMsg.subtype === 'init' && systemMsg.session_id) {
+                if (!isSidechain && !(systemMsg as any).isSidechain && systemMsg.subtype === 'init' && systemMsg.session_id) {
                     this.updateSessionId(systemMsg.session_id)
+                    // A fresh query may resume the same native session after
+                    // an abort, without a result to clear the previous sample.
+                    this.resetRequestMeasurements()
                 }
 
                 // System messages are typically not sent to logs
@@ -300,17 +317,19 @@ export class SDKToLogConverter {
                 const latestMainMessage = this.latestMainMessage
                 this.latestMainMessage = null
                 const usage = UsageSchema.safeParse(this.withContextWindow(this.withFinalUsage(latestMainMessage))?.usage)
-                // API duration and main-loop usage need the same request scope.
-                // Multi-request, subagent and mixed-model results are ambiguous;
-                // keep context usage, but do not manufacture a model speed.
+                // The API-duration fallback needs a matching single-request
+                // scope. Stream samples have independent request boundaries
+                // and never divide by the aggregate result duration.
                 const singleRequest = resultMsg.subtype === 'success' && !resultMsg.is_error
+                    && this.tokenSpeed.canUseApiDuration
                     && resultMsg.num_turns === 1 && this.mainResponseIds.size === 1
                     && !this.sawSidechainResponse && Object.keys(resultMsg.modelUsage ?? {}).length <= 1
                     && usage.success && usage.data.output_tokens === resultMsg.usage?.output_tokens
-                const tokensPerSecond = singleRequest
-                    ? outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_api_ms) : undefined
-                this.mainResponseIds.clear()
-                this.sawSidechainResponse = false
+                const tokensPerSecond = resultMsg.subtype === 'success' && !resultMsg.is_error
+                    ? this.tokenSpeed.tokensPerSecond ?? (singleRequest
+                        ? outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_api_ms) : undefined)
+                    : undefined
+                this.resetRequestMeasurements()
                 if (usage.success && (tokensPerSecond !== undefined || (typeof usage.data.context_window === 'number'
                     && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0))) {
                     // A system snapshot avoids replaying chat text and avoids

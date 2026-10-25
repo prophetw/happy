@@ -64,6 +64,20 @@ describe('claudeRemote', () => {
         expect(callbacks.onSDKMetadata).toHaveBeenCalledWith(expect.objectContaining({ currentModelCode: 'gateway-model' }));
     });
 
+    it('forwards stream lifecycle and usage while keeping content deltas out of chat and logs', async () => {
+        const lifecycle = ['message_start', 'message_delta', 'message_stop'].map(type => ({
+            type: 'stream_event', event: { type }, parent_tool_use_id: null,
+        }));
+        const callbacks = await runMessages([
+            lifecycle[0],
+            { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } } },
+            lifecycle[1], lifecycle[2],
+        ]);
+        expect(callbacks.onMessage.mock.calls.map(([message]) => message)).toEqual(lifecycle);
+        const { logger } = await import('@/lib');
+        expect(vi.mocked(logger.debugLargeJson).mock.calls.some(([label]) => String(label).includes('stream_event'))).toBe(false);
+    });
+
     it('explains host OAuth expiry once and closes the turn as failed', async () => {
         const callbacks = await runMessages([
             authAssistant,

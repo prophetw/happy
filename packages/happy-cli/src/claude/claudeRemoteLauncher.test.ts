@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProjectPath } from './utils/path';
+import kimiTokenSpeed from './utils/__fixtures__/kimi-token-speed.json';
 
 // Exercise the real outgoing queue, SDK converter and protocol mapper without
 // a terminal, credential store, provider process, relay or push service.
@@ -23,6 +24,7 @@ vi.mock('./utils/permissionHandler', () => ({
         reset = vi.fn();
         setOnPermissionRequest = vi.fn();
         getResponseLookup = () => new Map();
+        getResponseForToolUseId = vi.fn();
         handleToolCall = vi.fn();
     },
 }));
@@ -103,6 +105,39 @@ describe('claudeRemoteLauncher provider auth', () => {
 
 describe('claudeRemoteLauncher context usage', () => {
     beforeEach(() => { vi.mocked(claudeRemote).mockReset(); });
+
+    it.each([
+        { extraToolTime: 0, numTurns: 2 },
+        { extraToolTime: 60000, numTurns: 2 },
+        { extraToolTime: 0, numTurns: 16 },
+    ])('samples a captured Kimi turn with $extraToolTime ms extra tool waiting and num_turns=$numTurns', async ({ extraToolTime, numTurns }) => {
+        const { session, envelopes, stop } = fixture();
+        const clock = vi.spyOn(performance, 'now');
+        vi.mocked(claudeRemote).mockImplementation(async opts => {
+            for (const { at, event } of kimiTokenSpeed) {
+                clock.mockReturnValue(at + (at >= 9073 ? extraToolTime : 0));
+                if (event.type === 'boundary') {
+                    opts.onTokenSpeedBoundary!(event.subtype === 'PostToolBatch' ? 'tool-batch-complete' : 'interrupt');
+                } else {
+                    opts.onMessage((event.type === 'result' ? { ...event, num_turns: numTurns } : event) as any);
+                }
+            }
+            await opts.onReady();
+            stop();
+        });
+        try {
+            await claudeRemoteLauncher(session as any);
+            const usage = envelopes.filter(e => e.usage).at(-1)?.usage;
+            expect(usage?.output_tokens_per_second).toBeCloseTo(29 / 3.383);
+            expect(usage?.output_tokens_per_second_scope).toBe('model_request');
+            expect(usage?.input_tokens).toBe(408);
+            expect(usage?.cache_read_input_tokens).toBe(2304);
+            expect(envelopes.at(-1)?.ev.t).toBe('turn-end');
+            expect(envelopes.filter(e => e.ev.t === 'text' && !e.ev.thinking)).toHaveLength(2);
+        } finally {
+            clock.mockRestore();
+        }
+    });
 
     it('does not announce completion when the turn yielded for a local intervention', async () => {
         const { session, notification, stop } = fixture();

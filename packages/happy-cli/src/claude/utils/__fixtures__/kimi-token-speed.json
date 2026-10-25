@@ -1,0 +1,282 @@
+[
+  {
+    "at": 2364,
+    "event": {
+      "type": "stream_event",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "id": "response-1",
+          "model": "k3.1-pro",
+          "usage": {
+            "input_tokens": 2446,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 0
+          }
+        }
+      }
+    }
+  },
+  {
+    "at": 6854,
+    "event": {
+      "type": "assistant",
+      "parent_tool_use_id": null,
+      "message": {
+        "id": "response-1",
+        "model": "k3.1-pro",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Captured reasoning"
+          }
+        ],
+        "usage": {
+          "input_tokens": 2446,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    }
+  },
+  {
+    "at": 6869,
+    "event": {
+      "type": "assistant",
+      "parent_tool_use_id": null,
+      "message": {
+        "id": "response-1",
+        "model": "k3.1-pro",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Captured reply"
+          }
+        ],
+        "usage": {
+          "input_tokens": 2446,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    }
+  },
+  {
+    "at": 6873,
+    "event": {
+      "type": "assistant",
+      "parent_tool_use_id": null,
+      "message": {
+        "id": "response-1",
+        "model": "k3.1-pro",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "tool-1",
+            "name": "Bash",
+            "input": {
+              "command": "sleep 2"
+            }
+          }
+        ],
+        "usage": {
+          "input_tokens": 2446,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    }
+  },
+  {
+    "at": 6875,
+    "event": {
+      "type": "boundary",
+      "subtype": "PreToolUse",
+      "subagent": false
+    }
+  },
+  {
+    "at": 6876,
+    "event": {
+      "type": "stream_event",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "tool_use"
+        },
+        "usage": {
+          "input_tokens": 2446,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 232
+        }
+      }
+    }
+  },
+  {
+    "at": 6876,
+    "event": {
+      "type": "stream_event",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_stop"
+      }
+    }
+  },
+  {
+    "at": 9072,
+    "event": {
+      "type": "user",
+      "parent_tool_use_id": null,
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool-1",
+            "content": ""
+          }
+        ]
+      }
+    }
+  },
+  {
+    "at": 9073,
+    "event": {
+      "type": "boundary",
+      "subtype": "PostToolBatch",
+      "subagent": false
+    }
+  },
+  {
+    "at": 11917,
+    "event": {
+      "type": "stream_event",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "id": "response-2",
+          "model": "k3.1-pro",
+          "usage": {
+            "input_tokens": 408,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "output_tokens": 0
+          }
+        }
+      }
+    }
+  },
+  {
+    "at": 12287,
+    "event": {
+      "type": "assistant",
+      "parent_tool_use_id": null,
+      "message": {
+        "id": "response-2",
+        "model": "k3.1-pro",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "Captured reasoning"
+          }
+        ],
+        "usage": {
+          "input_tokens": 408,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 2304,
+          "output_tokens": 0
+        }
+      }
+    }
+  },
+  {
+    "at": 12455,
+    "event": {
+      "type": "assistant",
+      "parent_tool_use_id": null,
+      "message": {
+        "id": "response-2",
+        "model": "k3.1-pro",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Captured reply"
+          }
+        ],
+        "usage": {
+          "input_tokens": 408,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 2304,
+          "output_tokens": 0
+        }
+      }
+    }
+  },
+  {
+    "at": 12456,
+    "event": {
+      "type": "stream_event",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "input_tokens": 408,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 2304,
+          "output_tokens": 29
+        }
+      }
+    }
+  },
+  {
+    "at": 12456,
+    "event": {
+      "type": "stream_event",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_stop"
+      }
+    }
+  },
+  {
+    "at": 12491,
+    "event": {
+      "type": "result",
+      "subtype": "success",
+      "duration_ms": 12093,
+      "duration_api_ms": 21026,
+      "num_turns": 2,
+      "is_error": false,
+      "usage": {
+        "input_tokens": 2854,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2304,
+        "output_tokens": 261
+      },
+      "modelUsage": {
+        "ccs-claude-kimi--k3.1-pro[1m]": {
+          "contextWindow": 1000000
+        },
+        "ccs-claude-kimi--k3.1-pro[1M]": {
+          "contextWindow": 1000000
+        }
+      }
+    }
+  }
+]
