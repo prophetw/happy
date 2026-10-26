@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SandboxConfig } from '@/persistence';
 import { mapCodexMcpMessageToSessionEnvelopes, type CodexTurnState } from './utils/sessionProtocolMapper';
+import { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 
 const {
     mockExecSync,
@@ -271,16 +272,53 @@ describe('CodexAppServerClient sandbox integration', () => {
         ]);
     });
 
-    it('invalidates timing for native compaction or unknown items while allowing text lifecycle events', async () => {
+    it.each(['imageView', 'sleep', 'contextCompaction'])
+    ('recovers a model speed sample after native %s instead of disabling the turn', async (type) => {
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        const clock = vi.spyOn(performance, 'now');
+        const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };
+        const envelopes: ReturnType<typeof mapCodexMcpMessageToSessionEnvelopes>['envelopes'] = [];
+        client.setEventHandler(event => {
+            const mapped = mapCodexMcpMessageToSessionEnvelopes(event, state);
+            state.currentTurnId = mapped.currentTurnId;
+            envelopes.push(...mapped.envelopes);
+        });
+        const notify = (at: number, method: string, data: Record<string, unknown>) => {
+            clock.mockReturnValue(at);
+            (client as any).handleNotification(method, { threadId: 'thread-main', turnId: 'turn-main', ...data });
+        };
+        try {
+            notify(0, 'turn/started', { turn: { id: 'turn-main' } });
+            notify(1000, 'item/completed', { item: { type: 'agentMessage', id: 'comment', text: 'Working' } });
+            notify(2000, 'item/started', { item: { type, id: 'activity-1' } });
+            notify(62000, 'item/completed', { item: { type, id: 'activity-1' } });
+            notify(62100, 'thread/tokenUsage/updated', { tokenUsage: {
+                total: { inputTokens: 1200, outputTokens: 150 }, last: { inputTokens: 1200, outputTokens: 150 },
+            } });
+            notify(63100, 'item/completed', { item: { type: 'agentMessage', id: 'final', text: 'Done' } });
+            notify(64100, 'thread/tokenUsage/updated', { tokenUsage: {
+                total: { inputTokens: 2400, outputTokens: 250 }, last: { inputTokens: 1200, outputTokens: 100 },
+            } });
+            notify(64200, 'turn/completed', { turn: { id: 'turn-main', status: 'completed' } });
+            const usage = envelopes.filter(envelope => envelope.usage).at(-1)?.usage;
+            expect(usage?.output_tokens_per_second).toBe(50);
+            expect(usage?.output_tokens_per_second_scope).toBe('model_request');
+            expect(envelopes.some(envelope => envelope.ev.t === 'turn-end')).toBe(true);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    it('invalidates timing for unknown native items while allowing text lifecycle events', async () => {
         const { CodexAppServerClient } = await import('./codexAppServerClient');
         const client = new CodexAppServerClient();
         const events: Array<Record<string, unknown>> = [];
         client.setEventHandler((event) => events.push(event));
-        for (const type of ['agentMessage', 'reasoning', 'userMessage', 'contextCompaction', 'futureActivity']) {
+        for (const type of ['agentMessage', 'reasoning', 'userMessage', 'futureActivity']) {
             (client as any).handleNotification('item/started', { item: { type, id: type } });
         }
         expect(events).toEqual([
-            { type: 'token_speed_unknown_activity' },
             { type: 'token_speed_unknown_activity' },
         ]);
     });

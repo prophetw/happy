@@ -630,10 +630,11 @@ export class CodexAppServerClient {
         }
 
         if (method === 'item/started' || method === 'item/completed') {
-            // These native tools have no UI mapping here, but their execution
-            // must still interrupt model timing. Do not silently time a new
-            // or unsupported activity as though it were model generation.
-            if (['mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageGeneration'].includes(item.type)) {
+            // Native tools and compaction have paired execution boundaries,
+            // even when they have no UI mapping here. Exclude their duration
+            // and let the next measured request recover after they finish.
+            if (['mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageGeneration',
+                'imageView', 'sleep', 'contextCompaction'].includes(item.type)) {
                 const itemId = typeof item.id === 'string' ? item.id : '';
                 this.eventHandler?.({
                     type: method === 'item/started' ? 'token_speed_tool_begin' : 'token_speed_tool_end',
