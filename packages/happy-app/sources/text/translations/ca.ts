@@ -563,6 +563,7 @@ export const ca: TranslationStructure = {
             outputSpeed: ({ speed }: { speed: string }) => `Model ${speed} tok/s`,
             outputSpeedTitle: "Velocitat mostrejada del model",
             outputSpeedDescription: "Tokens de sortida dividits pel temps de les respostes del model amb mesurament fiable. La mostra pot incloure només la primera resposta. Inclou processament d’entrada, espera de la petició, raonament i transferència; exclou eines i espera d’aprovació. Codex també inclou la preparació local del prompt. S’ometen les respostes sense temps fiable.",
+            outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Mostra de ${requests} peticions: ${tokens} tokens de sortida ÷ ${seconds} s = ${speed} tok/s`,
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de context`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% setmana`,

@@ -579,6 +579,7 @@ export const ru: TranslationStructure = {
             outputSpeed: ({ speed }: { speed: string }) => `Модель ${speed} tok/s`,
             outputSpeedTitle: "Выборочная скорость модели",
             outputSpeedDescription: "Выходные токены, делённые на время достоверно измеренных ответов модели. Выборка может включать только первый ответ. Учитывает обработку ввода, ожидание запроса, рассуждение и передачу; исключает инструменты и ожидание подтверждения. Для Codex также учитывается локальная подготовка запроса. Ответы без достоверного времени пропускаются.",
+            outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Выборка из ${requests} запросов: ${tokens} выходных токенов ÷ ${seconds} с = ${speed} tok/s`,
             detailContext: ({ used, total }: { used: string; total: string }) => `Контекст ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% контекста`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% за неделю`,

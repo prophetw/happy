@@ -14,6 +14,29 @@ const delta = (output: unknown, stopReason: string | null = 'end_turn') => strea
 const stop = () => stream({ type: 'message_stop' });
 
 describe('ClaudeModelRequestTokenSpeed', () => {
+    it('counts each timed request so a long turn can publish before its result', () => {
+        const tracker = new ClaudeModelRequestTokenSpeed();
+        tracker.boundary('tool-batch-complete', 1000);
+        tracker.observe(start('one'), 2000);
+        tracker.observe(delta(100), 2999);
+        expect(tracker.completedSampleCount).toBe(0);
+        tracker.observe(stop(), 3000);
+        expect(tracker.completedSampleCount).toBe(1);
+        expect(tracker.latestSample).toMatchObject({
+            model: 'k3.1-pro',
+            usage: { input_tokens: 1200, output_tokens: 100 },
+        });
+        expect(tracker.sampledTotals).toEqual({ tokens: 100, durationMs: 2000, requests: 1 });
+        // A request without a boundary has no usable timing: its usage still
+        // becomes the latest completed request but adds no speed sample.
+        tracker.observe(start('untimed'), 4000);
+        tracker.observe(delta(50), 4999);
+        tracker.observe(stop(), 5000);
+        expect(tracker.completedSampleCount).toBe(1);
+        expect(tracker.latestSample?.usage.output_tokens).toBe(50);
+        expect(tracker.tokensPerSecond).toBe(50);
+    });
+
     it('includes time waiting for the first token after all tools complete', () => {
         const tracker = new ClaudeModelRequestTokenSpeed();
         tracker.boundary('tool-batch-complete', 61000);

@@ -181,7 +181,8 @@ describe('AGY session push notifications', () => {
       .map(([envelope]) => envelope).filter((envelope) => envelope.usage);
     expect(usageEnvelopes().at(-1)).toMatchObject({
       ev: { t: 'service', text: '' }, usage: { input_tokens: 500, output_tokens: 100, output_tokens_per_second: 50,
-        output_tokens_per_second_scope: 'model_request' },
+        output_tokens_per_second_scope: 'model_request',
+        output_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 } },
     });
     expect(usageEnvelopes().at(-1)?.turn).toBeUndefined();
 

@@ -139,6 +139,38 @@ describe('claudeRemoteLauncher context usage', () => {
         }
     });
 
+    it('delivers a running speed snapshot before the turn ends', async () => {
+        const { session, envelopes, stop } = fixture();
+        const clock = vi.spyOn(performance, 'now');
+        vi.mocked(claudeRemote).mockImplementation(async opts => {
+            for (const { at, event } of kimiTokenSpeed) {
+                clock.mockReturnValue(at);
+                if (event.type === 'boundary') {
+                    opts.onTokenSpeedBoundary!(event.subtype === 'PostToolBatch' ? 'tool-batch-complete' : 'interrupt');
+                } else {
+                    opts.onMessage(event as any);
+                }
+            }
+            await opts.onReady();
+            stop();
+        });
+        try {
+            await claudeRemoteLauncher(session as any);
+            const service = envelopes
+                .map((envelope, index) => ({ envelope, index }))
+                .filter(({ envelope }) => envelope.ev.t === 'service'
+                    && typeof envelope.usage?.output_tokens_per_second === 'number');
+            expect(service).toHaveLength(2);
+            expect(service[0].envelope.usage?.output_tokens_per_second).toBeCloseTo(29 / 3.383);
+            expect(service[0].envelope.usage?.output_tokens_per_second_scope).toBe('model_request');
+            expect(service[0].envelope.usage?.output_tokens_per_second_sample)
+                .toEqual({ tokens: 29, duration_ms: 3383, requests: 1 });
+            expect(service[0].index).toBeLessThan(envelopes.findIndex(envelope => envelope.ev.t === 'turn-end'));
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
     it('does not announce completion when the turn yielded for a local intervention', async () => {
         const { session, notification, stop } = fixture();
         session.client.getAgentState.mockReturnValue({ humanIntervention: { id: 'local-1' } });

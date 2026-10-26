@@ -619,6 +619,7 @@ export const en = {
             outputSpeed: ({ speed }: { speed: string }) => `Model ${speed} tok/s`,
             outputSpeedTitle: "Sampled model response speed",
             outputSpeedDescription: "Output tokens divided by the elapsed time of reliably measured model responses. Samples may cover only the first response. Includes input processing, request wait, reasoning and response delivery; excludes tool execution and user approval waits. Codex samples also include local prompt preparation. Responses without reliable timing are omitted.",
+            outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Sampled ${requests} model requests: ${tokens} output tokens ÷ ${seconds} s = ${speed} tok/s`,
             detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} context`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% week`,

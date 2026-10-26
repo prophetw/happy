@@ -31,14 +31,24 @@ export class AgyTokenSpeedTracker {
     this.inTurn = false;
   }
 
-  get tokensPerSecond(): number | undefined {
+  private totals(): { tokens: number; durationMs: number; requests: number } | undefined {
     let output = 0;
     let durationMs = 0;
     for (const sample of this.samples.values()) {
       output += sample.output;
       durationMs += sample.durationMs;
     }
-    return Number.isSafeInteger(output) ? outputTokensPerSecond(output, durationMs) : undefined;
+    return this.samples.size > 0 && Number.isSafeInteger(output)
+      ? { tokens: output, durationMs, requests: this.samples.size } : undefined;
+  }
+
+  get tokensPerSecond(): number | undefined {
+    const totals = this.totals();
+    return totals ? outputTokensPerSecond(totals.tokens, totals.durationMs) : undefined;
+  }
+
+  get sample(): { tokens: number; durationMs: number; requests: number } | undefined {
+    return this.totals();
   }
 
   reset(): void {

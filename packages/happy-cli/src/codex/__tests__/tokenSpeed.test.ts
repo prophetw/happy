@@ -18,6 +18,8 @@ describe('Codex output speed envelopes', () => {
         const finalUsage = envelopes.filter((envelope) => envelope.usage).at(-1)?.usage;
         expect(finalUsage?.output_tokens_per_second).toBeCloseTo(422 / 12.259);
         expect(finalUsage?.output_tokens_per_second_scope).toBe('model_request');
+        expect(finalUsage?.output_tokens_per_second_sample)
+            .toEqual({ tokens: 422, duration_ms: 12259, requests: 1 });
         expect(envelopes.some((envelope) => envelope.ev.t === 'turn-end')).toBe(true);
     });
 
@@ -42,6 +44,8 @@ describe('Codex output speed envelopes', () => {
         expect(sample[0].ev).toEqual({ t: 'service', text: '' });
         expect(sample[0].usage?.output_tokens_per_second).toBe(50);
         expect(sample[0].usage?.output_tokens_per_second_scope).toBe('model_request');
+        expect(sample[0].usage?.output_tokens_per_second_sample)
+            .toEqual({ tokens: 100, duration_ms: 2000, requests: 1 });
 
         send({ type: 'exec_command_begin', call_id: 'slow', command: ['sleep', '60'] }, 3000);
         send({ type: 'exec_command_end', call_id: 'slow', exit_code: 0 }, 63000);

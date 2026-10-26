@@ -61,6 +61,7 @@ import { formatAgyPromptWithAttachments, prepareAgyImageAttachments } from './im
 import { AgyPermissionHandler } from './permissionHandler';
 import { AgyTurnCancelledError } from './types';
 import { AgyTokenSpeedTracker } from './tokenSpeed';
+import { speedSampleUsage } from '@/utils/tokenSpeed';
 import { AgyQuotaStore, type AgyStatusLineQuota } from './statusLine';
 import {
   buildAgyUsageEnvelope,
@@ -292,8 +293,17 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     if (!envelope) return;
     lastContextUsage = envelope.usage;
     const rate = tokenSpeed.tokensPerSecond;
+    const sample = tokenSpeed.sample;
     sendEnvelopes([rate !== undefined && envelope.usage
-      ? { ...envelope, usage: { ...envelope.usage, output_tokens_per_second: rate, output_tokens_per_second_scope: 'model_request' } }
+      ? {
+          ...envelope,
+          usage: {
+            ...envelope.usage,
+            output_tokens_per_second: rate,
+            output_tokens_per_second_scope: 'model_request',
+            ...speedSampleUsage(sample),
+          },
+        }
       : envelope]);
   };
 

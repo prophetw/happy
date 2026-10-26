@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { normalizeRawMessage } from './typesRaw';
 import { createReducer, reducer } from './reducer/reducer';
 
-function usageMessage(id: string, time: number, speed?: unknown, turn?: string, scope: unknown = 'model_request') {
+function usageMessage(id: string, time: number, speed?: unknown, turn?: string, scope: unknown = 'model_request',
+    sample?: { tokens: number; duration_ms: number; requests: number }) {
     return normalizeRawMessage(id, null, time, {
         role: 'session', content: { type: 'session', data: {
             id, time, role: 'agent', turn, ev: { t: 'service', text: '' },
             usage: { input_tokens: 1200, output_tokens: 50, output_tokens_per_second: speed,
-                ...(scope !== null ? { output_tokens_per_second_scope: scope } : {}) },
+                ...(scope !== null ? { output_tokens_per_second_scope: scope } : {}),
+                ...(sample ? { output_tokens_per_second_sample: sample } : {}) },
         } },
     } as any)!;
 }
@@ -94,6 +96,27 @@ describe('output speed normalization and storage', () => {
         const final = reducer(state, [textMessage('final', 3000, 'agent'), usageMessage('completed', 4000, 25)]);
         expect(replySpeed(final, 'progress')).toBeUndefined();
         expect(replySpeed(final, 'final')).toBe(25);
+    });
+
+    it('keeps the totals behind the rate for the explanation modal', () => {
+        const result = reducer(createReducer(), [
+            textMessage('reply', 1000, 'agent'),
+            usageMessage('sample', 2000, 50, undefined, 'model_request', { tokens: 100, duration_ms: 2000, requests: 1 }),
+        ]);
+        const reply = result.messages.find((m) => m.kind === 'agent-text' && m.text === 'reply');
+        expect(reply?.kind === 'agent-text' ? reply.tokensPerSecondSample : undefined)
+            .toEqual({ tokens: 100, durationMs: 2000, requests: 1 });
+        expect(replySpeed(result, 'reply')).toBe(50);
+    });
+
+    it('ignores malformed sample totals without dropping the rate', () => {
+        const result = reducer(createReducer(), [
+            textMessage('reply', 1000, 'agent'),
+            usageMessage('sample', 2000, 50, undefined, 'model_request', { tokens: 0, duration_ms: -1, requests: 0 }),
+        ]);
+        const reply = result.messages.find((m) => m.kind === 'agent-text' && m.text === 'reply');
+        expect(reply?.kind === 'agent-text' ? reply.tokensPerSecondSample : undefined).toBeUndefined();
+        expect(replySpeed(result, 'reply')).toBe(50);
     });
 
     it('reconstructs historical speeds when usage snapshots load before their text', () => {

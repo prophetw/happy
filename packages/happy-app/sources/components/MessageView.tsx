@@ -304,7 +304,7 @@ function AgentTextBlock(props: {
             <Text style={styles.agentMetaText}>{metaText}</Text>
           </View>
         ) : null}
-        <OutputTokenSpeed tokensPerSecond={props.message.tokensPerSecond} />
+        <OutputTokenSpeed tokensPerSecond={props.message.tokensPerSecond} sample={props.message.tokensPerSecondSample} />
       </View>
     </View>
   );

@@ -62,6 +62,7 @@ describe('Claude output speed snapshot', () => {
         expect(result.usage).toMatchObject({
             input_tokens: 1200, output_tokens: 1000, context_window: 200000, output_tokens_per_second: 50,
             output_tokens_per_second_scope: 'model_request',
+            output_tokens_per_second_sample: { tokens: 1000, duration_ms: 20000, requests: 1 },
         });
     });
 
@@ -72,6 +73,7 @@ describe('Claude output speed snapshot', () => {
         expect(mapped.envelopes).toHaveLength(1);
         expect(mapped.envelopes[0].usage?.output_tokens_per_second).toBe(50);
         expect(mapped.envelopes[0].usage?.output_tokens_per_second_scope).toBe('model_request');
+        expect(mapped.envelopes[0].usage?.output_tokens_per_second_sample).toEqual({ tokens: 1000, duration_ms: 20000, requests: 1 });
         expect(mapped.envelopes[0].ev).toEqual({ t: 'service', text: '' });
     });
 
@@ -108,5 +110,67 @@ describe('Claude output speed snapshot', () => {
                 usage: { input_tokens: 1200, output_tokens: 1000 } },
         } as unknown as SDKMessage));
         expect(result?.usage).not.toHaveProperty('output_tokens_per_second');
+    });
+});
+
+const streamEvent = (event: Record<string, unknown>) => ({
+    type: 'stream_event', parent_tool_use_id: null, event,
+}) as unknown as SDKMessage;
+
+describe('Claude mid-turn output speed', () => {
+    it('publishes a running snapshot as soon as a request completes after a tool batch', () => {
+        const converter = new SDKToLogConverter({ cwd: process.cwd(), sessionId: 'speed-test', gitBranch: 'main' });
+        const clock = vi.spyOn(performance, 'now');
+        try {
+            clock.mockReturnValue(1000);
+            converter.observeTokenSpeedBoundary('tool-batch-complete');
+            clock.mockReturnValue(2000);
+            expect(converter.convert(streamEvent({
+                type: 'message_start',
+                message: {
+                    id: 'mid-turn', model: 'k3.1-pro',
+                    usage: { input_tokens: 1200, cache_read_input_tokens: 300, output_tokens: 0 },
+                },
+            }))).toBeNull();
+            clock.mockReturnValue(2999);
+            converter.convert(streamEvent({
+                type: 'message_delta', usage: { output_tokens: 100 }, delta: { stop_reason: 'end_turn' },
+            }));
+            clock.mockReturnValue(3000);
+            const snapshot = converter.convert(streamEvent({ type: 'message_stop' })) as any;
+            expect(snapshot).toMatchObject({ type: 'system', subtype: 'happy_context_usage' });
+            expect(snapshot.usage).toMatchObject({
+                input_tokens: 1200, cache_read_input_tokens: 300, output_tokens: 100,
+                output_tokens_per_second: 50, output_tokens_per_second_scope: 'model_request',
+                output_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+            });
+            const mapped = mapClaudeLogMessageToSessionEnvelopes(RawJSONLinesSchema.parse(snapshot), { currentTurnId: 'turn-1' });
+            expect(mapped.envelopes).toHaveLength(1);
+            expect(mapped.envelopes[0].turn).toBe('turn-1');
+            expect(mapped.envelopes[0].ev).toEqual({ t: 'service', text: '' });
+            expect(mapped.envelopes[0].usage?.output_tokens_per_second).toBe(50);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    it('stays silent until a request adds a timed sample', () => {
+        const converter = new SDKToLogConverter({ cwd: process.cwd(), sessionId: 'speed-test', gitBranch: 'main' });
+        const clock = vi.spyOn(performance, 'now');
+        try {
+            clock.mockReturnValue(1000);
+            converter.convert(streamEvent({
+                type: 'message_start',
+                message: { id: 'first', model: 'k3.1-pro', usage: { input_tokens: 100, output_tokens: 0 } },
+            }));
+            clock.mockReturnValue(2000);
+            converter.convert(streamEvent({
+                type: 'message_delta', usage: { output_tokens: 10 }, delta: { stop_reason: 'end_turn' },
+            }));
+            clock.mockReturnValue(3000);
+            expect(converter.convert(streamEvent({ type: 'message_stop' }))).toBeNull();
+        } finally {
+            clock.mockRestore();
+        }
     });
 });

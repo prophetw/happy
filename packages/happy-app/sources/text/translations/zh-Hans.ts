@@ -587,6 +587,7 @@ export const zhHans: TranslationStructure = {
             outputSpeed: ({ speed }: { speed: string }) => `模型 ${speed} tok/s`,
             outputSpeedTitle: "模型请求采样速度",
             outputSpeedDescription: "仅统计本轮有可靠计时的模型响应，可能只覆盖首个响应。输出 token 数除以对应响应耗时，包含输入处理、请求等待、推理与响应传输，排除工具执行和人工确认等待。Codex 首段还包含本地提示准备时间。缺少可靠计时的响应不参与统计。",
+            outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `本轮采样 ${requests} 次模型请求：${tokens} 输出 token ÷ ${seconds} 秒 = ${speed} tok/s`,
             detailContext: ({ used, total }: { used: string; total: string }) => `上下文 ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `上下文 ${percent}%`,
             percentWeek: ({ percent }: { percent: number }) => `本周 ${percent}%`,

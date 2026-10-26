@@ -10,6 +10,7 @@ export class ClaudeModelRequestTokenSpeed {
     private pendingStart?: number;
     private active?: {
         id: string;
+        model: string;
         startedAt?: number;
         usage: Record<string, unknown>;
         finalUsage: boolean;
@@ -18,8 +19,9 @@ export class ClaudeModelRequestTokenSpeed {
     private models = new Set<string>();
     private sampledTokens = 0;
     private sampledDuration = 0;
+    private sampledRequests = 0;
     private interrupted = false;
-    private completed?: { id: string; usage: Usage };
+    private completed?: { id: string; model: string; usage: Usage };
 
     boundary(event: ClaudeTokenSpeedBoundary, now = performance.now()): void {
         if (this.active || (event === 'interrupt' && this.pendingStart !== undefined)) this.interrupted = true;
@@ -58,7 +60,7 @@ export class ClaudeModelRequestTokenSpeed {
             this.pendingStart = undefined;
             this.seen.add(id);
             this.models.add(model);
-            this.active = { id, startedAt, usage: { ...usage }, finalUsage: false };
+            this.active = { id, model, startedAt, usage: { ...usage }, finalUsage: false };
         } else if (event.type === 'message_delta' && this.active) {
             const output = event.usage.output_tokens;
             if (!Number.isSafeInteger(output) || output < 0
@@ -72,17 +74,35 @@ export class ClaudeModelRequestTokenSpeed {
             this.active = undefined;
             const usage = UsageSchema.safeParse(response.usage);
             if (!response.finalUsage || !usage.success) return;
-            this.completed = { id: response.id, usage: usage.data };
+            this.completed = { id: response.id, model: response.model, usage: usage.data };
             const duration = response.startedAt === undefined ? undefined : now - response.startedAt;
             if (outputTokensPerSecond(usage.data.output_tokens, duration) !== undefined) {
                 this.sampledTokens += usage.data.output_tokens;
                 this.sampledDuration += duration!;
+                this.sampledRequests += 1;
             }
         }
     }
 
     usageForResponse(id: string): Usage | undefined {
         return this.completed?.id === id ? this.completed.usage : undefined;
+    }
+
+    /** Monotonic count of requests that added a timed sample to this turn. */
+    get completedSampleCount(): number {
+        return this.sampledRequests;
+    }
+
+    /** Usage of the request that finished last, refreshed even without usable timing. */
+    get latestSample(): { model: string; usage: Usage } | undefined {
+        return this.completed;
+    }
+
+    /** Totals behind the running rate, absent until one request was timed. */
+    get sampledTotals(): { tokens: number; durationMs: number; requests: number } | undefined {
+        return this.sampledRequests > 0
+            ? { tokens: this.sampledTokens, durationMs: this.sampledDuration, requests: this.sampledRequests }
+            : undefined;
     }
 
     get tokensPerSecond(): number | undefined {

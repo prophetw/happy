@@ -8,6 +8,25 @@ export function outputTokensPerSecond(outputTokens: unknown, durationMs: unknown
     return Number.isFinite(rate) && rate > 0 ? rate : undefined;
 }
 
+/** Totals behind a sampled rate, valid only when they can reproduce it. */
+export type TokenSpeedSample = { tokens: number; durationMs: number; requests: number };
+
+/**
+ * Wire fields for a sample. Usage snapshots use snake_case like every other
+ * provider-reported count, while trackers keep camelCase internally.
+ */
+export function speedSampleUsage(sample: TokenSpeedSample | undefined): {
+    output_tokens_per_second_sample?: { tokens: number; duration_ms: number; requests: number };
+} {
+    return sample ? {
+        output_tokens_per_second_sample: {
+            tokens: sample.tokens,
+            duration_ms: sample.durationMs,
+            requests: sample.requests,
+        },
+    } : {};
+}
+
 function outputCount(value: unknown): number | undefined {
     if (!value || typeof value !== 'object') return undefined;
     const counts = value as Record<string, unknown>;
@@ -34,6 +53,8 @@ export class CodexTokenSpeedTracker {
     private resumeAfterTools = false;
     private invalid = false;
     private rate?: number;
+    private rateTokens?: number;
+    private rateDurationMs?: number;
 
     observe(message: Record<string, unknown>, now = performance.now()): {
         usage: Record<string, unknown>;
@@ -51,6 +72,8 @@ export class CodexTokenSpeedTracker {
             this.resumeAfterTools = false;
             this.invalid = false;
             this.rate = undefined;
+            this.rateTokens = undefined;
+            this.rateDurationMs = undefined;
             return undefined;
         }
 
@@ -75,8 +98,13 @@ export class CodexTokenSpeedTracker {
                 } else if (last !== undefined && last > 0 && last <= total
                     && (this.baseline === undefined || total - this.baseline === last)) {
                     if (this.startedAt !== undefined && this.hasResponse && this.activeTools.size === 0) {
-                        this.rate = outputTokensPerSecond(last, now - this.startedAt);
+                        const durationMs = now - this.startedAt;
+                        this.rate = outputTokensPerSecond(last, durationMs);
                         this.invalid = this.rate === undefined;
+                        if (this.rate !== undefined) {
+                            this.rateTokens = last;
+                            this.rateDurationMs = durationMs;
+                        }
                     }
                     // The usage closes one request even if its own start was
                     // unusable. The next request can be timed from here, or
@@ -135,5 +163,12 @@ export class CodexTokenSpeedTracker {
         }
 
         return this.latestUsage ? { usage: this.latestUsage, tokensPerSecond: this.rate } : undefined;
+    }
+
+    /** Totals behind the frozen first-response rate, for client-side detail. */
+    get sample(): { tokens: number; durationMs: number; requests: number } | undefined {
+        return this.rateTokens !== undefined && this.rateDurationMs !== undefined
+            ? { tokens: this.rateTokens, durationMs: this.rateDurationMs, requests: 1 }
+            : undefined;
     }
 }

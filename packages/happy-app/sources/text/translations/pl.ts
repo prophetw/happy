@@ -579,6 +579,7 @@ export const pl: TranslationStructure = {
             outputSpeed: ({ speed }: { speed: string }) => `Model ${speed} tok/s`,
             outputSpeedTitle: "Próbkowana prędkość modelu",
             outputSpeedDescription: "Tokeny wyjściowe podzielone przez czas wiarygodnie zmierzonych odpowiedzi modelu. Próbka może obejmować tylko pierwszą odpowiedź. Obejmuje przetwarzanie wejścia, oczekiwanie na żądanie, rozumowanie i przesyłanie; pomija narzędzia i oczekiwanie na zatwierdzenie. Codex uwzględnia też lokalne przygotowanie promptu. Odpowiedzi bez wiarygodnego czasu są pomijane.",
+            outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Próbka z ${requests} żądań: ${tokens} tokenów wyjściowych ÷ ${seconds} s = ${speed} tok/s`,
             detailContext: ({ used, total }: { used: string; total: string }) => `Kontekst ${used} / ${total}`,
             percentContext: ({ percent }: { percent: number }) => `${percent}% kontekstu`,
             percentWeek: ({ percent }: { percent: number }) => `${percent}% tygodnia`,

@@ -1,6 +1,13 @@
 import { AgentEvent, SessionAuthor } from "./typesRaw";
 import { MessageMeta } from "./typesMessageMeta";
 
+/** Tokens and elapsed time behind a sampled model-request rate. */
+export type TokenSpeedSample = {
+    tokens: number;
+    durationMs: number;
+    requests: number;
+};
+
 export type ToolCall = {
     /** Provider/session-protocol tool-call id used to join side-channel UI state. */
     callId?: string;
@@ -88,6 +95,8 @@ export type AgentTextMessage = {
     isThinking?: boolean;
     /** Average output throughput of this reply's turn, from its usage snapshots. */
     tokensPerSecond?: number;
+    /** Totals behind that rate, shown when the user asks how it was calculated. */
+    tokensPerSecondSample?: TokenSpeedSample;
     meta?: MessageMeta;
 }
 

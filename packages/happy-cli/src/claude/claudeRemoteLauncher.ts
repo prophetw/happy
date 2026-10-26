@@ -140,7 +140,9 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     function onMessage(message: SDKMessage) {
         if (message.type === 'stream_event') {
-            sdkToLogConverter.convert(message);
+            // A completed request can publish a running speed snapshot mid-turn.
+            const snapshot = sdkToLogConverter.convert(message);
+            if (snapshot) messageQueue.enqueue(snapshot);
             return;
         }
 

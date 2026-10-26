@@ -8,6 +8,12 @@ import { MessageMetaSchema, MessageMeta } from './typesMessageMeta';
 //
 
 // Usage data type from Claude API
+const tokenSpeedSampleSchema = z.object({
+    tokens: z.number(),
+    duration_ms: z.number(),
+    requests: z.number(),
+}).passthrough();
+
 const usageDataSchema = z.object({
     input_tokens: z.number(),
     cache_creation_input_tokens: z.number().optional(),
@@ -15,6 +21,7 @@ const usageDataSchema = z.object({
     output_tokens: z.number(),
     output_tokens_per_second: z.number().positive().optional().catch(undefined),
     output_tokens_per_second_scope: z.literal('model_request').optional().catch(undefined),
+    output_tokens_per_second_sample: tokenSpeedSampleSchema.optional().catch(undefined),
     context_window: z.number().optional(),
     service_tier: z.string().optional(),
 }).passthrough();

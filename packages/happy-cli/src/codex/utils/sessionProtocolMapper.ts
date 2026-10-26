@@ -12,7 +12,7 @@ import {
 import type { Thread, ThreadItem, ThreadTurn } from '../codexAppServerTypes';
 import { stripHappySystemBlocks } from '../codexPrompt';
 import { getCodexTurnOutcome } from '../codexTurnOutcome';
-import type { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
+import { speedSampleUsage, type CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 
 export type CodexTurnState = {
     currentTurnId: string | null;
@@ -918,11 +918,13 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
     const speed = state.tokenSpeedTracker?.observe(message);
     const result = mapCodexMcpMessageToSessionEnvelopesInner(message, state);
     if (speed) {
+        const sample = state.tokenSpeedTracker?.sample;
         if (message.type === 'token_count') {
             for (const envelope of result.envelopes) {
                 if (envelope.usage && speed.tokensPerSecond !== undefined) {
                     envelope.usage.output_tokens_per_second = speed.tokensPerSecond;
                     envelope.usage.output_tokens_per_second_scope = 'model_request';
+                    Object.assign(envelope.usage, speedSampleUsage(sample));
                 }
             }
         } else {
@@ -930,7 +932,11 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
             if (usage) {
                 result.envelopes.push(createEnvelope('agent', { t: 'service', text: '' }, {
                     usage: { ...usage, ...(speed.tokensPerSecond !== undefined
-                        ? { output_tokens_per_second: speed.tokensPerSecond, output_tokens_per_second_scope: 'model_request' } : {}) },
+                        ? {
+                            output_tokens_per_second: speed.tokensPerSecond,
+                            output_tokens_per_second_scope: 'model_request',
+                            ...speedSampleUsage(sample),
+                        } : {}) },
                 }));
             }
         }

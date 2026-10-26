@@ -15,7 +15,7 @@ import type {
 import { UsageSchema, type RawJSONLines } from '@/claude/types'
 import type { PermissionResponseLookup } from './permissionHandler'
 import { readTranscriptUsage } from './readTranscriptUsage'
-import { outputTokensPerSecond } from '@/utils/tokenSpeed'
+import { outputTokensPerSecond, speedSampleUsage } from '@/utils/tokenSpeed'
 import { ClaudeModelRequestTokenSpeed, type ClaudeTokenSpeedBoundary } from './modelRequestTokenSpeed'
 
 /**
@@ -188,12 +188,57 @@ export class SDKToLogConverter {
     }
 
     /**
+     * Publish the turn's running model speed as soon as one request completes.
+     * Carries that request's final usage so clients can also refresh context
+     * occupancy mid-turn; the result message still emits the final snapshot.
+     */
+    private speedSnapshot(): RawJSONLines | null {
+        const completed = this.tokenSpeed.latestSample
+        const totals = this.tokenSpeed.sampledTotals
+        const tokensPerSecond = this.tokenSpeed.tokensPerSecond
+        if (!completed || !totals || tokensPerSecond === undefined) return null
+        const usage = UsageSchema.safeParse(this.withContextWindow({
+            model: completed.model,
+            usage: completed.usage,
+        })?.usage)
+        if (!usage.success) return null
+        const uuid = randomUUID()
+        const timestamp = new Date().toISOString()
+        const snapshot: RawJSONLines = {
+            parentUuid: this.lastUuid,
+            isSidechain: false,
+            userType: 'external',
+            cwd: this.context.cwd,
+            sessionId: this.context.sessionId,
+            version: this.context.version,
+            gitBranch: this.context.gitBranch,
+            uuid,
+            timestamp,
+            type: 'system',
+            subtype: 'happy_context_usage',
+            usage: {
+                ...usage.data,
+                output_tokens_per_second: tokensPerSecond,
+                output_tokens_per_second_scope: 'model_request',
+                ...speedSampleUsage(totals),
+            },
+        } as RawJSONLines
+        this.lastUuid = uuid
+        return snapshot
+    }
+
+    /**
      * Convert SDK message to log format
      */
     convert(sdkMessage: SDKMessage): RawJSONLines | null {
+        const samplesBefore = this.tokenSpeed.completedSampleCount
         this.tokenSpeed.observe(sdkMessage)
         // Streaming deltas are timing input, not additional chat messages.
-        if (sdkMessage.type === 'stream_event') return null
+        // A request that just added a timed sample publishes the running model
+        // speed immediately, so long turns are visible before the result.
+        if (sdkMessage.type === 'stream_event') {
+            return this.tokenSpeed.completedSampleCount === samplesBefore ? null : this.speedSnapshot()
+        }
         const uuid = randomUUID()
         const timestamp = new Date().toISOString()
         let parentUuid = this.lastUuid;
@@ -325,10 +370,22 @@ export class SDKToLogConverter {
                     && resultMsg.num_turns === 1 && this.mainResponseIds.size === 1
                     && !this.sawSidechainResponse && Object.keys(resultMsg.modelUsage ?? {}).length <= 1
                     && usage.success && usage.data.output_tokens === resultMsg.usage?.output_tokens
+                const sampledSpeed = this.tokenSpeed.tokensPerSecond
+                const fallbackSpeed = sampledSpeed === undefined && singleRequest
+                    ? outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_api_ms) : undefined
                 const tokensPerSecond = resultMsg.subtype === 'success' && !resultMsg.is_error
-                    ? this.tokenSpeed.tokensPerSecond ?? (singleRequest
-                        ? outputTokensPerSecond(resultMsg.usage?.output_tokens, resultMsg.duration_api_ms) : undefined)
-                    : undefined
+                    ? sampledSpeed ?? fallbackSpeed : undefined
+                // Streamed samples are weighted across the turn's requests; the
+                // API-duration fallback always describes exactly one request.
+                const speedSample = sampledSpeed !== undefined
+                    ? this.tokenSpeed.sampledTotals
+                    : fallbackSpeed !== undefined
+                        ? {
+                            tokens: resultMsg.usage!.output_tokens,
+                            durationMs: resultMsg.duration_api_ms!,
+                            requests: 1,
+                        }
+                        : undefined
                 this.resetRequestMeasurements()
                 if (usage.success && (tokensPerSecond !== undefined || (typeof usage.data.context_window === 'number'
                     && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0))) {
@@ -339,7 +396,11 @@ export class SDKToLogConverter {
                         type: 'system',
                         subtype: 'happy_context_usage',
                         usage: { ...usage.data, ...(tokensPerSecond !== undefined
-                            ? { output_tokens_per_second: tokensPerSecond, output_tokens_per_second_scope: 'model_request' } : {}) },
+                            ? {
+                                output_tokens_per_second: tokensPerSecond,
+                                output_tokens_per_second_scope: 'model_request',
+                                ...speedSampleUsage(speedSample),
+                            } : {}) },
                     }
                 }
                 break

@@ -1,4 +1,5 @@
 import { assignTurns, type TurnAssignable } from './agentTurns';
+import type { TokenSpeedSample } from '@/sync/typesMessage';
 
 type TurnSpeedMessage = TurnAssignable & {
     id: string;
@@ -12,13 +13,21 @@ export type OutputSpeedSample = {
     createdAt: number;
     turn?: string;
     tokensPerSecond?: number;
+    /** Tokens and duration that produced the rate, for the explanation modal. */
+    sample?: TokenSpeedSample;
+};
+
+/** Rate and its underlying totals assigned to one turn's final visible reply. */
+export type TurnSpeedAssignment = {
+    tokensPerSecond?: number;
+    sample?: TokenSpeedSample;
 };
 
 /** Associates usage snapshots with each turn's last visible reply, never a session-wide rate. */
 export function buildAgentTurnTokenSpeedByMessageId(
     messages: readonly TurnSpeedMessage[], // newest-first, in chat order
     samples: readonly OutputSpeedSample[],
-): Map<string, number | undefined> {
+): Map<string, TurnSpeedAssignment | undefined> {
     const turns = assignTurns(messages);
     const finalByTurn = new Map<number, string>();
     const finalByTurnId = new Map<string, string>();
@@ -39,7 +48,7 @@ export function buildAgentTurnTokenSpeedByMessageId(
         .filter(({ message }) => !(message.kind === 'user-text' && (message.pending || message.sendError !== undefined)))
         .reverse()
         .sort((a, b) => (a.message.sortAt ?? a.message.createdAt) - (b.message.sortAt ?? b.message.createdAt));
-    const result = new Map<string, number | undefined>();
+    const result = new Map<string, TurnSpeedAssignment | undefined>();
     let row = -1;
     for (const sample of [...samples].sort((a, b) => a.createdAt - b.createdAt)) {
         while (row + 1 < timeline.length
@@ -53,7 +62,10 @@ export function buildAgentTurnTokenSpeedByMessageId(
                 ? finalByTurn.get(preceding.turn)
                 : undefined;
         const speed = sample.tokensPerSecond;
-        if (final) result.set(final, typeof speed === 'number' && Number.isFinite(speed) && speed > 0 ? speed : undefined);
+        const valid = typeof speed === 'number' && Number.isFinite(speed) && speed > 0;
+        if (final) result.set(final, valid
+            ? { tokensPerSecond: speed, ...(sample.sample ? { sample: sample.sample } : {}) }
+            : undefined);
     }
     return result;
 }
