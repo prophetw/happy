@@ -30,6 +30,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const en: TranslationStructure = {
+    qrScanner: {
+        title: 'Scan QR code',
+        scanWithCamera: 'Scan with camera',
+        noQrCode: 'No QR code found. Try a clearer image or crop around the code.',
+        scanFailed: 'Unable to scan the QR code. Please try again.',
+    },
+
     browserNotifications: {
         title: 'Browser notifications',
         enable: 'Enable desktop notifications',

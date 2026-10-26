@@ -6,6 +6,7 @@ import { decodeBase64 } from '@/encryption/base64';
 import { encryptBox } from '@/encryption/libsodium';
 import { authApprove } from '@/auth/authApprove';
 import { useCheckScannerPermissions } from '@/hooks/useCheckCameraPermissions';
+import { useScanQrCode } from '@/hooks/useScanQrCode';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
@@ -57,16 +58,22 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         }
     }, [auth.credentials, options]);
 
-    const connectTerminal = React.useCallback(async () => {
+    const scanWithCamera = React.useCallback(async () => {
         if (await checkScannerPermissions()) {
             // Use camera scanner
-            CameraView.launchScanner({
+            await CameraView.launchScanner({
                 barcodeTypes: ['qr']
             });
         } else {
             Modal.alert(t('common.error'), t('modals.cameraPermissionsRequiredToConnectTerminal'), [{ text: t('common.ok') }]);
         }
     }, [checkScannerPermissions]);
+
+    const { scanQrCode: connectTerminal, isPickingImage } = useScanQrCode({
+        urlPrefix: 'happy://terminal?',
+        onScan: processAuthUrl,
+        scanWithCamera,
+    });
 
     const connectWithUrl = React.useCallback(async (url: string) => {
         return await processAuthUrl(url);
@@ -109,7 +116,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     return {
         connectTerminal,
         connectWithUrl,
-        isLoading,
+        isLoading: isLoading || isPickingImage,
         processAuthUrl
     };
 }

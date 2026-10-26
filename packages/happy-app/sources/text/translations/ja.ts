@@ -18,6 +18,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const ja: TranslationStructure = {
+    qrScanner: en.qrScanner,
     browserNotifications: en.browserNotifications,
 
     voiceStatusBar: {

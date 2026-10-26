@@ -17,6 +17,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const zhHant: TranslationStructure = {
+    qrScanner: {
+        title: '掃描 QR Code',
+        scanWithCamera: '使用相機掃描',
+        noQrCode: '未辨識到 QR Code，請選擇更清晰的圖片或裁剪至 QR Code 區域。',
+        scanFailed: '無法辨識 QR Code，請重試。',
+    },
+
     browserNotifications: {
         title: '瀏覽器通知',
         enable: '開啟桌面通知',

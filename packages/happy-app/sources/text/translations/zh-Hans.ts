@@ -17,6 +17,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const zhHans: TranslationStructure = {
+    qrScanner: {
+        title: '扫描二维码',
+        scanWithCamera: '使用相机扫描',
+        noQrCode: '未识别到二维码，请选择更清晰的图片或裁剪至二维码区域。',
+        scanFailed: '无法识别二维码，请重试。',
+    },
+
     browserNotifications: {
         title: '浏览器通知',
         enable: '开启桌面通知',

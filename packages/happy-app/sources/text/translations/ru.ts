@@ -26,6 +26,7 @@ function plural({ count, one, few, many }: { count: number; one: string; few: st
  * Must match the exact structure of the English translations
  */
 export const ru: TranslationStructure = {
+    qrScanner: en.qrScanner,
     browserNotifications: en.browserNotifications,
 
     voiceStatusBar: {
