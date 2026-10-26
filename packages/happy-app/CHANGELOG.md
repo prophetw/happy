@@ -1,3 +1,10 @@
+# October 26 - Model speed, explained
+
+Requires the updated Happy CLI.
+
+- **See the calculation** — tap a reply's tok/s figure to see the sampled output tokens, elapsed time, and request count. Claude speed updates as each model response arrives during a turn.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # October 18 - Switch your relay
 
 Requires the updated Happy CLI and a compatible server.
