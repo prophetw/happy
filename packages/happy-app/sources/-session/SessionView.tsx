@@ -923,7 +923,8 @@ export function SessionViewLoaded({
 
     const updateModelMode = React.useCallback((mode: ModelMode) => {
         if (!session || !sessionId) return;
-        const nextEffortLevels = getEffortLevelsForModel(flavor, mode.key, session.metadata);
+        const nextEffortLevels = mode.thinkingLevels?.map(key => ({ key }))
+            ?? getEffortLevelsForModel(flavor, mode.key, session.metadata);
         const currentEffortSupported = session.effortLevel
             ? nextEffortLevels.some((level) => level.key === session.effortLevel)
             : true;

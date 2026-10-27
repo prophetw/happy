@@ -835,6 +835,10 @@ export class CodexAppServerClient {
         await this.disconnectInternal();
     }
 
+    async listModels(params: { cursor?: string; limit?: number } = {}): Promise<unknown> {
+        return this.request('model/list', params, 10_000);
+    }
+
     private buildThreadConfig(mcpServers?: Record<string, unknown>): Record<string, unknown> | null {
         return mcpServers ? { mcp_servers: mcpServers } : null;
     }

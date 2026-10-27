@@ -2,6 +2,7 @@ import { render } from "ink";
 import React from "react";
 import { ApiClient } from '@/api/api';
 import { CodexAppServerClient } from './codexAppServerClient';
+import { readCodexModelCatalog } from './discoverModels';
 import type { ReasoningEffort } from './codexAppServerTypes';
 import { CodexPermissionHandler } from './utils/permissionHandler';
 import { ReasoningProcessor } from './utils/reasoningProcessor';
@@ -897,6 +898,11 @@ export async function runCodex(opts: {
         logger.debug('[codex]: client.connect begin');
         await client.connect();
         logger.debug('[codex]: client.connect done');
+        // Catalog failure must not stop a session. The daemon also publishes
+        // its catalog for pre-spawn pickers and sessions created by older CLIs.
+        void readCodexModelCatalog(client).then(catalog => {
+            session.updateMetadata(meta => ({ ...meta, models: catalog.options }));
+        }).catch(error => logger.debug('[codex] Model catalog unavailable:', error));
 
         if (opts.resumeThreadId) {
             const resumed = await resumeExistingThread({

@@ -11,6 +11,7 @@ import {
     getAvailableModels,
     getAvailablePermissionModes,
     getCodexModelModes,
+    getMachineModelModes,
     getCodexPermissionModes,
     getClaudeModelModes,
     getClaudePermissionModes,
@@ -30,7 +31,40 @@ import { rigMetadataFixture } from '@/sync/__testdata__/rigMetadata';
 
 const translate = (key: string) => `tr:${key}`;
 
+const codexCatalog = {
+    options: [{ code: 'gpt-6.1-terra', value: 'GPT-6.1 Terra', description: 'Host model',
+        thinkingLevels: ['low', 'medium', 'ultra'], defaultThinkingLevel: 'low' }],
+    currentCode: 'gpt-6.1-terra', detectedAt: 1,
+};
+
 describe('modelModeOptions', () => {
+    it('uses each selected machine catalog instead of the static Codex list', () => {
+        const machine = { codexModels: codexCatalog } as any;
+        const models = getMachineModelModes('codex', machine, translate);
+        expect(models.map(model => model.key)).toEqual(['gpt-6.1-terra']);
+        expect(models[0].thinkingLevels).toEqual(['low', 'medium', 'ultra']);
+        expect(models[0].defaultThinkingLevel).toBe('low');
+        const other = { codexModels: { ...codexCatalog, options: [{ ...codexCatalog.options[0], code: 'other' }] } } as any;
+        expect(getMachineModelModes('codex', other, translate).map(model => model.key)).toEqual(['other']);
+        expect(getMachineModelModes('codex', null, translate)).toEqual(getCodexModelModes());
+    });
+
+    it('updates existing sessions from machine metadata while retaining saved model overrides', () => {
+        const machine = { codexModels: codexCatalog } as any;
+        const session = { flavor: 'codex', models: [{ code: 'old', value: 'Old' }] } as any;
+        const models = getAvailableModels('codex', session, translate, 'saved-custom', machine);
+        expect(models.map(model => model.key)).toEqual(['gpt-6.1-terra', 'saved-custom']);
+        expect(getEffortLevelsForModel('codex', 'gpt-6.1-terra', session, machine).map(level => level.key))
+            .toEqual(['low', 'medium', 'ultra']);
+    });
+
+    it('reads session-published Codex efforts when no daemon catalog is available', () => {
+        const session = { flavor: 'codex', models: codexCatalog.options } as any;
+        expect(getAvailableModels('codex', session, translate).find(model => model.key === 'gpt-6.1-terra')?.thinkingLevels)
+            .toEqual(['low', 'medium', 'ultra']);
+        expect(getEffortLevelsForModel('codex', 'gpt-6.1-terra', session).map(level => level.key))
+            .toEqual(['low', 'medium', 'ultra']);
+    });
     it('groups models by provider without sorting providers or rows', () => {
         const groups = groupModelModesByProvider([
             { key: 'codex:sol', name: 'Sol', providerId: 'codex', providerName: 'OpenAI Codex' },

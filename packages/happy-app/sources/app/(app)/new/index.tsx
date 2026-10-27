@@ -1205,8 +1205,8 @@ function NewSessionScreen() {
     const effortLevels = React.useMemo<EffortLevel[]>(
         () => rigCreation
             ? rigCreation.effortsForModel(currentModelKey).map((key) => ({ key, name: key }))
-            : getEffortLevelsForModel(selectedAgent, currentModelKey),
-        [selectedAgent, currentModelKey, rigCreation],
+            : getEffortLevelsForModel(selectedAgent, currentModelKey, undefined, selectedChoice?.happyMachine?.metadata),
+        [selectedAgent, currentModelKey, rigCreation, selectedChoice?.happyMachine?.metadata],
     );
     const effectiveEffortDefault = rigCreation?.defaultEffortForModel(currentModelKey)
         ?? effectiveAgentDefaults.effortLevel;

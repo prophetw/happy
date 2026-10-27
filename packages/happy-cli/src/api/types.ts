@@ -170,6 +170,18 @@ export const MachineMetadataSchema = z.object({
     currentCode: z.string().nullable().optional(),
     detectedAt: z.number(),
   }).optional(),
+  // Installed Codex's catalog, refreshed periodically without starting a thread.
+  codexModels: z.object({
+    options: z.array(z.object({
+      code: z.string(),
+      value: z.string(),
+      description: z.string().nullable().optional(),
+      thinkingLevels: z.array(z.string()),
+      defaultThinkingLevel: z.string(),
+    })),
+    currentCode: z.string().nullable(),
+    detectedAt: z.number(),
+  }).optional(),
   // dsh's opaque provider routes, probed once per daemon lifetime over ACP.
   dshModels: z.object({
     options: z.array(z.object({
@@ -322,7 +334,7 @@ export type Metadata = {
    * ACP session config option value (normalized for UI metadata consumers).
    */
   // `code` = protocol value ID, `value` = human label
-  models?: Array<{ code: string; value: string; description?: string | null }>,
+  models?: Array<{ code: string; value: string; description?: string | null; thinkingLevels?: string[]; defaultThinkingLevel?: string }>,
   currentModelCode?: string,
   operatingModes?: Array<{ code: string; value: string; description?: string | null }>,
   currentOperatingModeCode?: string,

@@ -80,6 +80,8 @@ type MetadataOption = {
     code: string;
     value: string;
     description?: string | null;
+    thinkingLevels?: string[];
+    defaultThinkingLevel?: string | null;
 };
 
 const GEMINI_MODEL_FALLBACKS: ModelMode[] = [
@@ -91,7 +93,7 @@ const GEMINI_MODEL_FALLBACKS: ModelMode[] = [
     { key: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'fastest' },
 ];
 
-export function mapMetadataOptions(options?: MetadataOption[] | null): ModeOption[] {
+export function mapMetadataOptions(options?: MetadataOption[] | null): ModelMode[] {
     if (!options || options.length === 0) {
         return [];
     }
@@ -100,6 +102,8 @@ export function mapMetadataOptions(options?: MetadataOption[] | null): ModeOptio
         key: option.code,
         name: option.value,
         description: option.description ?? null,
+        ...(option.thinkingLevels ? { thinkingLevels: option.thinkingLevels } : {}),
+        ...(option.defaultThinkingLevel != null ? { defaultThinkingLevel: option.defaultThinkingLevel } : {}),
     }));
 }
 
@@ -172,7 +176,12 @@ const UNLISTED_CLAUDE_MODEL_NAMES: Record<string, string> = {
     'claude-sonnet-5': 'Sonnet 5',
 };
 
-export function getCodexModelModes(): ModelMode[] {
+export function getCodexModelModes(catalog?: MachineMetadata['codexModels'] | null): ModelMode[] {
+    if (catalog?.options.length) {
+        return mapMetadataOptions(catalog.options).map(model => ({
+            ...model, providerId: 'openai', providerName: 'OpenAI',
+        }));
+    }
     return [
         { key: 'gpt-6-astra', name: 'GPT-6 Astra', description: 'most capable', providerId: 'openai', providerName: 'OpenAI' },
         { key: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', description: null, providerId: 'openai', providerName: 'OpenAI' },
@@ -416,6 +425,7 @@ export function getAvailableModels(
     metadata: Metadata | null | undefined,
     translate: Translate,
     selectedKey?: string | null,
+    machineMetadata?: MachineMetadata | null,
 ): ModelMode[] {
     if (isRigMetadataV1(metadata)) {
         const models: ModelMode[] = sortRigModelsForPicker(getRigModels(metadata)).map((model) => ({
@@ -466,6 +476,9 @@ export function getAvailableModels(
         }
         return models;
     }
+    if (flavor === 'codex' && machineMetadata?.codexModels?.options.length) {
+        return includeConfiguredModel(flavor, getCodexModelModes(machineMetadata.codexModels), selectedKey);
+    }
     const metadataModels = mapMetadataOptions(metadata?.models);
     const isClaude = !flavor || flavor === 'claude';
     if (isClaude && (metadataModels.length > 0 || metadata?.currentModelCode)) {
@@ -483,8 +496,11 @@ export function getAvailableModels(
         return models;
     }
     if (metadataModels.length > 0) {
-        if (flavor === 'codex' && !metadataModels.some((model) => model.key === 'default')) {
-            return [{ key: 'default', name: 'default model', description: null }, ...metadataModels];
+        if (flavor === 'codex') {
+            const models = metadataModels.some(model => model.key === 'default')
+                ? metadataModels
+                : [{ key: 'default', name: 'default model', description: null }, ...metadataModels];
+            return includeConfiguredModel(flavor, models, selectedKey);
         }
         return metadataModels;
     }
@@ -502,6 +518,9 @@ export function getMachineModelModes(
     translate: Translate,
     configuredModelKey?: string | null,
 ): ModelMode[] {
+    if (flavor === 'codex') {
+        return includeConfiguredModel(flavor, getCodexModelModes(metadata?.codexModels), configuredModelKey);
+    }
     if (flavor !== 'rig' && normalizeAgentKey(flavor) === 'claude' && metadata?.claudeModels) {
         return getClaudeModelModes(metadata.claudeModels);
     }
@@ -663,6 +682,7 @@ export function getEffortLevelsForModel(
     flavor: AgentFlavor,
     modelKey: string,
     metadata?: Metadata | null,
+    machineMetadata?: MachineMetadata | null,
 ): EffortLevel[] {
     if (isRigMetadataV1(metadata)) {
         return getRigReasoningLevels(metadata, modelKey).map((level) => ({
@@ -679,6 +699,9 @@ export function getEffortLevelsForModel(
         return getClaudeEffortLevels();
     }
     if (flavor === 'codex') {
+        const levels = machineMetadata?.codexModels?.options.find(model => model.code === modelKey)?.thinkingLevels
+            ?? metadata?.models?.find(model => model.code === modelKey)?.thinkingLevels;
+        if (levels) return effortLevels(levels);
         return getCodexEffortLevels(modelKey);
     }
     if (flavor === 'agy') {

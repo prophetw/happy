@@ -65,6 +65,12 @@ Claude 模型选择器使用宿主机配置，移除了固定的 Fable / Opus / 
 
 会话创建后按工作目录重新读取项目和本地设置，通过会话 `models` 元数据发布，并在 SDK 初始化时更新 `currentModelCode`。默认选项显示配置的实际模型；选择它时新建会话不传 `--model`，已有会话发送 `meta.model = null` 清除覆盖。新建会话时，保存的旧模型若不在该机器目录中，回退到默认配置；已有会话保留显示目录外的当前模型，并允许手动切回默认配置。已有进程需加载新版 CLI 后才能发布目录。
 
+### Codex 宿主机模型
+
+Codex 选择器优先使用所选机器上 `codex app-server` 的 `model/list` 目录。daemon 启动后首次心跳探测，成功后每五分钟刷新；失败后一分钟重试，保留上次成功目录。探测只列模型，不创建线程或执行模型请求，结束后关闭探测进程。目录通过现有加密机器元数据 `codexModels: { options, currentCode, detectedAt }` 同步，不需要修改 Relay API。
+
+读取完整分页，保留 Codex 返回的顺序与显示名称，过滤隐藏模型和重复 ID，同时同步各模型的 `thinkingLevels` 与 `defaultThinkingLevel`。新建会话、首页输入框、Agent Defaults 和已有会话使用该目录；已有会话按 `machineId` 跟随对应机器更新。每个 Codex 会话连接时也发布会话级 `models`，作为机器目录不可用时的数据来源。没有动态目录的旧 CLI 使用原有静态列表；保存的自定义模型仍保留。生效需要 App 和 CLI 均加载新版代码，已有旧会话进程不会自动替换 CLI 代码。
+
 ## 关键数据结构
 
 ```typescript

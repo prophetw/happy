@@ -783,6 +783,27 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
+    it('lists Codex models through app-server without starting a conversation', async () => {
+        const requests: MockRpcMessage[] = [];
+        const response = { data: [], nextCursor: null };
+        const proc = createMockProcess({
+            onRequest: (msg, stdout) => {
+                requests.push(msg);
+                if (msg.method === 'model/list' && msg.id != null) {
+                    pushJsonLine(stdout, { id: msg.id, result: response });
+                }
+            },
+        });
+        mockSpawn.mockImplementation(() => proc);
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        await client.connect();
+        expect(await client.listModels({ limit: 100, cursor: 'next' })).toEqual(response);
+        expect(requests.find(msg => msg.method === 'model/list')?.params).toEqual({ limit: 100, cursor: 'next' });
+        expect(requests.some(msg => msg.method === 'thread/start')).toBe(false);
+        await client.disconnect();
+    });
+
     it('lists stored Codex threads through app-server without starting a conversation', async () => {
         const requests: MockRpcMessage[] = [];
         const response = {

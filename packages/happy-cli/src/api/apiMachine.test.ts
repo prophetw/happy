@@ -9,6 +9,7 @@ const {
     mockDetectResumeSupport,
     mockDiscoverDshModels,
     mockDiscoverClaudeModels,
+    mockDiscoverCodexModels,
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     mockShouldReconnect: vi.fn(() => true),
@@ -28,6 +29,7 @@ const {
     })),
     mockDiscoverDshModels: vi.fn(),
     mockDiscoverClaudeModels: vi.fn().mockResolvedValue(null),
+    mockDiscoverCodexModels: vi.fn(),
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -72,6 +74,7 @@ vi.mock('@/dsh/discoverModels', () => ({
 }));
 
 vi.mock('@/claude/utils/discoverModels', () => ({ discoverClaudeModels: mockDiscoverClaudeModels }));
+vi.mock('@/codex/discoverModels', () => ({ discoverCodexModels: mockDiscoverCodexModels }));
 
 vi.mock('@/resume/localHappyAgentAuth', () => ({
     detectResumeSupport: mockDetectResumeSupport
@@ -328,6 +331,59 @@ describe('ApiMachineClient keepalive availability republish', () => {
     afterEach(() => {
         vi.useRealTimers();
         vi.restoreAllMocks();
+    });
+
+    it('refreshes Codex models every five minutes and retains the catalog on failure', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ codex: true }));
+        const catalog = {
+            currentCode: 'gpt-6.1-terra',
+            options: [{ code: 'gpt-6.1-terra', value: 'GPT-6.1 Terra', thinkingLevels: ['low', 'ultra'], defaultThinkingLevel: 'low' }],
+        };
+        mockDiscoverCodexModels.mockResolvedValue(catalog);
+        const machine = makeMachine();
+        const client = new ApiMachineClient('fake-token', machine);
+        vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async handler => {
+            machine.metadata = handler(machine.metadata);
+        });
+        client.connect();
+        emitSocketEvent('connect');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(machine.metadata.codexModels).toMatchObject(catalog);
+        await vi.advanceTimersByTimeAsync(280_000);
+        expect(mockDiscoverCodexModels).toHaveBeenCalledTimes(1);
+        mockDiscoverCodexModels.mockRejectedValueOnce(new Error('offline'));
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(mockDiscoverCodexModels).toHaveBeenCalledTimes(2);
+        expect(machine.metadata.codexModels).toMatchObject(catalog);
+        const updated = { ...catalog, currentCode: 'new-model' };
+        mockDiscoverCodexModels.mockResolvedValue(updated);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(mockDiscoverCodexModels).toHaveBeenCalledTimes(3);
+        expect(machine.metadata.codexModels?.currentCode).toBe('new-model');
+        client.shutdown();
+    });
+
+    it('does not run concurrent Codex catalog probes or publish after shutdown', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ codex: true }));
+        let finish!: (catalog: unknown) => void;
+        mockDiscoverCodexModels.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+        const machine = makeMachine();
+        const client = new ApiMachineClient('fake-token', machine);
+        vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async handler => {
+            machine.metadata = handler(machine.metadata);
+        });
+        client.connect();
+        emitSocketEvent('connect');
+        await vi.advanceTimersByTimeAsync(80_000);
+        expect(mockDiscoverCodexModels).toHaveBeenCalledTimes(1);
+        client.shutdown();
+        finish({ options: [], currentCode: null });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(machine.metadata.codexModels).toBeUndefined();
     });
 
     it('publishes Claude host models and refreshes them when settings change', async () => {

@@ -257,6 +257,9 @@ export default function AgentsSettingsScreen() {
                 // (dshModelCatalog.ts), not from a hardcoded table; the field
                 // stays hidden until some machine publishes a catalog.
                 const dshCatalog = agent === 'dsh' ? dshModelCatalog : null;
+                const catalogMachine = machineChoices.find(choice => agent === 'codex'
+                    ? choice.happyMachine?.metadata?.codexModels?.options.length
+                    : choice.happyMachine?.metadata?.claudeModels)?.happyMachine?.metadata;
                 const modelOptions = agent === 'dsh'
                     ? (dshCatalog?.options ?? []).map((option) => ({
                         key: option.code,
@@ -265,11 +268,11 @@ export default function AgentsSettingsScreen() {
                     }))
                     : getMachineModelModes(
                         agent,
-                        machineChoices.find(choice => choice.happyMachine?.metadata?.claudeModels)?.happyMachine?.metadata,
+                        catalogMachine,
                         t,
                         effectiveDefaults.modelMode,
                     ).filter((option) => agent === 'claude' || option.key !== 'default');
-                const effortOptions = getEffortLevelsForModel(agent, effectiveDefaults.modelMode);
+                const effortOptions = getEffortLevelsForModel(agent, effectiveDefaults.modelMode, undefined, catalogMachine);
                 const fields: FieldConfig[] = [
                     {
                         field: 'permissionMode',

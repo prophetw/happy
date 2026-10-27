@@ -985,8 +985,8 @@ export const HomeDock = React.memo(({
     const effortOptions = React.useMemo(
         () => rigCreation
             ? rigCreation.effortsForModel(currentModel?.key).map((key) => ({ key, name: key }))
-            : getEffortLevelsForModel(agentType, currentModel?.key ?? 'default'),
-        [agentType, currentModel?.key, rigCreation],
+            : getEffortLevelsForModel(agentType, currentModel?.key ?? 'default', undefined, selectedChoice?.happyMachine?.metadata),
+        [agentType, currentModel?.key, rigCreation, selectedChoice?.happyMachine?.metadata],
     );
     const currentEffortDefault = rigCreation?.defaultEffortForModel(currentModel?.key)
         ?? defaults.effortLevel;

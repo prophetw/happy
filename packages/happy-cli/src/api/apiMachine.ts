@@ -20,6 +20,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { discoverClaudeModels } from '@/claude/utils/discoverModels';
+import { discoverCodexModels } from '@/codex/discoverModels';
 import {
     releaseReconnectCapabilityMonitor,
     retainReconnectCapabilityMonitor,
@@ -170,6 +171,8 @@ export class ApiMachineClient {
      */
     private dshModelsProbe: 'pending' | 'in-flight' | 'done' = 'pending';
     private claudeModelsRefreshing = false;
+    private codexModelsRefreshing = false;
+    private codexModelsNextRefresh = 0;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -745,6 +748,8 @@ export class ApiMachineClient {
         // Re-detect CLI availability and push metadata update if changed
         const newAvailability = detectCLIAvailability();
         if (newAvailability.claude) void this.refreshClaudeModels();
+        if (newAvailability.codex) void this.refreshCodexModels();
+        else this.codexModelsNextRefresh = 0;
         const prev = this.lastKnownCLIAvailability;
         const newResumeSupport = detectResumeSupport();
         const prevResume = this.lastKnownResumeSupport;
@@ -791,6 +796,31 @@ export class ApiMachineClient {
             this.maybeProbeDshModels();
         } else {
             this.dshModelsProbe = 'pending';
+        }
+    }
+
+    private async refreshCodexModels(): Promise<void> {
+        if (this.codexModelsRefreshing || Date.now() < this.codexModelsNextRefresh) return;
+        this.codexModelsRefreshing = true;
+        // Retry failures after one minute; a successful catalog lasts five minutes.
+        this.codexModelsNextRefresh = Date.now() + 60_000;
+        try {
+            const catalog = await discoverCodexModels();
+            if (this.shutdownRequested) return;
+            const previous = this.machine.metadata?.codexModels;
+            if (JSON.stringify(previous?.options) !== JSON.stringify(catalog.options)
+                || previous?.currentCode !== catalog.currentCode) {
+                await this.updateMachineMetadata(metadata => ({
+                    ...(metadata ?? this.machine.metadata),
+                    codexModels: { ...catalog, detectedAt: Date.now() },
+                }));
+            }
+            this.codexModelsNextRefresh = Date.now() + 5 * 60_000;
+        } catch (error) {
+            this.codexModelsNextRefresh = Date.now() + 60_000;
+            logger.debug('[API MACHINE] Failed to refresh Codex model catalog:', error);
+        } finally {
+            this.codexModelsRefreshing = false;
         }
     }
 

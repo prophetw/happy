@@ -10,7 +10,7 @@ import {
 import type { ModelMode, PermissionMode } from '@/components/PermissionModeSelector';
 import { resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import { getRigReasoningSelection, isRigMetadata } from '@/sync/rig';
-import { useSetting } from '@/sync/storage';
+import { useMachine, useSetting } from '@/sync/storage';
 import type { Session } from '@/sync/storageTypes';
 import { t } from '@/text';
 
@@ -37,6 +37,7 @@ export interface ComposerModes {
  */
 export function useComposerModes(session: Session | null | undefined): ComposerModes {
     const metadata = session?.metadata;
+    const machine = useMachine(metadata?.machineId ?? '');
     const flavor = metadata?.flavor;
     const cliVersion = metadata?.version;
     const isRig = isRigMetadata(metadata);
@@ -56,8 +57,9 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
             metadata,
             t,
             sessionModelMode ?? (isRig ? null : effectiveAgentDefaults.modelMode),
+            machine?.metadata,
         )
-    ), [flavor, metadata, sessionModelMode, effectiveAgentDefaults.modelMode, isRig]);
+    ), [flavor, metadata, sessionModelMode, effectiveAgentDefaults.modelMode, isRig, machine?.metadata]);
     const availableModes = React.useMemo(() => (
         getAvailablePermissionModes(flavor, metadata, t, session?.permissionMode)
     ), [flavor, metadata, session?.permissionMode]);
@@ -88,8 +90,8 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
 
     const modelKey = modelMode?.key ?? 'default';
     const availableEffortLevels = React.useMemo<EffortLevel[]>(() => (
-        getEffortLevelsForModel(flavor, modelKey, metadata)
-    ), [flavor, modelKey, metadata]);
+        getEffortLevelsForModel(flavor, modelKey, metadata, machine?.metadata)
+    ), [flavor, modelKey, metadata, machine?.metadata]);
     const effortLevel = React.useMemo<EffortLevel | null>(() => (
         resolveCurrentOption(availableEffortLevels, [
             session?.effortLevel,

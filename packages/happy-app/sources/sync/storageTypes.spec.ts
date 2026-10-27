@@ -56,6 +56,21 @@ describe('MetadataSchema', () => {
 });
 
 describe('MachineMetadataSchema', () => {
+    it('preserves Codex model capabilities and ignores malformed catalogs without dropping the machine', () => {
+        const base = {
+            host: 'workstation', platform: 'linux', happyCliVersion: 'test',
+            happyHomeDir: '/home/dev/.happy', homeDir: '/home/dev',
+        };
+        const catalog = {
+            options: [{ code: 'gpt-6.1-terra', value: 'GPT-6.1 Terra',
+                thinkingLevels: ['low', 'ultra'], defaultThinkingLevel: 'low' }],
+            currentCode: 'gpt-6.1-terra', detectedAt: 1,
+        };
+        expect(MachineMetadataSchema.parse({ ...base, codexModels: catalog }).codexModels).toEqual(catalog);
+        expect(MachineMetadataSchema.parse({ ...base, codexModels: { options: 'invalid' } }).codexModels).toBeUndefined();
+        expect(MachineMetadataSchema.parse(base).codexModels).toBeUndefined();
+    });
+
     it('preserves the Rig creation catalog and future machine fields', () => {
         const metadata = MachineMetadataSchema.parse({
             host: 'workstation',

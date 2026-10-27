@@ -608,6 +608,18 @@ export const MachineMetadataSchema = z.object({
         currentCode: z.string().nullish().optional(),
         detectedAt: z.number().optional(),
     }).passthrough().optional().catch(undefined),
+    // Installed Codex's model/list catalog, refreshed by the daemon.
+    codexModels: z.object({
+        options: z.array(z.object({
+            code: z.string(),
+            value: z.string(),
+            description: z.string().nullish(),
+            thinkingLevels: z.array(z.string()),
+            defaultThinkingLevel: z.string(),
+        }).passthrough()),
+        currentCode: z.string().nullish(),
+        detectedAt: z.number().optional(),
+    }).passthrough().optional().catch(undefined),
     // dsh model catalog, probed by the daemon over a throwaway ACP session.
     dshModels: z.object({
         options: z.array(z.object({

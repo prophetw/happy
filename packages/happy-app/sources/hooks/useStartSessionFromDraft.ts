@@ -401,7 +401,7 @@ export function useStartSessionFromDraft() {
         const effort = resolveOption<{ key: string }>(
             rigCreation
                 ? rigCreation.effortsForModel(model?.key).map((key) => ({ key, name: key }))
-                : getEffortLevelsForModel(agentType, model?.key ?? 'default'),
+                : getEffortLevelsForModel(agentType, model?.key ?? 'default', undefined, machine.metadata),
             agentChanged
                 ? [effortDefault]
                 : [draft.effortLevel, effortDefault],
