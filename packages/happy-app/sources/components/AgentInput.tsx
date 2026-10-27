@@ -687,6 +687,7 @@ function ContextGaugeIcon(props: { percent: number }) {
 type UsageRowProps = {
     contextStatus: { percent: number; detailText: string; color: string } | null;
     weekPercent: number | null;
+    isSessionOnly?: boolean;
     /** Prebuilt "Session — 32% · resets 6 PM" rows for the week popup. */
     usageMenuOptions: NativeSettingsMenuOption[];
     /** The live model and effort pick, named the way the pickers name them. */
@@ -709,7 +710,9 @@ const AgentInputUsageRow = React.memo(function AgentInputUsageRow(p: UsageRowPro
     }
     const weekText = p.weekPercent != null ? (
         <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
-            {t('agentInput.context.percentWeek', { percent: Math.round(p.weekPercent) })}
+            {p.isSessionOnly
+                ? `${t('agentInput.usagePopup.session')} ${Math.round(p.weekPercent)}%`
+                : t('agentInput.context.percentWeek', { percent: Math.round(p.weekPercent) })}
         </Text>
     ) : null;
     return (
@@ -956,8 +959,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const week = rows.find((row) => row.id === 'seven_day') ?? null;
         return { session, week };
     }, [props.sessionStatusUsageLimits]);
-    const weekPercent = usageRows.week?.utilization != null && (props.alwaysShowContextSize || contextStatus != null)
-        ? getUsageLimitDisplayPercentage(usageRows.week.utilization, usageLimitShowRemaining)
+    const activeQuotaRow = usageRows.week ?? usageRows.session;
+    const isSessionOnly = !usageRows.week && usageRows.session != null;
+    const weekPercent = activeQuotaRow?.utilization != null && (props.alwaysShowContextSize || contextStatus != null)
+        ? getUsageLimitDisplayPercentage(activeQuotaRow.utilization, usageLimitShowRemaining)
         : null;
     const usageMenuOptions = React.useMemo<NativeSettingsMenuOption[]>(() => {
         const options: NativeSettingsMenuOption[] = [];
@@ -2311,6 +2316,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     <AgentInputUsageRow
                         contextStatus={contextStatus}
                         weekPercent={weekPercent}
+                        isSessionOnly={isSessionOnly}
                         usageMenuOptions={usageMenuOptions}
                         modelLabel={props.zenMode ? null : props.modelMode?.name}
                         effortLabel={props.zenMode ? null : props.effortLevel?.name}

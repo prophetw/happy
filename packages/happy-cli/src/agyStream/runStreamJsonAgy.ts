@@ -382,6 +382,24 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   quotaStore.loadFromFile();
   syncUsageState();
 
+  const seedUsageFromApi = async () => {
+    try {
+      const usageStatus = await fetchAgyUsage({ log });
+      if (usageStatus && (usageStatus.models.length > 0 || usageStatus.groups)) {
+        quotaStore.updateFromUsageStatus(usageStatus);
+        syncUsageState();
+      }
+    } catch {
+      // ignore seed errors
+    }
+  };
+
+  const hasValidQuota = () => (typeof quotaStore.hasQuota === 'function' ? quotaStore.hasQuota(false) : Boolean(quotaStore.getQuota()));
+
+  if (!hasValidQuota()) {
+    void seedUsageFromApi();
+  }
+
   const unsubscribeQuota = quotaStore.subscribe((quota) => {
     syncUsageState(quota);
   });
@@ -744,6 +762,11 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         }
       }
       quotaStore.loadFromFile();
+      if (!hasValidQuota()) {
+        void seedUsageFromApi();
+      } else {
+        syncUsageState();
+      }
       thinking = false;
       session.keepAlive(false, 'remote');
       session.sendSessionEvent({ type: 'ready' });

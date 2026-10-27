@@ -347,4 +347,57 @@ describe('AgyQuotaStore', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it('preserves existing quota groups when updated with a payload that only contains context_window', () => {
+    const store = AgyQuotaStore.getInstance();
+    store.update({
+      quota: {
+        'gemini-5h': { remaining_fraction: 0.95 },
+        'gemini-weekly': { remaining_fraction: 0.5 },
+      },
+    });
+
+    expect(store.hasQuota(false)).toBe(true);
+    expect(store.getQuota()?.gemini?.fiveHour?.percentage).toBe(95);
+    expect(store.getQuota()?.gemini?.weekly?.percentage).toBe(50);
+
+    // Incoming payload only has context_window (e.g. cold start / idle turn)
+    store.update({
+      context_window: { total_input_tokens: 1000, total_output_tokens: 200 },
+    });
+
+    expect(store.hasQuota(false)).toBe(true);
+    expect(store.getQuota()?.gemini?.fiveHour?.percentage).toBe(95);
+    expect(store.getQuota()?.gemini?.weekly?.percentage).toBe(50);
+    expect(store.getQuota()?.contextWindow?.totalInputTokens).toBe(1000);
+  });
+
+  it('updates and merges weekly quota when updateFromUsageStatus is called', () => {
+    const store = AgyQuotaStore.getInstance();
+    store.update({
+      quota: {
+        'gemini-5h': { remaining_fraction: 0.9 },
+        'gemini-weekly': { remaining_fraction: 0.4 },
+      },
+    });
+
+    store.updateFromUsageStatus({
+      models: [],
+      groups: {
+        gemini: {
+          name: 'Gemini',
+          fiveHour: {
+            remainingFraction: 0.98,
+            percentage: 98,
+          },
+        },
+      },
+      source: 'cloudcode-api',
+    });
+
+    const quota = store.getQuota();
+    expect(quota?.gemini?.fiveHour?.percentage).toBe(98);
+    // Preserves existing weekly window!
+    expect(quota?.gemini?.weekly?.percentage).toBe(40);
+  });
 });

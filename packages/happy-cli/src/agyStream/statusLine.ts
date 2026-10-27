@@ -607,7 +607,15 @@ export class AgyQuotaStore {
   }
 
   hasQuota(loadFromDisk = true, maxAgeMs?: number): boolean {
-    return this.getQuota(loadFromDisk, maxAgeMs) !== null;
+    const q = this.getQuota(loadFromDisk, maxAgeMs);
+    return Boolean(
+      q &&
+        (q.gemini?.fiveHour ||
+          q.gemini?.weekly ||
+          q.claude?.fiveHour ||
+          q.claude?.weekly ||
+          (q.models && q.models.length > 0)),
+    );
   }
 
   clear(): void {
@@ -618,17 +626,76 @@ export class AgyQuotaStore {
   update(payloadOrRaw: string | Record<string, unknown>, now = Date.now()): boolean {
     const parsed = parseStatusLinePayload(payloadOrRaw, now);
     if (parsed?.quota) {
+      if (!parsed.quota.gemini && this.currentQuota?.gemini) {
+        parsed.quota.gemini = this.currentQuota.gemini;
+      }
+      if (!parsed.quota.claude && this.currentQuota?.claude) {
+        parsed.quota.claude = this.currentQuota.claude;
+      }
+      if ((!parsed.quota.models || parsed.quota.models.length === 0) && this.currentQuota?.models) {
+        parsed.quota.models = this.currentQuota.models;
+      }
+      const isChanged = JSON.stringify(this.currentQuota) !== JSON.stringify(parsed.quota);
       this.currentQuota = parsed.quota;
-      for (const listener of this.listeners) {
-        try {
-          listener(parsed.quota);
-        } catch {
-          // ignore listener errors
+      if (isChanged) {
+        for (const listener of this.listeners) {
+          try {
+            listener(parsed.quota);
+          } catch {
+            // ignore listener errors
+          }
         }
       }
       return true;
     }
     return false;
+  }
+
+  /**
+   * Updates in-memory quota from an AgyUsageStatus (e.g. freshly fetched from CloudCode API or Language Server).
+   * Preserves existing weekly windows or context window info when absent in the incoming status.
+   */
+  updateFromUsageStatus(status: AgyUsageStatus, now = Date.now()): boolean {
+    if (!status || (status.models.length === 0 && (!status.groups || Object.keys(status.groups).length === 0))) {
+      return false;
+    }
+    const current = this.currentQuota;
+    const geminiGroup: AgyQuotaGroup | undefined = status.groups?.gemini
+      ? {
+          ...status.groups.gemini,
+          weekly: status.groups.gemini.weekly ?? current?.gemini?.weekly,
+        }
+      : current?.gemini;
+
+    const claudeGroup: AgyQuotaGroup | undefined = status.groups?.claude
+      ? {
+          ...status.groups.claude,
+          weekly: status.groups.claude.weekly ?? current?.claude?.weekly,
+        }
+      : current?.claude;
+
+    const newQuota: AgyStatusLineQuota = {
+      gemini: geminiGroup,
+      claude: claudeGroup,
+      models: status.models.length > 0 ? status.models : current?.models,
+      contextWindow: current?.contextWindow,
+      email: status.email || current?.email,
+      planTier: status.userTierName || status.planName || current?.planTier,
+      updatedAt: now,
+    };
+
+    const isChanged = JSON.stringify(this.currentQuota) !== JSON.stringify(newQuota);
+    this.currentQuota = newQuota;
+    if (isChanged) {
+      for (const listener of this.listeners) {
+        try {
+          listener(newQuota);
+        } catch {
+          // ignore listener errors
+        }
+      }
+    }
+    return true;
   }
 
   /**
@@ -655,6 +722,15 @@ export class AgyQuotaStore {
               const parsed = parseStatusLinePayload(raw, now);
               if (parsed?.quota) {
                 parsed.quota.updatedAt = stats.mtimeMs;
+                if (!parsed.quota.gemini && this.currentQuota?.gemini) {
+                  parsed.quota.gemini = this.currentQuota.gemini;
+                }
+                if (!parsed.quota.claude && this.currentQuota?.claude) {
+                  parsed.quota.claude = this.currentQuota.claude;
+                }
+                if ((!parsed.quota.models || parsed.quota.models.length === 0) && this.currentQuota?.models) {
+                  parsed.quota.models = this.currentQuota.models;
+                }
                 const isChanged = JSON.stringify(this.currentQuota) !== JSON.stringify(parsed.quota);
                 this.currentQuota = parsed.quota;
                 if (isChanged) {

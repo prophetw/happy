@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => {
     prepareImages: vi.fn<(...args: any[]) => Promise<any>>(),
     quota: {
       loadFromFile: vi.fn(), getQuota: vi.fn<() => AgyStatusLineQuota | null>(() => null),
+      hasQuota: vi.fn(() => false), updateFromUsageStatus: vi.fn(),
       subscribe: vi.fn((_callback: (quota: AgyStatusLineQuota) => void) => vi.fn()),
     },
   };
