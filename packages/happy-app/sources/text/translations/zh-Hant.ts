@@ -581,7 +581,7 @@ export const zhHant: TranslationStructure = {
             generationSpeed: ({ speed }: { speed: string }) => `生成 ${speed} tok/s`,
             firstTokenWait: ({ seconds }: { seconds: string }) => `首 token ${seconds} s`,
             generationSpeedTitle: "生成速度與首 token 等待",
-            generationSpeedDescription: "生成速度按回報的輸出 token 除以首個到最後一個內容片段的時間計算，包含串流思考和工具參數，排除請求等待與工具執行。首 token 為有效請求的平均等待時間，可能包含本機請求準備。只顯示有可靠取樣的資料。",
+            generationSpeedDescription: "生成速度按回報的輸出 token 除以首個到最後一個內容片段的時間計算，包含串流思考和工具參數，排除請求等待與工具執行。首 token 為有效請求的平均等待時間，可能包含本機請求準備。只顯示有可靠取樣的資料。Codex 未提供思考串流時，速度僅統計扣除思考 token 後的正文，隱藏思考的耗時保留在首 token 等待中。",
             outputSpeedTitle: "模型請求取樣速度",
             outputSpeedDescription: "僅統計本輪有可靠計時的模型回應，可能只涵蓋首個回應。輸出 token 數除以對應回應耗時，包含輸入處理、請求等待、推理與回應傳輸，排除工具執行和人工確認等待。Codex 首段還包含本機提示準備時間。缺少可靠計時的回應不參與統計。",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `本輪取樣 ${requests} 次模型請求：${tokens} 輸出 token ÷ ${seconds} 秒 = ${speed} tok/s`,

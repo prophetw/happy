@@ -1,0 +1,26 @@
+[
+  { "at": 0, "event": { "type": "task_started" } },
+  {
+    "at": 0,
+    "event": {
+      "type": "token_count",
+      "total": { "outputTokens": 12765 },
+      "last": { "outputTokens": 2385, "reasoningOutputTokens": 2100 }
+    }
+  },
+  { "at": 28886, "event": { "type": "token_speed_output_delta", "kind": "text" } },
+  { "at": 51577, "event": { "type": "token_speed_output_delta", "kind": "text" } },
+  {
+    "at": 51710,
+    "event": { "type": "agent_message", "item_id": "reply", "message": "Captured visible response" }
+  },
+  {
+    "at": 51769,
+    "event": {
+      "type": "token_count",
+      "total": { "outputTokens": 16658 },
+      "last": { "inputTokens": 182986, "outputTokens": 3893, "reasoningOutputTokens": 1552, "totalTokens": 186879 }
+    }
+  },
+  { "at": 51775, "event": { "type": "task_complete" } }
+]

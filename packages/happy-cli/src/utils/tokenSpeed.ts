@@ -162,11 +162,21 @@ export class CodexTokenSpeedTracker {
                         }
                         const counts = (message.last ?? info?.last_token_usage) as Record<string, unknown> | undefined;
                         const reasoning = counts?.reasoningOutputTokens ?? counts?.reasoning_output_tokens;
-                        // A text-only stream cannot time hidden reasoning whose
-                        // tokens are included in the output count. Keep its wait.
-                        const generationEnd = typeof reasoning === 'number' && reasoning > 0 && !this.sawReasoningDelta
-                            ? undefined : this.lastTokenAt;
-                        this.generation.record(last, this.firstTokenAt, generationEnd, this.startedAt);
+                        let generationTokens = last;
+                        let generationEnd = this.lastTokenAt;
+                        if (!this.sawReasoningDelta && reasoning !== undefined) {
+                            // Codex output includes hidden reasoning. Pair the
+                            // visible stream with its reported non-reasoning
+                            // subset, while keeping full usage for context.
+                            if (typeof reasoning === 'number' && Number.isSafeInteger(reasoning)
+                                && reasoning >= 0 && reasoning < last) {
+                                generationTokens -= reasoning;
+                            } else {
+                                // Unusable subset counts can still retain TTFT.
+                                generationEnd = undefined;
+                            }
+                        }
+                        this.generation.record(generationTokens, this.firstTokenAt, generationEnd, this.startedAt);
                     }
                     // The usage closes one request even if its own start was
                     // unusable. The next request can be timed from here, or

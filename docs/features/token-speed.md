@@ -10,10 +10,12 @@ Expo App 在每轮最后一条可见 Agent 回复的底部显示
 两项指标独立测量，只使用提供方上报的输出 token，不根据字符数估算，
 不加入输入或缓存 token。
 
-- **生成阶段速度**：完整响应的输出 token 总数，除以这些响应从首个到最后一个
+- **生成阶段速度**：完整响应中可计时的输出 token 总数，除以这些响应从首个到最后一个
   非空内容片段的耗时总和（秒）。包含可观测的流式思考、正文和工具参数。
   不把请求开始至首个内容片段的等待、工具执行、人工确认或尾部用量上报计入生成时间。
   多个有效响应按 token 与生成耗时加权，不再固定使用 Codex 首个样本。
+  Codex 没有思考流时，使用 `outputTokens - reasoningOutputTokens` 作为正文 token 数，
+  与正文流的时间配对；完整输出用量和上下文占用保持原值。
 - **首 token 等待**：从可靠请求边界到首个非空内容片段的时间，显示本轮有效请求的
   算术平均值。Codex 首段包含本地提示准备；Claude 从 UserPromptSubmit 或
   PostToolBatch 开始计时，也可能包含请求准备与输入处理。
@@ -29,14 +31,14 @@ Expo App 在每轮最后一条可见 Agent 回复的底部显示
 
 准确性优先于覆盖率：不完整、计数异常或边界不可靠的片段不参与采样。
 两项指标的有效请求集合可能不同；缺少对应计时就隐藏该项，不回退到整轮耗时。
-首 token 指首个可观测内容，思考内容没有流式输出时，其生成时间可能包含在等待中。
+首 token 指首个可观测内容，思考内容没有流式输出时，其生成时间包含在可观测首 token 的等待中。
 
 ## 引擎与边界
 
 | 引擎 | 采样方式与限制 |
 | --- | --- |
 | Claude Code 远程模式（含 Kimi / CCS 路由） | UserPromptSubmit 为初始请求、原生 PostToolBatch 为工具结束后的请求建立起点。message_start 只建立响应身份，不作为首 token；非空 text / thinking / input_json 内容片段建立生成起止时间。message_stop 后以最终 message_delta.usage.output_tokens 结算，逐请求发布中途快照并加权。工具开始、确认、重试、压缩、切换模型和未完成流使当前片段失效，下一次可靠边界可恢复。子线程及重复响应 ID 不参与，混用主模型时隐藏。不依赖 num_turns === 1。 |
-| Codex | task_started 为初始请求建立起点；token_count 可为后续请求建立边界，已开始的工具未结束时等全部结束再计时。原生 agentMessage / reasoning delta 和 legacy 内容 delta 记录实际内容到达时间。要求累计输出增量与 last.outputTokens 一致，首次恢复可对齐历史；历史快照和重复用量不移动起点。每个完整有效响应参与生成速度与等待统计。工具、查看图片、sleep、压缩和并行工具的时间不进入指标；无可靠边界的等待、未知事件和异常计数停止后续采样，保留已完成样本。输出计数包含思考 token 而没有观测到思考流时，仅保留首个可观测内容的等待，不用正文时间计算全部输出的生成速度。 |
+| Codex | task_started 为初始请求建立起点；token_count 可为后续请求建立边界，已开始的工具未结束时等全部结束再计时。原生 agentMessage / reasoning delta 和 legacy 内容 delta 记录实际内容到达时间。要求累计输出增量与 last.outputTokens 一致，首次恢复可对齐历史；历史快照和重复用量不移动起点。每个完整有效响应参与生成速度与等待统计。工具、查看图片、sleep、压缩和并行工具的时间不进入指标；无可靠边界的等待、未知事件和异常计数停止后续采样，保留已完成样本。没有思考流时，从 outputTokens 中扣除上报的 reasoningOutputTokens，以正文 token 数和正文时间计算速度；首 token 等待保留隐藏思考耗时。思考计数异常或扣除后没有正文 token 时只保留等待。 |
 | agy stream-json / SDK / legacy | 本次未增加内容流计时。旧的独立 agent_response 步骤计时仍显示为“请求”速度；缺少独立计时的 SDK / legacy 继续隐藏。 |
 
 Claude result.duration_api_ms 的原有单请求兜底只生成旧的请求平均速度，
@@ -74,6 +76,8 @@ CLI 与 App 都需要包含本次修改。手机更新不会更新电脑上的 C
 
 - CLI：可控时间重放验证 8 秒等待 + 2 秒生成的两项指标；后续响应加权、历史/重复用量、
   单片段、未流式输出的思考、无内容流、迟到用量和逐轮重置。
+  增加真实 Codex 会话的脱敏重放：3,893 输出 token 减去 1,552 思考 token，
+  得到 2,341 正文 token；正文流耗时 22.691 秒，速度约 103.2 tok/s，首 token 等待 28.886 秒。
 - Codex：原生客户端 → mapper → tracker 验证正文与思考 delta；过滤空片段、子线程和旧轮次。
   工具多执行一分钟不改变两项指标，已完成样本不受后续等待影响。
 - Claude：converter → mapper 验证新增字段透传；内容片段独立于 message_start / message_stop，

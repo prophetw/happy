@@ -70,13 +70,28 @@ describe('CodexTokenSpeedTracker', () => {
         expect(tracker.generationUsage).toEqual({ time_to_first_token_ms: 1000 });
     });
 
-    it('keeps visible first-token wait but hides a rate when reasoning tokens were not streamed', () => {
+    it('uses only non-reasoning tokens for a visible stream when reasoning was hidden', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 0);
         tracker.observe({ type: 'agent_message_delta', delta: 'First' }, 8000);
         tracker.observe({ type: 'agent_message_delta', delta: 'Last' }, 10000);
         tracker.observe({ type: 'agent_message', message: 'First last' }, 10100);
         tracker.observe({ type: 'token_count', total: { outputTokens: 100 }, last: { outputTokens: 100, reasoningOutputTokens: 80 } }, 11000);
+        expect(tracker.generationUsage).toEqual({
+            generation_tokens_per_second: 10,
+            generation_tokens_per_second_sample: { tokens: 20, duration_ms: 2000, requests: 1 },
+            time_to_first_token_ms: 8000,
+        });
+    });
+
+    it.each([-1, 100, 101, 0.5, NaN, Infinity, '80'])
+    ('keeps wait alone when the hidden-reasoning count cannot identify positive visible output: %s', reasoning => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message_delta', delta: 'First' }, 8000);
+        tracker.observe({ type: 'agent_message_delta', delta: 'Last' }, 10000);
+        tracker.observe({ type: 'agent_message', message: 'First last' }, 10100);
+        tracker.observe({ type: 'token_count', total: { outputTokens: 100 }, last: { outputTokens: 100, reasoningOutputTokens: reasoning } }, 11000);
         expect(tracker.generationUsage).toEqual({ time_to_first_token_ms: 8000 });
     });
 

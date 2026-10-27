@@ -2,10 +2,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 import { mapCodexMcpMessageToSessionEnvelopes, type CodexTurnState } from '../utils/sessionProtocolMapper';
 import recordedToolBeforeUsage from './fixtures/token-speed-tool-before-usage.json';
+import recordedHiddenReasoning from './fixtures/token-speed-hidden-reasoning.json';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('Codex output speed envelopes', () => {
+    it('replays a real text-only stream using reported output minus hidden reasoning without changing context usage', () => {
+        const clock = vi.spyOn(performance, 'now');
+        const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };
+        // Keep the captured request boundary, first/last content timestamps and
+        // counts; intermediate chunks and private message text are omitted.
+        const envelopes = recordedHiddenReasoning.flatMap(({ at, event }) => {
+            clock.mockReturnValue(at);
+            const mapped = mapCodexMcpMessageToSessionEnvelopes(event, state);
+            state.currentTurnId = mapped.currentTurnId;
+            return mapped.envelopes;
+        });
+        const usage = envelopes.filter(envelope => envelope.usage).at(-1)?.usage;
+        expect(usage?.generation_tokens_per_second).toBeCloseTo(2341 / 22.691);
+        expect(usage?.generation_tokens_per_second_sample).toEqual({ tokens: 2341, duration_ms: 22691, requests: 1 });
+        expect(usage?.time_to_first_token_ms).toBe(28886);
+        expect(usage?.output_tokens).toBe(3893);
+        expect(usage?.input_tokens).toBe(182986);
+    });
+
     it.each([0, 60000])('recovers a captured tool-before-usage turn with %i ms of extra tool time', (extraToolTime) => {
         const clock = vi.spyOn(performance, 'now');
         const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };
