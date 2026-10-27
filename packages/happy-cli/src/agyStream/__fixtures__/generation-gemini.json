@@ -1,0 +1,28 @@
+[
+  {
+    "at": 4756.545423000001,
+    "step": {
+      "step_index": 1,
+      "state": "ACTIVE",
+      "step_type": "agent_response",
+      "text_delta": "Captured body chunk"
+    }
+  },
+  {
+    "at": 8071.945976000001,
+    "step": {
+      "step_index": 1,
+      "state": "DONE",
+      "step_type": "agent_response",
+      "text_delta": "Captured body chunk",
+      "duration_seconds": 7.692567174,
+      "usage": {
+        "input_tokens": 10852,
+        "output_tokens": 740,
+        "thinking_tokens": 209,
+        "cache_read_tokens": 0,
+        "total_tokens": 11592
+      }
+    }
+  }
+]

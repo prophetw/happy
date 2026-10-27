@@ -16,9 +16,12 @@ Expo App 在每轮最后一条可见 Agent 回复的底部显示
   多个有效响应按 token 与生成耗时加权，不再固定使用 Codex 首个样本。
   Codex 没有思考流时，使用 `outputTokens - reasoningOutputTokens` 作为正文 token 数，
   与正文流的时间配对；完整输出用量和上下文占用保持原值。
+  agy stream-json 也用 `output_tokens - thinking_tokens` 与正文片段配对；
+  缺少可拆分的思考计数时不猜测正文 token，仍可保留可靠的首 token 等待。
 - **首 token 等待**：从可靠请求边界到首个非空内容片段的时间，显示本轮有效请求的
   算术平均值。Codex 首段包含本地提示准备；Claude 从 UserPromptSubmit 或
-  PostToolBatch 开始计时，也可能包含请求准备与输入处理。
+  PostToolBatch 开始计时，也可能包含请求准备与输入处理。agy stream-json 从本轮发送前开始，
+  工具结束后的请求从全部已开始工具结束时开始；首个 ACTIVE 已带正文时不把等待算为 0。
   它不是从用户发送到整轮完成的总耗时。
 
 例如请求开始后等待 8 秒，再在 2 秒内收到 100 个输出 token，显示
@@ -39,7 +42,8 @@ Expo App 在每轮最后一条可见 Agent 回复的底部显示
 | --- | --- |
 | Claude Code 远程模式（含 Kimi / CCS 路由） | UserPromptSubmit 为初始请求、原生 PostToolBatch 为工具结束后的请求建立起点。message_start 只建立响应身份，不作为首 token；非空 text / thinking / input_json 内容片段建立生成起止时间。message_stop 后以最终 message_delta.usage.output_tokens 结算，逐请求发布中途快照并加权。工具开始、确认、重试、压缩、切换模型和未完成流使当前片段失效，下一次可靠边界可恢复。子线程及重复响应 ID 不参与，混用主模型时隐藏。不依赖 num_turns === 1。 |
 | Codex | task_started 为初始请求建立起点；token_count 可为后续请求建立边界，已开始的工具未结束时等全部结束再计时。原生 agentMessage / reasoning delta 和 legacy 内容 delta 记录实际内容到达时间。要求累计输出增量与 last.outputTokens 一致，首次恢复可对齐历史；历史快照和重复用量不移动起点。每个完整有效响应参与生成速度与等待统计。工具、查看图片、sleep、压缩和并行工具的时间不进入指标；无可靠边界的等待、未知事件和异常计数停止后续采样，保留已完成样本。没有思考流时，从 outputTokens 中扣除上报的 reasoningOutputTokens，以正文 token 数和正文时间计算速度；首 token 等待保留隐藏思考耗时。思考计数异常或扣除后没有正文 token 时只保留等待。 |
-| agy stream-json / SDK / legacy | 本次未增加内容流计时。旧的独立 agent_response 步骤计时仍显示为“请求”速度；缺少独立计时的 SDK / legacy 继续隐藏。 |
+| agy stream-json | 通过原生 step_update 回调先记录 agent_response 正文片段时间，再处理同一帧的 usage 和最后一段正文。以 step_index 去重，DONE 结算，输出 token 扣除上报的 thinking_tokens；重复完成快照只更新计数，不拉长生成时间或移动下一请求边界。成对工具 / 子任务执行不进入等待；确认、取消、checkpoint 或未知活动使未完成采样失效。后续可靠工具边界可恢复。会话累计 result 不作为单请求计数或计时。 |
+| agy SDK / legacy | 尚无可靠原生内容步骤回调，不生成新指标；保留已有用量 / 上下文行为。 |
 
 Claude result.duration_api_ms 的原有单请求兜底只生成旧的请求平均速度，
 不会被解释为生成速度或首 token 等待。本地终端模式没有 SDK 内容流时不猜测。
@@ -61,6 +65,9 @@ Codex 也不从最终 agent_message 的到达时间推算首 token。
    在完整响应结束后发出快照，result 复用累计采样。内容增量只用于计时，
    不进入聊天消息队列或内容日志。Codex 原生适配器只发出不含正文的计时标记，
    runCodex 将其直接交给 tracker，不为每个原生内容片段新增日志或聊天行。
+   agy 后端利用现有 parser.onStepUpdate 回调，将原始帧直接交给 tracker，
+   避免 DONE 帧先发用量、后发最后正文时遗漏终点；回调不会新增聊天消息。
+   runner 在用量、状态栏和回合结束快照上附加相同的新指标。
 4. App 的 typesRaw.ts 分别校验新字段，异常指标不丢弃消息或上下文用量。
    reducer 将 generationMetrics（tokensPerSecond / sample / timeToFirstTokenMs）
    交给 agentTurnTokenSpeed，沿用 assignTurns 的归属规则，绑定该轮最后一条可见回复。
@@ -85,6 +92,9 @@ CLI 与 App 都需要包含本次修改。手机更新不会更新电脑上的 C
   确保内容增量不会在转发层被过滤，也不会产生重复聊天行或进入内容日志。
   内容片段独立于 message_start / message_stop，
   完整请求加权、重复响应、工具/确认中断、子线程隔离、未知起点和旧 API 计时兼容。
+- agy：覆盖真实原生 stdout → AgyBackend → runner → 用量快照，验证最后一个 DONE 帧、
+  思考 token 扣除、独立等待、单片段、加权去重、并行工具、确认中断 / 恢复、累计结果排除和逐轮重置。
+  另用受控 Gemini 原生请求验证真实内容流与上报计数，探测后关闭临时原生进程。
 - App：验证规范化 → reducer → 回合归属 → 消息底部展示，覆盖等待为 0、只有等待、
   非法指标不丢上下文、生成阶段计算说明和旧指标兼容。
 - 真实 CLI → Relay → App、浏览器和手机表现需单独验收；单元测试不代表线上验证。

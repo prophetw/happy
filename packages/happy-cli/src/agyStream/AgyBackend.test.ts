@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AgyBackend, isRetryableAgyError, type SpawnFn } from './AgyBackend';
 import type { AgentMessage } from '@/agent/core/AgentBackend';
+import { AgyTokenSpeedTracker } from './tokenSpeed';
 
 function makeFakeChild() {
   const stdin = {
@@ -49,6 +50,44 @@ describe('isRetryableAgyError', () => {
 });
 
 describe('AgyBackend persistent single-process', () => {
+  it('forwards native content timing before the DONE frame emits usage and final text', async () => {
+    const { child, stdin, stdout } = makeFakeChild();
+    let now = 0;
+    const tracker = new AgyTokenSpeedTracker();
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const backend = new AgyBackend({ cwd: '/work', permissionMode: 'default',
+      spawnFn: vi.fn(() => child) as unknown as SpawnFn, onStepUpdate: step => tracker.observeStep(step) });
+    const usageAtEmission: unknown[] = [];
+    backend.onMessage(message => {
+      if (message.type === 'token-count' && message.agy_usage_scope === 'step') usageAtEmission.push(tracker.generationUsage);
+    });
+    try {
+      const starting = backend.startSession();
+      stdout.emit('data', '{"event":"init","conversation_id":"timing"}\n');
+      await starting;
+      tracker.startTurn();
+      const turn = backend.sendPrompt('/work', 'Controlled response');
+      await vi.waitFor(() => expect(stdin.write).toHaveBeenCalled());
+      now = 8000;
+      stdout.emit('data', JSON.stringify({ event: 'step_update', step_update: { step_index: 1,
+        step_type: 'agent_response', state: 'ACTIVE', text_delta: 'First ' } }) + '\n');
+      now = 10000;
+      stdout.emit('data', JSON.stringify({ event: 'step_update', step_update: { step_index: 1,
+        step_type: 'agent_response', state: 'DONE', text_delta: 'last',
+        usage: { input_tokens: 500, output_tokens: 120, thinking_tokens: 20 }, duration_seconds: 10 } }) + '\n');
+      stdout.emit('data', '{"event":"result","result":{"status":"SUCCESS"}}\n');
+      await turn;
+      expect(usageAtEmission).toEqual([{
+        generation_tokens_per_second: 50,
+        generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+        time_to_first_token_ms: 8000,
+      }]);
+    } finally {
+      await backend.dispose();
+      clock.mockRestore();
+    }
+  });
+
   it.each(['CANCELED', 'CANCELLED'])('keeps a %s result cancelled even after producing output', async (status) => {
     const { child, stdin, stdout } = makeFakeChild();
     const backend = new AgyBackend({ cwd: '/work', permissionMode: 'default', spawnFn: vi.fn(() => child) as unknown as SpawnFn });

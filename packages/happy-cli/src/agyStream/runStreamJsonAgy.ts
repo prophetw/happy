@@ -236,6 +236,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
   let abortController = new AbortController();
   let thinking = false;
   let abortCount = 0;
+  const tokenSpeed = new AgyTokenSpeedTracker();
 
   let displayedModel = initialModel;
   // Last model/effort selection received from the app (message meta). Unlike the
@@ -251,6 +252,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     models: discoveredModels,
     conversationId: initialConversationId,
     forceEngine: opts.forceEngine,
+    onStepUpdate: step => tokenSpeed.observeStep(step),
     log,
     onConversationId: (cid) => {
       if (metadata.agyConversationId !== cid) {
@@ -287,21 +289,23 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     }
   };
 
-  const tokenSpeed = new AgyTokenSpeedTracker();
   let lastContextUsage: SessionEnvelope['usage'];
   const sendUsageEnvelope = (envelope: SessionEnvelope | null) => {
     if (!envelope) return;
     lastContextUsage = envelope.usage;
     const rate = tokenSpeed.tokensPerSecond;
     const sample = tokenSpeed.sample;
-    sendEnvelopes([rate !== undefined && envelope.usage
+    sendEnvelopes([envelope.usage
       ? {
           ...envelope,
           usage: {
             ...envelope.usage,
-            output_tokens_per_second: rate,
-            output_tokens_per_second_scope: 'model_request',
-            ...speedSampleUsage(sample),
+            ...tokenSpeed.generationUsage,
+            ...(rate !== undefined ? {
+              output_tokens_per_second: rate,
+              output_tokens_per_second_scope: 'model_request',
+              ...speedSampleUsage(sample),
+            } : {}),
           },
         }
       : envelope]);
@@ -326,6 +330,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     } else if (msg.type === 'tool-result') {
       permissionHandler.completeToolCall(msg.callId, msg.toolName, (msg as any).result);
     } else if (msg.type === 'permission-request') {
+      tokenSpeed.interrupt();
       const payload = (msg as any).payload || {};
       session.sendAgentMessage('agy', {
         type: 'permission-request',
@@ -494,6 +499,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
     // Mark cancellation before awaiting the backend: it may resolve the turn
     // while cancel() itself is still settling (notably the SDK bridge).
     abortCount += 1;
+    tokenSpeed.interrupt();
     permissionHandler.abortAll();
     try {
       await backend.cancel(sessionTag);
@@ -733,7 +739,7 @@ export async function runStreamJsonAgy(opts: RunStreamJsonAgyOptions): Promise<v
         sendEnvelopes(sessionManager.endTurn(cancelled ? 'cancelled' : 'failed'));
       } finally {
         tokenSpeed.finishTurn();
-        if (lastContextUsage && tokenSpeed.tokensPerSecond !== undefined) {
+        if (lastContextUsage && (tokenSpeed.tokensPerSecond !== undefined || Object.keys(tokenSpeed.generationUsage).length > 0)) {
           sendUsageEnvelope(createEnvelope('agent', { t: 'service', text: '' }, { usage: lastContextUsage }));
         }
       }

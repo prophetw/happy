@@ -29,7 +29,7 @@ import type {
 } from '@/agent/core/AgentBackend';
 import { resolveAgyBin, AGY_PRINT_TIMEOUT } from './constants';
 import { resolveAgyModelName, type DiscoveredModel } from './discoverModels';
-import { StreamJsonParser, type AgyResult } from './streamJson';
+import { StreamJsonParser, type AgyResult, type AgyStepUpdate } from './streamJson';
 import { AgyTurnCancelledError } from './types';
 import type { AgyPermissionHandler } from './permissionHandler';
 
@@ -56,6 +56,8 @@ export interface AgyBackendOptions {
   spawnFn?: SpawnFn;
   /** Optional callback fired whenever a conversation ID is confirmed. */
   onConversationId?: (conversationId: string) => void;
+  /** Observes original step frames before usage/text mapping, without queueing extra chat events. */
+  onStepUpdate?: (step: AgyStepUpdate) => void;
   /** Maximum number of retries for transient startup errors (default 3). */
   maxRetries?: number;
 }
@@ -83,6 +85,7 @@ export class AgyBackend implements AgentBackend {
   private readonly log: (msg: string) => void;
   private readonly spawnFn: SpawnFn;
   private readonly maxRetries: number;
+  private readonly onStepUpdate?: (step: AgyStepUpdate) => void;
 
   private permissionMode: PermissionMode;
   private permissionHandler?: AgyPermissionHandler;
@@ -111,6 +114,7 @@ export class AgyBackend implements AgentBackend {
     this.log = opts.log ?? (() => {});
     this.spawnFn = opts.spawnFn ?? spawn;
     this.maxRetries = opts.maxRetries ?? 3;
+    this.onStepUpdate = opts.onStepUpdate;
 
     if (opts.onConversationId) {
       this.conversationIdListeners.add(opts.onConversationId);
@@ -240,6 +244,7 @@ export class AgyBackend implements AgentBackend {
       });
 
       this.currentTurnParser = new StreamJsonParser({
+        onStepUpdate: event => this.onStepUpdate?.(event.step_update),
         onInit: (event) => {
           if (event.conversation_id) {
             this.setConversationId(event.conversation_id);

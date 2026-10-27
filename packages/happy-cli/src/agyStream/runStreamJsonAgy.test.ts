@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage } from '@/agent/core';
 import type { AgyStatusLineQuota } from './statusLine';
@@ -72,7 +73,8 @@ vi.mock('@/ui/logger', () => ({ logger: { debug: vi.fn() } }));
 vi.mock('ink', () => ({ render: vi.fn() }));
 vi.mock('@/ui/ink/AgyDisplay', () => ({ AgyDisplay: vi.fn() }));
 vi.mock('./createAgyBackend', () => ({ createAgyBackend: mocks.createBackend }));
-vi.mock('./discoverModels', () => ({
+vi.mock('./discoverModels', async importOriginal => ({
+  ...await importOriginal<typeof import('./discoverModels')>(),
   discoverAgyModels: vi.fn(async () => []),
   resolveAgyModelSelection: vi.fn(() => 'Gemini 3.8 Flash (High)'),
 }));
@@ -94,6 +96,7 @@ vi.mock('./imageInput', () => ({
 import { PushNotificationClient } from '@/api/pushNotifications';
 import { runStreamJsonAgy } from './runStreamJsonAgy';
 import { AgyTurnCancelledError } from './types';
+import { AgyBackend, type SpawnFn } from './AgyBackend';
 import * as conversationSummary from './conversationSummary';
 
 describe('AGY session push notifications', () => {
@@ -163,6 +166,43 @@ describe('AGY session push notifications', () => {
     const onMessage = session.onUserMessage.mock.calls[0][0];
     await onMessage({ content: { text }, meta: {} });
   }
+
+  it('carries native stdout through the real backend and runner into generation/wait usage envelopes', async () => {
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const child = Object.assign(new EventEmitter(), { stdout, stderr, killed: false,
+      stdin: { write: vi.fn(), end: vi.fn() }, kill: vi.fn() });
+    child.kill.mockImplementation(() => { child.killed = true; queueMicrotask(() => child.emit('close', 0)); return true; });
+    child.stdin.write.mockImplementation(() => {
+      queueMicrotask(() => {
+        now = 8000;
+        stdout.emit('data', JSON.stringify({ event: 'step_update', step_update: { step_index: 1,
+          state: 'ACTIVE', step_type: 'agent_response', text_delta: 'First ' } }) + '\n');
+        now = 10000;
+        stdout.emit('data', JSON.stringify({ event: 'step_update', step_update: { step_index: 1,
+          state: 'DONE', step_type: 'agent_response', text_delta: 'last', duration_seconds: 10,
+          usage: { input_tokens: 500, output_tokens: 120, thinking_tokens: 20 } } }) + '\n');
+        stdout.emit('data', '{"event":"result","result":{"status":"SUCCESS"}}\n');
+      });
+    });
+    mocks.createBackend.mockImplementationOnce(options => new AgyBackend({ ...options,
+      spawnFn: (() => {
+        queueMicrotask(() => stdout.emit('data', '{"event":"init","conversation_id":"native-generation"}\n'));
+        return child;
+      }) as unknown as SpawnFn,
+    }));
+    await start('cli');
+    await send('Controlled generation');
+    await vi.waitFor(() => expect(turnStatuses()).toEqual(['completed']));
+    const usage = session.sendSessionProtocolMessage.mock.calls.map(([e]) => e).filter(e => e.usage).at(-1)?.usage;
+    expect(usage).toMatchObject({
+      input_tokens: 500, output_tokens: 120,
+      generation_tokens_per_second: 50, time_to_first_token_ms: 8000,
+      generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+    });
+  });
 
   it('reports measured model speed, preserves it through statusline snapshots, and resets it for the next turn', async () => {
     let now = 0;

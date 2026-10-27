@@ -49,14 +49,14 @@ export class GenerationStats {
     private waitRequests = 0;
     completedSamples = 0;
 
-    record(tokens: number, first: number | undefined, last: number | undefined, started?: number): void {
-        if (!Number.isSafeInteger(tokens) || tokens <= 0 || first === undefined || !Number.isFinite(first)
+    record(tokens: number | undefined, first: number | undefined, last: number | undefined, started?: number): void {
+        if (first === undefined || !Number.isFinite(first)
             || (last !== undefined && (!Number.isFinite(last) || last < first))) return;
         const duration = last === undefined ? undefined : last - first;
-        const measuredGeneration = outputTokensPerSecond(tokens, duration) !== undefined;
+        const measuredGeneration = Number.isSafeInteger(tokens) && outputTokensPerSecond(tokens, duration) !== undefined;
         const measuredWait = started !== undefined && Number.isFinite(started) && started <= first;
         if (measuredGeneration) {
-            this.tokens += tokens;
+            this.tokens += tokens!;
             this.durationMs += duration!;
             this.requests++;
         }
