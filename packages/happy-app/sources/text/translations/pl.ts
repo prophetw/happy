@@ -597,6 +597,8 @@ export const pl: TranslationStructure = {
         noMachinesAvailable: 'Brak maszyn',
     },
 
+    directoryPicker: en.directoryPicker,
+
     machineLauncher: {
         allMachines: 'Wszystkie komputery',
         searchDirectories: 'Szukaj projektów lub folderów',

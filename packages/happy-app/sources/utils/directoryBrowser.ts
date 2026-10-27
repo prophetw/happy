@@ -35,3 +35,24 @@ export function joinDirectoryPath(path: string, name: string): string {
     const separator = directorySeparator(path);
     return `${path}${path.endsWith(separator) ? '' : separator}${name}`;
 }
+
+/** Manual input must never silently fall back to the user's home directory. */
+export function parseDirectoryInput(value: string, homeDir?: string): string | null {
+    const input = value.trim();
+    if (!input || !/^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+|~(?:[\\/]|$))/.test(input)) return null;
+    return getDirectoryBrowserPath(input, homeDir) ?? input;
+}
+
+export function getDirectoryBreadcrumbs(path: string): { label: string; path: string }[] {
+    const crumbs: { label: string; path: string }[] = [];
+    let current: string | null = path;
+    while (current) {
+        const parent = getParentDirectory(current);
+        const label = parent
+            ? current.slice(parent.length + (parent.endsWith(directorySeparator(current)) ? 0 : 1))
+            : current;
+        crumbs.unshift({ label, path: current });
+        current = parent;
+    }
+    return crumbs;
+}

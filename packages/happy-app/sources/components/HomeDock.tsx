@@ -24,6 +24,7 @@ import { NativeOptionsPicker, type NativeOptionsPickerOption, type NativeOptions
 import { NativeSettingsMenu, type NativeSettingsMenuGroup, type NativeSettingsMenuProps } from './NativeSettingsMenu';
 import { PickerSheetOption, PickerSheetPanel, PickerSheetSection } from './PickerSheet';
 import { DirectoryBrowser } from './DirectoryBrowser';
+import { WebDirectoryPicker } from './WebDirectoryPicker';
 import { ProviderIcon } from './ProviderIcon';
 import { NativeSegmentedControl } from './NativeSegmentedControl';
 import { BotFacePicker } from './BotFacePicker';
@@ -1701,8 +1702,22 @@ export const HomeDock = React.memo(({
     // Only reached with a page selected: `sheetVisible` gates the whole sheet.
     const renderSettingsSheet = (page: PickerPage) => {
         const config = getPickerConfig(page);
-        // Keep the directory browser inside the focused composer's modal on
-        // every platform. Other in-app settings pickers are Android only.
+        const directoryProps = {
+            machineId: happyMachineOnline ? happyMachineId : null,
+            homeDir: selectedHomeDir,
+            initialPath: selectedPath,
+            recentPaths: projectOptions,
+            selectedKey: config.selectedKey,
+            onSelectDirectory: (path: string) => { setPath(path); closePicker(); },
+            onSelectRecent: (key: string) => { config.onSelect(key); closePicker(); },
+            onRequestCustomPath: () => { closePicker(); requestCustomProjectPath(); },
+        };
+        if (page === 'project' && Platform.OS === 'web') {
+            return <WebDirectoryPicker {...directoryProps} key={selectedChoice?.id ?? 'no-machine'}
+                machineName={selectedChoice?.name} onClose={closePicker} />;
+        }
+        // Native directory browsing stays inside the focused composer's modal.
+        // Other in-app settings pickers are Android only.
         return (
             <PickerSheetPanel
                 title={config.title}
@@ -1711,12 +1726,8 @@ export const HomeDock = React.memo(({
             >
                 {page === 'project' ? (
                     <DirectoryBrowser
+                        {...directoryProps}
                         key={selectedChoice?.id ?? 'no-machine'}
-                        machineId={happyMachineOnline ? happyMachineId : null}
-                        homeDir={selectedHomeDir}
-                        initialPath={selectedPath}
-                        recentPaths={projectOptions}
-                        selectedKey={config.selectedKey}
                         projectSearch={Platform.OS === 'ios' ? {
                             options: projectSearchOptions,
                             machineId: selectedChoice?.id ?? null,
@@ -1725,18 +1736,6 @@ export const HomeDock = React.memo(({
                                 closePicker();
                             },
                         } : undefined}
-                        onSelectDirectory={(path) => {
-                            setPath(path);
-                            closePicker();
-                        }}
-                        onSelectRecent={(key) => {
-                            config.onSelect(key);
-                            closePicker();
-                        }}
-                        onRequestCustomPath={() => {
-                            closePicker();
-                            requestCustomProjectPath();
-                        }}
                     />
                 ) : config.sections.map((section, sectionIndex) => (
                     <React.Fragment key={section.key}>

@@ -7,8 +7,14 @@ import { t } from '@/text';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { PickerSheet } from './PickerSheet';
 
+export type DirectoryPickerProps = React.ComponentProps<typeof DirectoryBrowser> & {
+    machineName?: string;
+    /** Stable identity even while the machine has no online directory daemon. */
+    machineKey?: string;
+};
+
 /** Opens the remote machine's directories without changing the draft while browsing. */
-export function DirectoryPicker(props: React.ComponentProps<typeof DirectoryBrowser>) {
+export function DirectoryPicker(props: DirectoryPickerProps) {
     const { theme } = useUnistyles();
     const [visible, setVisible] = React.useState(false);
 

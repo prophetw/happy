@@ -628,6 +628,23 @@ export const en: TranslationStructure = {
         noMachinesAvailable: 'No machines',
     },
 
+    directoryPicker: {
+        title: 'Select working directory',
+        browse: 'Browse folders',
+        go: 'Go to path',
+        editPath: 'Edit path',
+        noRecent: 'No recent projects yet',
+        invalidPath: 'Enter an absolute path or a path starting with ~.',
+        catalogHint: 'This project is managed by Happy Agent. You can select it without browsing a directory.',
+        unavailableHint: 'Choose a recent project or enter a path manually.',
+        emptyHint: 'You can use this directory directly.',
+        searchEmptyHint: 'Try another name or enter the full path.',
+        willUse: 'Will use',
+        nothingSelected: 'Choose a directory or project',
+        manualHint: 'This path will be checked when the session starts.',
+        selectProject: 'Use this project',
+    },
+
     machineLauncher: {
         allMachines: 'All machines',
         searchDirectories: 'Search projects or directories',

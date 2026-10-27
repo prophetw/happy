@@ -526,6 +526,8 @@ function PathPickerContent({
     selectedProjectKey,
     homeDir,
     directoryMachineId,
+    directoryMachineName,
+    directoryMachineKey,
     onChangeValue,
     onSelectProject,
     onDone,
@@ -541,6 +543,8 @@ function PathPickerContent({
     selectedProjectKey: string | null;
     homeDir?: string;
     directoryMachineId?: string | null;
+    directoryMachineName?: string;
+    directoryMachineKey?: string;
     onChangeValue: (value: string) => void;
     onSelectProject: (projectId: string) => void;
     onDone?: () => void;
@@ -705,6 +709,8 @@ function PathPickerContent({
                 {Platform.OS === 'web' && (
                     <DirectoryPicker
                         machineId={directoryMachineId ?? null}
+                        machineName={directoryMachineName}
+                        machineKey={directoryMachineKey}
                         homeDir={homeDir}
                         initialPath={value}
                         recentPaths={items.map((item) => ({ key: item.key, name: item.label, description: item.subtitle }))}
@@ -1889,6 +1895,8 @@ function NewSessionScreen() {
                 directoryMachineId={selectedChoice?.happyMachine && isMachineOnline(selectedChoice.happyMachine)
                     ? selectedChoice.happyMachine.id
                     : null}
+                directoryMachineName={selectedChoice?.name}
+                directoryMachineKey={selectedChoice?.id}
                 onChangeValue={setSelectedPath}
                 onSelectProject={selectProjectPlace}
                 onDone={closePicker}

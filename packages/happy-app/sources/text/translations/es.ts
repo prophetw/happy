@@ -581,6 +581,8 @@ export const es: TranslationStructure = {
         noMachinesAvailable: 'Sin máquinas',
     },
 
+    directoryPicker: en.directoryPicker,
+
     machineLauncher: {
         allMachines: 'Todos los equipos',
         searchDirectories: 'Buscar proyectos o carpetas',

@@ -581,6 +581,8 @@ export const ca: TranslationStructure = {
         noMachinesAvailable: 'Sense màquines',
     },
 
+    directoryPicker: en.directoryPicker,
+
     machineLauncher: {
         allMachines: 'Tots els equips',
         searchDirectories: 'Cerca projectes o carpetes',

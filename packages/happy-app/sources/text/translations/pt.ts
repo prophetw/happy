@@ -580,6 +580,8 @@ export const pt: TranslationStructure = {
         noMachinesAvailable: 'Sem máquinas',
     },
 
+    directoryPicker: en.directoryPicker,
+
     machineLauncher: {
         allMachines: 'Todas as máquinas',
         searchDirectories: 'Buscar projetos ou pastas',

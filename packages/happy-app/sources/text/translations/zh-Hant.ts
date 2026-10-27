@@ -597,6 +597,23 @@ export const zhHant: TranslationStructure = {
         noMachinesAvailable: '無裝置',
     },
 
+    directoryPicker: {
+        title: "選擇工作目錄",
+        browse: "瀏覽目錄",
+        go: "前往此路徑",
+        editPath: "編輯路徑",
+        noRecent: "尚無最近使用的專案",
+        invalidPath: "請輸入完整路徑，或以 ~ 開頭的使用者目錄路徑。",
+        catalogHint: "此專案由 Happy Agent 管理，可以直接選擇，無需瀏覽目錄。",
+        unavailableHint: "可以選擇最近專案，或手動輸入路徑。",
+        emptyHint: "可以直接使用目前目錄。",
+        searchEmptyHint: "試試其他名稱，或直接輸入完整路徑。",
+        willUse: "將使用",
+        nothingSelected: "請選擇目錄或專案",
+        manualHint: "此路徑將在啟動工作階段時檢查。",
+        selectProject: "使用此專案",
+    },
+
     machineLauncher: {
         allMachines: '所有電腦',
         searchDirectories: '搜尋專案或目錄',

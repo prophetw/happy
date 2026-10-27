@@ -582,6 +582,8 @@ export const ja: TranslationStructure = {
         noMachinesAvailable: 'マシンなし',
     },
 
+    directoryPicker: en.directoryPicker,
+
     machineLauncher: {
         allMachines: 'すべてのマシン',
         searchDirectories: 'プロジェクトまたはフォルダーを検索',

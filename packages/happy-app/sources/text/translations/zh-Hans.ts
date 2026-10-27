@@ -611,6 +611,23 @@ export const zhHans: TranslationStructure = {
         noMachinesAvailable: '无设备',
     },
 
+    directoryPicker: {
+        title: "选择工作目录",
+        browse: "浏览目录",
+        go: "跳转到此路径",
+        editPath: "编辑路径",
+        noRecent: "暂无最近使用的项目",
+        invalidPath: "请输入完整路径，或以 ~ 开头的用户目录路径。",
+        catalogHint: "此项目由 Happy Agent 管理，可以直接选择，无需浏览目录。",
+        unavailableHint: "可以选择最近项目，或手动输入路径。",
+        emptyHint: "可以直接使用当前目录。",
+        searchEmptyHint: "试试其他名称，或直接输入完整路径。",
+        willUse: "将使用",
+        nothingSelected: "请选择目录或项目",
+        manualHint: "此路径将在启动会话时检查。",
+        selectProject: "使用此项目",
+    },
+
     machineLauncher: {
         allMachines: '所有机器',
         searchDirectories: '搜索项目或目录',

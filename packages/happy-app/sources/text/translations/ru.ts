@@ -597,6 +597,8 @@ export const ru: TranslationStructure = {
         noMachinesAvailable: 'Нет машин',
     },
 
+    directoryPicker: en.directoryPicker,
+
     machineLauncher: {
         allMachines: 'Все компьютеры',
         searchDirectories: 'Поиск проектов или папок',
