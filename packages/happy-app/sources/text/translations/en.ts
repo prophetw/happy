@@ -608,7 +608,11 @@ export const en: TranslationStructure = {
             badgePlan: 'plan',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Model ${speed} tok/s`,
+            outputSpeed: ({ speed }: { speed: string }) => `Request ${speed} tok/s`,
+            generationSpeed: ({ speed }: { speed: string }) => `Generation ${speed} tok/s`,
+            firstTokenWait: ({ seconds }: { seconds: string }) => `First token ${seconds} s`,
+            generationSpeedTitle: "Generation speed and first-token wait",
+            generationSpeedDescription: "Generation speed divides reported output tokens by the time between the first and last content chunks, including streamed reasoning and tool arguments. It excludes request wait and tool execution. First token is the average wait from a reliable request boundary to first content and may include local preparation. Only measured values are shown.",
             outputSpeedTitle: "Sampled model response speed",
             outputSpeedDescription: "Output tokens divided by the elapsed time of reliably measured model responses. Samples may cover only the first response. Includes input processing, request wait, reasoning and response delivery; excludes tool execution and user approval waits. Codex samples also include local prompt preparation. Responses without reliable timing are omitted.",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Sampled ${requests} model requests: ${tokens} output tokens ÷ ${seconds} s = ${speed} tok/s`,

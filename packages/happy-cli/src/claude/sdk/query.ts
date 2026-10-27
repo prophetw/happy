@@ -53,7 +53,8 @@ export function query(params: { prompt: QueryPrompt; options?: QueryOptions }): 
         sdkOptions.includePartialMessages = true
         const observeBoundary: HookCallback = async (input) => {
             if (!input.agent_id) {
-                opts.onTokenSpeedBoundary!(input.hook_event_name === 'PostToolBatch' ? 'tool-batch-complete' : 'interrupt')
+                opts.onTokenSpeedBoundary!(input.hook_event_name === 'PostToolBatch' ? 'tool-batch-complete'
+                    : input.hook_event_name === 'UserPromptSubmit' ? 'prompt-submit' : 'interrupt')
             }
             return {}
         }

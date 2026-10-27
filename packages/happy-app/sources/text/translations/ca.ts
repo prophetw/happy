@@ -561,7 +561,11 @@ export const ca: TranslationStructure = {
             badgePlan: 'Planificació',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Model ${speed} tok/s`,
+            outputSpeed: ({ speed }: { speed: string }) => `Petició ${speed} tok/s`,
+            generationSpeed: ({ speed }: { speed: string }) => `Generació ${speed} tok/s`,
+            firstTokenWait: ({ seconds }: { seconds: string }) => `Primer token ${seconds} s`,
+            generationSpeedTitle: "Velocitat de generació i espera inicial",
+            generationSpeedDescription: "La velocitat divideix els tokens de sortida pel temps entre el primer i l’últim fragment, inclosos el raonament i els arguments d’eines. Exclou l’espera i l’execució d’eines. El primer token indica l’espera mitjana i pot incloure preparació local. Només es mostren mesures fiables.",
             outputSpeedTitle: "Velocitat mostrejada del model",
             outputSpeedDescription: "Tokens de sortida dividits pel temps de les respostes del model amb mesurament fiable. La mostra pot incloure només la primera resposta. Inclou processament d’entrada, espera de la petició, raonament i transferència; exclou eines i espera d’aprovació. Codex també inclou la preparació local del prompt. S’ometen les respostes sense temps fiable.",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Mostra de ${requests} peticions: ${tokens} tokens de sortida ÷ ${seconds} s = ${speed} tok/s`,

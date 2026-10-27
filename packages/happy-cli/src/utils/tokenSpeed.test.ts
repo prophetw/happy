@@ -19,6 +19,67 @@ describe('outputTokensPerSecond', () => {
 });
 
 describe('CodexTokenSpeedTracker', () => {
+    it('separates content generation from first-token wait and usage delivery, then weights later responses', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message_delta', delta: '' }, 1000);
+        tracker.observe({ type: 'agent_reasoning_delta', delta: 'Thinking' }, 8000);
+        tracker.observe({ type: 'agent_message_delta', delta: 'Done' }, 10000);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 10010);
+        tracker.observe(usage(100), 11000);
+        expect(tracker.generationUsage).toEqual({
+            generation_tokens_per_second: 50,
+            generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+            time_to_first_token_ms: 8000,
+        });
+        tracker.observe({ type: 'agent_message_delta', delta: 'Next' }, 12000);
+        tracker.observe({ type: 'agent_message_delta', delta: 'Done' }, 14000);
+        tracker.observe({ type: 'agent_message', message: 'Next done' }, 14010);
+        tracker.observe(usage(300, 200), 15000);
+        tracker.observe(usage(300, 200), 20000);
+        expect(tracker.generationUsage).toEqual({
+            generation_tokens_per_second: 75,
+            generation_tokens_per_second_sample: { tokens: 300, duration_ms: 4000, requests: 2 },
+            time_to_first_token_ms: 4500,
+        });
+    });
+
+    it.each([0, 60000])('excludes %i ms of tool time from both generation metrics', (extra) => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'exec_command_begin', call_id: 'tool' }, 1000);
+        tracker.observe(usage(10), 1100);
+        tracker.observe({ type: 'exec_command_end', call_id: 'tool' }, 2000 + extra);
+        tracker.observe({ type: 'token_speed_output_delta', kind: 'text' }, 10000 + extra);
+        tracker.observe({ type: 'token_speed_output_delta', kind: 'text' }, 12000 + extra);
+        tracker.observe({ type: 'agent_message', message: 'Done' }, 12010 + extra);
+        tracker.observe(usage(110, 100), 13000 + extra);
+        expect(tracker.generationUsage).toMatchObject({ generation_tokens_per_second: 50, time_to_first_token_ms: 8000 });
+    });
+
+    it('reports wait alone for one chunk and never guesses generation from completed text', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message', message: 'Unstreamed' }, 1000);
+        tracker.observe(usage(10), 1100);
+        expect(tracker.generationUsage).toEqual({});
+        tracker.observe({ type: 'task_started' }, 2000);
+        tracker.observe({ type: 'agent_message_delta', delta: 'One chunk' }, 3000);
+        tracker.observe({ type: 'agent_message', message: 'One chunk' }, 3100);
+        tracker.observe(usage(20, 10), 3200);
+        expect(tracker.generationUsage).toEqual({ time_to_first_token_ms: 1000 });
+    });
+
+    it('keeps visible first-token wait but hides a rate when reasoning tokens were not streamed', () => {
+        const tracker = new CodexTokenSpeedTracker();
+        tracker.observe({ type: 'task_started' }, 0);
+        tracker.observe({ type: 'agent_message_delta', delta: 'First' }, 8000);
+        tracker.observe({ type: 'agent_message_delta', delta: 'Last' }, 10000);
+        tracker.observe({ type: 'agent_message', message: 'First last' }, 10100);
+        tracker.observe({ type: 'token_count', total: { outputTokens: 100 }, last: { outputTokens: 100, reasoningOutputTokens: 80 } }, 11000);
+        expect(tracker.generationUsage).toEqual({ time_to_first_token_ms: 8000 });
+    });
+
     it('samples the first uninterrupted model response without historical tokens', () => {
         const tracker = new CodexTokenSpeedTracker();
         tracker.observe({ type: 'task_started' }, 1000);

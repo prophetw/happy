@@ -2,6 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { GenerationMetrics } from '@/sync/typesMessage';
 
 vi.hoisted(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true));
 vi.mock('react-native', () => ({ Pressable: 'Pressable', Text: 'Text' }));
@@ -9,7 +10,9 @@ vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { color
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 vi.mock('@/text', () => ({
     t: (key: string, values?: { speed?: string; tokens?: string; seconds?: string; requests?: number }) => {
-        if (key === 'agentInput.context.outputSpeed') return `模型 ${values?.speed} tok/s`;
+        if (key === 'agentInput.context.outputSpeed') return `请求 ${values?.speed} tok/s`;
+        if (key === 'agentInput.context.generationSpeed') return `生成 ${values?.speed} tok/s`;
+        if (key === 'agentInput.context.firstTokenWait') return `首 token ${values?.seconds} s`;
         if (key === 'agentInput.context.outputSpeedCalculation') {
             return `本轮采样 ${values?.requests} 次模型请求：${values?.tokens} 输出 token ÷ ${values?.seconds} 秒 = ${values?.speed} tok/s`;
         }
@@ -27,17 +30,32 @@ afterEach(() => {
     vi.clearAllMocks();
 });
 
-function render(tokensPerSecond?: number, sample?: { tokens: number; durationMs: number; requests: number }) {
+function render(tokensPerSecond?: number, sample?: { tokens: number; durationMs: number; requests: number }, generationMetrics?: GenerationMetrics) {
     let renderer!: ReturnType<typeof create>;
-    act(() => { renderer = create(React.createElement(OutputTokenSpeed, { tokensPerSecond, sample })); });
+    act(() => { renderer = create(React.createElement(OutputTokenSpeed, { tokensPerSecond, sample, generationMetrics })); });
     renderers.push(renderer);
     return renderer;
 }
 
 describe('OutputTokenSpeed', () => {
+    it('shows generation and first-token wait separately and explains the generation sample', () => {
+        const renderer = render(10, undefined, {
+            tokensPerSecond: 50, timeToFirstTokenMs: 8000, sample: { tokens: 100, durationMs: 2000, requests: 1 },
+        });
+        expect(renderer.root.findByType('Text').props.children).toBe('生成 50.0 tok/s · 首 token 8.00 s');
+        act(() => renderer.root.findByType('Pressable').props.onPress());
+        expect(vi.mocked(Modal.alert).mock.calls[0][1]).toContain('100 输出 token ÷ 2.00 秒 = 50.0 tok/s');
+        expect(vi.mocked(Modal.alert).mock.calls[0][1]).toContain('agentInput.context.generationSpeedDescription');
+    });
+
+    it('shows a valid zero wait even without a measurable generation rate', () => {
+        const renderer = render(undefined, undefined, { timeToFirstTokenMs: 0 });
+        expect(renderer.root.findByType('Text').props.children).toBe('首 token 0.00 s');
+    });
+
     it('shows model tokens per second and opens its sampling explanation', () => {
         const renderer = render(50);
-        expect(renderer.root.findByType('Text').props.children).toBe('模型 50.0 tok/s');
+        expect(renderer.root.findByType('Text').props.children).toBe('请求 50.0 tok/s');
         act(() => renderer.root.findByType('Pressable').props.onPress());
         expect(Modal.alert).toHaveBeenCalledWith('agentInput.context.outputSpeedTitle', 'agentInput.context.outputSpeedDescription');
     });

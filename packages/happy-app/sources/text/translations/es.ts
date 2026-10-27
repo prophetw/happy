@@ -561,7 +561,11 @@ export const es: TranslationStructure = {
             badgePlan: 'Planificación',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Modelo ${speed} tok/s`,
+            outputSpeed: ({ speed }: { speed: string }) => `Solicitud ${speed} tok/s`,
+            generationSpeed: ({ speed }: { speed: string }) => `Generación ${speed} tok/s`,
+            firstTokenWait: ({ seconds }: { seconds: string }) => `Primer token ${seconds} s`,
+            generationSpeedTitle: "Velocidad de generación y espera inicial",
+            generationSpeedDescription: "La velocidad divide los tokens de salida por el tiempo entre el primer y el último fragmento, incluido el razonamiento y los argumentos de herramientas. Excluye la espera y la ejecución de herramientas. El primer token indica la espera media y puede incluir preparación local. Solo se muestran mediciones fiables.",
             outputSpeedTitle: "Velocidad muestreada del modelo",
             outputSpeedDescription: "Tokens de salida divididos por el tiempo de las respuestas del modelo con medición fiable. La muestra puede incluir solo la primera respuesta. Incluye procesamiento de entrada, espera de la solicitud, razonamiento y transferencia; excluye herramientas y espera de aprobación. Codex también incluye la preparación local del prompt. Se omiten respuestas sin tiempos fiables.",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Muestra de ${requests} solicitudes: ${tokens} tokens de salida ÷ ${seconds} s = ${speed} tok/s`,

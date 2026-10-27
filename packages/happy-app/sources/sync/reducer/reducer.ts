@@ -110,7 +110,7 @@
  * - Updated internal state for future processing
  */
 
-import { Message, PENDING_SORT_OFFSET, ToolCall, TokenSpeedSample } from "../typesMessage";
+import { GenerationMetrics, Message, PENDING_SORT_OFFSET, ToolCall, TokenSpeedSample } from "../typesMessage";
 import { AgentEvent, NormalizedMessage, SessionAuthor, UsageData } from "../typesRaw";
 import { createTracer, traceMessages, TracerState } from "./reducerTracer";
 import { AgentState, TodoItem, TodoItemsSchema } from "../storageTypes";
@@ -128,6 +128,7 @@ type ReducerMessage = {
     isThinking?: boolean;
     tokensPerSecond?: number;
     tokensPerSecondSample?: TokenSpeedSample;
+    generationMetrics?: GenerationMetrics;
     event: AgentEvent | null;
     tool: ToolCall | null;
     meta?: MessageMeta;
@@ -914,11 +915,13 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
                 processUsageData(state, msg.usage, msg.createdAt);
                 const modelRequest = msg.usage.output_tokens_per_second_scope === 'model_request';
                 const sample = modelRequest ? readTokenSpeedSample(msg.usage.output_tokens_per_second_sample) : undefined;
+                const generationMetrics = readGenerationMetrics(msg.usage);
                 state.outputSpeedSamples.set(msg.id, {
                     createdAt: msg.createdAt,
                     turn: msg.turn,
                     tokensPerSecond: modelRequest ? msg.usage.output_tokens_per_second : undefined,
                     ...(sample ? { sample } : {}),
+                    ...(generationMetrics ? { generationMetrics } : {}),
                 });
             }
 
@@ -1354,7 +1357,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // Usage-only events stay invisible, but must update the matching reply,
     // including when usage or older history arrives after the text itself.
     const speedSamples = Array.from(state.outputSpeedSamples.values());
-    if (speedSamples.some((sample) => sample.tokensPerSecond !== undefined)) {
+    if (speedSamples.some((sample) => sample.tokensPerSecond !== undefined || sample.generationMetrics)) {
         const rows = Array.from(state.messages.values()).map((message) => ({
             id: message.id,
             kind: message.role === 'user' ? 'user-text' : message.text !== null ? 'agent-text' : 'agent-event',
@@ -1371,9 +1374,12 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             const assignment = speeds.get(message.id);
             const speed = assignment?.tokensPerSecond;
             const sample = assignment?.sample;
-            if (message.tokensPerSecond !== speed || message.tokensPerSecondSample !== sample) {
+            const generationMetrics = assignment?.generationMetrics;
+            if (message.tokensPerSecond !== speed || message.tokensPerSecondSample !== sample
+                || message.generationMetrics !== generationMetrics) {
                 message.tokensPerSecond = speed;
                 message.tokensPerSecondSample = sample;
+                message.generationMetrics = generationMetrics;
                 changed.add(message.id);
             }
         }
@@ -1467,6 +1473,20 @@ function readTokenSpeedSample(value: unknown): TokenSpeedSample | undefined {
         : undefined;
 }
 
+function readGenerationMetrics(usage: UsageData): GenerationMetrics | undefined {
+    const rate = usage.generation_tokens_per_second;
+    const wait = usage.time_to_first_token_ms;
+    const hasRate = typeof rate === 'number' && Number.isFinite(rate) && rate > 0;
+    const hasWait = typeof wait === 'number' && Number.isFinite(wait) && wait >= 0;
+    if (!hasRate && !hasWait) return undefined;
+    const sample = hasRate ? readTokenSpeedSample(usage.generation_tokens_per_second_sample) : undefined;
+    return {
+        ...(hasRate ? { tokensPerSecond: rate } : {}),
+        ...(sample ? { sample } : {}),
+        ...(hasWait ? { timeToFirstTokenMs: wait } : {}),
+    };
+}
+
 
 function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: ReducerState): Message | null {
     if (reducerMsg.role === 'user' && reducerMsg.text !== null) {
@@ -1495,6 +1515,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
             ...(reducerMsg.isThinking && { isThinking: true }),
             ...(reducerMsg.tokensPerSecond !== undefined && { tokensPerSecond: reducerMsg.tokensPerSecond }),
             ...(reducerMsg.tokensPerSecondSample && { tokensPerSecondSample: reducerMsg.tokensPerSecondSample }),
+            ...(reducerMsg.generationMetrics && { generationMetrics: reducerMsg.generationMetrics }),
             ...(reducerMsg.turn !== undefined && { turn: reducerMsg.turn }),
             meta: reducerMsg.meta
         };

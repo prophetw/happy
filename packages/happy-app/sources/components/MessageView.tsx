@@ -304,7 +304,8 @@ function AgentTextBlock(props: {
             <Text style={styles.agentMetaText}>{metaText}</Text>
           </View>
         ) : null}
-        <OutputTokenSpeed tokensPerSecond={props.message.tokensPerSecond} sample={props.message.tokensPerSecondSample} />
+        <OutputTokenSpeed tokensPerSecond={props.message.tokensPerSecond} sample={props.message.tokensPerSecondSample}
+          generationMetrics={props.message.generationMetrics} />
       </View>
     </View>
   );
@@ -511,6 +512,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   agentFooterRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 12,
   },

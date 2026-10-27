@@ -591,7 +591,11 @@ export const zhHans: TranslationStructure = {
             badgePlan: '计划',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `模型 ${speed} tok/s`,
+            outputSpeed: ({ speed }: { speed: string }) => `请求 ${speed} tok/s`,
+            generationSpeed: ({ speed }: { speed: string }) => `生成 ${speed} tok/s`,
+            firstTokenWait: ({ seconds }: { seconds: string }) => `首 token ${seconds} s`,
+            generationSpeedTitle: "生成速度与首 token 等待",
+            generationSpeedDescription: "生成速度按上报的输出 token 除以首个到最后一个内容片段的时间计算，包含流式思考和工具参数，排除请求等待与工具执行。首 token 为有效请求的平均等待时间，可能包含本地请求准备。只显示有可靠采样的数据。",
             outputSpeedTitle: "模型请求采样速度",
             outputSpeedDescription: "仅统计本轮有可靠计时的模型响应，可能只覆盖首个响应。输出 token 数除以对应响应耗时，包含输入处理、请求等待、推理与响应传输，排除工具执行和人工确认等待。Codex 首段还包含本地提示准备时间。缺少可靠计时的响应不参与统计。",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `本轮采样 ${requests} 次模型请求：${tokens} 输出 token ÷ ${seconds} 秒 = ${speed} tok/s`,

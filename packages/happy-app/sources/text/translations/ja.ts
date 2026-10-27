@@ -562,7 +562,11 @@ export const ja: TranslationStructure = {
             badgePlan: 'プラン',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `モデル ${speed} tok/s`,
+            outputSpeed: ({ speed }: { speed: string }) => `リクエスト ${speed} tok/s`,
+            generationSpeed: ({ speed }: { speed: string }) => `生成 ${speed} tok/s`,
+            firstTokenWait: ({ seconds }: { seconds: string }) => `最初のトークン ${seconds} s`,
+            generationSpeedTitle: "生成速度と最初のトークンの待機時間",
+            generationSpeedDescription: "生成速度は出力トークン数を最初から最後の内容チャンクまでの時間で割ります。推論とツール引数のストリームを含み、リクエスト待機とツール実行は除外します。最初のトークンは計測可能なリクエストの平均待機時間で、ローカル準備を含む場合があります。計測値のみ表示します。",
             outputSpeedTitle: "モデル応答のサンプリング速度",
             outputSpeedDescription: "信頼できる計測時間があるモデル応答の出力トークン数を、その所要時間で割ります。最初の応答のみの場合があります。入力処理、リクエスト待機、推論、応答の転送を含み、ツール実行とユーザー承認待ちは除外します。Codex の最初の応答にはローカルでのプロンプト準備も含まれます。計測できない応答は集計しません。",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `モデル応答 ${requests} 回分：出力 ${tokens} トークン ÷ ${seconds} 秒 = ${speed} tok/s`,

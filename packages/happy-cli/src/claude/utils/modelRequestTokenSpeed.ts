@@ -1,11 +1,11 @@
 import type { SDKMessage } from '@/claude/sdk';
 import type { Usage } from '@/api/types';
-import { outputTokensPerSecond } from '@/utils/tokenSpeed';
+import { GenerationStats, outputTokensPerSecond, type GenerationUsage } from '@/utils/tokenSpeed';
 import { UsageSchema } from '../types';
 
-export type ClaudeTokenSpeedBoundary = 'tool-batch-complete' | 'interrupt';
+export type ClaudeTokenSpeedBoundary = 'tool-batch-complete' | 'prompt-submit' | 'interrupt';
 
-/** Measures complete main-thread requests after a native PostToolBatch hook. */
+/** Measures complete main-thread requests and their actual content streams. */
 export class ClaudeModelRequestTokenSpeed {
     private pendingStart?: number;
     private active?: {
@@ -14,21 +14,29 @@ export class ClaudeModelRequestTokenSpeed {
         startedAt?: number;
         usage: Record<string, unknown>;
         finalUsage: boolean;
+        measurable: boolean;
+        firstTokenAt?: number;
+        lastTokenAt?: number;
     };
     private seen = new Set<string>();
     private models = new Set<string>();
     private sampledTokens = 0;
     private sampledDuration = 0;
     private sampledRequests = 0;
+    private completedSamples = 0;
     private interrupted = false;
     private completed?: { id: string; model: string; usage: Usage };
+    private generation = new GenerationStats();
 
     boundary(event: ClaudeTokenSpeedBoundary, now = performance.now()): void {
         if (this.active || (event === 'interrupt' && this.pendingStart !== undefined)) this.interrupted = true;
         // A batch can finish while its originating stream is still closing.
         // That overlap cannot establish a start for the following request.
-        this.pendingStart = event === 'tool-batch-complete' && !this.active ? this.pendingStart ?? now : undefined;
-        if (this.active) this.active.startedAt = undefined;
+        this.pendingStart = event !== 'interrupt' && !this.active ? this.pendingStart ?? now : undefined;
+        if (this.active) {
+            this.active.startedAt = undefined;
+            this.active.measurable = false;
+        }
     }
 
     observe(message: SDKMessage, now = performance.now()): void {
@@ -56,16 +64,26 @@ export class ClaudeModelRequestTokenSpeed {
                 this.active = undefined;
                 return;
             }
-            const startedAt = !this.active && !this.seen.has(id) ? this.pendingStart : undefined;
+            const measurable = !this.active && !this.seen.has(id);
+            const startedAt = measurable ? this.pendingStart : undefined;
             this.pendingStart = undefined;
             this.seen.add(id);
             this.models.add(model);
-            this.active = { id, model, startedAt, usage: { ...usage }, finalUsage: false };
+            this.active = { id, model, startedAt, usage: { ...usage }, finalUsage: false, measurable };
+        } else if (this.active && (event.type === 'content_block_delta' || event.type === 'content_block_start')) {
+            const content = event.type === 'content_block_delta' ? event.delta : event.content_block;
+            const chunk = 'text' in content ? content.text : 'thinking' in content ? content.thinking
+                : 'partial_json' in content ? content.partial_json : undefined;
+            if (typeof chunk === 'string' && chunk.length > 0) {
+                this.active.firstTokenAt ??= now;
+                this.active.lastTokenAt = now;
+            }
         } else if (event.type === 'message_delta' && this.active) {
             const output = event.usage.output_tokens;
             if (!Number.isSafeInteger(output) || output < 0
                 || (typeof this.active.usage.output_tokens === 'number' && output < this.active.usage.output_tokens)) {
                 this.active.startedAt = undefined;
+                this.active.measurable = false;
             }
             this.active.usage = { ...this.active.usage, ...event.usage };
             this.active.finalUsage = typeof event.delta.stop_reason === 'string';
@@ -75,12 +93,18 @@ export class ClaudeModelRequestTokenSpeed {
             const usage = UsageSchema.safeParse(response.usage);
             if (!response.finalUsage || !usage.success) return;
             this.completed = { id: response.id, model: response.model, usage: usage.data };
+            const generationSamplesBefore = this.generation.completedSamples;
+            if (response.measurable) {
+                this.generation.record(usage.data.output_tokens, response.firstTokenAt, response.lastTokenAt, response.startedAt);
+            }
             const duration = response.startedAt === undefined ? undefined : now - response.startedAt;
-            if (outputTokensPerSecond(usage.data.output_tokens, duration) !== undefined) {
+            const measuredRequest = outputTokensPerSecond(usage.data.output_tokens, duration) !== undefined;
+            if (measuredRequest) {
                 this.sampledTokens += usage.data.output_tokens;
                 this.sampledDuration += duration!;
                 this.sampledRequests += 1;
             }
+            if (measuredRequest || this.generation.completedSamples > generationSamplesBefore) this.completedSamples++;
         }
     }
 
@@ -90,7 +114,7 @@ export class ClaudeModelRequestTokenSpeed {
 
     /** Monotonic count of requests that added a timed sample to this turn. */
     get completedSampleCount(): number {
-        return this.sampledRequests;
+        return this.completedSamples;
     }
 
     /** Usage of the request that finished last, refreshed even without usable timing. */
@@ -107,6 +131,10 @@ export class ClaudeModelRequestTokenSpeed {
 
     get tokensPerSecond(): number | undefined {
         return this.models.size === 1 ? outputTokensPerSecond(this.sampledTokens, this.sampledDuration) : undefined;
+    }
+
+    get generationUsage(): GenerationUsage {
+        return this.models.size === 1 ? this.generation.usage : {};
     }
 
     get canUseApiDuration(): boolean {

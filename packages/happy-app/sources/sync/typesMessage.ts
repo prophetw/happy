@@ -8,6 +8,13 @@ export type TokenSpeedSample = {
     requests: number;
 };
 
+/** Content-stream throughput and average first-token wait, sampled independently. */
+export type GenerationMetrics = {
+    tokensPerSecond?: number;
+    sample?: TokenSpeedSample;
+    timeToFirstTokenMs?: number;
+};
+
 export type ToolCall = {
     /** Provider/session-protocol tool-call id used to join side-channel UI state. */
     callId?: string;
@@ -97,6 +104,7 @@ export type AgentTextMessage = {
     tokensPerSecond?: number;
     /** Totals behind that rate, shown when the user asks how it was calculated. */
     tokensPerSecondSample?: TokenSpeedSample;
+    generationMetrics?: GenerationMetrics;
     meta?: MessageMeta;
 }
 

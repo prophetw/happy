@@ -3,13 +3,13 @@ import { normalizeRawMessage } from './typesRaw';
 import { createReducer, reducer } from './reducer/reducer';
 
 function usageMessage(id: string, time: number, speed?: unknown, turn?: string, scope: unknown = 'model_request',
-    sample?: { tokens: number; duration_ms: number; requests: number }) {
+    sample?: { tokens: number; duration_ms: number; requests: number }, metrics?: Record<string, unknown>) {
     return normalizeRawMessage(id, null, time, {
         role: 'session', content: { type: 'session', data: {
             id, time, role: 'agent', turn, ev: { t: 'service', text: '' },
             usage: { input_tokens: 1200, output_tokens: 50, output_tokens_per_second: speed,
                 ...(scope !== null ? { output_tokens_per_second_scope: scope } : {}),
-                ...(sample ? { output_tokens_per_second_sample: sample } : {}) },
+                ...(sample ? { output_tokens_per_second_sample: sample } : {}), ...metrics },
         } },
     } as any)!;
 }
@@ -29,6 +29,55 @@ function replySpeed(result: ReturnType<typeof reducer>, text: string) {
 }
 
 describe('output speed normalization and storage', () => {
+    it('preserves generation timing separately from the legacy request rate, on the correct turn', () => {
+        const state = createReducer();
+        reducer(state, [textMessage('reply', 1000, 'agent')]);
+        const result = reducer(state, [usageMessage('metrics', 2000, 10, 'turn-1', 'model_request', undefined, {
+            generation_tokens_per_second: 50, time_to_first_token_ms: 8000,
+            generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+        })]);
+        const reply = result.messages.find(m => m.kind === 'agent-text');
+        expect(reply?.kind === 'agent-text' && reply.generationMetrics).toEqual({
+            tokensPerSecond: 50, timeToFirstTokenMs: 8000, sample: { tokens: 100, durationMs: 2000, requests: 1 },
+        });
+        expect(replySpeed(result, 'reply')).toBe(10);
+        expect(result.messages).toHaveLength(1);
+    });
+
+    it('attaches a wait-only snapshot without requiring a speed or creating blank messages', () => {
+        const result = reducer(createReducer(), [textMessage('reply', 1000, 'agent'),
+            usageMessage('wait', 2000, undefined, 'turn-1', null, undefined, { time_to_first_token_ms: 0 })]);
+        const reply = result.messages.find(m => m.kind === 'agent-text');
+        expect(reply?.kind === 'agent-text' && reply.generationMetrics).toEqual({ timeToFirstTokenMs: 0 });
+        expect(result.messages).toHaveLength(1);
+    });
+
+    it('drops invalid generation metrics without losing valid wait or context usage', () => {
+        const result = reducer(createReducer(), [textMessage('reply', 1000, 'agent'),
+            usageMessage('invalid', 2000, undefined, undefined, null, undefined, {
+                generation_tokens_per_second: -1, time_to_first_token_ms: 8000,
+                generation_tokens_per_second_sample: { tokens: 0, duration_ms: 0, requests: 0 },
+            })]);
+        const reply = result.messages.find(m => m.kind === 'agent-text');
+        expect(reply?.kind === 'agent-text' && reply.generationMetrics).toEqual({ timeToFirstTokenMs: 8000 });
+        expect(result.usage?.contextSize).toBe(1200);
+    });
+
+    it('moves generation metrics to the final reply and keeps the next turn independent', () => {
+        const state = createReducer();
+        reducer(state, [textMessage('progress', 1000, 'agent'),
+            usageMessage('generation', 2000, undefined, undefined, null, undefined, {
+                generation_tokens_per_second: 50, time_to_first_token_ms: 8000,
+            })]);
+        const final = reducer(state, [textMessage('final', 3000, 'agent')]);
+        const replies = final.messages.filter(m => m.kind === 'agent-text');
+        expect(replies.find(m => m.text === 'progress')?.generationMetrics).toBeUndefined();
+        expect(replies.find(m => m.text === 'final')?.generationMetrics).toEqual({ tokensPerSecond: 50, timeToFirstTokenMs: 8000 });
+        const next = reducer(state, [textMessage('next-user', 4000, 'user', 'turn-2'), textMessage('next-reply', 5000, 'agent', 'turn-2')]);
+        expect(next.messages.find(m => m.kind === 'agent-text' && m.text === 'next-reply'))
+            .not.toHaveProperty('generationMetrics');
+    });
+
     it.each([null, 'turn', 'unknown'])('hides legacy or unrecognized speed scope: %s', (scope) => {
         const message = usageMessage('legacy', 1000, 50, undefined, scope);
         const result = reducer(createReducer(), [textMessage('reply', 500, 'agent'), message]);

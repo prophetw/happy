@@ -577,7 +577,11 @@ export const ru: TranslationStructure = {
             badgePlan: 'Планирование',
         },
         context: {
-            outputSpeed: ({ speed }: { speed: string }) => `Модель ${speed} tok/s`,
+            outputSpeed: ({ speed }: { speed: string }) => `Запрос ${speed} tok/s`,
+            generationSpeed: ({ speed }: { speed: string }) => `Генерация ${speed} tok/s`,
+            firstTokenWait: ({ seconds }: { seconds: string }) => `Первый токен ${seconds} s`,
+            generationSpeedTitle: "Скорость генерации и ожидание первого токена",
+            generationSpeedDescription: "Скорость — выходные токены, делённые на время от первого до последнего фрагмента, включая рассуждения и аргументы инструментов. Ожидание запроса и работа инструментов исключены. Первый токен — среднее ожидание, которое может включать локальную подготовку. Показаны только надёжные измерения.",
             outputSpeedTitle: "Выборочная скорость модели",
             outputSpeedDescription: "Выходные токены, делённые на время достоверно измеренных ответов модели. Выборка может включать только первый ответ. Учитывает обработку ввода, ожидание запроса, рассуждение и передачу; исключает инструменты и ожидание подтверждения. Для Codex также учитывается локальная подготовка запроса. Ответы без достоверного времени пропускаются.",
             outputSpeedCalculation: ({ tokens, seconds, requests, speed }: { tokens: string; seconds: string; requests: number; speed: string }) => `Выборка из ${requests} запросов: ${tokens} выходных токенов ÷ ${seconds} с = ${speed} tok/s`,

@@ -196,7 +196,8 @@ export class SDKToLogConverter {
         const completed = this.tokenSpeed.latestSample
         const totals = this.tokenSpeed.sampledTotals
         const tokensPerSecond = this.tokenSpeed.tokensPerSecond
-        if (!completed || !totals || tokensPerSecond === undefined) return null
+        const generation = this.tokenSpeed.generationUsage
+        if (!completed || (tokensPerSecond === undefined && Object.keys(generation).length === 0)) return null
         const usage = UsageSchema.safeParse(this.withContextWindow({
             model: completed.model,
             usage: completed.usage,
@@ -218,9 +219,12 @@ export class SDKToLogConverter {
             subtype: 'happy_context_usage',
             usage: {
                 ...usage.data,
-                output_tokens_per_second: tokensPerSecond,
-                output_tokens_per_second_scope: 'model_request',
-                ...speedSampleUsage(totals),
+                ...generation,
+                ...(tokensPerSecond !== undefined ? {
+                    output_tokens_per_second: tokensPerSecond,
+                    output_tokens_per_second_scope: 'model_request',
+                    ...speedSampleUsage(totals),
+                } : {}),
             },
         } as RawJSONLines
         this.lastUuid = uuid
@@ -386,8 +390,9 @@ export class SDKToLogConverter {
                             requests: 1,
                         }
                         : undefined
+                const generation = resultMsg.subtype === 'success' && !resultMsg.is_error ? this.tokenSpeed.generationUsage : {}
                 this.resetRequestMeasurements()
-                if (usage.success && (tokensPerSecond !== undefined || (typeof usage.data.context_window === 'number'
+                if (usage.success && (tokensPerSecond !== undefined || Object.keys(generation).length > 0 || (typeof usage.data.context_window === 'number'
                     && Number.isFinite(usage.data.context_window) && usage.data.context_window > 0))) {
                     // A system snapshot avoids replaying chat text and avoids
                     // charging the same assistant usage a second time.
@@ -395,7 +400,7 @@ export class SDKToLogConverter {
                         ...baseFields,
                         type: 'system',
                         subtype: 'happy_context_usage',
-                        usage: { ...usage.data, ...(tokensPerSecond !== undefined
+                        usage: { ...usage.data, ...generation, ...(tokensPerSecond !== undefined
                             ? {
                                 output_tokens_per_second: tokensPerSecond,
                                 output_tokens_per_second_scope: 'model_request',

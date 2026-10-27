@@ -44,7 +44,7 @@ describe('Claude query initialization', () => {
             const callback = options.hooks![name]![0].hooks[0];
             expect(await callback({ ...base, hook_event_name: name } as any, undefined, hookOptions)).toEqual({});
         }
-        expect(onTokenSpeedBoundary.mock.calls.slice(1)).toEqual(Array(6).fill(['interrupt']));
+        expect(onTokenSpeedBoundary.mock.calls.slice(1)).toEqual([...Array(5).fill(['interrupt']), ['prompt-submit']]);
     });
 
     it('creates repeated SDK queries without collecting a process diagnostic report', () => {

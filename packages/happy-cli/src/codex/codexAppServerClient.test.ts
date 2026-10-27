@@ -272,6 +272,43 @@ describe('CodexAppServerClient sandbox integration', () => {
         ]);
     });
 
+    it('carries native content timing through usage while ignoring empty, child, and stale deltas', async () => {
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        (client as any)._threadId = 'thread-main';
+        const clock = vi.spyOn(performance, 'now');
+        const state: CodexTurnState = { currentTurnId: null, tokenSpeedTracker: new CodexTokenSpeedTracker() };
+        const envelopes: ReturnType<typeof mapCodexMcpMessageToSessionEnvelopes>['envelopes'] = [];
+        client.setEventHandler(event => {
+            const mapped = mapCodexMcpMessageToSessionEnvelopes(event, state);
+            state.currentTurnId = mapped.currentTurnId;
+            envelopes.push(...mapped.envelopes);
+        });
+        const notify = (at: number, method: string, data: Record<string, unknown>) => {
+            clock.mockReturnValue(at);
+            (client as any).handleNotification(method, { threadId: 'thread-main', turnId: 'turn-main', ...data });
+        };
+        try {
+            notify(0, 'turn/started', { turn: { id: 'turn-main' } });
+            notify(1000, 'item/agentMessage/delta', { delta: '' });
+            notify(2000, 'item/agentMessage/delta', { delta: 'child', threadId: 'child' });
+            notify(3000, 'item/agentMessage/delta', { delta: 'old', turnId: 'old-turn' });
+            notify(8000, 'item/reasoning/summaryTextDelta', { delta: 'Thinking' });
+            notify(10000, 'item/agentMessage/delta', { delta: 'Done' });
+            notify(10100, 'item/completed', { item: { type: 'agentMessage', id: 'reply', text: 'Done' } });
+            notify(11000, 'thread/tokenUsage/updated', { tokenUsage: {
+                total: { inputTokens: 1200, outputTokens: 100 }, last: { inputTokens: 1200, outputTokens: 100 },
+            } });
+            expect(envelopes.filter(envelope => envelope.usage).at(-1)?.usage).toMatchObject({
+                generation_tokens_per_second: 50, time_to_first_token_ms: 8000,
+                generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+            });
+            expect(envelopes.filter(envelope => envelope.ev.t === 'text')).toHaveLength(1);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
     it.each(['imageView', 'sleep', 'contextCompaction'])
     ('recovers a model speed sample after native %s instead of disabling the turn', async (type) => {
         const { CodexAppServerClient } = await import('./codexAppServerClient');

@@ -22,6 +22,9 @@ const usageDataSchema = z.object({
     output_tokens_per_second: z.number().positive().optional().catch(undefined),
     output_tokens_per_second_scope: z.literal('model_request').optional().catch(undefined),
     output_tokens_per_second_sample: tokenSpeedSampleSchema.optional().catch(undefined),
+    generation_tokens_per_second: z.number().finite().positive().optional().catch(undefined),
+    generation_tokens_per_second_sample: tokenSpeedSampleSchema.optional().catch(undefined),
+    time_to_first_token_ms: z.number().finite().nonnegative().optional().catch(undefined),
     context_window: z.number().optional(),
     service_tier: z.string().optional(),
 }).passthrough();

@@ -1,5 +1,5 @@
 import { assignTurns, type TurnAssignable } from './agentTurns';
-import type { TokenSpeedSample } from '@/sync/typesMessage';
+import type { GenerationMetrics, TokenSpeedSample } from '@/sync/typesMessage';
 
 type TurnSpeedMessage = TurnAssignable & {
     id: string;
@@ -15,12 +15,14 @@ export type OutputSpeedSample = {
     tokensPerSecond?: number;
     /** Tokens and duration that produced the rate, for the explanation modal. */
     sample?: TokenSpeedSample;
+    generationMetrics?: GenerationMetrics;
 };
 
 /** Rate and its underlying totals assigned to one turn's final visible reply. */
 export type TurnSpeedAssignment = {
     tokensPerSecond?: number;
     sample?: TokenSpeedSample;
+    generationMetrics?: GenerationMetrics;
 };
 
 /** Associates usage snapshots with each turn's last visible reply, never a session-wide rate. */
@@ -63,8 +65,11 @@ export function buildAgentTurnTokenSpeedByMessageId(
                 : undefined;
         const speed = sample.tokensPerSecond;
         const valid = typeof speed === 'number' && Number.isFinite(speed) && speed > 0;
-        if (final) result.set(final, valid
-            ? { tokensPerSecond: speed, ...(sample.sample ? { sample: sample.sample } : {}) }
+        if (final) result.set(final, valid || sample.generationMetrics
+            ? {
+                ...(valid ? { tokensPerSecond: speed, ...(sample.sample ? { sample: sample.sample } : {}) } : {}),
+                ...(sample.generationMetrics ? { generationMetrics: sample.generationMetrics } : {}),
+            }
             : undefined);
     }
     return result;

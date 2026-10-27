@@ -14,6 +14,76 @@ const delta = (output: unknown, stopReason: string | null = 'end_turn') => strea
 const stop = () => stream({ type: 'message_stop' });
 
 describe('ClaudeModelRequestTokenSpeed', () => {
+    it('measures actual thinking/text deltas separately from request wait, headers, and trailing usage', () => {
+        const tracker = new ClaudeModelRequestTokenSpeed();
+        tracker.boundary('prompt-submit', 0);
+        tracker.observe(start(), 1000);
+        tracker.observe(stream({ type: 'content_block_delta', delta: { type: 'text_delta', text: '' } }), 2000);
+        tracker.observe(stream({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'Thinking' } }), 8000);
+        tracker.observe(stream({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'Done' } }), 10000);
+        tracker.observe(delta(100), 10999);
+        tracker.observe(stop(), 11000);
+        expect(tracker.generationUsage).toEqual({
+            generation_tokens_per_second: 50,
+            generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+            time_to_first_token_ms: 8000,
+        });
+    });
+
+    it('can measure streaming without guessing a missing request start, and ignores repeated response ids', () => {
+        const tracker = new ClaudeModelRequestTokenSpeed();
+        for (const offset of [0, 10000]) {
+            tracker.observe(start(), offset + 1000);
+            tracker.observe(stream({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{' } }), offset + 2000);
+            tracker.observe(stream({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '}' } }), offset + 4000);
+            tracker.observe(delta(100), offset + 4999);
+            tracker.observe(stop(), offset + 5000);
+        }
+        expect(tracker.generationUsage).toEqual({
+            generation_tokens_per_second: 50,
+            generation_tokens_per_second_sample: { tokens: 100, duration_ms: 2000, requests: 1 },
+        });
+    });
+
+    it('does not infer token arrival from stream headers or assistant placeholder messages', () => {
+        const tracker = new ClaudeModelRequestTokenSpeed();
+        tracker.boundary('tool-batch-complete', 0);
+        tracker.observe(start(), 1000);
+        tracker.observe(delta(100), 2000);
+        tracker.observe(stop(), 3000);
+        expect(tracker.generationUsage).toEqual({});
+    });
+
+    it.each([0, 60000])('weights complete content streams while excluding %i ms of tool and permission wait', extra => {
+        const tracker = new ClaudeModelRequestTokenSpeed();
+        const content = (text: string) => stream({ type: 'content_block_delta', delta: { type: 'text_delta', text } });
+        tracker.boundary('prompt-submit', 0);
+        tracker.observe(start('one'), 1000);
+        tracker.observe(content('First'), 2000);
+        tracker.observe(content('Last'), 4000);
+        tracker.observe(delta(100), 4999);
+        tracker.observe(stop(), 5000);
+        tracker.boundary('interrupt', 6000);
+        tracker.boundary('tool-batch-complete', 7000 + extra);
+        tracker.observe(start('two'), 8000 + extra);
+        tracker.observe(content('First'), 9000 + extra);
+        tracker.observe(content('Last'), 11000 + extra);
+        tracker.observe(delta(300), 11999 + extra);
+        tracker.observe(stop(), 12000 + extra);
+        tracker.boundary('tool-batch-complete', 13000 + extra);
+        tracker.observe(start('permission'), 14000 + extra);
+        tracker.observe(content('Interrupted'), 15000 + extra);
+        tracker.boundary('interrupt', 16000 + extra);
+        tracker.observe(content('After wait'), 76000 + extra);
+        tracker.observe(delta(900), 76999 + extra);
+        tracker.observe(stop(), 77000 + extra);
+        expect(tracker.generationUsage).toEqual({
+            generation_tokens_per_second: 100,
+            generation_tokens_per_second_sample: { tokens: 400, duration_ms: 4000, requests: 2 },
+            time_to_first_token_ms: 2000,
+        });
+    });
+
     it('counts each timed request so a long turn can publish before its result', () => {
         const tracker = new ClaudeModelRequestTokenSpeed();
         tracker.boundary('tool-batch-complete', 1000);

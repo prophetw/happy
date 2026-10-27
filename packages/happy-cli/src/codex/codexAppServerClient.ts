@@ -465,6 +465,15 @@ export class CodexAppServerClient {
             return true;
         }
 
+        if (['item/agentMessage/delta', 'item/reasoning/textDelta', 'item/reasoning/summaryTextDelta'].includes(method)) {
+            if (this.isSessionThreadNotification(params) && this.isCurrentTurn(this.extractTurnId(params))
+                && typeof params?.delta === 'string' && params.delta.length > 0) {
+                // Timing only: do not duplicate chat text or log every content chunk.
+                this.eventHandler?.({ type: 'token_speed_output_delta', kind: method === 'item/agentMessage/delta' ? 'text' : 'reasoning' });
+            }
+            return true;
+        }
+
         const item = params?.item;
         if (!item || typeof item !== 'object') {
             return method.startsWith('item/');

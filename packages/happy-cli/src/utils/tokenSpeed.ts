@@ -34,11 +34,56 @@ function outputCount(value: unknown): number | undefined {
     return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
 }
 
+export type GenerationUsage = {
+    generation_tokens_per_second?: number;
+    generation_tokens_per_second_sample?: { tokens: number; duration_ms: number; requests: number };
+    time_to_first_token_ms?: number;
+};
+
+/** Aggregates completed content streams; request waiting never enters the rate. */
+export class GenerationStats {
+    private tokens = 0;
+    private durationMs = 0;
+    private requests = 0;
+    private waitMs = 0;
+    private waitRequests = 0;
+    completedSamples = 0;
+
+    record(tokens: number, first: number | undefined, last: number | undefined, started?: number): void {
+        if (!Number.isSafeInteger(tokens) || tokens <= 0 || first === undefined || !Number.isFinite(first)
+            || (last !== undefined && (!Number.isFinite(last) || last < first))) return;
+        const duration = last === undefined ? undefined : last - first;
+        const measuredGeneration = outputTokensPerSecond(tokens, duration) !== undefined;
+        const measuredWait = started !== undefined && Number.isFinite(started) && started <= first;
+        if (measuredGeneration) {
+            this.tokens += tokens;
+            this.durationMs += duration!;
+            this.requests++;
+        }
+        if (measuredWait) {
+            this.waitMs += first - started!;
+            this.waitRequests++;
+        }
+        if (measuredGeneration || measuredWait) this.completedSamples++;
+    }
+
+    get usage(): GenerationUsage {
+        const rate = outputTokensPerSecond(this.tokens, this.durationMs);
+        return {
+            ...(rate !== undefined ? {
+                generation_tokens_per_second: rate,
+                generation_tokens_per_second_sample: { tokens: this.tokens, duration_ms: this.durationMs, requests: this.requests },
+            } : {}),
+            ...(this.waitRequests > 0 ? { time_to_first_token_ms: this.waitMs / this.waitRequests } : {}),
+        };
+    }
+}
+
 /**
- * Keeps the first measurable Codex response of a turn. A completed request's
- * usage provides another boundary when tools have interrupted the initial one.
+ * Keeps the legacy request rate and independently aggregates content streams.
+ * A completed request's usage provides another boundary after tool execution.
  * If those tools are still running, timing resumes only after all of them end.
- * Ambiguous activity and user waits fail closed; a completed sample is frozen.
+ * Ambiguous activity and user waits fail closed; completed samples survive.
  */
 export class CodexTokenSpeedTracker {
     private startedAt?: number;
@@ -55,6 +100,10 @@ export class CodexTokenSpeedTracker {
     private rate?: number;
     private rateTokens?: number;
     private rateDurationMs?: number;
+    private firstTokenAt?: number;
+    private lastTokenAt?: number;
+    private sawReasoningDelta = false;
+    private generation = new GenerationStats();
 
     observe(message: Record<string, unknown>, now = performance.now()): {
         usage: Record<string, unknown>;
@@ -74,6 +123,10 @@ export class CodexTokenSpeedTracker {
             this.rate = undefined;
             this.rateTokens = undefined;
             this.rateDurationMs = undefined;
+            this.firstTokenAt = undefined;
+            this.lastTokenAt = undefined;
+            this.sawReasoningDelta = false;
+            this.generation = new GenerationStats();
             return undefined;
         }
 
@@ -86,7 +139,7 @@ export class CodexTokenSpeedTracker {
             const previousTotal = this.latestTotal;
             this.latestTotal = total;
             this.latestUsage = message;
-            if (this.inTurn && this.rate === undefined && !this.invalid) {
+            if (this.inTurn && !this.invalid) {
                 if (previousTotal !== undefined && total < previousTotal) {
                     this.invalid = true;
                 } else if (!this.hasActivity) {
@@ -99,12 +152,21 @@ export class CodexTokenSpeedTracker {
                     && (this.baseline === undefined || total - this.baseline === last)) {
                     if (this.startedAt !== undefined && this.hasResponse && this.activeTools.size === 0) {
                         const durationMs = now - this.startedAt;
-                        this.rate = outputTokensPerSecond(last, durationMs);
-                        this.invalid = this.rate === undefined;
-                        if (this.rate !== undefined) {
-                            this.rateTokens = last;
-                            this.rateDurationMs = durationMs;
+                        if (this.rate === undefined) {
+                            this.rate = outputTokensPerSecond(last, durationMs);
+                            this.invalid = this.rate === undefined;
+                            if (this.rate !== undefined) {
+                                this.rateTokens = last;
+                                this.rateDurationMs = durationMs;
+                            }
                         }
+                        const counts = (message.last ?? info?.last_token_usage) as Record<string, unknown> | undefined;
+                        const reasoning = counts?.reasoningOutputTokens ?? counts?.reasoning_output_tokens;
+                        // A text-only stream cannot time hidden reasoning whose
+                        // tokens are included in the output count. Keep its wait.
+                        const generationEnd = typeof reasoning === 'number' && reasoning > 0 && !this.sawReasoningDelta
+                            ? undefined : this.lastTokenAt;
+                        this.generation.record(last, this.firstTokenAt, generationEnd, this.startedAt);
                     }
                     // The usage closes one request even if its own start was
                     // unusable. The next request can be timed from here, or
@@ -115,6 +177,9 @@ export class CodexTokenSpeedTracker {
                     this.hasActivity = false;
                     this.hasResponse = false;
                     this.responseId = undefined;
+                    this.firstTokenAt = undefined;
+                    this.lastTokenAt = undefined;
+                    this.sawReasoningDelta = false;
                 } else {
                     // Missing or mismatched counts cannot identify one request.
                     this.invalid = true;
@@ -123,7 +188,7 @@ export class CodexTokenSpeedTracker {
         } else if (message.type === 'task_complete' || message.type === 'turn_aborted') {
             this.inTurn = false;
         } else {
-            if (!this.inTurn || this.rate !== undefined || this.invalid) return undefined;
+            if (!this.inTurn || this.invalid) return undefined;
             const type = String(message.type);
             const toolEvent = /^(exec_command|mcp_tool_call|patch_apply|collab_agent|token_speed_tool)_(begin|end)$/.exec(type);
             if (toolEvent) {
@@ -135,6 +200,9 @@ export class CodexTokenSpeedTracker {
                     if (this.activeTools.has(key)) this.invalid = true;
                     this.activeTools.add(key);
                     this.startedAt = undefined;
+                    this.firstTokenAt = undefined;
+                    this.lastTokenAt = undefined;
+                    this.sawReasoningDelta = false;
                     this.resumeAfterTools = false;
                     this.hasActivity = true;
                 } else if (!this.activeTools.delete(key)) {
@@ -142,6 +210,14 @@ export class CodexTokenSpeedTracker {
                 } else if (this.activeTools.size === 0 && this.resumeAfterTools && !this.hasResponse) {
                     this.startedAt = now;
                     this.resumeAfterTools = false;
+                }
+            } else if (message.type === 'token_speed_output_delta'
+                || (['agent_message_delta', 'agent_reasoning_delta', 'agent_reasoning_raw_content_delta'].includes(type)
+                    && typeof message.delta === 'string' && message.delta.length > 0)) {
+                if (this.startedAt !== undefined && this.activeTools.size === 0) {
+                    this.firstTokenAt ??= now;
+                    this.lastTokenAt = now;
+                    if (message.kind === 'reasoning' || type.startsWith('agent_reasoning')) this.sawReasoningDelta = true;
                 }
             } else if (message.type === 'agent_message') {
                 if (typeof message.message === 'string' && message.message.trim().length > 0) {
@@ -170,5 +246,9 @@ export class CodexTokenSpeedTracker {
         return this.rateTokens !== undefined && this.rateDurationMs !== undefined
             ? { tokens: this.rateTokens, durationMs: this.rateDurationMs, requests: 1 }
             : undefined;
+    }
+
+    get generationUsage(): GenerationUsage {
+        return this.generation.usage;
     }
 }

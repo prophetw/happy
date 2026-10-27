@@ -919,8 +919,10 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
     const result = mapCodexMcpMessageToSessionEnvelopesInner(message, state);
     if (speed) {
         const sample = state.tokenSpeedTracker?.sample;
+        const generation = state.tokenSpeedTracker?.generationUsage;
         if (message.type === 'token_count') {
             for (const envelope of result.envelopes) {
+                if (envelope.usage) Object.assign(envelope.usage, generation);
                 if (envelope.usage && speed.tokensPerSecond !== undefined) {
                     envelope.usage.output_tokens_per_second = speed.tokensPerSecond;
                     envelope.usage.output_tokens_per_second_scope = 'model_request';
@@ -931,7 +933,7 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
             const usage = pickTokenUsage(speed.usage);
             if (usage) {
                 result.envelopes.push(createEnvelope('agent', { t: 'service', text: '' }, {
-                    usage: { ...usage, ...(speed.tokensPerSecond !== undefined
+                    usage: { ...usage, ...generation, ...(speed.tokensPerSecond !== undefined
                         ? {
                             output_tokens_per_second: speed.tokensPerSecond,
                             output_tokens_per_second_scope: 'model_request',

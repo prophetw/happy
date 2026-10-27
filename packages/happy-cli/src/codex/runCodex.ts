@@ -736,6 +736,10 @@ export async function runCodex(opts: {
 
     // Event handler: same EventMsg types as the legacy MCP server — no changes needed
     client.setEventHandler((msg) => {
+        if (msg.type === 'token_speed_output_delta') {
+            tokenSpeedTracker.observe(msg);
+            return;
+        }
         logger.debug(`[Codex] Event: ${JSON.stringify(msg)}`);
         const isSubagentScopedEvent = hasCodexSubagentReference(msg as Record<string, unknown>);
         if (msg.type === 'agent_message' && msg.delivery === 'async' && Array.isArray(msg.questions)) {
@@ -853,6 +857,7 @@ export async function runCodex(opts: {
             || msg.type === 'agent_reasoning'
             || msg.type === 'agent_reasoning_section_break';
         const isForwardableSubagentReasoning = isSubagentScopedEvent && msg.type === 'agent_reasoning';
+        if (isReasoningEvent && !isSubagentScopedEvent) tokenSpeedTracker.observe(msg);
         if (msg.type !== 'turn_diff' && (!isReasoningEvent || isForwardableSubagentReasoning)) {
             const mapped = mapCodexMcpMessageToSessionEnvelopes(msg, {
                 currentTurnId,

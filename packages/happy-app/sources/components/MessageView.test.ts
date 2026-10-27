@@ -23,7 +23,7 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/sync/sync', () => ({ sync: { sendMessage: vi.fn() } }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
-vi.mock('@/sync/storage', () => ({ useSetting: () => 'default' }));
+vi.mock('@/sync/storage', () => ({ useSetting: () => 'default', storage: { getState: () => ({ sessions: {} }) } }));
 vi.mock('@/utils/userMessageBubbleColor', () => ({ resolveUserMessageBubbleColor: () => ({}) }));
 vi.mock('@/utils/messageTimestamp', () => ({
     formatMessageTimestamp: vi.fn(() => 'message.timestamp'),
@@ -169,6 +169,11 @@ describe('agent text block', () => {
         expect(footer.findAllByType('Text').map((node: any) => node.props.children))
             .toContain('message.duration · message.timestamp');
         expect(footer.findByProps({ accessibilityLabel: 'common.copy' })).toBeDefined();
+    });
+
+    it('shows generation and first-token wait in the final reply footer', () => {
+        const renderer = render({ ...agentBase, generationMetrics: { tokensPerSecond: 50, timeToFirstTokenMs: 8000 } });
+        expect(renderer.root.findByProps({ accessibilityLabel: 'agentInput.context.generationSpeed · agentInput.context.firstTokenWait' })).toBeDefined();
     });
 
     it('omits speed for historical replies without a usage sample', () => {

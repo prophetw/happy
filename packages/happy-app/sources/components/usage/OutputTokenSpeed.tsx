@@ -4,7 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import type { TokenSpeedSample } from '@/sync/typesMessage';
+import type { GenerationMetrics, TokenSpeedSample } from '@/sync/typesMessage';
 
 export function formatTokenSpeed(tokensPerSecond: number | undefined): string | null {
     if (tokensPerSecond === undefined || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return null;
@@ -35,21 +35,28 @@ export function formatTokenSpeedCalculation(sample: TokenSpeedSample | undefined
 export const OutputTokenSpeed = React.memo(function OutputTokenSpeed(props: {
     tokensPerSecond?: number;
     sample?: TokenSpeedSample;
+    generationMetrics?: GenerationMetrics;
 }) {
     const { theme } = useUnistyles();
-    const speed = formatTokenSpeed(props.tokensPerSecond);
-    if (speed === null) return null;
-    const label = t('agentInput.context.outputSpeed', { speed });
-    const description = t('agentInput.context.outputSpeedDescription');
-    const calculation = formatTokenSpeedCalculation(props.sample);
+    const generation = props.generationMetrics;
+    const speed = formatTokenSpeed(generation ? generation.tokensPerSecond : props.tokensPerSecond);
+    const wait = generation?.timeToFirstTokenMs;
+    const waitLabel = typeof wait === 'number' && Number.isFinite(wait) && wait >= 0
+        ? t('agentInput.context.firstTokenWait', { seconds: (wait / 1000).toFixed(2) }) : null;
+    const label = [speed !== null ? t(generation ? 'agentInput.context.generationSpeed' : 'agentInput.context.outputSpeed', { speed }) : null,
+        waitLabel].filter(Boolean).join(' · ');
+    if (!label) return null;
+    const description = t(generation ? 'agentInput.context.generationSpeedDescription' : 'agentInput.context.outputSpeedDescription');
+    const calculation = formatTokenSpeedCalculation(generation ? generation.sample : props.sample);
     return (
         <Pressable
+            style={{ flexShrink: 1 }}
             accessibilityRole="button"
             accessibilityLabel={label}
             hitSlop={10}
             onPress={() => Modal.alert(
-                t('agentInput.context.outputSpeedTitle'),
-                calculation ? `${calculation}\n\n${description}` : description,
+                t(generation ? 'agentInput.context.generationSpeedTitle' : 'agentInput.context.outputSpeedTitle'),
+                [calculation, waitLabel, description].filter(Boolean).join('\n\n'),
             )}
         >
             <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
