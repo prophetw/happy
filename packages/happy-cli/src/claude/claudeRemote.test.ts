@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeRemote } from './claudeRemote';
 import { query } from '@/claude/sdk';
 import type { EnhancedMode } from './loop';
+import type { SDKMessage } from './sdk';
+import { SDKToLogConverter } from './utils/sdkToLogConverter';
+import { mapClaudeLogMessageToSessionEnvelopes, type ClaudeSessionProtocolState } from './utils/sessionProtocolMapper';
+import type { SessionEnvelope } from '@slopus/happy-wire';
 
 // No provider process, credentials, transcript watcher, or real log files.
 vi.mock('@/lib', () => ({ logger: { debug: vi.fn(), debugLargeJson: vi.fn() } }));
@@ -64,18 +68,74 @@ describe('claudeRemote', () => {
         expect(callbacks.onSDKMetadata).toHaveBeenCalledWith(expect.objectContaining({ currentModelCode: 'gateway-model' }));
     });
 
-    it('forwards stream lifecycle and usage while keeping content deltas out of chat and logs', async () => {
+    it('forwards stream content and lifecycle to the timing callback without logging partial content', async () => {
         const lifecycle = ['message_start', 'message_delta', 'message_stop'].map(type => ({
             type: 'stream_event', event: { type }, parent_tool_use_id: null,
         }));
-        const callbacks = await runMessages([
+        const events = [
             lifecycle[0],
             { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial' } } },
             lifecycle[1], lifecycle[2],
-        ]);
-        expect(callbacks.onMessage.mock.calls.map(([message]) => message)).toEqual(lifecycle);
+        ];
+        const callbacks = await runMessages(events);
+        expect(callbacks.onMessage.mock.calls.map(([message]) => message)).toEqual(events);
         const { logger } = await import('@/lib');
         expect(vi.mocked(logger.debugLargeJson).mock.calls.some(([label]) => String(label).includes('stream_event'))).toBe(false);
+    });
+
+    it('carries real remote content forwarding into generation/wait snapshots without duplicate chat rows', async () => {
+        const converter = new SDKToLogConverter({ cwd: '/fixture/project', sessionId: 'fixture' });
+        const state: ClaudeSessionProtocolState = { currentTurnId: null };
+        const envelopes: SessionEnvelope[] = [];
+        const clock = vi.spyOn(performance, 'now');
+        const stream = (event: Record<string, unknown>) => ({ type: 'stream_event', parent_tool_use_id: null, event });
+        const messages = [
+            { at: 1000, message: stream({ type: 'message_start', message: { id: 'reply', model: 'k3.1-pro', usage: { input_tokens: 1200, output_tokens: 0 } } }) },
+            { at: 8000, message: stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }) },
+            { at: 8000, message: stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'First ' } }) },
+            { at: 10000, message: stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'last' } }) },
+            { at: 10010, message: { type: 'assistant', parent_tool_use_id: null, message: {
+                id: 'reply', model: 'k3.1-pro', content: [{ type: 'text', text: 'First last' }], usage: { input_tokens: 1200, output_tokens: 0 },
+            } } },
+            { at: 10999, message: stream({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 100 } }) },
+            { at: 11000, message: stream({ type: 'message_stop' }) },
+            { at: 12000, message: { type: 'result', subtype: 'success', is_error: false, num_turns: 1,
+                duration_ms: 12000, duration_api_ms: 11000, usage: { input_tokens: 1200, output_tokens: 100 } } },
+        ];
+        vi.mocked(query).mockImplementation(({ options }) => ({
+            async *[Symbol.asyncIterator]() {
+                clock.mockReturnValue(0);
+                options!.onTokenSpeedBoundary!('prompt-submit');
+                for (const { at, message } of messages) {
+                    clock.mockReturnValue(at);
+                    yield message;
+                }
+            },
+        } as any));
+        try {
+            await claudeRemote({
+                sessionId: null, path: '/fixture/project', allowedTools: [], hookSettingsPath: '/fixture/settings.json',
+                nextMessage: vi.fn().mockResolvedValueOnce({ message: 'Original prompt', mode }).mockResolvedValue(null),
+                onReady: vi.fn(), onCompletionEvent: vi.fn(), onSDKMetadata: vi.fn(),
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+                onSessionFound: vi.fn(),
+                onTokenSpeedBoundary: event => converter.observeTokenSpeedBoundary(event),
+                onMessage: message => {
+                    const log = converter.convert(message as SDKMessage);
+                    if (!log) return;
+                    const mapped = mapClaudeLogMessageToSessionEnvelopes(log, state);
+                    state.currentTurnId = mapped.currentTurnId;
+                    envelopes.push(...mapped.envelopes);
+                },
+            });
+            const usage = envelopes.filter(e => e.usage).at(-1)?.usage;
+            expect(usage?.generation_tokens_per_second).toBe(50);
+            expect(usage?.time_to_first_token_ms).toBe(8000);
+            expect(usage?.generation_tokens_per_second_sample).toEqual({ tokens: 100, duration_ms: 2000, requests: 1 });
+            expect(envelopes.filter(e => e.ev.t === 'text').map(e => e.ev)).toEqual([{ t: 'text', text: 'First last' }]);
+        } finally {
+            clock.mockRestore();
+        }
     });
 
     it('explains host OAuth expiry once and closes the turn as failed', async () => {

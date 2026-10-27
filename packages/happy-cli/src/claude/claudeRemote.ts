@@ -266,9 +266,10 @@ export async function claudeRemote(opts: {
 
         for await (const message of response) {
             if (message.type === 'stream_event') {
-                // Forward only request lifecycle/usage. Content deltas must not
-                // duplicate assistant blocks or flood logs and the relay.
-                if (['message_start', 'message_delta', 'message_stop'].includes(message.event.type)) opts.onMessage(message);
+                // The converter needs content timing as well as lifecycle and
+                // usage. It only queues completed usage snapshots, so partial
+                // content never duplicates chat blocks or enters these logs.
+                opts.onMessage(message);
                 continue;
             }
             const authMessage = claudeProviderAuthMessage(message);

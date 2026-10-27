@@ -57,8 +57,9 @@ Codex 也不从最终 agent_message 的到达时间推算首 token。
    - time_to_first_token_ms：有效请求的首个可观测内容平均等待时间，可以为 0。
 2. 旧的 output_tokens_per_second、model_request scope 和 sample 保持原有请求平均口径，
    供旧客户端兼容。App 把这种数据明确标为“请求”，不把旧历史重新标为“生成”。
-3. Claude converter 观察内容流并在完整响应结束后发出快照，result 复用累计采样。
-   内容 delta 不重复进入消息队列。Codex 原生适配器只发出不含正文的计时标记，
+3. Claude 的 claudeRemote 将 SDK 的完整 stream_event（包括内容增量）交给 converter，
+   在完整响应结束后发出快照，result 复用累计采样。内容增量只用于计时，
+   不进入聊天消息队列或内容日志。Codex 原生适配器只发出不含正文的计时标记，
    runCodex 将其直接交给 tracker，不为每个原生内容片段新增日志或聊天行。
 4. App 的 typesRaw.ts 分别校验新字段，异常指标不丢弃消息或上下文用量。
    reducer 将 generationMetrics（tokensPerSecond / sample / timeToFirstTokenMs）
@@ -80,7 +81,9 @@ CLI 与 App 都需要包含本次修改。手机更新不会更新电脑上的 C
   得到 2,341 正文 token；正文流耗时 22.691 秒，速度约 103.2 tok/s，首 token 等待 28.886 秒。
 - Codex：原生客户端 → mapper → tracker 验证正文与思考 delta；过滤空片段、子线程和旧轮次。
   工具多执行一分钟不改变两项指标，已完成样本不受后续等待影响。
-- Claude：converter → mapper 验证新增字段透传；内容片段独立于 message_start / message_stop，
+- Claude：SDK 输入 → claudeRemote 真实转发 → converter → mapper 验证新增字段透传，
+  确保内容增量不会在转发层被过滤，也不会产生重复聊天行或进入内容日志。
+  内容片段独立于 message_start / message_stop，
   完整请求加权、重复响应、工具/确认中断、子线程隔离、未知起点和旧 API 计时兼容。
 - App：验证规范化 → reducer → 回合归属 → 消息底部展示，覆盖等待为 0、只有等待、
   非法指标不丢上下文、生成阶段计算说明和旧指标兼容。
