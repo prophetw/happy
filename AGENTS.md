@@ -195,6 +195,21 @@ EAS 发布成功与手机已经接收分别报告；真机未验证时明确说�
    已指向本仓库且依赖未变时，构建一次、顺序停止 / 启动 daemon、核验 PID 与实际
    `dist/index.mjs` 路径即可，不重复 `npm link`。源码更新可能保持相同版本号，
    不能仅凭版本号认定已更新；已有会话进程不会因此热替换代码，新会话使用新构建。
+   重建 `dist` 后 daemon 会自行交接，通常不需要手动重启：心跳（默认 60 秒，
+   `HAPPY_DAEMON_HEARTBEAT_INTERVAL`）比较 `dist/index.mjs` 的 mtime 与启动时记录的值，
+   变化即清理状态并 spawn 新 daemon（`packages/happy-cli/src/daemon/run.ts:1100`，
+   日志 “Daemon bundle replaced on disk, handing off to new daemon”）。构建后等一个
+   心跳周期，再核验新 daemon 的 PID 与启动时间晚于 `dist` mtime 即可。
+   确需手动停 / 启时（bundle 未变化或要强制重启），把 stop 与 start 放进同一条
+   **由独立进程执行**的序列，例如让脚本 `setsid nohup bash <脚本>` 执行内部的
+   `happy daemon stop`、等待 state 文件消失、`happy daemon start`、回写 status，
+   不要在依赖当前会话存活的前台命令里先停后启。2026-10-27 有过一次实测：在远程会话内
+   执行 `happy daemon stop`，daemon 优雅退出成功，但该会话进程也在同一秒收到终止信号
+   退出，命令后半段没有机会执行，机器停在“已停未启”状态约 8 分钟直到用户手动恢复；
+   当天稍后同样的停 / 启（含 daemon 自交接）两次都未复现，会话均存活，信号发送方不在
+   happy 代码内、**来源未确认**。因此不能假定停 daemon 时当前会话一定安全，按“可能被杀”
+   准备兜底；执行后必须核验 daemon 已用新 PID 起来再报告完成，命令中途被打断时先确认
+   daemon 状态，不能直接结束回合。
 
 ## 6. 原生构建与 TestFlight
 
