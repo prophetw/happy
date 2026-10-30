@@ -37,7 +37,7 @@ export function MobileSessionNotificationContent() {
         // Live presence and its durable push event can describe the same change.
         // Re-arm only after the conversation leaves this status (for example, runs again).
         const keys = new Set(items.map(item => `${item.id}:${item.status}`));
-        const incoming = seen.current ? items.find(item => item.status !== 'intervention_required' && !seen.current!.has(`${item.id}:${item.status}`)) : undefined;
+        const incoming = seen.current ? items.find(item => !seen.current!.has(`${item.id}:${item.status}`)) : undefined;
         seen.current = keys;
         if (!active) { setBanner(null); return; }
         if (!incoming) {
@@ -117,7 +117,7 @@ export function MobileSessionNotificationContent() {
 function AttentionRow({ item }: { item: MobileAttentionItem }) {
     const { theme } = useUnistyles();
     const color = SESSION_ATTENTION_COLORS[item.status];
-    const label = item.status === 'intervention_required' ? t('status.interventionRequired') : item.status === 'completed' ? t('status.completed') : item.status === 'failed' ? t('status.failed')
+    const label = item.status === 'completed' ? t('status.completed') : item.status === 'failed' ? t('status.failed')
         : item.status === 'permission_required' ? t('status.permissionRequired') : t('status.inputRequired');
     return (
         <>

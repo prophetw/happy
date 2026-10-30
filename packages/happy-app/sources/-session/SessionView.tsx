@@ -989,7 +989,6 @@ export function SessionViewLoaded({
                     const accepted = await sync.sendMessage(sessionId, liveMessage, {
                         deliveryMode,
                         source: 'chat',
-                        humanInterventionId: session?.agentState?.humanIntervention?.id,
                         attachments,
                         awaitDelivery: communicationsToDismiss.length > 0,
                         onAccepted: () => {
@@ -1020,7 +1019,7 @@ export function SessionViewLoaded({
                 }
             })();
         }
-    }, [sessionId, pendingChatId, selectedImages, removeImage, pendingCommunications, flavor, session?.agentState?.humanIntervention?.id]);
+    }, [sessionId, pendingChatId, selectedImages, removeImage, pendingCommunications, flavor]);
 
     const handleAbort = React.useCallback(() => {
         // Stop cancels only the active turn. Permission, model, and effort are
@@ -1180,16 +1179,6 @@ export function SessionViewLoaded({
     // this is what the user has their hands on.
     const composer = (
         <View onLayout={usesFloatingMobileDock ? handleComposerLayout : undefined}>
-            {session?.agentState?.humanIntervention && (
-                <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
-                    <View style={{ paddingHorizontal: 12, paddingVertical: 10 }} testID="human-intervention-reply-context">
-                        <Text style={{ color: theme.colors.text, fontSize: 14 }}>{t('humanIntervention.replyContext')}</Text>
-                        <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 4 }}>
-                            {session.agentState.humanIntervention.instructions}
-                        </Text>
-                    </View>
-                </CenteredInputWidth>
-            )}
             <ChatComposer
                 composerHandleRef={composerHandleRef}
                 placeholder={t('session.inputPlaceholder')}

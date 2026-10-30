@@ -171,12 +171,12 @@ describe('claudeRemoteLauncher context usage', () => {
         }
     });
 
-    it('does not announce completion when the turn yielded for a local intervention', async () => {
+    it('does not let legacy intervention state suppress completion', async () => {
         const { session, notification, stop } = fixture();
         session.client.getAgentState.mockReturnValue({ humanIntervention: { id: 'local-1' } });
         vi.mocked(claudeRemote).mockImplementation(async opts => { await opts.onReady(); stop(); });
         await claudeRemoteLauncher(session as any);
-        expect(notification).not.toHaveBeenCalled();
+        expect(notification).toHaveBeenCalledWith(expect.objectContaining({ kind: 'done' }));
     });
 
     it('delivers the cc-switch context snapshot through the real queue before completing the turn', async () => {

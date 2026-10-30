@@ -26,11 +26,13 @@ function createSessionMock() {
 
 describe('CodexPermissionHandler', () => {
     it.each(['request_human_intervention', 'happy__request_human_intervention', 'mcp__happy__request_human_intervention'])(
-        'allows %s to report a blocker without another approval prompt', async tool => {
+        'does not auto-approve the removed %s tool', async tool => {
             const { session, getState } = createSessionMock();
             const handler = new CodexPermissionHandler(session as any);
-            await expect(handler.handleToolCall('request-1', tool, { kind: 'sudo', instructions: 'Use the local terminal' })).resolves.toEqual({ decision: 'approved' });
-            expect(getState().requests).toBeUndefined();
+            const pending = handler.handleToolCall('request_human_intervention-1', tool, {});
+            expect(getState().requests['request_human_intervention-1']).toBeDefined();
+            handler.abortAll();
+            await expect(pending).resolves.toEqual({ decision: 'abort' });
         },
     );
 

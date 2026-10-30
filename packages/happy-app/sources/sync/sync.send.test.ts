@@ -104,18 +104,18 @@ afterEach(() => {
 });
 
 describe('first message session hydration', () => {
-    it.each(['处理好了，先检查结果再继续。', '没有处理，取消这一步。\n先看其他问题。'])('sends only the authored reminder reply and its encrypted request id: %s', async text => {
+    it.each(['处理好了，先检查结果再继续。', '没有处理，取消这一步。\n先看其他问题。'])('preserves authored text when awaiting message delivery: %s', async text => {
         const target = await sessionRecord('reply-session');
         fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sessions: [target] }) });
         await expect(engine.sendMessage('reply-session', text, {
-            humanInterventionId: 'request-1', awaitDelivery: true,
+            awaitDelivery: true,
         })).resolves.toBe(true);
         const batch = JSON.parse(mocks.request.mock.calls[0][1].body).messages;
         expect(batch).toHaveLength(1);
         const content = await writer.getSessionEncryption('reply-session')!.decryptRaw(batch[0].content);
         expect(content).toMatchObject({
             role: 'user', content: { type: 'text', text },
-            meta: { sentFrom: 'web', humanInterventionId: 'request-1' },
+            meta: { sentFrom: 'web' },
         });
     });
 

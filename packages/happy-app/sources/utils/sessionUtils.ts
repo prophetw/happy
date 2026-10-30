@@ -56,11 +56,11 @@ export function useSessionStatus(session: Session): SessionStatus {
         };
     }
 
-    if (state === 'input_required' || state === 'intervention_required') {
+    if (state === 'input_required') {
         return {
             state,
             isConnected: true,
-            statusText: state === 'intervention_required' ? t('status.interventionRequired') : t('status.inputRequired'),
+            statusText: t('status.inputRequired'),
             shouldShowStatus: true,
             statusColor: '#FF9500',
             statusDotColor: '#FF9500',

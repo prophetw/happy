@@ -16,11 +16,10 @@ export type SessionAttentionRecord = z.infer<typeof AttentionValueSchema> & { ve
 export type SessionAttentionRecords = Record<string, SessionAttentionRecord>;
 
 export function getSessionAttentionKind(session: Session, record: SessionAttentionRecord | undefined): AttentionKind | undefined {
-    if (session.agentState?.humanIntervention) return 'intervention';
-    // Clearing the local blocker is not a completed turn. Keep it neutral until
-    // the follow-up produces a new result or a different durable notification.
-    if (session.attentionKind === 'intervention' && (!record || record.kind === 'intervention')) return 'intervention';
     if (session.lastTurnStatus === 'failed') return 'failed';
+    // Keep old intervention notifications neutral rather than presenting them
+    // as completed work. Legacy agent state no longer controls attention.
+    if (record?.kind === 'intervention' || (!record && session.attentionKind === 'intervention')) return 'intervention';
     if (session.lastTurnStatus === 'completed') return 'done';
     return record?.kind ?? session.attentionKind;
 }

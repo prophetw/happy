@@ -182,7 +182,7 @@ describe('Codex resume startup readiness', () => {
         expect(mocks.notify).not.toHaveBeenCalled();
     });
 
-    it('does not announce completion while a local intervention remains pending', async () => {
+    it('does not let legacy intervention state suppress completion', async () => {
         mocks.session.getAgentState.mockReturnValue({ humanIntervention: { id: 'local-1' } });
         mocks.waitForMessage.mockResolvedValueOnce({ message: 'Continue', mode: { permissionMode: 'yolo' }, hash: 'test', isolate: false });
         mocks.sendTurn.mockImplementationOnce(async () => {
@@ -191,7 +191,7 @@ describe('Codex resume startup readiness', () => {
             return { aborted: false };
         });
         await runCodex({ credentials, startedBy: 'daemon' });
-        expect(mocks.notify).not.toHaveBeenCalled();
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ kind: 'done' }));
     });
 
     it('marks an unexpected exception as failure and closes the active UI turn', async () => {

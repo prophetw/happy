@@ -64,6 +64,29 @@ beforeEach(() => {
 afterEach(() => { act(() => tree.unmount()); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('iOS in-app session reminders', () => {
+    it('ignores legacy intervention state and unread notifications without a banner or badge', () => {
+        update({
+            sessions: { a: session('a', { attentionKind: 'intervention', agentState: {
+                humanIntervention: { id: 'old-request', kind: 'manual', instructions: 'Old reminder', createdAt: 1 },
+            } }) },
+            unreadSessionIds: new Set(['a']),
+            sessionAttention: { a: { kind: 'intervention', eventId: 'intervention:1', at: 1, read: false, version: 0 } },
+        });
+        expect(tree.toJSON()).toBeNull();
+        expect(mocks.haptic).not.toHaveBeenCalled();
+        expect(mocks.badge).toHaveBeenLastCalledWith(0);
+    });
+
+    it('shows a real permission request despite legacy intervention state', () => {
+        update({ sessions: { a: session('a', { thinking: true, agentState: {
+            humanIntervention: { id: 'old-request', kind: 'manual', instructions: 'Old reminder', createdAt: 1 },
+            requests: { git: { tool: 'CodexBash', arguments: { command: 'git push' } } },
+        } }) } });
+        expect(views('mobile-attention-banner')).toHaveLength(1);
+        expect(JSON.stringify(tree.toJSON())).toContain('status.permissionRequired');
+        expect(mocks.badge).toHaveBeenLastCalledWith(1);
+    });
+
     it('shows the provider error type and then a success banner after retrying', () => {
         update({ sessions: { a: session('a', { attentionKind: 'failed', lastTurnErrorCode: 'serverOverloaded' }) }, unreadSessionIds: new Set(['a']) });
         expect(JSON.stringify(tree.toJSON())).toContain('serverOverloaded');

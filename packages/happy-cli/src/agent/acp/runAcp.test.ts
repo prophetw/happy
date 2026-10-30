@@ -1079,9 +1079,6 @@ describe('runAcp', () => {
     await expect(permissionHandler.handleToolCall('title-2', 'happy__change_title', { title: 'Fix login bug' }))
       .resolves.toEqual({ decision: 'approved' });
 
-    await expect(permissionHandler.handleToolCall('local-1', 'mcp__happy__request_human_intervention', { kind: 'sudo', instructions: 'Use the terminal' }))
-      .resolves.toEqual({ decision: 'approved' });
-
     // Any other tool still goes through the app as a permission request.
     const pending = permissionHandler.handleToolCall('tool-9', 'Bash', { command: 'ls' });
     pending.catch(() => {});

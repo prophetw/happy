@@ -38,11 +38,16 @@ function agentState({
 }
 
 describe('resolveSessionState', () => {
-    it('keeps a local intervention ahead of thinking and other requests', () => {
+    it('ignores legacy local interventions without hiding actual permission requests', () => {
         const state = agentState({ permission: true, communication: true });
         state.humanIntervention = { id: 'local-1', kind: 'sudo', instructions: 'Use the local terminal', createdAt: 1 };
-        expect(resolveSessionState({ agentState: state, thinking: true, isOnline: true })).toBe('intervention_required');
+        expect(resolveSessionState({ agentState: state, thinking: true, isOnline: true })).toBe('permission_required');
         expect(resolveSessionState({ agentState: state, thinking: true, isOnline: false })).toBe('disconnected');
+    });
+    it.each([true, false])('does not block a session with legacy intervention state (thinking=%s)', thinking => {
+        const state = agentState();
+        state.humanIntervention = { id: 'local-1', kind: 'manual', instructions: 'Old reminder', createdAt: 1 };
+        expect(resolveSessionState({ agentState: state, thinking, isOnline: true })).toBe(thinking ? 'thinking' : 'waiting');
     });
     it('keeps working while a non-blocking question is pending and leaves it answerable when idle', () => {
         const state = agentState({ communication: true });

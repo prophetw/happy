@@ -452,7 +452,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         // before closing the turn and notifying the client.
                         await messageQueue.flush();
                         session.client.closeClaudeSessionTurn(status ?? 'completed');
-                        if (status !== 'failed' && !pending && session.queue.size() === 0 && !session.client.getAgentState()?.humanIntervention) {
+                        if (status !== 'failed' && !pending && session.queue.size() === 0) {
                             session.api.push().sendSessionNotification({
                                 kind: 'done',
                                 metadata: session.client.getMetadata(),

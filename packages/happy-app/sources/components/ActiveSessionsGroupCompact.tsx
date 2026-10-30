@@ -31,7 +31,6 @@ const STATUS_CONFIG: Record<SessionState, { color: string; dotColor: string; isP
     waiting: { color: '#34C759', dotColor: '#34C759', isPulsing: false, isConnected: true },
     permission_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
     input_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
-    intervention_required: { color: '#FF9500', dotColor: '#FF9500', isPulsing: true, isConnected: true },
 };
 
 interface ActiveSessionsGroupProps {
@@ -229,7 +228,7 @@ export const CompactSessionRow = React.memo(({ session, selected, showBorder }: 
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const baseStatus = STATUS_CONFIG[session.state];
-    const needsUserAction = session.state === 'permission_required' || session.state === 'input_required' || session.state === 'intervention_required';
+    const needsUserAction = session.state === 'permission_required' || session.state === 'input_required';
     // User action stays orange and pulsing even when the request also marked the session unread.
     const status = session.hasUnread && !needsUserAction
         ? { ...baseStatus, color: '#007AFF', dotColor: '#007AFF', isPulsing: false, isConnected: baseStatus.isConnected }

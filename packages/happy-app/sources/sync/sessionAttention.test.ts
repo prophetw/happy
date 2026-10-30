@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodeAttentionItem, encodeAttentionValue, getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecord } from './sessionAttention';
 import type { Session } from './storageTypes';
+import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
+import { resolveSessionState } from './sessionState';
 
 const record = (patch: Partial<SessionAttentionRecord> = {}): SessionAttentionRecord => ({ kind: 'done', eventId: 'done:1:1', seq: 1, at: 10, read: false, version: 0, ...patch });
 
@@ -9,6 +11,18 @@ describe('attention event reconciliation', () => {
         const paused = { attentionKind: 'intervention', lastTurnStatus: 'completed', agentState: { humanIntervention: null } } as Session;
         expect(getSessionAttentionKind(paused, record({ kind: 'intervention' }))).toBe('intervention');
         expect(getSessionAttentionKind({ ...paused, attentionKind: 'done' }, record({ kind: 'done' }))).toBe('done');
+    });
+    it('keeps legacy notifications silent while showing actual permission requests', () => {
+        const session = { agentState: { humanIntervention: { id: 'old' }, requests: { git: { tool: 'Bash', arguments: { command: 'git push' } } } } } as unknown as Session;
+        const kind = getSessionAttentionKind(session, record({ kind: 'intervention' }));
+        expect(getSessionAttentionStatus('waiting', true, kind)).toBeNull();
+        const state = resolveSessionState({ agentState: session.agentState, thinking: true, isOnline: true });
+        expect(getSessionAttentionStatus(state, true, kind)).toBe('permission_required');
+    });
+    it('does not let legacy agent state hide a newer result or a failure', () => {
+        const session = { attentionKind: 'done', lastTurnStatus: 'completed', agentState: { humanIntervention: { id: 'old' } } } as unknown as Session;
+        expect(getSessionAttentionKind(session, record())).toBe('done');
+        expect(getSessionAttentionKind({ ...session, lastTurnStatus: 'failed' }, record({ kind: 'intervention' }))).toBe('failed');
     });
     it('synchronizes only event metadata and strips local retry fields from the wire value', () => {
         const value = encodeAttentionValue(record({ pendingRead: true }));
