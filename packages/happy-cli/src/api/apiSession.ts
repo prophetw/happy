@@ -374,6 +374,12 @@ export class ApiSessionClient extends EventEmitter {
                             ? (body as { content: { type: string } }).content.type
                             : 'unknown',
                     });
+                    if (UserMessageSchema.safeParse(body).data?.meta?.humanInterventionId) {
+                        // Use the retryable inbox path: persist the matching
+                        // acknowledgement before allowing the agent to respond.
+                        this.receiveSync.invalidate();
+                        return;
+                    }
                     this.routeIncomingMessage(body);
                     this.lastReceivedSeq = messageSeq;
                 } else if (data.body.t === 'update-session') {
@@ -737,22 +743,32 @@ export class ApiSessionClient extends EventEmitter {
                     maxSeq = message.seq;
                 }
 
-                if (skipRouting) continue;
+                if (skipRouting || message.seq <= this.lastReceivedSeq) continue;
 
                 if (message.content?.t !== 'encrypted') {
                     continue;
                 }
 
+                let body: unknown;
                 try {
-                    const body = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(message.content.c));
-                    this.routeIncomingMessage(body);
+                    body = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(message.content.c));
                 } catch (error) {
                     logger.debug('[API] Failed to decrypt fetched message', {
                         sessionId: this.sessionId,
                         seq: message.seq,
                         error
                     });
+                    continue;
                 }
+                const requestId = UserMessageSchema.safeParse(body).data?.meta?.humanInterventionId;
+                if (requestId) {
+                    await this.acknowledgeHumanInterventionReply(requestId);
+                    if (generation !== this.relayGeneration) return;
+                }
+                this.routeIncomingMessage(body);
+                // A failed state update retries this reply without replaying
+                // earlier messages from the same fetched batch.
+                this.lastReceivedSeq = Math.max(this.lastReceivedSeq, message.seq);
             }
 
             this.lastReceivedSeq = Math.max(this.lastReceivedSeq, maxSeq);
@@ -961,13 +977,15 @@ export class ApiSessionClient extends EventEmitter {
         this.enqueueMessage(content);
     }
 
-    /** Publish a user action through the normal durable inbox, preserving modes. */
-    async sendUserAction(text: string, localId: string): Promise<void> {
-        if (this.closed) throw new Error('Session is closed');
-        this.enqueueMessage({ role: 'user', content: { type: 'text', text }, meta: { sentFrom: 'human-intervention' } }, false, localId);
-        await this.sendSync.invalidateAndAwait();
-        if (this.closed || this.pendingOutbox.some(message => message.localId === localId)) {
-            throw new Error('Could not deliver the user action');
+    private async acknowledgeHumanInterventionReply(id: string): Promise<void> {
+        if (this.agentState?.humanIntervention?.id !== id) return;
+        await this.updateAgentState(state => state.humanIntervention?.id === id ? {
+            ...state,
+            humanIntervention: null,
+            completedHumanIntervention: { id, status: 'replied' },
+        } : state);
+        if (this.agentState?.humanIntervention?.id === id) {
+            throw new Error('Could not acknowledge the human intervention reply');
         }
     }
 

@@ -232,6 +232,7 @@ export type Machine = {
  */
 export const MessageMetaSchema = z.object({
   sentFrom: z.string().optional(), // Source identifier
+  humanInterventionId: z.string().min(1).optional(),
   deliveryMode: z.enum(['queue', 'steer']).optional(),
   // Any string is accepted so a newer app can name a mode this CLI does not
   // know yet without the whole message failing safeParse and being dropped.

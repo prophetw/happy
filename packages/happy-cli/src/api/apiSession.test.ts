@@ -348,22 +348,6 @@ describe('ApiSessionClient v3 messages API migration', () => {
         });
     });
 
-    it('durably publishes an encrypted intervention response with a stable id and no mode override', async () => {
-        const client = new ApiSessionClient('fake-token', session);
-        mockAxiosPost.mockResolvedValueOnce({ data: { messages: [{ id: 'msg-1', seq: 1, localId: 'intervention-1' }] } });
-        await client.sendUserAction('Check the local result before continuing.', 'intervention-1');
-        const payload = mockAxiosPost.mock.calls[0][1];
-        expect(payload.messages[0].localId).toBe('intervention-1');
-        const content = decrypt(session.encryptionKey, session.encryptionVariant, decodeBase64(payload.messages[0].content));
-        expect(content).toEqual({ role: 'user', content: { type: 'text', text: 'Check the local result before continuing.' }, meta: { sentFrom: 'human-intervention' } });
-        const received = vi.fn();
-        client.onUserMessage(received);
-        emitSocketEvent('update', createNewMessageUpdate(1, payload.messages[0].content));
-        expect(received).toHaveBeenCalledWith(content);
-        await client.close();
-        await expect(client.sendUserAction('Never sent', 'closed')).rejects.toThrow('closed');
-    });
-
     it('accumulates multiple pending outbox messages into one follow-up batch', async () => {
         const client = new ApiSessionClient('fake-token', session);
 
@@ -876,6 +860,107 @@ describe('ApiSessionClient v3 messages API migration', () => {
                     type: 'ready'
                 }
             }
+        });
+    });
+
+    describe('authored human intervention replies', () => {
+        const pending = (id = 'request-1') => ({ id, kind: 'manual', instructions: 'Check the local prompt.', createdAt: 1 });
+        const reply = (id: string | undefined = 'request-1', text = '没有处理，先取消这一步。') => ({
+            role: 'user', content: { type: 'text', text },
+            meta: { sentFrom: 'ios', ...(id ? { humanInterventionId: id } : {}), permissionMode: 'default', model: 'chosen-model' },
+        });
+        const batch = (bodies: unknown[]) => ({ data: { hasMore: false, messages: bodies.map((body, index) => ({
+            id: `msg-${index + 1}`, seq: index + 1,
+            content: { t: 'encrypted', c: encryptContent(session, body) },
+        })) } });
+        const persistState = () => mockSocket.emitWithAck.mockImplementation(async (_event: string, data: any) => ({
+            result: 'success', agentState: data.agentState, version: 1,
+        }));
+
+        it('persists only a replied status before forwarding the exact user text and modes once', async () => {
+            const client = new ApiSessionClient('fake-token', session);
+            (client as any).agentState = { humanIntervention: pending() };
+            persistState();
+            const received = vi.fn(() => expect(client.getAgentState()?.humanIntervention).toBeNull());
+            client.onUserMessage(received);
+            mockAxiosGet.mockResolvedValue(batch([reply()]));
+            await (client as any).fetchMessages();
+            await (client as any).fetchMessages();
+            expect(received).toHaveBeenCalledExactlyOnceWith(reply());
+            expect(client.getAgentState()?.completedHumanIntervention).toEqual({ id: 'request-1', status: 'replied' });
+            expect(mockSocket.emitWithAck).toHaveBeenCalledTimes(1);
+            expect(mockAxiosPost).not.toHaveBeenCalled();
+            await client.close();
+        });
+
+        it.each(['old-request', undefined])('keeps the current reminder when an unrelated message arrives (%s)', async id => {
+            const client = new ApiSessionClient('fake-token', session);
+            (client as any).agentState = { humanIntervention: pending() };
+            const received = vi.fn();
+            client.onUserMessage(received);
+            const body = reply(id, '另一件事');
+            if (id === undefined) delete body.meta.humanInterventionId;
+            mockAxiosGet.mockResolvedValue(batch([body]));
+            await (client as any).fetchMessages();
+            expect(received).toHaveBeenCalledExactlyOnceWith(body);
+            expect(client.getAgentState()?.humanIntervention?.id).toBe('request-1');
+            expect(mockSocket.emitWithAck).not.toHaveBeenCalled();
+            await client.close();
+        });
+
+        it('preserves a newer request that arrives during a state version conflict', async () => {
+            const client = new ApiSessionClient('fake-token', session);
+            (client as any).agentState = { humanIntervention: pending() };
+            mockSocket.emitWithAck
+                .mockResolvedValueOnce({ result: 'version-mismatch', version: 1,
+                    agentState: encryptContent(session, { humanIntervention: pending('request-2') }) })
+                .mockImplementation(async (_event: string, data: any) => ({ result: 'success', agentState: data.agentState, version: 2 }));
+            const received = vi.fn();
+            client.onUserMessage(received);
+            mockAxiosGet.mockResolvedValue(batch([reply()]));
+            await (client as any).fetchMessages();
+            expect(client.getAgentState()?.humanIntervention?.id).toBe('request-2');
+            expect(client.getAgentState()?.completedHumanIntervention).toBeUndefined();
+            expect(received).toHaveBeenCalledExactlyOnceWith(reply());
+            await client.close();
+        });
+
+        it('retries a failed acknowledgement without losing the reply or replaying earlier messages', async () => {
+            const client = new ApiSessionClient('fake-token', session);
+            (client as any).agentState = { humanIntervention: pending() };
+            const received = vi.fn();
+            client.onUserMessage(received);
+            const ordinary = reply('unrelated', 'Earlier message');
+            mockAxiosGet.mockResolvedValue(batch([ordinary, reply()]));
+            // A hard state-write error must keep the request and inbox cursor.
+            await expect((client as any).fetchMessages()).rejects.toThrow('Could not acknowledge');
+            expect(client.getAgentState()?.humanIntervention?.id).toBe('request-1');
+            expect((client as any).lastReceivedSeq).toBe(1);
+            expect(received).toHaveBeenCalledExactlyOnceWith(ordinary);
+            persistState();
+            await (client as any).fetchMessages();
+            expect(received.mock.calls.map(([body]) => body)).toEqual([ordinary, reply()]);
+            expect(client.getAgentState()?.completedHumanIntervention?.status).toBe('replied');
+            await client.close();
+        });
+
+        it('routes a socket reply through the durable inbox before waking the agent', async () => {
+            const client = new ApiSessionClient('fake-token', session);
+            (client as any).agentState = { humanIntervention: pending() };
+            let acknowledge!: (answer: unknown) => void;
+            mockSocket.emitWithAck.mockImplementation((_event: string, data: any) => new Promise(resolve => {
+                acknowledge = () => resolve({ result: 'success', agentState: data.agentState, version: 1 });
+            }));
+            mockAxiosGet.mockResolvedValue(batch([reply()]));
+            const received = vi.fn();
+            client.onUserMessage(received);
+            emitSocketEvent('update', createNewMessageUpdate(1, encryptContent(session, reply())));
+            await waitForCheck(() => expect(mockSocket.emitWithAck).toHaveBeenCalledOnce());
+            expect(received).not.toHaveBeenCalled();
+            acknowledge(undefined);
+            await waitForCheck(() => expect(received).toHaveBeenCalledExactlyOnceWith(reply()));
+            expect(client.getAgentState()?.humanIntervention).toBeNull();
+            await client.close();
         });
     });
 

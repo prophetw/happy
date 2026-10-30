@@ -10,7 +10,6 @@ import { useAuth } from '@/auth/AuthContext';
 import { storage } from '@/sync/storage';
 import { useDeepEqual } from '@/sync/storeSelectors';
 import { selectHumanInterventions } from '@/sync/humanIntervention';
-import { sessionReplyHumanIntervention } from '@/sync/ops';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { t } from '@/text';
 
@@ -27,9 +26,6 @@ export function HumanInterventionNotificationContent() {
     const insets = useSafeAreaInsets();
     const navigate = useNavigateToSession();
     const [deferred, setDeferred] = React.useState<ReadonlySet<string>>(new Set());
-    const [submitting, setSubmitting] = React.useState<string | null>(null);
-    const busy = React.useRef(false);
-    const [error, setError] = React.useState<{ id: string; message: string } | null>(null);
     const seen = React.useRef(new Set<string>());
     const request = requests.find(item => !deferred.has(item.id));
 
@@ -44,27 +40,6 @@ export function HumanInterventionNotificationContent() {
     }, [requests, active, haptics]);
 
     const defer = (id: string) => setDeferred(previous => new Set(previous).add(id));
-    const reply = async (status: 'resolved' | 'cancelled') => {
-        if (!request || busy.current) return;
-        busy.current = true;
-        setSubmitting(request.id);
-        setError(null);
-        const attentionEventId = storage.getState().sessionAttention[request.sessionId]?.eventId;
-        try {
-            await sessionReplyHumanIntervention(request.sessionId, request.id, status);
-            // The CLI clears encrypted state only after durably queuing the follow-up.
-            // Do not hide a newer request that arrived while this one was submitted.
-            const state = storage.getState();
-            if (attentionEventId && state.sessionAttention[request.sessionId]?.eventId === attentionEventId
-                && state.sessionAttention[request.sessionId]?.kind === 'intervention') state.markSessionRead(request.sessionId);
-            defer(request.id);
-        } catch (error) {
-            setError({ id: request.id, message: t('humanIntervention.sendFailed') });
-        } finally {
-            busy.current = false;
-            setSubmitting(null);
-        }
-    };
 
     if (!active || requests.length === 0) return null;
     return (
@@ -77,7 +52,7 @@ export function HumanInterventionNotificationContent() {
                     </Pressable>
                 </View>
             )}
-            <Modal visible={Boolean(request)} transparent animationType="fade" onRequestClose={() => {}}>
+            <Modal visible={Boolean(request)} transparent animationType="fade" onRequestClose={() => { if (request) defer(request.id); }}>
                 {request && (
                     <View style={[styles.backdrop, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
                         <View style={styles.dialog} testID="human-intervention-dialog" accessibilityViewIsModal>
@@ -89,17 +64,10 @@ export function HumanInterventionNotificationContent() {
                                 <Text style={styles.instructions} testID="human-intervention-instructions">{request.instructions}</Text>
                                 <Text style={styles.hint}>{t('humanIntervention.hint')}</Text>
                                 {!request.online && <Text style={styles.error}>{t('humanIntervention.offline')}</Text>}
-                                {error?.id === request.id && <Text style={styles.error} testID="human-intervention-error" accessibilityRole="alert">{error.message}</Text>}
-                                <Pressable disabled={!request.online || submitting !== null || request.response === 'cancelled'} style={styles.primary} accessibilityRole="button" testID="human-intervention-resolve" onPress={() => void reply('resolved')}>
-                                    <Text style={styles.primaryText}>{submitting === request.id ? t('humanIntervention.sending') : t('humanIntervention.continue')}</Text>
+                                <Pressable style={styles.primary} accessibilityRole="button" onPress={() => { defer(request.id); navigate(request.sessionId); }} testID="human-intervention-open">
+                                    <Text style={styles.primaryText}>{t('humanIntervention.reply')}</Text>
                                 </Pressable>
-                                <Pressable disabled={!request.online || submitting !== null || request.response === 'resolved'} style={styles.button} accessibilityRole="button" testID="human-intervention-cancel" onPress={() => void reply('cancelled')}>
-                                    <Text style={styles.cancel}>{t('humanIntervention.cancel')}</Text>
-                                </Pressable>
-                                <Pressable disabled={submitting !== null} style={styles.button} accessibilityRole="button" onPress={() => { defer(request.id); navigate(request.sessionId); }} testID="human-intervention-open">
-                                    <Text style={styles.body}>{t('status.viewConversation')}</Text>
-                                </Pressable>
-                                <Pressable disabled={submitting !== null} style={styles.button} accessibilityRole="button" onPress={() => defer(request.id)} testID="human-intervention-later">
+                                <Pressable style={styles.button} accessibilityRole="button" onPress={() => defer(request.id)} testID="human-intervention-later">
                                     <Text style={styles.hint}>{t('humanIntervention.later')}</Text>
                                 </Pressable>
                             </ScrollView>
@@ -123,7 +91,6 @@ const styles = StyleSheet.create(theme => ({
     primary: { backgroundColor: '#007AFF', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 18 },
     primaryText: { ...Typography.default('semiBold'), fontSize: 15, color: '#FFFFFF' },
     button: { padding: 12, alignItems: 'center' },
-    cancel: { ...Typography.default('semiBold'), fontSize: 15, color: '#FF453A' },
     reminder: { position: 'absolute', right: 16, left: 16, zIndex: 1100, alignItems: 'center' },
     reminderButton: { flexDirection: 'row', alignItems: 'center', gap: 8, borderColor: '#FF9500', borderWidth: 1, backgroundColor: theme.colors.surface, borderRadius: 12, padding: 14 },
     reminderText: { ...Typography.default('semiBold'), fontSize: 14, color: theme.colors.text },

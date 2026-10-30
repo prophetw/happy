@@ -50,42 +50,24 @@ describe('human intervention', () => {
         const { handler, client } = setup();
         await handler.request(input);
         await expect(handler.request({ kind: 'uac', instructions: 'Confirm UAC.' })).rejects.toThrow('already pending');
-        await expect(handler.reply({ id: 'old-request', status: 'resolved' })).rejects.toThrow('no longer pending');
-        await expect(handler.reply({ id: 'old-request', status: 'cancelled' })).rejects.toThrow('no longer pending');
+        await expect(handler.reply({ id: 'old-request', status: 'resolved' })).rejects.toThrow('send your own reply');
+        await expect(handler.reply({ id: 'old-request', status: 'cancelled' })).rejects.toThrow('send your own reply');
         expect(client.sendUserAction).not.toHaveBeenCalled();
         expect(client.rpcHandlerManager.invokeHandlerIfRegistered).not.toHaveBeenCalled();
     });
 
-    it.each(['resolved', 'cancelled'] as const)('durably sends a %s follow-up before clearing and makes retries idempotent', async status => {
+    it.each(['resolved', 'cancelled'] as const)('rejects legacy %s buttons without generating a message, clearing the reminder, or aborting', async status => {
         const { handler, client, state } = setup();
         const { requestId: id } = await handler.request(input);
-        client.sendUserAction.mockImplementation(async () => { expect(state().humanIntervention?.id).toBe(id); });
-        await Promise.all([handler.reply({ id, status }), handler.reply({ id, status })]);
-        expect(client.sendUserAction).toHaveBeenCalledOnce();
-        expect(client.sendUserAction).toHaveBeenCalledWith(
-            expect.stringContaining(status === 'resolved' ? 'Check the actual command result' : 'Stop the affected task'),
-            `human-intervention:${id}:${status}`,
-        );
-        expect(state().humanIntervention).toBeNull();
-        expect(state().completedHumanIntervention).toEqual({ id, status });
-        if (status === 'cancelled') expect(client.rpcHandlerManager.invokeHandlerIfRegistered).toHaveBeenCalledExactlyOnceWith('abort', expect.objectContaining({ reason: expect.stringContaining('cancelled') }));
-        else expect(client.rpcHandlerManager.invokeHandlerIfRegistered).not.toHaveBeenCalled();
-        const restarted = new HumanInterventionHandler(client as unknown as ApiSessionClient);
-        await restarted.reply({ id, status });
-        expect(client.sendUserAction).toHaveBeenCalledOnce();
-        await expect(restarted.reply({ id, status: status === 'resolved' ? 'cancelled' : 'resolved' })).rejects.toThrow('differently');
-    });
-
-    it('keeps the request pending on delivery failure and supports retry', async () => {
-        const { handler, client, state } = setup();
-        const { requestId: id } = await handler.request(input);
-        client.sendUserAction.mockRejectedValueOnce(new Error('network unavailable'));
-        await expect(handler.reply({ id, status: 'resolved' })).rejects.toThrow('network unavailable');
+        await expect(handler.reply({ id, status })).rejects.toThrow('send your own reply');
         expect(state().humanIntervention?.id).toBe(id);
+        expect(state().completedHumanIntervention).toBeUndefined();
+        expect(client.sendUserAction).not.toHaveBeenCalled();
+        expect(client.rpcHandlerManager.invokeHandlerIfRegistered).not.toHaveBeenCalled();
         const restarted = new HumanInterventionHandler(client as unknown as ApiSessionClient);
-        await expect(restarted.reply({ id, status: 'cancelled' })).rejects.toThrow('differently');
-        await handler.reply({ id, status: 'resolved' });
-        expect(state().humanIntervention).toBeNull();
+        await expect(restarted.reply({ id, status })).rejects.toThrow('send your own reply');
+        expect(state().humanIntervention?.id).toBe(id);
+        expect(client.sendUserAction).not.toHaveBeenCalled();
     });
 
     it('rejects malformed requests and replies', async () => {
@@ -108,9 +90,9 @@ describe('human intervention', () => {
             const result = await mcp.callTool({ name: 'request_human_intervention', arguments: { kind: 'uac', instructions: 'Confirm the Windows prompt.' } });
             expect(result.isError).not.toBe(true);
             const id = state().humanIntervention!.id;
-            await handlers.get('human-intervention')!({ id, status: 'resolved' });
-            expect(state().humanIntervention).toBeNull();
-            expect(client.sendUserAction).toHaveBeenCalledOnce();
+            await expect(handlers.get('human-intervention')!({ id, status: 'resolved' })).rejects.toThrow('send your own reply');
+            expect(state().humanIntervention?.id).toBe(id);
+            expect(client.sendUserAction).not.toHaveBeenCalled();
         } finally {
             await mcp.close();
             server.stop();

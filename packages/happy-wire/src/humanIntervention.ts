@@ -9,13 +9,14 @@ export const HumanInterventionInputSchema = z.object({
 export const HumanInterventionSchema = HumanInterventionInputSchema.extend({
     id: z.string().min(1),
     createdAt: z.number().finite(),
-    // Preserve the selected action if delivery fails or the CLI reconnects.
+    // Legacy button responses are retained for reading persisted requests.
     response: z.enum(['resolved', 'cancelled']).optional(),
 });
 
 export const HumanInterventionReplySchema = z.object({
     id: z.string().min(1),
-    status: z.enum(['resolved', 'cancelled']),
+    // Keep legacy values readable; a chat reply does not assert OS success.
+    status: z.enum(['resolved', 'cancelled', 'replied']),
 });
 
 export type HumanIntervention = z.infer<typeof HumanInterventionSchema>;

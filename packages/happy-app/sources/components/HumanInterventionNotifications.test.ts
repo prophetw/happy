@@ -4,7 +4,7 @@ import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/storageTypes';
 
-const mocks = vi.hoisted(() => ({ reply: vi.fn(async () => {}), navigate: vi.fn(), haptic: vi.fn(async () => {}), read: vi.fn() }));
+const mocks = vi.hoisted(() => ({ send: vi.fn(), rpc: vi.fn(), navigate: vi.fn(), haptic: vi.fn(async () => {}), read: vi.fn() }));
 vi.mock('react-native', async () => {
     const React = await import('react');
     const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -23,7 +23,8 @@ vi.mock('@expo/vector-icons', async () => {
 });
 vi.mock('expo-haptics', () => ({ notificationAsync: mocks.haptic, NotificationFeedbackType: { Warning: 'warning' } }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
-vi.mock('@/sync/ops', () => ({ sessionReplyHumanIntervention: mocks.reply }));
+vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
+vi.mock('@/sync/sync', () => ({ sync: { sendMessage: mocks.send } }));
 vi.mock('@/hooks/useNavigateToSession', () => ({ useNavigateToSession: () => mocks.navigate }));
 vi.mock('@/utils/sessionUtils', () => ({ getSessionName: (session: Session) => session.id }));
 vi.mock('@/text', () => ({ t: (key: string, args?: { host: string }) => args ? `${key}: ${args.host}` : key }));
@@ -52,7 +53,6 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.clearAllMocks();
     vi.useFakeTimers();
-    mocks.reply.mockReset().mockResolvedValue(undefined);
     storage.setState({ sessions: {}, archivingSessionIds: new Set(), sessionAttention: {}, appIsActive: true });
     storage.setState(state => ({ settings: { ...state.settings, sessionNotificationHaptics: true } }));
     const original = console.error;
@@ -74,14 +74,16 @@ describe('human intervention reminders', () => {
         update({ sessions: { a: session() } });
         expect(tree.root.findAllByType('Modal')).toHaveLength(1);
         expect(mocks.haptic).toHaveBeenCalledExactlyOnceWith('warning');
-        expect(mocks.reply).not.toHaveBeenCalled();
+        expect(mocks.rpc).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
     });
 
     it('defers or opens the conversation without resolving, then reopens from the persistent reminder', () => {
         update({ sessions: { a: session() } });
         act(() => find('human-intervention-open')!.props.onPress());
         expect(mocks.navigate).toHaveBeenCalledWith('a');
-        expect(mocks.reply).not.toHaveBeenCalled();
+        expect(mocks.rpc).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
         expect(find('human-intervention-reminder')).toBeDefined();
         act(() => find('human-intervention-reminder')!.props.onPress());
         expect(tree.root.findAllByType('Modal')).toHaveLength(1);
@@ -89,46 +91,49 @@ describe('human intervention reminders', () => {
         expect(storage.getState().sessions.a.agentState?.humanIntervention).toBeTruthy();
     });
 
-    it.each(['resolved', 'cancelled'] as const)('sends %s through the intervention RPC', async status => {
+    it('offers only navigation and deferral, with no automatic continue or cancel action', () => {
         update({ sessions: { a: session() } });
-        await act(async () => find(status === 'resolved' ? 'human-intervention-resolve' : 'human-intervention-cancel')!.props.onPress());
-        expect(mocks.reply).toHaveBeenCalledExactlyOnceWith('a', 'request-1', status);
+        expect(find('human-intervention-resolve')).toBeUndefined();
+        expect(find('human-intervention-cancel')).toBeUndefined();
+        expect(tree.root.findAllByType('Pressable')).toHaveLength(2);
+        expect(JSON.stringify(tree.toJSON())).toContain('humanIntervention.reply');
+        act(() => tree.root.findByType('Modal').props.onRequestClose());
+        expect(mocks.rpc).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
+        expect(storage.getState().sessions.a.agentState?.humanIntervention?.id).toBe('request-1');
+        expect(find('human-intervention-reminder')).toBeDefined();
+    });
+
+    it('removes the persistent reminder after a reply clears the pending request', () => {
+        update({ sessions: { a: session() } });
+        act(() => find('human-intervention-open')!.props.onPress());
         update({ sessions: { a: session('a', 'request-1', { agentState: { humanIntervention: null } }) } });
         expect(tree.root.findAllByType('Modal')).toHaveLength(0);
         expect(find('human-intervention-reminder')).toBeUndefined();
     });
 
-    it('keeps the modal on failure, shows the error, and allows retry', async () => {
-        mocks.reply.mockRejectedValueOnce(new Error('Connection lost'));
-        update({ sessions: { a: session() } });
-        await act(async () => find('human-intervention-resolve')!.props.onPress());
-        expect(JSON.stringify(tree.toJSON())).toContain('humanIntervention.sendFailed');
-        expect(tree.root.findAllByType('Modal')).toHaveLength(1);
-        await act(async () => find('human-intervention-resolve')!.props.onPress());
-        expect(mocks.reply).toHaveBeenCalledTimes(2);
-    });
-
-    it('disables offline replies, waits for foreground, and ignores archived sessions', () => {
+    it('allows opening an offline conversation to draft a reply, waits for foreground, and ignores archived sessions', () => {
         update({ appIsActive: false, sessions: { a: session('a', 'request-1', { presence: 1 }) } });
         expect(tree.root.findAllByType('Modal')).toHaveLength(0);
         expect(mocks.haptic).not.toHaveBeenCalled();
         update({ appIsActive: true });
-        expect(find('human-intervention-resolve')!.props.disabled).toBe(true);
-        expect(find('human-intervention-cancel')!.props.disabled).toBe(true);
+        expect(JSON.stringify(tree.toJSON())).toContain('humanIntervention.offline');
+        expect(find('human-intervention-open')!.props.disabled).not.toBe(true);
+        act(() => find('human-intervention-open')!.props.onPress());
+        expect(mocks.navigate).toHaveBeenCalledWith('a');
+        expect(mocks.rpc).not.toHaveBeenCalled();
+        expect(mocks.send).not.toHaveBeenCalled();
         update({ archivingSessionIds: new Set(['a']) });
         expect(tree.root.findAllByType('Modal')).toHaveLength(0);
     });
 
-    it('does not hide a new request or mark its event read after the previous RPC finishes', async () => {
-        let resolve!: () => void;
-        mocks.reply.mockImplementationOnce(() => new Promise<void>(done => { resolve = done; }));
+    it('does not defer a newer request or mark it read when the previous reminder is closed', () => {
         update({ sessions: { a: session() }, sessionAttention: { a: { kind: 'intervention', eventId: 'intervention:1:1', at: 1, read: false, version: 0 } } });
-        act(() => { find('human-intervention-resolve')!.props.onPress(); });
+        act(() => find('human-intervention-later')!.props.onPress());
         update({ sessions: { a: session('a', 'request-2') }, sessionAttention: { a: { kind: 'intervention', eventId: 'intervention:2:1', at: 2, read: false, version: 1 } } });
-        await act(async () => resolve());
         expect(mocks.read).not.toHaveBeenCalled();
         expect(tree.root.findAllByType('Modal')).toHaveLength(1);
-        expect(find('human-intervention-resolve')!.props.disabled).toBe(false);
+        expect(find('human-intervention-open')).toBeDefined();
     });
 
     it('parses persisted requests and never turns an old intervention notification into completion', () => {

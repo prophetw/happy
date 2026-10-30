@@ -2,6 +2,8 @@ import * as z from 'zod';
 
 export const MessageMetaSchema = z.object({
   sentFrom: z.string().optional(),
+  /** The local-action reminder explicitly answered by this user message. */
+  humanInterventionId: z.string().min(1).optional(),
   /** The sending client expects an agent acceptance or rejection receipt. */
   expectsAcceptance: z.boolean().optional(),
   /** The sending client observed an existing turn blocking this message. */

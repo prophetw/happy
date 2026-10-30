@@ -4,5 +4,6 @@ export const HUMAN_INTERVENTION_INSTRUCTION = [
     'Only report a confirmed need for human action; a sudo command or slow tool alone is not evidence.',
     'Never ask the user to send passwords or secrets through chat.',
     'After reporting, stop dependent work and end your turn. Do not poll or repeatedly retry.',
-    'Happy will send a user follow-up after they handle or cancel it. Verify the actual command result before continuing; the acknowledgement does not grant OS privileges.',
+    'Wait for the user to write and send their own chat reply, including cancellation. Opening or dismissing the reminder sends nothing.',
+    'Follow their reply and verify the actual command result before continuing dependent work; a reply does not grant OS privileges.',
 ].join(' ');

@@ -125,13 +125,11 @@ export const en = {
         sudo: 'Enter the sudo password in that computer’s terminal.',
         uac: 'Confirm the Windows UAC prompt on that computer.',
         manual: 'Complete the local action described below.',
-        hint: 'Keep passwords on your computer. After confirmation, the agent checks the actual result before continuing.',
-        continue: 'Handled, continue',
-        cancel: 'Cancel task',
+        hint: 'Keep passwords on your computer. Write your own reply in the conversation, including if you want to cancel. Opening or closing this reminder sends nothing.',
+        reply: 'Go to reply',
+        replyContext: 'Replying to this local-action reminder. Write your message below and press Send.',
         later: 'Remind me later',
-        sending: 'Sending…',
-        sendFailed: 'Could not send your response. Check the connection and try again.',
-        offline: 'This session is offline. Reconnect it before responding.',
+        offline: 'This session is offline. You can draft a reply; it will be delivered after reconnection.',
     },
 
     sessionNotifications: {

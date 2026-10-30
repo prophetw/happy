@@ -4,6 +4,7 @@ import { z } from 'zod';
 export const MessageMetaSchema = z.object({
     deliveryMode: z.enum(['queue', 'steer']).optional(),
     sentFrom: z.string().optional(), // Source identifier
+    humanInterventionId: z.string().min(1).optional(),
     // Capability at send time, inside the encrypted payload. New history can
     // resume waiting after reconnect without holding pre-receipt-era messages.
     expectsAcceptance: z.boolean().optional(),

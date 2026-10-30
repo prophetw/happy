@@ -113,6 +113,8 @@ type OutboxMessage = {
 
 type SendMessageOptions = {
     deliveryMode?: 'queue' | 'steer';
+    /** Associate an explicit chat reply without changing its text or modes. */
+    humanInterventionId?: string;
     displayText?: string;
     source?: MessageSentSource;
     /** Optional image attachments to send before the text message. */
@@ -988,6 +990,7 @@ class Sync {
             },
             meta: {
                 sentFrom,
+                ...(options?.humanInterventionId ? { humanInterventionId: options.humanInterventionId } : {}),
                 ...(options?.deliveryMode ? { deliveryMode: options.deliveryMode } : {}),
                 ...resolveMessageDeliveryMeta(sendingSession, source === 'new_session', hasPendingUserMessage),
                 appendSystemPrompt: systemPrompt,

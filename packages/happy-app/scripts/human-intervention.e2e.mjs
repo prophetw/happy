@@ -1,5 +1,5 @@
 // With Expo Web running: pnpm exec node packages/happy-app/scripts/human-intervention.e2e.mjs
-// Uses current CLI source, an isolated Relay/account and real encrypted Socket.IO RPC.
+// Uses current CLI source, an isolated Relay/account and real encrypted chat messages.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -160,7 +160,7 @@ try {
     await page.getByText('人工介入 Web 验收', { exact: true }).first().waitFor({ timeout: 60_000 });
     const dialog = page.getByTestId('human-intervention-dialog');
     assert.equal(await dialog.count(), 0);
-    const instructions = '请在执行电脑的终端中输入 sudo 密码。完成后返回 Happy，点击“已处理，继续”。';
+    const instructions = '请在执行电脑的终端中输入 sudo 密码。完成后返回 Happy，自行输入回复。';
     const first = await ask('sudo', instructions);
     await dialog.waitFor();
     assert.ok(await dialog.getByText('human-intervention-fixture', { exact: false }).isVisible());
@@ -202,82 +202,118 @@ try {
     await page.screenshot({ path: path.join(artifacts, 'mobile-web-dialog.png'), animations: 'disabled' });
     const box = await dialog.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= 390 && box.y >= 0 && box.y + box.height <= 844);
-    assert.ok(await page.getByTestId('human-intervention-resolve').isVisible());
-    assert.ok(await page.getByTestId('human-intervention-cancel').isVisible());
-    pass('The dialog and main actions fit the mobile Web viewport');
+    assert.ok(await page.getByTestId('human-intervention-open').isVisible());
+    assert.ok(await page.getByTestId('human-intervention-later').isVisible());
+    assert.equal(await page.getByTestId('human-intervention-resolve').count(), 0);
+    assert.equal(await page.getByTestId('human-intervention-cancel').count(), 0);
+    pass('The mobile dialog offers only reply navigation and deferral');
 
-    await page.getByTestId('human-intervention-resolve').click();
-    await waitFor(() => clients[0].getAgentState().humanIntervention === null && messages[0].length === 1, 'resolved state and durable follow-up');
-    await dialog.waitFor({ state: 'hidden' });
-    assert.match(messages[0][0].content.text, /Check the actual command result/);
-    assert.equal(messages[0][0].meta.sentFrom, 'human-intervention');
-    assert.equal(messages[0][0].meta.permissionMode, undefined);
-    assert.equal(clients[0].getAgentState().completedHumanIntervention.status, 'resolved');
-    pass('Handled sends one real encrypted follow-up requesting result verification and clears the blocker');
+    const openReply = async (index = 0) => {
+        await page.getByTestId('human-intervention-open').click();
+        await page.waitForURL(`**/session/${sessions[index].id}`);
+        await dialog.waitFor({ state: 'hidden' });
+        await page.getByTestId('human-intervention-reply-context').waitFor();
+        return page.locator('textarea').last();
+    };
+    const sendReply = async (text, index = 0) => {
+        const count = messages[index].length;
+        const id = clients[index].getAgentState().humanIntervention.id;
+        const input = page.locator('textarea').last();
+        await input.fill(text);
+        assert.equal(messages[index].length, count, 'Typing must not send');
+        await input.press('Enter');
+        await waitFor(() => clients[index].getAgentState().humanIntervention === null && messages[index].length === count + 1, 'authored reply delivered');
+        assert.equal(messages[index][count].content.text, text);
+        assert.equal(messages[index][count].meta.humanInterventionId, id);
+        assert.equal(clients[index].getAgentState().completedHumanIntervention.status, 'replied');
+        assert.equal(aborts[index], 0, 'Reminder replies never invoke abort');
+        await page.getByTestId('human-intervention-reply-context').waitFor({ state: 'hidden' });
+    };
+
+    const input = await openReply();
+    assert.equal(messages[0].length, 0);
+    assert.equal(await input.inputValue(), '', 'Opening must not prefill a message');
+    const draft = '我还没处理，先保留这条草稿。';
+    await input.fill(draft);
+    await page.getByTestId('human-intervention-reminder').click();
+    await dialog.waitFor();
+    await page.getByTestId('human-intervention-later').click();
+    assert.equal(await input.inputValue(), draft);
+    assert.equal(messages[0].length, 0);
+    await sendReply('本地已经处理，请先检查实际结果再继续。');
+    pass('Opening and closing preserve the draft; only the exact authored reply is delivered');
 
     await ask('uac', '请在执行电脑上确认 Windows UAC 授权弹窗。');
     await dialog.waitFor();
-    await page.getByTestId('human-intervention-cancel').click();
-    await waitFor(() => clients[0].getAgentState().humanIntervention === null && messages[0].length === 2, 'cancelled task');
-    await dialog.waitFor({ state: 'hidden' });
-    assert.equal(aborts[0], 1);
-    assert.match(messages[0][1].content.text, /Stop the affected task/);
-    assert.equal(clients[0].getAgentState().completedHumanIntervention.status, 'cancelled');
-    pass('Cancel invokes the current harness abort action and sends a stop follow-up');
+    await openReply();
+    await sendReply('没有处理，取消这一步，先检查其他问题。');
+    pass('Cancellation is expressed by the user’s own message, without a generated follow-up or automatic abort');
 
-    const send = clients[0].sendUserAction.bind(clients[0]);
-    let rejectOnce = true;
-    clients[0].sendUserAction = async (...args) => {
-        if (rejectOnce) { rejectOnce = false; throw new Error('Intentional E2E reply delivery failure'); }
-        return send(...args);
-    };
-    expectedFaults.push('One intentional CLI reply-delivery failure, returned through encrypted RPC');
-    await ask('manual', '请在电脑上完成本地确认，然后回来继续。');
+    await ask('manual', '请在电脑上完成本地确认，然后自行回复。');
     await dialog.waitFor();
-    await page.getByTestId('human-intervention-resolve').click();
-    await page.getByTestId('human-intervention-error').waitFor();
+    await openReply();
+    const updateState = clients[0].updateAgentState.bind(clients[0]);
+    let releaseAcknowledgement;
+    let acknowledgementStarted = false;
+    const acknowledgementGate = new Promise(resolve => { releaseAcknowledgement = resolve; });
+    clients[0].updateAgentState = async updater => {
+        acknowledgementStarted = true;
+        await acknowledgementGate;
+        return updateState(updater);
+    };
+    const countBeforeDelay = messages[0].length;
+    const delayedText = '暂时没完成，只反馈当前情况。';
+    await input.fill(delayedText);
+    await input.press('Enter');
+    await waitFor(() => acknowledgementStarted, 'CLI receives reply');
     assert.ok(clients[0].getAgentState().humanIntervention);
-    assert.equal(messages[0].length, 2);
-    assert.equal(await page.getByTestId('human-intervention-cancel').getAttribute('aria-disabled'), 'true');
-    await page.screenshot({ path: path.join(artifacts, 'reply-error.png'), animations: 'disabled' });
-    await page.getByTestId('human-intervention-resolve').click();
-    await waitFor(() => messages[0].length === 3 && clients[0].getAgentState().humanIntervention === null, 'retry succeeds once');
-    await dialog.waitFor({ state: 'hidden' });
-    clients[0].sendUserAction = send;
-    pass('Reply failure is visible, keeps the request pending, and retry recovers without a duplicate follow-up');
+    assert.equal(messages[0].length, countBeforeDelay);
+    releaseAcknowledgement();
+    await waitFor(() => messages[0].length === countBeforeDelay + 1 && clients[0].getAgentState().humanIntervention === null, 'durable acknowledgement');
+    clients[0].updateAgentState = updateState;
+    assert.equal(messages[0].at(-1).content.text, delayedText);
+    pass('The reminder remains pending until the CLI durably acknowledges the authored reply');
 
     await ask('sudo', '请在电脑终端处理密码提示。');
     await dialog.waitFor();
     alive = false;
     clients[0].sendSessionDeath();
-    await dialog.getByText('此会话已离线，请重新连接后再处理。', { exact: true }).waitFor();
-    assert.equal(await page.getByTestId('human-intervention-resolve').getAttribute('aria-disabled'), 'true');
-    assert.equal(await page.getByTestId('human-intervention-cancel').getAttribute('aria-disabled'), 'true');
-    // session-end intentionally suppresses heartbeats for 60s. A legitimate
-    // restart re-registers the same tag, which lifts that server-side guard.
+    await dialog.getByText('此会话已离线。可以先写回复，重新连接后才会送达。', { exact: true }).waitFor();
+    clients[0].socket.disconnect();
+    await openReply();
+    const offlineCount = messages[0].length;
+    const offlineText = '先取消，我稍后自己决定下一步。';
+    await input.fill(offlineText);
+    await input.press('Enter');
+    assert.ok(clients[0].getAgentState().humanIntervention);
+    assert.equal(messages[0].length, offlineCount);
+    // Re-register the same session to lift the server's session-end guard.
     const restarted = await api.getOrCreateSession({ tag: tags[0], metadata: sessions[0].metadata, state: clients[0].getAgentState() });
     assert.equal(restarted.id, sessions[0].id);
     alive = true;
+    clients[0].socket.connect();
+    await waitFor(() => clients[0].socket.connected, 'session reconnected');
     ping();
-    await waitFor(async () => await page.getByTestId('human-intervention-resolve').getAttribute('aria-disabled') !== 'true', 'session reconnected');
-    await page.getByTestId('human-intervention-cancel').click();
-    await waitFor(() => clients[0].getAgentState().humanIntervention === null, 'offline fixture cleared');
-    await dialog.waitFor({ state: 'hidden' });
-    pass('Offline state disables replies; a legitimate session restart restores handling');
+    await waitFor(() => messages[0].length === offlineCount + 1 && clients[0].getAgentState().humanIntervention === null, 'offline reply delivered once');
+    assert.equal(messages[0].at(-1).content.text, offlineText);
+    pass('Offline replies preserve the reminder until reconnection and deliver the user’s text once');
 
     await ask('manual', '这是第一个待处理任务。');
     await dialog.waitFor();
     await ask('manual', '这是另一个会话的待处理任务。', 1);
-    await page.getByTestId('human-intervention-resolve').click();
-    await waitFor(() => clients[0].getAgentState().humanIntervention === null, 'first queued request handled');
+    await page.getByTestId('human-intervention-open').click();
+    await page.waitForURL(`**/session/${sessions[0].id}`);
     await dialog.getByText('另一个等待处理的任务', { exact: true }).waitFor();
+    await page.getByTestId('human-intervention-later').click();
+    await sendReply('先处理第一个会话。');
     assert.ok(clients[1].getAgentState().humanIntervention);
-    await page.getByTestId('human-intervention-cancel').click();
-    await waitFor(() => clients[1].getAgentState().humanIntervention === null && messages[1].length === 1, 'second queued request handled');
-    await dialog.waitFor({ state: 'hidden' });
-    assert.equal(aborts[1], 1);
-    await page.screenshot({ path: path.join(artifacts, 'all-handled.png'), animations: 'disabled' });
-    pass('Multiple sessions are handled in order and replying to one does not clear another');
+    await page.getByTestId('human-intervention-reminder').click();
+    await dialog.waitFor();
+    await openReply(1);
+    await sendReply('第二个会话先取消。', 1);
+    assert.deepEqual(aborts, [0, 0]);
+    await page.screenshot({ path: path.join(artifacts, 'all-replied.png'), animations: 'disabled' });
+    pass('Each authored reply acknowledges only its own session and never triggers an automatic abort');
 
     assert.deepEqual(failures, [], 'Browser page, console, network and HTTP errors');
     pass('No page errors, console errors, unexpected HTTP errors or failed requests');
