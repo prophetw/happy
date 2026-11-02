@@ -331,6 +331,7 @@ export type MessageContent = z.infer<typeof MessageContentSchema>
 
 export type Metadata = {
   codexCapabilities?: { steering: boolean; asyncUserInput: boolean },
+  claudeCapabilities?: { steering: boolean },
   /**
    * ACP session config option value (normalized for UI metadata consumers).
    */

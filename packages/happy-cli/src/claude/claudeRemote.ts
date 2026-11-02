@@ -30,6 +30,8 @@ export async function claudeRemote(opts: {
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: CanCallToolOptions) => Promise<PermissionResult>,
     /** Called when the Query object is ready — allows permission handler to call setPermissionMode */
     onQueryReady?: (query: { setPermissionMode: (mode: string) => Promise<void> }) => void,
+    /** Registers a synchronous input handler for messages explicitly requested during the active turn. */
+    onSteeringReady?: (steer: (message: MessageParam['content']) => boolean) => void,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     hookSettingsPath: string,
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
@@ -184,6 +186,45 @@ export async function claudeRemote(opts: {
             setPermissionMode: (mode: string) => response.setPermissionMode(mode as any),
         });
     }
+
+    // Claude accepts asynchronous user input while a turn is running and can
+    // fold it into that turn between tool rounds. Ordinary messages retain the
+    // existing Happy queue; only an explicit steering request uses this path.
+    let turnActive = true;
+    let nextMessagePending = false;
+    let inputEnded = false;
+    let endInputAfterTurn = false;
+    const endInput = () => {
+        inputEnded = true;
+        messages.end();
+    };
+    const requestNextMessage = () => {
+        // A steered message can produce its own result while an earlier queue
+        // read is still pending. Never create a second competing queue waiter.
+        if (nextMessagePending || inputEnded || endInputAfterTurn || opts.signal?.aborted) return;
+        nextMessagePending = true;
+        opts.nextMessage().then((next) => {
+            nextMessagePending = false;
+            if (!next) {
+                if (turnActive) endInputAfterTurn = true;
+                else endInput();
+                return;
+            }
+            mode = next.mode;
+            turnActive = true;
+            updateThinking(true);
+            messages.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: next.message } });
+        }).catch(() => {
+            nextMessagePending = false;
+            if (turnActive) endInputAfterTurn = true;
+            else endInput();
+        });
+    };
+    opts.onSteeringReady?.((content) => {
+        if (!turnActive || inputEnded || opts.signal?.aborted) return false;
+        messages.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content } });
+        return true;
+    });
 
     // Plan rate-limit accumulation: events are buffered and flushed once per
     // result (coalescing agent-state writes to at most one per turn). The seed
@@ -345,6 +386,7 @@ export async function claudeRemote(opts: {
 
             // Handle result messages
             if (message.type === 'result') {
+                turnActive = false;
                 updateThinking(false);
                 logger.debug('[claudeRemote] Result received');
 
@@ -369,19 +411,10 @@ export async function claudeRemote(opts: {
                 }
                 providerAuthFailed = false;
 
-                // Wait for next user message without blocking the message loop.
-                // Background task messages (task_started, task_progress, task_notification)
-                // continue flowing through while we wait for user input.
-                opts.nextMessage().then((next) => {
-                    if (!next) {
-                        messages.end();
-                    } else {
-                        mode = next.mode;
-                        messages.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: next.message } });
-                    }
-                }).catch(() => {
-                    messages.end();
-                });
+                // Wait for the next ordinary user message without blocking the
+                // response loop. Background task messages can continue flowing.
+                if (endInputAfterTurn) endInput();
+                else requestNextMessage();
             }
 
             // Handle tool result
@@ -405,6 +438,7 @@ export async function claudeRemote(opts: {
             throw e;
         }
     } finally {
+        turnActive = false;
         updateThinking(false);
     }
 }

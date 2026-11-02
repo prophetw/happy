@@ -195,6 +195,74 @@ describe('claudeRemote', () => {
         expect(query).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ resume: 'fixture-session' }) }));
     });
 
+    it('injects steering into the active input stream and rejects it after the turn', async () => {
+        const received: unknown[] = [];
+        let steer!: (message: string) => boolean;
+        vi.mocked(query).mockImplementation(({ prompt }) => ({
+            async *[Symbol.asyncIterator]() {
+                const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+                received.push((await input.next()).value);
+                expect(steer('Supplement')).toBe(true);
+                received.push((await input.next()).value);
+                yield { type: 'result', subtype: 'success', is_error: false, result: 'Done' };
+                expect((await input.next()).done).toBe(true);
+            },
+        } as any));
+        const nextMessage = vi.fn()
+            .mockResolvedValueOnce({ message: 'Original prompt', mode })
+            .mockResolvedValue(null);
+        const onReady = vi.fn(() => {
+            expect(steer('Too late')).toBe(false);
+        });
+
+        await claudeRemote({
+            sessionId: null, path: '/fixture/project', allowedTools: [], hookSettingsPath: '/fixture/settings.json',
+            nextMessage, onReady, onCompletionEvent: vi.fn(), onSDKMetadata: vi.fn(),
+            onSteeringReady: handler => { steer = handler; },
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+            onSessionFound: vi.fn(), onMessage: vi.fn(),
+        });
+
+        expect(received).toEqual([
+            expect.objectContaining({ message: { role: 'user', content: 'Original prompt' } }),
+            expect.objectContaining({ message: { role: 'user', content: 'Supplement' } }),
+        ]);
+        expect(nextMessage).toHaveBeenCalledTimes(2);
+        expect(onReady).toHaveBeenCalledOnce();
+    });
+
+    it('keeps one ordinary queue waiter when steering produces another result', async () => {
+        let steer!: (message: string) => boolean;
+        let finishQueueRead!: () => void;
+        const nextMessage = vi.fn()
+            .mockResolvedValueOnce({ message: 'Original prompt', mode })
+            .mockImplementationOnce(() => new Promise<null>(resolve => {
+                finishQueueRead = () => resolve(null);
+            }));
+        vi.mocked(query).mockImplementation(({ prompt }) => ({
+            async *[Symbol.asyncIterator]() {
+                const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+                await input.next();
+                expect(steer('Steered follow-up')).toBe(true);
+                await input.next();
+                yield { type: 'result', subtype: 'success', is_error: false, result: 'First' };
+                yield { type: 'result', subtype: 'success', is_error: false, result: 'Second' };
+                finishQueueRead();
+                expect((await input.next()).done).toBe(true);
+            },
+        } as any));
+
+        await claudeRemote({
+            sessionId: null, path: '/fixture/project', allowedTools: [], hookSettingsPath: '/fixture/settings.json',
+            nextMessage, onReady: vi.fn(), onCompletionEvent: vi.fn(), onSDKMetadata: vi.fn(),
+            onSteeringReady: handler => { steer = handler; },
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+            onSessionFound: vi.fn(), onMessage: vi.fn(),
+        });
+
+        expect(nextMessage).toHaveBeenCalledTimes(2);
+    });
+
     it('does not interpret ordinary assistant text or a successful result as an auth failure', async () => {
         const callbacks = await runMessages([
             { ...authAssistant, error: undefined },

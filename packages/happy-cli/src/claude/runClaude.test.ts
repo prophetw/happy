@@ -187,7 +187,11 @@ async function startRemoteRunClaudeHarness(opts: {
     if (!scannerOptions || !loopOptions) {
         throw new Error('runClaude harness did not start');
     }
-    const runtimeSession = { thinking: false, cleanup: vi.fn() };
+    const runtimeSession = {
+        thinking: false,
+        cleanup: vi.fn(),
+        steeringHandler: null as null | ((text: string, attachments?: unknown[]) => boolean),
+    };
     loopOptions.onSessionReady(runtimeSession);
     const goalActionHandler = registerHandler.mock.calls.find(([method]) => method === 'goal-action')?.[1];
 
@@ -876,6 +880,51 @@ describe('runClaude remote JSONL scanner', () => {
             effort: 'high',
         });
 
+        await harness.finish();
+    });
+
+    it('routes explicit immediate sends to the active Claude steering handler', async () => {
+        const harness = await startRemoteRunClaudeHarness();
+        const steer = vi.fn(() => true);
+        harness.runtimeSession.steeringHandler = steer;
+        const userMessageHandler = harness.sessionClient.onUserMessage.mock.calls[0][0];
+
+        await userMessageHandler({
+            content: { text: 'add this to the active turn' },
+            meta: { deliveryMode: 'steer' },
+        });
+
+        expect(steer).toHaveBeenCalledWith('add this to the active turn', []);
+        expect(harness.loopOptions.messageQueue.queue).toEqual([]);
+        expect(harness.api.getOrCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: expect.objectContaining({ claudeCapabilities: { steering: true } }),
+        }));
+        await harness.finish();
+    });
+
+    it('queues rejected steering and slash commands without changing ordinary sends', async () => {
+        const harness = await startRemoteRunClaudeHarness();
+        const steer = vi.fn(() => false);
+        harness.runtimeSession.steeringHandler = steer;
+        const userMessageHandler = harness.sessionClient.onUserMessage.mock.calls[0][0];
+
+        await userMessageHandler({ content: { text: 'turn already ended' }, meta: { deliveryMode: 'steer' } });
+        expect(harness.loopOptions.messageQueue.queue).toEqual([
+            expect.objectContaining({ message: 'turn already ended', isolate: false }),
+        ]);
+
+        await userMessageHandler({ content: { text: '/compact' }, meta: { deliveryMode: 'steer' } });
+        expect(harness.loopOptions.messageQueue.queue).toEqual([
+            expect.objectContaining({ message: '/compact', isolate: true }),
+        ]);
+
+        await userMessageHandler({ content: { text: 'ordinary' }, meta: {} });
+
+        expect(steer).toHaveBeenCalledOnce();
+        expect(harness.loopOptions.messageQueue.queue).toEqual([
+            expect.objectContaining({ message: '/compact', isolate: true }),
+            expect.objectContaining({ message: 'ordinary', isolate: false }),
+        ]);
         await harness.finish();
     });
 

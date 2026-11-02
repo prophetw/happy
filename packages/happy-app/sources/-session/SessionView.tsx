@@ -1198,8 +1198,10 @@ export function SessionViewLoaded({
                 connectionStatus={session ? connectionStatus : undefined}
                 blockSend={isRig && session?.thinking && session.metadata?.capabilities?.steering !== true}
                 onSend={() => handleSend()}
-                onSendImmediately={flavor === 'codex' && !isRig && session?.thinking && session.metadata?.codexCapabilities?.steering
-                    ? () => handleSend('steer') : undefined}
+                onSendImmediately={!isRig && session?.thinking && (
+                    (flavor === 'codex' && session.metadata?.codexCapabilities?.steering)
+                    || (flavor === 'claude' && session.metadata?.claudeCapabilities?.steering)
+                ) ? () => handleSend('steer') : undefined}
                 onMicPress={(embedded || isDisconnected) ? undefined : micButtonState.onMicPress}
                 isMicActive={(embedded || isDisconnected) ? false : micButtonState.isMicActive}
                 onAbort={!session || isDisconnected || !rigCanAbort(session.metadata) ? undefined : handleAbort}

@@ -1,5 +1,5 @@
 import { ApiClient, ApiSessionClient } from "@/lib";
-import { MessageQueue2 } from "@/utils/MessageQueue2";
+import { MessageQueue2, type PendingAttachment } from "@/utils/MessageQueue2";
 import { EnhancedMode } from "./loop";
 import { logger } from "@/ui/logger";
 import type { JsRuntime } from "./runClaude";
@@ -26,7 +26,9 @@ export class Session {
     sessionId: string | null;
     mode: 'local' | 'remote' = 'local';
     thinking: boolean = false;
-    
+    /** Set by the active remote query; returns false when the message must join the normal queue. */
+    steeringHandler: ((text: string, attachments?: PendingAttachment[]) => boolean) | null = null;
+
     /** Callbacks to be notified when session ID is found/changed */
     private sessionFoundCallbacks: ((sessionId: string) => void)[] = [];
     
@@ -80,6 +82,7 @@ export class Session {
      */
     cleanup = (): void => {
         clearInterval(this.keepAliveInterval);
+        this.steeringHandler = null;
         this.sessionFoundCallbacks = [];
         logger.debug('[Session] Cleaned up resources');
     }

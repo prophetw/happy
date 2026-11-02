@@ -24,6 +24,7 @@ export type RigComposerDraft = z.infer<typeof RigComposerDraftSchema>;
 
 export const MetadataSchema = z.object({
     codexCapabilities: z.object({ steering: z.boolean(), asyncUserInput: z.boolean() }).optional(),
+    claudeCapabilities: z.object({ steering: z.boolean() }).optional(),
     bot: RigBotSchema.optional(),
     models: z.array(z.object({
         code: z.string(),

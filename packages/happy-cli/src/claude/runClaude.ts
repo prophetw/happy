@@ -148,6 +148,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: 'claude',
+        claudeCapabilities: { steering: (options.startingMode ?? 'local') === 'remote' },
         ...(modelCatalog ? {
             models: [
                 { code: 'default', value: modelCatalog.currentCode ?? 'Default model', description: 'Claude Code default' },
@@ -839,6 +840,18 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             }
         }
 
+        // Explicit immediate sends enter the active SDK input stream. If the
+        // turn ended concurrently, the handler rejects and this message joins
+        // the ordinary queue exactly once. Slash commands keep queue ordering.
+        const shouldSteer = message.meta?.deliveryMode === 'steer' && !message.content.text.trim().startsWith('/');
+        if (shouldSteer && currentSession?.steeringHandler?.(message.content.text, attachmentsForThisMessage)) {
+            logger.debug('[loop] User message injected into the active Claude turn');
+            return;
+        }
+        if (shouldSteer) {
+            logger.debug('[loop] Claude turn is not accepting steering; queueing message instead');
+        }
+
         // Push with resolved permission mode, model, system prompts, and tools
         messageQueue.push(message.content.text, currentEnhancedMode(), attachmentsForThisMessage);
         logger.debugLargeJson('User message pushed to queue:', message)
@@ -955,6 +968,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),
         onModeChange: (newMode) => {
             currentRunMode = newMode;
+            session.updateMetadata((currentMetadata) => ({
+                ...currentMetadata,
+                claudeCapabilities: { steering: newMode === 'remote' },
+            }));
             session.sendSessionEvent({ type: 'switch', mode: newMode });
             session.updateAgentState((currentState) => ({
                 ...currentState,

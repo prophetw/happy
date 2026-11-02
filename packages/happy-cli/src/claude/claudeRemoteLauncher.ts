@@ -20,6 +20,7 @@ import { getAskUserQuestionToolCallIds } from "./utils/questionNotification";
 import { launchFailureMessage } from "./utils/launchFailureMessage";
 import { cleanupStdinAfterInk } from "@/utils/terminalStdinCleanup";
 import type { MessageParam, ContentBlockParam } from '@anthropic-ai/sdk/resources';
+import type { PendingAttachment } from '@/utils/MessageQueue2';
 
 interface PermissionsField {
     date: number;
@@ -359,46 +360,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             mode = msg.mode;
                             permissionHandler.handleModeChange(mode.permissionMode);
 
-                            // Per-message attachments are already claimed by the message
-                            // when it was pushed onto the queue, so there is no race window
-                            // to wait out here — just consume what travelled with the batch.
-                            const attachments = msg.attachments ?? [];
-                            if (attachments.length > 0) {
-                                const contentBlocks: ContentBlockParam[] = [];
-                                for (const att of attachments) {
-                                    // Detect media type from the decrypted bytes' magic header
-                                    // rather than trusting the wire-supplied mimeType. iOS image
-                                    // pickers happily report things like "image/heic" or no
-                                    // mimeType at all, which the Anthropic API rejects with a
-                                    // strict enum validation error. If the bytes look like one
-                                    // of the four formats Claude accepts, send that label —
-                                    // otherwise skip the attachment with a debug log.
-                                    const detected = detectClaudeImageMime(att.data);
-                                    if (!detected) {
-                                        logger.debug(`[remote] Skipping unsupported attachment (no magic-byte match): ${att.name}, claimed mimeType=${att.mimeType}`);
-                                        continue;
-                                    }
-                                    contentBlocks.push({
-                                        type: 'image' as const,
-                                        source: {
-                                            type: 'base64' as const,
-                                            media_type: detected,
-                                            data: Buffer.from(att.data).toString('base64'),
-                                        },
-                                    });
-                                }
-                                contentBlocks.push({ type: 'text' as const, text: msg.message });
-                                logger.debug(`[remote] Combined ${contentBlocks.length - 1} image(s) with text message`);
-                                return {
-                                    message: contentBlocks,
-                                    mode: msg.mode,
-                                };
-                            }
-
                             return {
-                                message: msg.message,
-                                mode: msg.mode
-                            }
+                                message: claudeMessageContent(msg.message, msg.attachments ?? []),
+                                mode: msg.mode,
+                            };
                         }
 
                         // Exit
@@ -432,6 +397,11 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         permissionHandler.setPermissionModeUpdater(async (mode) => {
                             await q.setPermissionMode(mode);
                         });
+                    },
+                    onSteeringReady: (steer) => {
+                        session.steeringHandler = (text, attachments) => (
+                            steer(claudeMessageContent(text, attachments ?? []))
+                        );
                     },
                     onThinkingChange: session.onThinkingChange,
                     claudeEnvVars: session.claudeEnvVars,
@@ -486,6 +456,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             } finally {
 
                 logger.debug('[remote]: launch finally');
+                session.steeringHandler = null;
 
                 // Terminate all ongoing tool calls
                 for (let [toolCallId, { parentToolCallId }] of ongoingToolCalls) {
@@ -551,6 +522,33 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     }
 
     return exitReason || 'exit';
+}
+
+/** Build the same SDK user content for queued and actively steered messages. */
+function claudeMessageContent(text: string, attachments: PendingAttachment[]): MessageParam['content'] {
+    if (attachments.length === 0) return text;
+
+    const contentBlocks: ContentBlockParam[] = [];
+    for (const att of attachments) {
+        // Detect media type from decrypted bytes rather than trusting the wire
+        // mimeType: iOS commonly supplies HEIC or no type, which Claude rejects.
+        const detected = detectClaudeImageMime(att.data);
+        if (!detected) {
+            logger.debug(`[remote] Skipping unsupported attachment (no magic-byte match): ${att.name}, claimed mimeType=${att.mimeType}`);
+            continue;
+        }
+        contentBlocks.push({
+            type: 'image' as const,
+            source: {
+                type: 'base64' as const,
+                media_type: detected,
+                data: Buffer.from(att.data).toString('base64'),
+            },
+        });
+    }
+    contentBlocks.push({ type: 'text' as const, text });
+    logger.debug(`[remote] Combined ${contentBlocks.length - 1} image(s) with text message`);
+    return contentBlocks;
 }
 
 /**
