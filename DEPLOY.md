@@ -1,198 +1,83 @@
-# 部署说明：个人 Fork 操作手册（合并 → 构建 → OTA → daemon 替换 → 真机冒烟）
+# 个人 Fork 部署入口（prophetw/happy）
 
-本文档是 fork（prophetw/happy）日常部署的唯一入口，面向“功能分支开发完，合入个人聚合线并发布到真机”的完整闭环。
+本文件提供当前部署入口；个人项目身份、Git 发布线、授权范围与最低充分验证规则以
+[AGENTS.md](AGENTS.md) 为准。历史发布结果只证明当时状态，每次发布仍需核对线上版本。
 
-2026-10-18 已完成获批的 Relay 分支测试发布：`192.168.99.55:/data/code/happy-relay`，
-API 为 `http://192.168.99.55:8193`。镜像、备份、数据保留和验证记录见
-[自建 Relay 部署说明](docs/deployment.md#1921689955-分支测试发布2026-10-18)。此次仅更新服务端，未发布 App 或 CLI。
-同日已备份并热重载 `99.57` 的现有 Nginx，入口为
-`https://szsp.suitbim.com.cn:7100/home-relay`，复用原端口；健康检查和 WSS 已验证。
-`99.55` 的 `PUBLIC_URL` 已同步为上述 HTTPS 基址，容器健康；配置备份和验证记录见
-[HTTPS 入口](docs/deployment.md#https-入口)。
+## 发布来源与准备
 
-自建 Relay 的独立服务器测试：使用仓库根目录 `docker-compose.yml`，具体配置、
-启动和持久化步骤见 [Docker Compose 测试部署](docs/deployment.md#自建-relaydocker-compose-测试部署)。
-部署到 `192.168.99.56` 前，先阅读同一文档的“部署前准备”和“容器和首次部署顺序”；
-先执行 `node scripts/deploy-relay.mjs --dry-run` 预览，再按需执行只读的 `--check`。
-此入口只部署 relay API 与路径网关；客户端需使用包含自定义地址支持的版本。
-仅运行 relay API 的场景使用 `docker-compose.relay-only.yml`，直接发布 HTTP
-`8193`，操作见同一部署文档的“仅部署 relay 服务”小节。
-SSH 一键部署使用 `node scripts/deploy-relay.mjs`；准备好镜像时加
-`--image <tag>` 可直接复用。步骤见该文档的“一键部署到 SSH 服务器”小节。
-复用 `99.57` 的 HTTPS 入口时，将 [最小 Nginx 配置](deploy/relay/nginx-location.conf)
-放入现有 TLS `server` 块，复用当前域名和 HTTPS 端口，通过 `/home-relay` 访问。
-接入位置和公网地址配置见
-[HTTPS 入口](docs/deployment.md#https-入口)。
+- 常规发布使用已提交的个人 `main`。当次执行 `git fetch fork main`，确认
+  `HEAD == fork/main`，发布 checkout 干净，包括未跟踪文件。
+- `fork` 指向 `git@github.com:prophetw/happy.git`；`origin` 是上游
+  `git@github.com:slopus/happy.git`，仅按用户要求吸收更新，不向上游推送。
+- 开发工作区有其他改动时，使用独立、干净的发布 clone；不依赖固定 worktree 路径，
+  不擅自 stash、清理或提交其他改动。提交、推送与实际发布分别按用户授权执行。
+- 使用根 `package.json` 指定的 pnpm（当前 `10.11.0`）；安装使用仓库 `.npmrc`
+  中的阿里云 npmmirror。仅在依赖变化或缺失时安装。
+- 新 checkout 缺少共享包产物时，先在仓库根执行
+  `pnpm --filter @slopus/happy-wire run build`，再检查 App。
+- 验证范围按变更选择。发布 App / Web 时检查类型与 changelog 一致性；不因修改文档
+  自动执行完整构建、全量测试、部署或 daemon 重启。测试失败必须调查，不能套用旧失败名单。
 
-分工：服务端/后端 k8s 部署见仓库内 `docs/deployment.md`（上游，英文）。**本文只讲 fork 特有的操作**：worktree 布局、合并到 fork/main、个人 EAS OTA、daemon 替换、冒烟验证、已知坑。
+## Happy Web
 
-> 最近实操验证：2026-09-19（合并 847bc6c0 → OTA 30ae3c5d → daemon 1.2.4 → 4/4 冒烟通过）。
-> 当前基线：fork/main = `1a5bec38`，happy-agy main = `1878c84c`（含后续 dsh 工作）。
+详细构建、上传、验收和回滚步骤见
+[Web 部署手册](docs/deployment.md#web复用现有-https-域名并挂载到-happy)。
 
----
+| 项目 | 当前部署约定 |
+| --- | --- |
+| 公网入口 | <https://szsp.suitbim.com.cn:7100/happy/> |
+| Relay API 基址 | `https://szsp.suitbim.com.cn:7100/home-relay` |
+| 网关 | `root@192.168.99.57`，Nginx 容器 `bim-nginx-1.30` |
+| Nginx 配置 | `/root/bim-engine/script/http.nginx.1.30.1.prod.conf` |
+| 宿主机静态目录 | `/root/bim-engine/web/html` |
+| 版本目录 / 当前入口 | `.happy-releases/<run-id>` / 相对符号链接 `happy` |
+| 发布记录与静态包 | `/root/bim-engine/script/happy-web-artifacts/` |
+| 构建入口 | `Dockerfile.webapp` 的 `builder` 阶段 |
 
-## 1. 环境与 worktree 布局
+构建时设置 `HAPPY_WEB_BASE_PATH=/happy`、`HAPPY_SERVER_URL` 为上述 Relay 基址，
+并注入来源提交 SHA 与提交时间。构建导出静态文件后，上传到新版本目录，再原子切换
+`happy` 符号链接。切换前核对当前线上来源提交，确认新版本包含已发布功能。
 
-| 路径 | 分支 | 角色 |
-|---|---|---|
-| `/home/dev/code/happy` | `feat/resume-native-sessions` | 主仓库，/resume 功能开发（有未提交 WIP，勿动） |
-| `/home/dev/code/happy-dsh` | `feat/dsh-harness` | dsh(DeepSeek Harness) 集成开发 |
-| `/home/dev/code/happy-agy` | `main` | **聚合/部署 worktree**，所有合并、构建、OTA、cli:install 都在这里做 |
+现有 `/happy/` Nginx 路由已配置，常规更新无需重复插入路由或重启网关。
+保留上一版本、静态包校验值、来源 SHA 和 `previous-target`，按详细手册回滚。
+验收包括入口、JS/CSS、WASM、深层路由、缺失资源的真实 404 和 Relay 健康检查。
+真实浏览器按用户当次授权执行；未验证登录、消息收发或附件时，明确报告验证边界。
 
-Git 拓扑：origin = 上游 `slopus/happy`（HTTPS，无凭据，**不可推**）；fork = `prophetw/happy`（SSH，可推）。worktree 间共享 refs。
+## Relay
 
-分支策略：**fork/main 就是个人聚合点**，不建二级集成分支。功能分支就绪后直接合入 main 再推 fork/main。
+详细说明见 [Relay 部署手册](docs/deployment.md#自建-relaydocker-compose-测试部署)。
 
-外部依赖（均已装好，重装时才需要）：
+- 现有实例：`192.168.99.55:/data/code/happy-relay`，内网 API 为
+  `http://192.168.99.55:8193`；公网由 `99.57` 的 `/home-relay` 转发。
+- `docker-compose.relay-only.yml` 只运行 API；`docker-compose.yml` 包含路径网关。
+- SSH 部署脚本为 `scripts/deploy-relay.mjs`，默认目标是 `192.168.99.56`。
+  部署现有 `99.55` 时必须显式指定目标；先用 `--dry-run` 预览、`--check` 只读检查。
+- 保留已有密钥、账号和数据卷。客户端与 daemon 使用相同的最终 API 基址，
+  `RELAY_PUBLIC_URL` 也必须对应公网基址。不要将历史健康检查当作当前业务验收。
 
-- `~/.local/bin/dsh` shim → `~/code/deepseek-harness/apps/cli/lib/bin.js`（需先在 deepseek-harness 仓库构建）
-- 凭据：`~/.happy/access.key`（happy）、`~/.dsh/.credentials.yaml`（dsh）——凭据文件，任何日志/文档中不得暴露内容
+## 手机 App：OTA 与 TestFlight
 
-## 2. 合并流程（合入 fork/main）
+个人 Expo 身份、`preview prophet` 渠道、预检、发布命令及回读要求见
+[AGENTS.md](AGENTS.md#3-preview-prophet-的个人发布目标)。执行发布前阅读
+[release 技能](.agents/skills/release/SKILL.md)，上游默认值以个人约定覆盖。
 
-前提：功能分支已推到自己 fork 远端。在 happy-agy worktree 上操作：
+`packages/happy-app/app.config.js` 包含上游默认身份，个人发布必须显式加载已核验配置，
+不能依赖未提交的本机修改。纯 JS OTA 保持与安装包兼容的 runtime；原生接口变化时，
+更新 runtime 并重建安装包。原生构建与送达 TestFlight 分别核验，不将构建完成视为可安装。
 
-```bash
-cd /home/dev/code/happy-agy
-git fetch origin fork
-git merge origin/main          # 第一步：先吸收上游
-git merge <feature-branch>     # 第二步：逐个合功能分支
-# 解决冲突 → 验证（见第 3 节）→ 推送
-git push fork main
-```
+现有 `pnpm ota` / `release:build:*` 的预检脚本仍检查 `origin/main`，尚未适配个人
+`fork/main`。按 `AGENTS.md` 完成个人预检后使用明确的 EAS 命令，不整体跳过发布检查。
+回滚使用已核验个人项目的 EAS 机制，明确恢复版本、兼容 runtime 和受影响渠道。
 
-已完成的合并（2026-09-19，提交序）：
+## CLI 与 daemon
 
-1. `a17ad796` merge origin/main（dd4cb252）
-2. `409e8cdd` merge feat/dsh-harness
-3. `847bc6c0` merge feat/resume-native-sessions（后 fork/main 推进至 `1a5bec38`）
+本地构建、安装参考 [dev 技能](.agents/skills/dev/SKILL.md)。CLI 的包名是 `happy`，
+构建使用 `pnpm --filter happy run build`；不默认替换为上游 npm 的 `happy@latest`。
 
-### 冲突取舍原则
+先通过 `command -v happy` 与实际链接核对安装路径。已链接到目标源码且依赖未变时，
+构建后显式重启 daemon，无需重复 `npm link`。停止与启动必须放在独立进程执行的同一
+序列中，避免当前会话终止后停在未启动状态，具体要求见
+[AGENTS.md](AGENTS.md#执行顺序与耗时控制2026-10-23-实操经验)。
 
-- **main（更新架构）为基准**，把功能分支的增量端口过来，不反向“恢复”旧实现。
-- 典型案例：`EditView` 系列视图里 main 已**有意移除** `trimIdent`（并加了“保留纯空白编辑”的回归测试），即使旧分支有它也不要恢复。
-- docs 冲突：取 HEAD（main）侧路径，如 agy 新引擎在 `src/agyStream/`。
-- Picker 类冲突：用 main 的 list 式实现（`listMachineChoiceAvailableAgents`），功能分支的可见性需求通过 `harnessCatalog.ts` 的 `EXPLICIT_REPORT_HARNESSES` 满足。
-
-### 自动合并的语义陷阱（必须人工 diff 复核）
-
-`git merge` 的 rename-following + 文本自动合并可能**悄悄丢行为**：
-
-- 某文件被 main 重命名/重构后，旧分支对它的修改可能落到错误位置或直接消失。
-- zod schema 改成 `.passthrough()` 后字段变 `unknown`；类型改可选（`input?:`）后原 `parsed.success` 直接引用会编译错。
-
-复核方法：对每个自动合并的文件 `git diff <merge-base>..HEAD -- <path>`，确认功能分支的行为增量仍在。
-
-## 3. 构建与验证（合并后、发布前）
-
-**pnpm 版本铁律：必须 `npx pnpm@10.11.0`**。系统 pnpm 7.9.0 会污染 v9 lockfile。
-
-```bash
-cd /home/dev/code/happy-agy
-npx pnpm@10.11.0 install            # 如依赖有变
-
-# CLI：全量测试（合并验收时当时 1126 个全绿）
-npx pnpm@10.11.0 --filter happy-cli test
-
-# App：类型检查 + 测试
-cd packages/happy-app
-APP_ENV=preview NODE_ENV=preview npx pnpm@10.11.0 typecheck
-APP_ENV=preview NODE_ENV=preview npx pnpm@10.11.0 test
-npx pnpm@10.11.0 --filter happy-cli build   # CLI 产物
-```
-
-已知基线：**上游 dd4cb252 自带 8 个 `sync.send.test.ts` 失败**（已用 detached 检出 + 软链 node_modules 复现确认，与合并无关）。看到刚好是这 8 个就不要当回归排查。
-
-## 4. CLI 安装与 PATH 遮蔽坑
-
-```bash
-cd /home/dev/code/happy-agy/packages/happy-cli
-npx pnpm@10.11.0 run cli:install    # 构建 → npm link → 重启 daemon（复用 ~/.happy）
-happy --version                     # ← 必须核对！目标版本（如 1.2.4）
-```
-
-**`~/.local/bin/happy` 符号链接会遮蔽 pnpm 全局 link**（已踩过：它指向主仓库旧 bin/happy.mjs，daemon 跑的是旧 dist，`--version` 显示 1.2.2）。修复：
-
-```bash
-ln -sfn /home/dev/code/happy-agy/packages/happy-cli/bin/happy.mjs ~/.local/bin/happy
-ln -sfn /home/dev/code/happy-agy/packages/happy-cli/bin/happy-mcp.mjs ~/.local/bin/happy-mcp
-```
-
-`bin/happy.mjs` 是 flags shim（re-exec node --no-warnings --no-deprecation 加载同目录 dist/index.mjs），链到它即可。
-
-daemon 重启序列：
-
-```bash
-happy daemon stop
-rm -f ~/.happy/daemon.state.json.lock    # stop 偶发留锁
-happy daemon start
-```
-
-验证（不要只看命令返回）：
-
-```bash
-cat ~/.happy/daemon.state.json           # pid + startedWithCliVersion
-tr '\0' ' ' < /proc/<pid>/cmdline        # 必须指向 happy-agy 的 dist/index.mjs
-```
-
-## 5. OTA 发布
-
-前置：个人 EAS 配置已在 `packages/happy-app/app.config.js`（prophetwayen 项目，**保持未提交**，可用 EXPO_OWNER/EAS_PROJECT_ID 等 env 覆盖）。
-
-```bash
-cd /home/dev/code/happy-agy/packages/happy-app
-APP_ENV=preview NODE_ENV=preview npx pnpm@10.11.0 tsx sources/scripts/parseChangelog.ts
-npx pnpm@10.11.0 typecheck
-npx pnpm@10.11.0 exec eas update --branch preview --environment preview --auto
-```
-
-要点：
-
-- **runtimeVersion 硬编码 "21"，永远不要 bump**（bump 会让所有已装二进制收不到 OTA）。
-- OTA 只能送达「构建时 updates URL 指向个人项目」的二进制；指向上游项目的旧构建永远收不到。
-- 上游 bulkacorp 项目对当前账号无权限：`eas build:list` 等操作必须在个人 app.config.js 就绪后再跑，否则报权限错。
-
-## 6. 真机冒烟清单
-
-daemon 换好后在手机上逐项过（2026-09-19 全过）：
-
-| 项 | 操作 | 预期 |
-|---|---|---|
-| claude 基础 | 新建 claude 会话发一条 | 正常流式回复 |
-| dsh 中止续聊 | dsh 会话发送 → 点中止 ×2 → 再发 | 同一会话存活继续（日志：tool aborted → TurnCancelledError 域 turn end） |
-| /resume | claude 会话发 `/resume <sessionId>` | 日志出现 FORK BACKFILL replay 计数（实测 89 条），历史回填进当前会话 |
-| agy | agy 会话正常跑 | agyStream 引擎工作；`/resume` 在 agy flavor 被**拒绝是预期**（拦截只在 claude flavor 实现） |
-
-手机端目视确认（历史回填后的 UI 显示）需人工看一眼，日志只能证明数据层。
-
-## 7. 日志监听冒烟法
-
-不用盯着手机，监听 daemon 会话日志即可。日志路径：`~/.happy/logs/<YYYY-MM-DD>-pid-<pid>[-daemon].log`。
-
-要点：按文件名做 cutoff（字典序大于 `切换时刻的最新日志名` 才看）、记录 offset 增量 tail、用 /proc 判断 pid 存活、grep 过滤关键行。参考脚本 `/tmp/watch-merged-sessions.sh`（会话级，非 daemon 日志）：
-
-```bash
-CUTOFF="2026-09-19-11-18-58-pid-0"
-# 跳过 *-daemon.log；base > $CUTOFF 才算新会话；增量 tail + grep:
-# "tool-call|Tool:|idle|stopped|abort|turn-end|rror|FAILED|Cancelled|exited|BACKFILL|/resume|esume"
-```
-
-排查某会话时先 `pgrep -af index.mjs` 找到 pid，再 tail 对应文件。
-
-## 8. 已知坑速查
-
-| 坑 | 对策 |
-|---|---|
-| 系统 pnpm 7.9.0 污染 lockfile | 一律 `npx pnpm@10.11.0` |
-| `~/.local/bin/happy` 遮蔽全局 link，daemon 跑旧 dist | cli:install 后核对 `happy --version`；`ln -sfn` 到目标 worktree bin |
-| runtimeVersion 被 bump | 不许动，保持 "21" |
-| daemon stop 留 lock | `rm -f ~/.happy/daemon.state.json.lock` 后再 start |
-| WSL 磁盘常年紧张 | 构建/上传前 `df -h`；清过 npm/pip/uv 缓存腾 13G |
-| 8 个 sync.send 测试失败 | 上游 dd4cb252 既有，勿当合并回归 |
-| agy flavor 的 /resume | 未实现，拒绝是预期行为 |
-| 多 worktree 的 dsh 会话进程 | `pgrep -af index.mjs` 时注意 pid 来自哪个 dist，别杀错 |
-
-## 9. 回滚
-
-- **CLI/daemon**：`npm unlink -g happy happy-mcp`（并删除 `~/.local/bin` 下的遮蔽链接）→ `npm i -g happy@latest` → 按第 4 节重启并验证 daemon。
-- **App（OTA）**：OTA 按 update 递增生效，不能单独回退某台设备；回滚 = 在目标代码上重新发一个 update（或重装旧二进制）。
+重启后核对 daemon PID、实际 `dist/index.mjs` 路径和启动时间晚于构建产物 mtime；
+版本号可能不变，不能仅靠版本号判断是否更新。已有会话进程不会随构建自动替换代码。

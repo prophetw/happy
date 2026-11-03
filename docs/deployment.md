@@ -529,8 +529,9 @@ SSH/Docker 命令，没有连接目标服务器；Compose 解析确认项目名�
 
 ## Web：复用现有 HTTPS 域名并挂载到 /happy/
 
-**2026-10-25 已首次发布到 `/happy/`**，公网 HTTP 与浏览器冒烟检查通过，
-浏览器保留已有路由警告。来源、验证边界与回滚记录见第 0 节的公网发布记录。
+**最近发布：2026-10-30，来源 `4ffff7a1db67`。** 公网 HTTP 与 WSS 握手检查通过，
+本次未执行真实浏览器与登录后的业务验收。2026-10-25 首次发布的浏览器冒烟记录保留，
+但不能代替新版本的浏览器验收。来源、验证边界与回滚记录见第 0 节的公网发布记录。
 `/happy` 的源码适配、本地 Web 导出和浏览器复验记录也保留在第 0 节。
 部署前 2026-10-24 的只读检查确认：现有 Relay 公网 `/health` 返回 200；
 `99.57` 的 Nginx 正在运行，已有静态目录挂载且加载了 `mime.types`；
@@ -740,6 +741,38 @@ Console Error、非预期 HTTP 4xx/5xx、外部请求或资源路径越出前缀
 本次公网冒烟没有登录真实个人账号；真实手机扫码确认、该账号在公网与 CLI 的
 加密消息收发、重连和附件上传下载仍未验证。这些业务流程的现有自动化结果来自
 上面的本地临时 Relay 验收；WSS 握手成功不代表已验证登录后的消息收发。
+
+#### 2026-10-30 Web 更新
+
+- 公网入口：<https://szsp.suitbim.com.cn:7100/happy/>。
+- 发布来源：`4ffff7a1db67cc33f2504a67ce0e58d98635b249`。独立发布 clone 为干净的
+  个人 `main`，准备时及上传前均 fetch 并核对 `fork/main`；包含上一线上提交
+  `6ad793da0bc6231b42c4c386f7f075dc06288908`，未吸收上游或发布 OTA / CLI。
+- 版本标识：`20261030T061425Z-4ffff7a1db67`；实际激活时间
+  `2026-10-30T06:21:41Z`（新加坡时间 14:21）。
+- 静态包 SHA-256：`3d6077d2977ba8d123bf42c89d4a0ab620f6d8dff3e913fd13df06b2056c1e09`。
+- 当前链接：`/root/bim-engine/web/html/happy` →
+  `.happy-releases/20261030T061425Z-4ffff7a1db67`。
+- `previous-target` 为 `.happy-releases/20261025T004606Z-6ad793da0bc6`，旧版本目录保留；
+  静态包、来源 SHA 与 `.deployment.json` 位于
+  `/root/bim-engine/script/happy-web-artifacts/`。按第 6 节回滚时使用本次版本标识。
+- 此次只上传静态文件并切换符号链接；现有 Nginx 配置 SHA-256 未变，未重启网关或
+  Relay。回滚机制与记录已核对，未在公网执行回滚演练。
+- 验收产物：`.e2e-artifacts/web-release-20261030T061425Z-4ffff7a1db67/`，包括
+  `checkout-checks.json`、`builder-checks.log`、`public-http-report.json`、
+  `public-wss-report.json`、`gateway-verification.json` 和 `publication-report.json`。
+
+本次 App 类型检查通过，changelog 重新生成后与已提交版本一致。13 个相关测试文件、
+252 项测试通过。Docker Web 导出成功，已核验 `/happy` 前缀、编译后的 Relay 地址、
+来源 SHA、入口资源和 WASM。构建保留既有 `@noble/hashes/crypto.js` exports 回退警告，
+以及 `POSTHOG_API_KEY` 使用 ARG 的提示（本次值为空）；网关解包保留系统 tarfile 的
+默认安全策略提示，归档成员已逐项检查相对路径与类型，没有解包错误。
+
+公网 HTTP **7 项通过**：308 跳转、入口与导出字节一致及 `no-cache`、深层路由、
+JS/CSS 与 favicon、WASM、缺失资源真实 404，以及 Relay 健康检查。
+另已验证 `/home-relay/v1/updates/` 的 WSS 升级和 Engine.IO 握手。
+**本次状态为部分验证**：按当次授权未启动浏览器，未验证页面运行时错误、真实手机扫码、
+登录后的会话收发、附件或重连；HTTP 和 WSS 握手结果不代表这些业务流程通过。
 
 ### 1. 开发机：准备独立发布目录
 
