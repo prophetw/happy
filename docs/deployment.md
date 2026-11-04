@@ -57,6 +57,78 @@ Key notes:
 
 ## 自建 Relay：Docker Compose 测试部署
 
+### 192.168.99.55 定向推送最小补丁（2026-11-04）
+
+已按当次用户明确批准的**非 main 最小补丁例外**，在原运行镜像上回移
+`b0f850d4b43334036a31e73ef2f780af9af5a119` 的目标会话焦点判断。旧版会因任何
+前台 Happy UI 抑制其他会话通知；现在仅明确查看目标会话时抑制，并识别已有的
+`alwaysPushToPhone` 输入。只覆盖 `eventRouter.ts`、`focusTracker.ts`、
+`pushDispatch.ts`、`socket.ts`，保留原镜像其他层、依赖、配置和数据库结构。
+
+| 项目 | 本次结果 |
+| --- | --- |
+| 实例 | `192.168.99.55:/data/code/happy-relay`，项目 `happy-relay`，仅更新 `relay` 服务 |
+| 镜像 | `happy-relay:targeted-focus-aacf81fae02e` |
+| 镜像 ID | `sha256:c235c83318d20ab2b7b2804c77f006db931a596c7365a1b63c8a399d32161801` |
+| 原始基线 | `happy-relay:relay-switch-d346ec958c0b`，镜像 ID `sha256:89664c870fbc18705d11bbd661a7918966c53c8480ad5efa8542cbea9e4f53d8` |
+| 补丁 SHA-256 | `aacf81fae02ec2060b51e1581005423b70ddbae8a1df87b73ac46245a2df2c6a` |
+| 来源 | 经明确批准保留现有镜像基线的非 main 回移；当次 fetch 的 `fork/main` 为 `aa8b0dcef288cfe094ff58afc46f2d0e8b919737`，未执行整版主线升级 |
+| 容器 | `039f621e3b26385473957bd96d4fcd1d96a1021910cfe4bc215cad56e878c224`，启动于 `2026-11-04T03:36:44.59580502Z` |
+| 已核验 | 健康、重启计数 0、实际四文件 SHA、运行环境变量相同、原数据卷与端口相同、无新增迁移、专用会话认证读回及旧消息保留 |
+
+一致性备份位于：
+
+```text
+/data/code/happy-relay/backups/20261104T033518Z-targeted-focus-aacf81fae02e
+```
+
+原 `.env.relay`、Compose、数据/附件归档及校验值均已保留；目录权限 `700`，备份文件
+权限 `600`。归档完整读取检查通过，SHA-256 为
+`c924525c3db6a40a4af5ae70a6c09b1ab60807fda06b088b601d9fc5aaa4d6b2`。
+`release-source/` 保留四文件源码、补丁、摘要和构建入口，便于从同一基线镜像复现。
+回滚使用该备份中的原配置与原镜像，保留当前数据卷；本次没有结构迁移。
+
+候选针对性测试 17/17 通过，原镜像同一组测试出现 9 项断言失败，覆盖目标会话判断、
+参数传递与 socket 握手/状态更新。相同配置的生产源码类型检查和隔离启动通过；原始
+完整测试类型检查因运行镜像缺少 App 测试引用源码而失败，失败记录已保留，不能称
+完整测试类型检查通过。测试模拟 Expo 与 Socket.IO 基础设施，不能代替真机显示验收。
+
+首次尝试因操作者依据过期状态发送中断信号而在备份中触发自动回滚，原版恢复健康；
+随后去除较慢的全容器清单查询，再次完成备份并成功部署。首次中断备份不作为可用
+数据归档，记录位于 `backups/20261104T033339Z-targeted-focus-aacf81fae02e`。
+此次仅向 `relay` 发出 stop/up，未执行全容器重启；其他容器清单未独立核验。
+部署后外部健康接口及既有专用会话读取通过，启动日志无新增迁移或非预期错误。
+部署后沿用原职责重排一次真实提醒，正文已在原专用会话读回；正常推送事件返回
+`sent`，网关接受设备数为 `1`，没有再被活跃UI规则抑制。本次重排和提醒没有新增
+模型调用。用户随后明确反馈未收到系统通知，手机显示的端到端验收未通过，点击
+跳转未验证；不能由网关接受代替。现有客户端整个App前台时隐藏系统横幅，且App内
+列表过滤非活跃的普通会话；是否命中本次场景仍待核验前后台状态、设备权限及实际
+客户端版本，不将源码策略直接认定为本次投递失败原因。
+
+### 192.168.99.55 全量源码升级（2026-11-04）
+
+经本次用户明确授权，将个人 `main` `87e16bb659ec4b6361f1de93fe6fb47f0fd25d26`
+的完整 `happy-server` / `happy-wire` 源码部署到现有 Relay。镜像以原补丁镜像为基线，
+仅替换两个包的源码与 wire `dist`，复用未变化的依赖，不更换密钥、账号配置或数据卷。
+
+| 项目 | 本次结果 |
+| --- | --- |
+| 实例 | `192.168.99.55:/data/code/happy-relay`，项目 `happy-relay`，仅更新 `relay` 服务 |
+| 镜像 | `happy-relay:head-87e16bb659ec`，镜像 ID `sha256:88fe97123ab3cd2359e31c2dbc218cb468ab3d28789c9fe27c0f3deb5d95d34b` |
+| 基线镜像 | `happy-relay:targeted-focus-aacf81fae02e`，镜像 ID `sha256:c235c83318d20ab2b7b2804c77f006db931a596c7365a1b63c8a399d32161801` |
+| 来源 | `main` `87e16bb6...`，源码树 `3e01ff794681947aecaa2847c91aa8616e26fcf8`；发布 clone 干净且等于当次 `fork/main` |
+| 容器 | `0f158b3924c932765fff18c1a521783a6613b3799b7e727139215351c7a59a89`，启动于 `2026-11-04T10:52:54Z` |
+| 备份 | `/data/code/happy-relay/backups/20261104T104633Z-head-87e16bb659ec`；数据归档 SHA-256 `437e7c5934ccea7da01a399da5c96cda620adf01d6d2e807dc1f1696132fa8ed`，约 1021M |
+| 已核验 | 健康、重启计数 0、镜像标签 revision/tree/off-main、镜像内 server 与 wire 类型检查、运行源码包含 `sessionAttention`，除 `RELAY_IMAGE` 外环境变量逐字一致、数据卷相同、无新增迁移、公网 `/home-relay/health` 200、`/happy-control/v1/compatibility` 200、启动日志无错误 |
+
+相比上一补丁镜像，本版本额外包含会话注意力记录/去重与 badge、`failed` / `intervention`
+事件类型、intervention 始终推送、启动 RPC 50s 超时、push priority 等改动。
+回滚时将 `.env.relay` 的 `RELAY_IMAGE` 改回 `happy-relay:targeted-focus-aacf81fae02e`，
+执行同样的 `docker compose ... up -d --no-build`；数据卷保留，必要时用上述备份恢复。
+
+**未验证**：未用真实账号验证登录后的消息收发、推送投递、附件和真机显示；健康检查与
+WSS 握手不能代替这些业务流程。
+
 ### 192.168.99.55 分支测试发布（2026-10-18）
 
 已按本次会话的明确授权，将 `feat/custom-relay-url` 的分支测试版本原位置升级到
@@ -529,7 +601,7 @@ SSH/Docker 命令，没有连接目标服务器；Compose 解析确认项目名�
 
 ## Web：复用现有 HTTPS 域名并挂载到 /happy/
 
-**最近发布：2026-10-30，来源 `4ffff7a1db67`。** 公网 HTTP 与 WSS 握手检查通过，
+**最近发布：2026-11-04，来源 `87e16bb659ec`。** 公网 HTTP 与 WSS 握手检查通过，
 本次未执行真实浏览器与登录后的业务验收。2026-10-25 首次发布的浏览器冒烟记录保留，
 但不能代替新版本的浏览器验收。来源、验证边界与回滚记录见第 0 节的公网发布记录。
 `/happy` 的源码适配、本地 Web 导出和浏览器复验记录也保留在第 0 节。
@@ -773,6 +845,32 @@ JS/CSS 与 favicon、WASM、缺失资源真实 404，以及 Relay 健康检查�
 另已验证 `/home-relay/v1/updates/` 的 WSS 升级和 Engine.IO 握手。
 **本次状态为部分验证**：按当次授权未启动浏览器，未验证页面运行时错误、真实手机扫码、
 登录后的会话收发、附件或重连；HTTP 和 WSS 握手结果不代表这些业务流程通过。
+
+#### 2026-11-04 Web 更新
+
+- 公网入口：<https://szsp.suitbim.com.cn:7100/happy/>。
+- 发布来源：`87e16bb659ec4b6361f1de93fe6fb47f0fd25d26`。独立发布 clone 为干净的
+  个人 `main`，准备时及上传前均 fetch 并核对 `fork/main`；包含上一线上树
+  `d8758551bf3b` 的全部文件（无删除项），并加入 Dots、自动化 UI 与 hosted Dot 状态修复。
+- 版本标识：`20261104T104633Z-87e16bb659ec`；实际激活时间
+  `2026-11-04T10:51:25Z`（新加坡时间 18:51）。
+- 静态包 SHA-256：`df03f2ddcc03799f31c570f704655f771b1321b87c0accc0a503a6f4ac6465ac`。
+- 当前链接：`/root/bim-engine/web/html/happy` →
+  `.happy-releases/20261104T104633Z-87e16bb659ec`。
+- `previous-target` 为 `.happy-releases/directory-selection-d8758551bf3b`；该旧版本
+  没有标准 source-sha 记录，发布前按 `20261104T093203Z-directory-selection.activation.json`
+  核对线上 index SHA 为 `1ab2eb70d500998219ba00e648a13206e9c079e69038df3f462c0303933023fd`，
+  并确认其源码树相对 HEAD 无删除文件。
+- 本次只上传静态文件并切换符号链接；Nginx 配置 SHA-256、inode 与容器 ID 均未变，
+  未重启网关。Relay 另行升级，见上文。
+- 验收产物：`.e2e-artifacts/web-release-20261104T104633Z-87e16bb659ec/`，7 项公网 HTTP
+  检查和 `/home-relay/v1/updates/` 的 WSS/Engine.IO 握手通过。
+- 构建使用 `Dockerfile.webapp` 的 `builder` 阶段；为遵守阿里云镜像规则，构建时用
+  临时 Dockerfile 增加 `ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com`，
+  其余步骤与仓库 Dockerfile 相同。App 类型检查、changelog 一致性、导出配置与
+  来源 SHA 核对通过。
+- **本次状态为部分验证**：未启动浏览器，未验证页面运行时错误、真实手机扫码、登录后
+  会话收发、附件或重连；HTTP 与 WSS 握手不代表这些业务流程通过。
 
 ### 1. 开发机：准备独立发布目录
 
