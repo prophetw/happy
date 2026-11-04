@@ -1,5 +1,20 @@
 # 99.55 REST / 99.57 HTTPS：长期服务，测试范围任务控制已验证
 
+## 默认30天期限的时钟偏差修复已上线（2026-11-04）
+
+已提交修复并同步个人 `fork/main`，从干净的 `main` 发布 `05e5e80b882b9d4e7ca028fe8c0c27177da23104`。创建页改传 `expiresInMs`，服务端计算到期时间；旧 `expiresAt` 格式仍兼容，配置的时长上限保持。明确的范围拒绝和目录核实失效分别提示，网络结果未知仍禁止重复提交。现场日志确认创建返回403；默认30天加客户端快1秒的同类问题已复现修复，但原两次线上请求的具体错误码和时钟差未记录，不能断言原始根因已完全确认。
+
+55控制对已更新为镜像 `sha256:291d992cddea3765bcdb54751abbae618b5ccc16a9539ac5331421985e12ba47`；57 Web为 `.happy-releases/service-expiry-05e5e80b`，保留旧target及缓存资源。26份既有持久记录字节一致，host配置不变；relay与57入口Nginx未重启/重载，4090 worker仍PID3634349，未升级worker或更改授权范围。REST控制对切换有短暂控制面中断。
+
+47项后端、26项前端测试、App类型与changelog检查、镜像构建类型检查、76项精确镜像Nginx/mTLS隔离检查、编译镜像的时钟偏差回归、桌面/手机2个完整隔离浏览器情景通过；线上9项HTTP和32项匿名浏览器检查通过，确认加载新版entry JS。浏览器没有运行时/网络错误，保留原有dev路由warning。真实登录账号的30天创建、批准与交付仍待本人验收；未代本人创建生产grant或签发令牌。首轮浏览器脚本对服务页的登录按钮预期错误已按实际登录边界修正，失败及修正记录见JSON。
+
+| 验收截图 | 外链 |
+| --- | --- |
+| 线上匿名服务页：未登录时不开放创建/批准 | [查看](https://szsp.suitbim.com.cn:7100/img-bed/images/70ae5051-24e1-494f-b6ef-babcf2b3d0de.png) |
+| 隔离手机浏览器：已核实多目录、默认30天（fixture身份） | [查看](https://szsp.suitbim.com.cn:7100/img-bed/images/6c527744-6552-4eaf-88a8-712e39c90fb0.png) |
+
+完整记录：`validation.service-expiry-live-2026-11-04.json`。55执行记录：`/data/code/happy-control/rollouts/service-expiry-05e5e80b`；57回退target记录：`/root/bim-engine/script/happy-web-artifacts/service-expiry-05e5e80b.previous-target`。回退保持当前授权/撤销/幂等状态，不恢复旧state；实际回退分支未演练。
+
 ## 浏览目录授权已上线（2026-11-04，待本人批准新授权）
 
 已按本人明确授权更新55 REST、57 Web与4090原机器worker/daemon，固定应用树 `d8758551bf3b482093b251c1cc9af16add8a216e`。两端 `directorySelection.roots` 均为 `/home/dev/code`；保留原A/B登记、方法、身份、公钥、provider、期限策略和既有会话范围。根目录只是可选择边界，不直接授权整个目录树；旧令牌不会扩权，新选目录须新建并明确批准授权。

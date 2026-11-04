@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T12:46:49.398998+00:00",
+  "status": "REST_WEB_DEPLOYED_VERIFIED_OWNER_RETRY_PENDING",
+  "sourceSHA": "05e5e80b882b9d4e7ca028fe8c0c27177da23104",
+  "sourceBranch": "main",
+  "remote": "fork/main",
+  "releaseCheckoutCleanAndMatchedRemote": true,
+  "artifacts": {
+    "sourceSHA": "05e5e80b882b9d4e7ca028fe8c0c27177da23104",
+    "entryJS": "/happy/_expo/static/js/web/index-3b44a14abb2fcadf6ceb49457c3ace6a.js",
+    "indexSHA256": "b8b3f2e7b9dcdf36a7f52450a39ef1b479fa2d9fc6e68865a52bf046fceabc35",
+    "web.tar.gz": {
+      "sha256": "128cd7d147cc36ad27fdec287e0c0725582d884b8ab8bd05476125bdaeec9052",
+      "bytes": 11083843
+    },
+    "control-image.tar": {
+      "sha256": "4116a7b47d0863ab9f9d0be4281f1872b3ee62ed05c8f9690d7e2e6b16d9acef",
+      "bytes": 266414592
+    },
+    "control-source.tar.gz": {
+      "sha256": "0eb6cd0378bb85120112d472f72b991832180c75826d5881e396cea5723cb70e",
+      "bytes": 532466
+    }
+  },
+  "control": {
+    "sourceSHA": "05e5e80b882b9d4e7ca028fe8c0c27177da23104",
+    "phase": "healthy",
+    "success": true,
+    "stateRestored": false,
+    "relayUnchanged": true,
+    "hostConfigUnchanged": true,
+    "priorDurableRecords": 26,
+    "changedDurableRecords": [],
+    "containers": {
+      "happy-control-control-1": {
+        "id": "301a21cb115f448c4c8bfa4a78be401baa563146e2a79fec6ee81972dac4cbb5",
+        "image": "sha256:291d992cddea3765bcdb54751abbae618b5ccc16a9539ac5331421985e12ba47",
+        "started": "2026-11-04T12:42:04.39860939Z"
+      },
+      "happy-control-gateway-1": {
+        "id": "ebdd3b3f82aa07fb703612e298a13dcd9d06dda2489342e27a791365149301a7",
+        "image": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+        "started": "2026-11-04T12:42:10.030395261Z"
+      }
+    }
+  },
+  "web": {
+    "target": ".happy-releases/service-expiry-05e5e80b",
+    "previousTarget": ".happy-releases/20261104T104633Z-87e16bb659ec",
+    "previousSourceSHA": "87e16bb659ec4b6361f1de93fe6fb47f0fd25d26",
+    "preservedOlderAssets": 1,
+    "nginxContainerAndConfigUnchanged": true
+  },
+  "validation": {
+    "relatedBackendTests": 47,
+    "relatedUITests": 26,
+    "appTypecheck": true,
+    "agentTypecheckViaImageBuild": true,
+    "changelogUnchanged": true,
+    "exactImageNativeNginxMTLSChecks": 76,
+    "exactImageDurationRegression": {
+      "oldAbsoluteExpiryWith1sClockSkew": 403,
+      "newServerDuration": 200,
+      "durationMs": 2592000000,
+      "state": "pending",
+      "isolatedOnly": true
+    },
+    "localBrowserScenarios": 2,
+    "localBrowserFixture": {
+      "fixtureOnly": true,
+      "realAccountOrGrant": false,
+      "realEncryptedDirectoryRPC": false,
+      "directoryRPCTransportMock": true,
+      "fixtureDirectoryEscapeChecks": 2,
+      "publicListener": false,
+      "checks": [
+        "desktop:real-directory-picker+two-unregistered-paths+worker-canonical-verification+v3-approval+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+revoke+no-plaintext-persistence",
+        "mobile:real-directory-picker+two-unregistered-paths+worker-canonical-verification+v3-approval+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+revoke+no-plaintext-persistence"
+      ],
+      "errors": [],
+      "networkFailures": [],
+      "browserClosed": true,
+      "loopbackServersClosed": true
+    },
+    "publicHTTP": {
+      "indexMatchesRelease": true,
+      "htmlNoCache": true,
+      "deepRoutes": true,
+      "entryMatchesRelease": true,
+      "jsContentType": true,
+      "wasmValid": true,
+      "missingResource404": true,
+      "relayHealthy": true,
+      "liveRestSupportsDuration": true
+    },
+    "liveAnonymousBrowsers": {
+      "sourceSHA": "05e5e80b882b9d4e7ca028fe8c0c27177da23104",
+      "anonymousOnly": true,
+      "realLogin": false,
+      "realGrantCreated": false,
+      "browserClosed": true,
+      "results": [
+        {
+          "profile": "desktop",
+          "route": "automation-service",
+          "checks": {
+            "document200": true,
+            "finalEntryLoaded": true,
+            "loginRequired": true,
+            "noApproval": true,
+            "noCredentialDelivery": true,
+            "noHorizontalOverflow": true,
+            "noRuntimeOrNetworkError": true,
+            "noNewWarning": true
+          },
+          "errors": [],
+          "networkFailures": [],
+          "warnings": [
+            "existing-dev-route-warning"
+          ],
+          "httpErrors": []
+        },
+        {
+          "profile": "desktop",
+          "route": "automation",
+          "checks": {
+            "document200": true,
+            "finalEntryLoaded": true,
+            "loginRequired": true,
+            "noApproval": true,
+            "noCredentialDelivery": true,
+            "noHorizontalOverflow": true,
+            "noRuntimeOrNetworkError": true,
+            "noNewWarning": true
+          },
+          "errors": [],
+          "networkFailures": [],
+          "warnings": [
+            "existing-dev-route-warning"
+          ],
+          "httpErrors": []
+        },
+        {
+          "profile": "mobile",
+          "route": "automation-service",
+          "checks": {
+            "document200": true,
+            "finalEntryLoaded": true,
+            "loginRequired": true,
+            "noApproval": true,
+            "noCredentialDelivery": true,
+            "noHorizontalOverflow": true,
+            "noRuntimeOrNetworkError": true,
+            "noNewWarning": true
+          },
+          "errors": [],
+          "networkFailures": [],
+          "warnings": [
+            "existing-dev-route-warning"
+          ],
+          "httpErrors": []
+        },
+        {
+          "profile": "mobile",
+          "route": "automation",
+          "checks": {
+            "document200": true,
+            "finalEntryLoaded": true,
+            "loginRequired": true,
+            "noApproval": true,
+            "noCredentialDelivery": true,
+            "noHorizontalOverflow": true,
+            "noRuntimeOrNetworkError": true,
+            "noNewWarning": true
+          },
+          "errors": [],
+          "networkFailures": [],
+          "warnings": [
+            "existing-dev-route-warning"
+          ],
+          "httpErrors": []
+        }
+      ]
+    },
+    "nativeFixtureCleanup": {
+      "remainingContainers": 0,
+      "remainingNetworks": 0,
+      "testKeysRemoved": true
+    }
+  },
+  "screenshots": {
+    "liveAnonymousServicePage": "https://szsp.suitbim.com.cn:7100/img-bed/images/70ae5051-24e1-494f-b6ef-babcf2b3d0de.png",
+    "fixture30DayMultiDirectoryScope": "https://szsp.suitbim.com.cn:7100/img-bed/images/6c527744-6552-4eaf-88a8-712e39c90fb0.png"
+  },
+  "boundaries": {
+    "hostConfigUnchanged": true,
+    "workerPIDBeforeAndAfter": 3634349,
+    "workerRestarted": false,
+    "relayRestarted": false,
+    "entryNginxReloadedOrRecreated": false,
+    "originalGrantOrTokenCreatedByAssistant": false,
+    "existingSessionInstructionsOrCancelsSent": false,
+    "stateRestoredOrReplaced": false,
+    "nativeOTAOrCLIPublished": false
+  },
+  "findings": [
+    "Production logs established successful owner authentication and directory verification, followed by HTTP403 creation. Error code and browser clock offset were not logged, so the precise original cause remains unverified.",
+    "A deterministic 30-day/1-second-ahead reproduction returned SCOPE_DENIED without creating a connection. New duration requests compute expiry on the server and preserve the configured cap.",
+    "Initial live browser script incorrectly expected the approval screen login button on the service form. Inspection confirmed that the service form intentionally shows an unauthenticated service-options message. The corrected route-specific assertions passed all32 checks; no runtime or network error was hidden.",
+    "The pre-existing dev/masked-progress route warning remains in anonymous browsers; no new warning or console error was observed."
+  ],
+  "notVerified": [
+    "Actual signed-in owner retry at default30 days, explicit approval and token delivery on the production site",
+    "The exact cause of the original two production403 responses",
+    "Actual rollback or host failure recovery"
+  ]
+}
