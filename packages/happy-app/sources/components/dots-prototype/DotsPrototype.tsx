@@ -1,21 +1,17 @@
 /**
- * THROWAWAY: compare three Dots home layouts at /dots?prototype=1&variant=A.
- * A = assistants + attention; B = compact directory; C = work-first agenda.
+ * THROWAWAY: selected layout B (compact directory) at /dots?prototype=1.
+ * User selected B on 2026-11-05; comparison layouts and switcher removed.
  * All mutations are fixture-only. Reuse Happy's shell, typography, theme and icons.
  */
 import * as React from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text } from '@/components/StyledText';
 import { prototypeReducer, seedState, workLabels, type Dot, type Memory, type PrototypeState, type Work, type WorkStatus } from './model';
 
-type Variant = 'A' | 'B' | 'C';
 type Tab = 'chat' | 'work' | 'memory';
-const variants: Variant[] = ['A', 'B', 'C'];
-const variantNames = { A: '助理与待办', B: '紧凑目录', C: '工作优先' };
 type HomeProps = { state: PrototypeState; openDot: (id: string) => void; openWork: (work: Work) => void; create: () => void; compact: boolean };
 
 function useStyles() {
@@ -108,30 +104,8 @@ function Attention({ state, openWork }: Pick<HomeProps, 'state' | 'openWork'>) {
     </View>;
 }
 
-// A: attention strip, then a grid of standing assistants. Default agreed design.
-export function VariantA({ state, openDot, openWork, create, compact }: HomeProps) {
-    const { styles: s, colors } = useStyles();
-    return <View style={{ gap: 28 }}><HomeHeader create={create} /><Attention state={state} openWork={openWork} />
-        <View style={{ gap: 16 }}><Text accessibilityRole="header" style={s.heading}>我的 Dots <Text style={s.muted}>/ {state.dots.length}</Text></Text>
-            <View style={[s.row, { alignItems: 'stretch', gap: 16 }]}>{state.dots.map(dot => {
-                const work = state.works.filter(item => item.dotId === dot.id);
-                const attention = work.filter(item => item.status === 'review' || item.status === 'proposed').length;
-                return <Pressable key={dot.id} accessibilityRole="button" accessibilityLabel={`进入 ${dot.name}`} onPress={() => openDot(dot.id)}
-                    style={({ pressed }) => [s.card, { width: compact ? '100%' : '47%', flexGrow: 1, opacity: pressed ? 0.7 : 1 }]}>
-                    <View style={s.between}><Avatar dot={dot} /><Text style={[s.muted, attention > 0 && { color: dot.color }]}>{attention ? `${attention} 件待处理` : work.some(item => item.status === 'running') ? '有工作在执行' : '暂无待处理事项'}</Text></View>
-                    <Text style={s.heading}>{dot.name}</Text><Text style={[s.muted, { minHeight: 42 }]}>{dot.instruction}</Text>
-                    <View style={[s.between, { paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.divider }]}>
-                        <Text style={s.muted}>{work.find(item => item.status === 'review') ? '收到执行结果，等待验收' : `${work.length} 个工作项`}</Text>
-                        <Ionicons name="arrow-forward" size={18} color={dot.color} />
-                    </View>
-                </Pressable>;
-            })}</View>
-        </View>
-    </View>;
-}
-
-// B: dense directory with an adjacent decision queue; no card grid.
-export function VariantB({ state, openDot, openWork, create, compact }: HomeProps) {
+// Selected layout B: compact directory with an adjacent decision queue.
+function DotsDirectoryHome({ state, openDot, openWork, create, compact }: HomeProps) {
     const { styles: s, colors } = useStyles();
     return <View style={{ gap: 30 }}><HomeHeader create={create} />
         <View style={{ flexDirection: compact ? 'column' : 'row', gap: 30, alignItems: 'flex-start' }}>
@@ -143,28 +117,6 @@ export function VariantB({ state, openDot, openWork, create, compact }: HomeProp
                 </Pressable>)}
             </View>
             <View style={{ width: compact ? '100%' : 280 }}><Attention state={state} openWork={openWork} /></View>
-        </View>
-    </View>;
-}
-
-// C: work grouped by next action, followed by a small assistant strip.
-export function VariantC({ state, openDot, openWork, create }: HomeProps) {
-    const { styles: s } = useStyles();
-    const groups: { label: string; statuses: WorkStatus[] }[] = [
-        { label: '等你决定', statuses: ['review', 'proposed'] }, { label: '正在推进', statuses: ['running'] }, { label: '已结束', statuses: ['accepted', 'canceled'] },
-    ];
-    return <View style={{ gap: 28 }}><HomeHeader create={create} />
-        {groups.map(group => {
-            const items = state.works.filter(item => group.statuses.includes(item.status));
-            return items.length ? <View key={group.label} style={{ gap: 6 }}>
-                <Text style={s.eyebrow}>{group.label} / {items.length}</Text>
-                {items.map(work => <View key={work.id} style={s.divider}><WorkRow work={work} dotName={state.dots.find(dot => dot.id === work.dotId)?.name} onPress={() => openWork(work)} /></View>)}
-            </View> : null;
-        })}
-        <View style={[s.inset, { gap: 16 }]}><Text style={s.heading}>找一位助理聊聊</Text>
-            <View style={s.row}>{state.dots.map(dot => <Pressable key={dot.id} accessibilityRole="button" accessibilityLabel={`进入 ${dot.name}`} onPress={() => openDot(dot.id)} style={s.row}>
-                <Avatar dot={dot} small /><Text style={s.body}>{dot.name}</Text>
-            </Pressable>)}</View>
         </View>
     </View>;
 }
@@ -207,9 +159,6 @@ function MemoryEditor({ memory, dotId, onClose, dispatch }: { memory: Memory | n
 }
 
 export default function DotsPrototype({ topContentInset = 0 }: { topContentInset?: number }) {
-    const params = useLocalSearchParams<{ variant?: string }>();
-    const variant: Variant = variants.includes(params.variant as Variant) ? params.variant as Variant : 'A';
-    const router = useRouter();
     const insets = useSafeAreaInsets();
     const { styles: s, colors, accent } = useStyles();
     const [state, dispatch] = React.useReducer(prototypeReducer, undefined, seedState);
@@ -237,23 +186,6 @@ export default function DotsPrototype({ topContentInset = 0 }: { topContentInset
     const works = state.works.filter(work => work.dotId === dotId);
     const memories = state.memories.filter(memory => memory.dotId === dotId);
     const messages = state.messages.filter(message => message.dotId === dotId);
-    const setVariant = React.useCallback((step: number) => {
-        const next = variants[(variants.indexOf(variant) + step + variants.length) % variants.length];
-        router.setParams({ variant: next });
-    }, [router, variant]);
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        const listener = (event: KeyboardEvent) => {
-            const target = event.target;
-            if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
-                || creating || selectedWorkId || memoryEditor
-                || target instanceof HTMLElement && target.closest('input,textarea,select,[contenteditable],[role="textbox"]')) return;
-            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setVariant(event.key === 'ArrowLeft' ? -1 : 1); }
-        };
-        window.addEventListener('keydown', listener);
-        return () => window.removeEventListener('keydown', listener);
-    }, [setVariant, creating, selectedWorkId, memoryEditor]);
-
     const workPanel = <ScrollView contentContainerStyle={{ padding: 20, gap: 18 }}>
         <View style={{ gap: 8 }}><Text style={s.eyebrow}>长期职责</Text><Text style={s.body}>{dot?.instruction}</Text></View>
         <View style={{ gap: 4 }}><View style={s.between}><Text style={s.heading}>工作项</Text><Text style={s.muted}>{works.length}</Text></View>
@@ -307,7 +239,7 @@ export default function DotsPrototype({ topContentInset = 0 }: { topContentInset
         </View>
         {offline && <View style={[s.inset, { borderRadius: 0 }]}><Text accessibilityRole="alert" style={s.body}>连接状态待确认 · 当前展示的是上次状态（示例），连接恢复后再提交操作。</Text></View>}
         {!dot ? <ScrollView contentContainerStyle={[s.page, compact && { padding: 18 }]}>
-            {React.createElement(variant === 'B' ? VariantB : variant === 'C' ? VariantC : VariantA, { state, openDot, openWork, create: () => setCreating(true), compact })}
+            <DotsDirectoryHome state={state} openDot={openDot} openWork={openWork} create={() => setCreating(true)} compact={compact} />
         </ScrollView> : <View style={s.panel}>
             <View style={{ padding: compact ? 16 : 24, gap: 16, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                 <View style={s.between}><Button label="返回 Dots" icon="arrow-back" onPress={() => setDotId(null)} />
@@ -367,13 +299,11 @@ export default function DotsPrototype({ topContentInset = 0 }: { topContentInset
             <View style={s.row}><Button label={offline ? '恢复示例连接' : '模拟断线'} onPress={() => setOffline(value => !value)} /><Button label="重置原型" onPress={() => {
                 dispatch({ type: 'reset' }); setDotId(null); setTab('chat'); setSelectedWorkId(null); setMemoryEditor(null); setCreating(false); setDrafts({}); setOffline(false);
             }} /></View>
-            <Text selectable style={[s.muted, { fontSize: 10 }]}>{JSON.stringify({ variant, dotId, tab, offline, ...state }, null, 2)}</Text>
+            <Text selectable style={[s.muted, { fontSize: 10 }]}>{JSON.stringify({ variant: 'B', dotId, tab, offline, ...state }, null, 2)}</Text>
         </ScrollView>}
         <View style={{ paddingBottom: Math.max(insets.bottom, 10), paddingTop: 9, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.divider }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#24212e' }}>
-                <Pressable accessibilityRole="button" accessibilityLabel="上一个首页方案" onPress={() => setVariant(-1)} style={{ padding: 12 }}><Ionicons name="arrow-back" color="#fff" size={16} /></Pressable>
-                <Text style={{ color: '#fff', fontSize: 12 }}>原型 {variant} · {variantNames[variant]}</Text>
-                <Pressable accessibilityRole="button" accessibilityLabel="下一个首页方案" onPress={() => setVariant(1)} style={{ padding: 12 }}><Ionicons name="arrow-forward" color="#fff" size={16} /></Pressable>
+                <Text style={{ color: '#fff', fontSize: 12, paddingLeft: 12 }}>原型 B · 紧凑目录</Text>
                 <Pressable accessibilityRole="button" accessibilityLabel={inspect ? '隐藏原型状态' : '查看原型状态'} onPress={() => setInspect(value => !value)} style={{ padding: 12 }}><Ionicons name="options-outline" color="#bdb3d5" size={17} /></Pressable>
             </View>
         </View>
