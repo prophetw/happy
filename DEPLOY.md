@@ -43,6 +43,13 @@
 验收包括入口、JS/CSS、WASM、深层路由、缺失资源的真实 404 和 Relay 健康检查。
 真实浏览器按用户当次授权执行；未验证登录、消息收发或附件时，明确报告验证边界。
 
+Dots 交互原型预览可在 Web 构建时显式传入 `--build-arg HAPPY_DOTS_PROTOTYPE=1`，
+访问 `/happy/dots?prototype=1&variant=A`；B、C 为另外两种首页布局。
+默认值为 `0`，普通 `/happy/dots` 继续使用真实工作台入口。原型只修改内存示例，
+刷新恢复，不会发送业务消息或创建真实任务；它不代表已接入正式 Dots 页面。
+原型代码与评审、清理说明见
+[Dots 原型说明](packages/happy-app/sources/components/dots-prototype/NOTES.md)。
+
 ## Relay
 
 详细说明见 [Relay 部署手册](docs/deployment.md#自建-relaydocker-compose-测试部署)。
