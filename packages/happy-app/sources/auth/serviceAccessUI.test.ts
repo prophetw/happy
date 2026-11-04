@@ -59,7 +59,28 @@ describe('service access UI, fixture credentials only',()=>{
   await act(async()=>{renderer.root.findByType('TextInput').props.onChangeText('31');});expect(button('创建申请并审查权限').props.disabled).toBe(true);
   await act(async()=>{renderer.root.findByType('TextInput').props.onChangeText('30');});
   await act(async()=>{button('创建申请并审查权限').props.onPress();});
-  expect(a.createService).toHaveBeenCalledTimes(1);const scope=(a.createService as any).mock.calls[0][0];expect(scope).toMatchObject({clientID:'service',workerID:'worker',machineID:'machine',projectID:'project',methods:['machines.list'],sessionIDs:[]});expect(scope.expiresAt).toBeLessThanOrEqual(Date.now()+30*24*3600000);expect(created).toHaveBeenCalledWith('created_connection');
+  expect(a.createService).toHaveBeenCalledTimes(1);const scope=(a.createService as any).mock.calls[0][0];expect(scope).toMatchObject({clientID:'service',workerID:'worker',machineID:'machine',projectID:'project',methods:['machines.list'],sessionIDs:[],expiresInMs:30*24*3600000});expect(scope.expiresAt).toBeUndefined();expect(created).toHaveBeenCalledWith('created_connection');
+ });
+ it.each([-3600000,1000,3600000])('submits the chosen duration independently of client clock skew (%i ms)',async(skew)=>{
+  const clock=vi.spyOn(Date,'now').mockReturnValue(1793793600000+skew);
+  try{
+   const a=api();await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn()}));});
+   await act(async()=>{button('创建申请并审查权限').props.onPress();});
+   expect(a.createService).toHaveBeenCalledWith(expect.objectContaining({expiresInMs:30*24*3600000}));
+   expect((a.createService as any).mock.calls[0][0].expiresAt).toBeUndefined();
+  }finally{clock.mockRestore();}
+ });
+ it.each([
+  ['SCOPE_DENIED','创建申请被拒绝，未创建授权'],
+  ['DIRECTORY_SELECTION_MISMATCH','目录核实已失效或与所选范围不一致'],
+  ['fixture-private-details','创建结果未确认'],
+ ])('distinguishes a definite rejection from an unknown creation result (%s)',async(code,message)=>{
+  const a=api(),created=vi.fn();a.createService=vi.fn(async()=>{throw Error(code);});
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created}));});
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  const text=JSON.stringify(renderer.toJSON());expect(text).toContain(message);expect(text).not.toContain('fixture-private-details');
+  expect(created).not.toHaveBeenCalled();expect(button('创建申请并审查权限').props.disabled).toBe(true);
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(a.createService).toHaveBeenCalledTimes(1);
  });
 });
 

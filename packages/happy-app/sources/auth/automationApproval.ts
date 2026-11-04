@@ -14,8 +14,9 @@ export interface ServiceConnectionOptions {
     workers: { id: string; name: string; machineID: string; projectScopes?: 1; directoryScopes?: 1; directorySelection?: { roots: string[] }; methods: string[]; projects: { id: string; directory: string; sessionIDs: string[] }[] }[];
 }
 export type ServiceConnectionRequest = {
-    clientID: string; workerID: string; machineID: string; methods: string[]; sessionIDs: string[]; expiresAt: number;
-} & ({ projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[]; selectionID: string });
+    clientID: string; workerID: string; machineID: string; methods: string[]; sessionIDs: string[];
+} & ({ expiresInMs: number; expiresAt?: never } | { expiresAt: number; expiresInMs?: never })
+  & ({ projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[]; selectionID: string });
 /** Do not approve a multi-project shape that this page cannot fully display. */
 export function consentProjects(consent: AutomationConsent): { id: string; directory: string }[] {
     if (consent.scopeVersion === undefined) {

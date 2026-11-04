@@ -1197,7 +1197,7 @@
     "/service-connections": {
       "post": {
         "operationId": "requestServiceConnection",
-        "description": "Optional service-token-v1: pending consent, at most 30 days from creation. Legacy projectID or explicit scopeVersion=2 + 2..32 unique projectIDs (never both). Binds every selected ID/directory, one worker/machine, shared methods/expiry, new sessions by default. V3 accepts 1..32 exact projects/projectIDs only with a fresh owner/client/worker-bound one-use selectionID returned by resolve-directories. Separate bound approval required; existing grants never expand.",
+        "description": "Optional service-token-v1: pending consent, at most 30 days from creation. Supply exactly one of expiresInMs (positive integer duration in milliseconds, resolved using server time) or legacy expiresAt (absolute timestamp in milliseconds). Both obey the configured service grant limit. Legacy projectID or explicit scopeVersion=2 + 2..32 unique projectIDs (never both). Binds every selected ID/directory, one worker/machine, shared methods/expiry, new sessions by default. V3 accepts 1..32 exact projects/projectIDs only with a fresh owner/client/worker-bound one-use selectionID returned by resolve-directories. Separate bound approval required; existing grants never expand.",
         "security": [
           {
             "OwnerBearer": []
@@ -1450,6 +1450,248 @@
                       "projects",
                       "clientID",
                       "selectionID"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "workerID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "machineID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "projectID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "methods": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "machines.list",
+                            "sessions.list",
+                            "tasks.create",
+                            "requests.get",
+                            "sessions.send",
+                            "sessions.status",
+                            "sessions.logs",
+                            "sessions.result",
+                            "sessions.cancel"
+                          ]
+                        }
+                      },
+                      "sessionIDs": {
+                        "default": [],
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                        }
+                      },
+                      "clientID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "expiresInMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "workerID",
+                      "machineID",
+                      "projectID",
+                      "methods",
+                      "sessionIDs",
+                      "clientID",
+                      "expiresInMs"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "workerID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "machineID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "methods": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "machines.list",
+                            "sessions.list",
+                            "tasks.create",
+                            "requests.get",
+                            "sessions.send",
+                            "sessions.status",
+                            "sessions.logs",
+                            "sessions.result",
+                            "sessions.cancel"
+                          ]
+                        }
+                      },
+                      "sessionIDs": {
+                        "default": [],
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                        }
+                      },
+                      "scopeVersion": {
+                        "type": "number",
+                        "const": 2
+                      },
+                      "projectIDs": {
+                        "minItems": 2,
+                        "maxItems": 32,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                        }
+                      },
+                      "clientID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "expiresInMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "workerID",
+                      "machineID",
+                      "methods",
+                      "sessionIDs",
+                      "scopeVersion",
+                      "projectIDs",
+                      "clientID",
+                      "expiresInMs"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "workerID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "machineID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "methods": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "machines.list",
+                            "sessions.list",
+                            "tasks.create",
+                            "requests.get",
+                            "sessions.send",
+                            "sessions.status",
+                            "sessions.logs",
+                            "sessions.result",
+                            "sessions.cancel"
+                          ]
+                        }
+                      },
+                      "sessionIDs": {
+                        "default": [],
+                        "maxItems": 0,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                        }
+                      },
+                      "scopeVersion": {
+                        "type": "number",
+                        "const": 3
+                      },
+                      "projectIDs": {
+                        "minItems": 1,
+                        "maxItems": 32,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                        }
+                      },
+                      "projects": {
+                        "minItems": 1,
+                        "maxItems": 32,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                            },
+                            "directory": {
+                              "type": "string",
+                              "minLength": 2,
+                              "maxLength": 4096
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "directory"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "clientID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "selectionID": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                      },
+                      "expiresInMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "workerID",
+                      "machineID",
+                      "methods",
+                      "sessionIDs",
+                      "scopeVersion",
+                      "projectIDs",
+                      "projects",
+                      "clientID",
+                      "selectionID",
+                      "expiresInMs"
                     ],
                     "additionalProperties": false
                   }

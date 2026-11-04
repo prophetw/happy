@@ -19,6 +19,30 @@ async function request(r:any,token:string,route:string,method='GET',body?:unknow
  const response=await fetch(`${r.address}/happy-control/v1${route}`,{method,headers:{authorization:`Bearer ${token}`,...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(10000) as NonNullable<Parameters<typeof fetch>[1]>['signal']});return {status:response.status,body:await response.json() as any};
 }
 describe('opt-in service access tokens (all identities/credentials and relay are isolated fixtures)',()=>{
+ it('computes requested durations on the server for single, multiple and verified-directory scopes',async()=>{
+  const serverNow=Date.now(),r=await setup({clock:()=>serverNow,multipleProjects:true,directorySelection:true});
+  await r.startWorker();
+  const selection=(await r.ownerRequest('/service-connections/resolve-directories','POST',{clientID:'serviceA',workerID:'worker',machineID:'machineA',directories:[r.projectB]})).body.data;
+  const base={clientID:'serviceA',workerID:'worker',machineID:'machineA',methods:['machines.list'],sessionIDs:[],expiresInMs:MAX_SERVICE_GRANT_MS};
+  for(const scope of [{projectID:'projectA'},{scopeVersion:2,projectIDs:['projectA','projectB']},{scopeVersion:3,projectIDs:selection.projects.map((p:any)=>p.id),projects:selection.projects,selectionID:selection.selectionID}]){
+   const created=await r.ownerRequest('/service-connections','POST',{...base,...scope});
+   expect(created.status).toBe(200);expect(created.body.data).toMatchObject({createdAt:serverNow,expiresAt:serverNow+MAX_SERVICE_GRANT_MS,state:'pending'});
+   expect(created.body.data.expiresInMs).toBeUndefined();
+  }
+  for(const patch of [{expiresInMs:0},{expiresInMs:-1},{expiresInMs:1.5},{expiresInMs:undefined},{expiresAt:serverNow+60000}]){
+   expect((await r.ownerRequest('/service-connections','POST',{...base,projectID:'projectA',...patch})).status).toBe(400);
+  }
+  expect((await r.ownerRequest('/service-connections','POST',{...base,projectID:'projectA',expiresInMs:MAX_SERVICE_GRANT_MS+1})).status).toBe(403);
+  expect(r.gateway.store.list('connection:')).toHaveLength(3);
+ });
+ it('keeps the configured service duration cap and original signed expiry contract',async()=>{
+  const serverNow=Date.now(),r=await setup({clock:()=>serverNow,serviceTokens:{clients,maxGrantMs:60000}});
+  const base={clientID:'serviceA',workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],sessionIDs:[]};
+  expect((await r.ownerRequest('/service-connections','POST',{...base,expiresInMs:60001})).status).toBe(403);
+  const c=await r.ownerRequest('/service-connections','POST',{...base,expiresInMs:60000});expect(c.body.data.expiresAt).toBe(serverNow+60000);
+  const signed=await r.client.request('POST','/connections',{workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],sessionIDs:[],expiresInMs:60000});
+  expect(signed.error.code).toBe('INVALID_REQUEST');
+ });
  it('keeps signed defaults unchanged; opts in explicitly and caps service grants at 30 days',async()=>{
   const r=await setup();
   const normal=await r.client.request('POST','/connections',{workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],expiresAt:Date.now()+2*3600000});expect(normal.error.code).toBe('SCOPE_DENIED');

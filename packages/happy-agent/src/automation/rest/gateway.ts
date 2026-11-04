@@ -216,7 +216,12 @@ export function createGateway(options: GatewayOptions) {
         if (!serviceConfig) throw new ApiError('SERVICE_TOKENS_DISABLED', 404);
         limit(`service-pair:${userID}`, 10);
         const parsed = serviceConnectionSchema.parse(req.body);
-        const { clientID, ...scope } = parsed;
+        const { clientID, ...requested } = parsed;
+        if ('expiresInMs' in requested && requested.expiresInMs > serviceConfig.maxGrantMs) throw new ApiError('SCOPE_DENIED', 403);
+        // Resolve duration once against the server clock; never trust a browser's wall clock.
+        const scope = 'expiresInMs' in requested
+            ? (({ expiresInMs, ...bound }) => ({ ...bound, expiresAt: now() + expiresInMs }))(requested)
+            : requested;
         const client = serviceConfig.clients.find(c => c.id === clientID && c.userID === userID);
         if (!client) throw new ApiError('SCOPE_DENIED', 403);
         if ('selectionID' in scope) {

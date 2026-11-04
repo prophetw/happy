@@ -94,9 +94,15 @@ export function ServiceConnectionForm({ api, onCreated }: { api: API; onCreated:
         attempted.current = true; const version = generation.current; setSubmitted(true); setBusy(true); setError('');
         try {
             const next = await api.createService({ clientID, workerID, machineID: worker.machineID,
-                ...(customDirectories.length && verified ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID } : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() }), methods, sessionIDs: [], expiresAt: Date.now() + duration });
+                ...(customDirectories.length && verified ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID } : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() }), methods, sessionIDs: [], expiresInMs: duration });
             if (version === generation.current) onCreated(next.id);
-        } catch { if (version === generation.current) setError('创建结果未确认。请返回连接记录核实，不要重复创建；尚未批准的申请不会获得执行权限。'); }
+        } catch (error) {
+            if (version === generation.current) setError(error instanceof Error && error.message === 'SCOPE_DENIED'
+                ? '创建申请被拒绝，未创建授权。请返回后重新检查项目、操作范围和有效时长。'
+                : error instanceof Error && error.message === 'DIRECTORY_SELECTION_MISMATCH'
+                    ? '目录核实已失效或与所选范围不一致，未创建授权。请返回后重新核实目录。'
+                    : '创建结果未确认。请返回连接记录核实，不要重复创建；尚未批准的申请不会获得执行权限。');
+        }
         finally { if (version === generation.current) setBusy(false); }
     };
     const addDirectory = (path: string) => {

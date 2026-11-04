@@ -35,10 +35,14 @@ export const MAX_SERVICE_GRANT_MS = 30 * 24 * 3600000;
 export const serviceTokensConfigSchema = z.object({ clients: z.array(serviceClientSchema).min(1),
     maxGrantMs: z.number().int().min(1000).max(MAX_SERVICE_GRANT_MS).default(MAX_SERVICE_GRANT_MS) }).strict();
 export type ServiceTokensConfig = z.input<typeof serviceTokensConfigSchema>;
+const serviceDurationMs = z.number().int().positive();
 export const serviceConnectionSchema = z.union([
     scopeSchema.extend({ clientID: identifier }).strict(),
     multiProjectScopeSchema.extend({ clientID: identifier }).strict(),
     directoryScopeSchema.extend({ clientID: identifier, selectionID: identifier }).strict(),
+    scopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, expiresInMs: serviceDurationMs }).strict(),
+    multiProjectScopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, expiresInMs: serviceDurationMs }).strict(),
+    directoryScopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, selectionID: identifier, expiresInMs: serviceDurationMs }).strict(),
 ]);
 export type WorkerRegistration = Registration & {
     machineID: string; projects: { id: string; directory: string; sessionIDs: string[] }[];
