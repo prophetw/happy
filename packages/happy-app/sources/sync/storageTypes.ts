@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RigBotSchema, HumanInterventionSchema, HumanInterventionReplySchema } from '@slopus/happy-wire';
 import type { SessionAvatarDescriptor } from './sessionAvatarTypes';
 import type { ProjectAvatar } from './projectTypes';
+import { TestloopDotsMetadataSchema } from './testloopDots';
 
 //
 // Agent states
@@ -23,6 +24,7 @@ export type RigComposerMode = z.infer<typeof RigComposerModeSchema>;
 export type RigComposerDraft = z.infer<typeof RigComposerDraftSchema>;
 
 export const MetadataSchema = z.object({
+    testloopDots: TestloopDotsMetadataSchema.optional().catch(undefined),
     codexCapabilities: z.object({ steering: z.boolean(), asyncUserInput: z.boolean() }).optional(),
     claudeCapabilities: z.object({ steering: z.boolean() }).optional(),
     bot: RigBotSchema.optional(),

@@ -52,6 +52,11 @@ export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
                 if (project) result.push(project);
                 return;
             }
+            if (item.type === 'dots') {
+                const sessions = hideArchivedSessions ? item.sessions.filter(session => !session.archived) : item.sessions;
+                if (sessions.length > 0) result.push({ ...item, sessions });
+                return;
+            }
             if (item.type === 'active-sessions' || item.type === 'bots') result.push(item);
         });
 
@@ -87,6 +92,7 @@ export function useHasArchivedSessions(): boolean {
     return React.useMemo(() => {
         if (!data) return false;
         return data.some((item) => {
+            if (item.type === 'dots') return item.sessions.some(session => session.archived);
             if (item.type === 'project') {
                 return item.project.workspaces.some((workspace) =>
                     workspace.sessions.some((session) => session.archived),

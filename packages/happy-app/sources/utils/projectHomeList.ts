@@ -101,6 +101,7 @@ export interface WorktreeToggle {
 }
 
 export type ProjectHomeRow =
+    | { type: 'dots'; sessions: SessionRowData[] }
     | { type: 'section'; id: string; label: string }
     /**
      * The computer everything below it runs on, down to the next one of these.
@@ -356,6 +357,7 @@ export function buildProjectHomeRows({
     const rows: ProjectHomeRow[] = [];
     const machinesById = new Map(machines.map((machine) => [machine.id, machine]));
     const sections = new Map<string | null, MachineSection>();
+    for (const item of data) if (item.type === 'dots') rows.push(item);
 
     const sectionFor = (machineId: string | null): MachineSection => {
         const existing = sections.get(machineId);

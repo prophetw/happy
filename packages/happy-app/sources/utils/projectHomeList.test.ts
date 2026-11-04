@@ -84,6 +84,7 @@ function build(
 function shape(rows: ReturnType<typeof build>): string[] {
     return rows.map((item) => {
         switch (item.type) {
+            case 'dots': return `dots:${item.sessions.map(session => session.id).join(',')}`;
             case 'section': return `section:${item.label}`;
             case 'machine': return `machine:${item.machineName}`;
             case 'bot': return `bot:${item.session.id}`;

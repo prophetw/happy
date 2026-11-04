@@ -80,6 +80,8 @@ import {
 } from '@/sync/rig';
 import { RigActivityBar } from '@/components/RigActivityBar';
 import { AnimatedFade } from '@/components/AnimatedOverlay';
+import { DotsWorkspacePanel, DotWorkspaceHeaderLink } from './DotsWorkspacePanel';
+import { readTestloopDotsMetadata } from '@/sync/testloopDots';
 
 export const SessionView = React.memo((props: { id: string }) => {
     const routeId = props.id;
@@ -100,6 +102,7 @@ export const SessionView = React.memo((props: { id: string }) => {
     // a chat that was asked for has not arrived.
     const sessionId = pendingChat ? pendingChat.sessionId : routeId;
     const session = useSession(sessionId ?? '');
+    const testloopDots = readTestloopDotsMetadata(session?.metadata);
     const avatar = useSessionAvatar(sessionId ?? '');
     /**
      * A chat that does not exist yet cannot speak for its checkout, so the
@@ -117,7 +120,7 @@ export const SessionView = React.memo((props: { id: string }) => {
     // Grouped by project, a chat is one tab of its checkout: the header names
     // the checkout, and the strip under it holds the checkout's chats.
     const worktree = useProjectWorktreeSummary(headerSessionId);
-    const showTabStrip = !!worktree && !!headerSession && isDataReady;
+    const showTabStrip = !testloopDots && !!worktree && !!headerSession && isDataReady;
     const tabStripHeight = showTabStrip ? WORKTREE_TAB_STRIP_HEIGHT : 0;
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
@@ -129,7 +132,7 @@ export const SessionView = React.memo((props: { id: string }) => {
         : headerHeight;
     // Keep Android's compact landscape header: it owns the session info and
     // Changes navigation even when a small tablet uses the phone layout.
-    const hidesLandscapeHeader = isLandscape && !isTablet && Platform.OS === 'ios';
+    const hidesLandscapeHeader = !testloopDots && isLandscape && !isTablet && Platform.OS === 'ios';
     const contentRunsUnderHeader = !isTablet
         && Platform.OS !== 'web'
         && !isLandscape;
@@ -444,6 +447,12 @@ export const SessionView = React.memo((props: { id: string }) => {
             </Pressable>
         )
         : null;
+    const dotHeaderRight = session && testloopDots?.kind === 'dot'
+        ? <DotWorkspaceHeaderLink metadata={testloopDots} sessionId={session.id} active={isFocused} />
+        : null;
+    const dotSubtitle = testloopDots?.kind === 'dot'
+        ? testloopDots.instruction?.replace(/\s+/g, ' ').trim() || '专属对话 · 独立任务与记忆'
+        : undefined;
 
     const mainContent = (
         <>
@@ -491,7 +500,14 @@ export const SessionView = React.memo((props: { id: string }) => {
                     // since the press, and it must not be rebuilt underneath
                     // them when the machine finally answers.
                     <View style={{ flexBasis: 0, flexGrow: 1 }}>
-                        <SessionViewLoaded
+                        {session && testloopDots?.kind === 'workspace' ? <DotsWorkspacePanel
+                            key={routeId}
+                            session={session}
+                            workspaceId={testloopDots.workspaceId}
+                            active={isFocused}
+                            topInset={contentRunsUnderHeader ? safeArea.top + mobileHeaderHeight + tabStripHeight
+                                + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0) : 0}
+                        /> : <SessionViewLoaded
                             key={routeId}
                             sessionId={sessionId}
                             session={session}
@@ -501,7 +517,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                             onHeaderBackdropVisibilityChange={contentRunsUnderHeader
                                 ? setHeaderBackdropVisible
                                 : undefined}
-                        />
+                        />}
                     </View>
                 ) : (
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -520,18 +536,18 @@ export const SessionView = React.memo((props: { id: string }) => {
                     left: 0,
                     right: 0,
                     zIndex: 1000
-                }}>
+                }} testID={testloopDots?.kind === 'dot' ? 'testloop-dot-header' : undefined}>
                     <ChatHeaderView
                         title={showTabStrip
                             ? worktree.workspaceName ?? headerGit.subtitle ?? worktree.projectName
                             : headerProps.title}
-                        subtitle={showTabStrip
+                        subtitle={dotSubtitle ?? (showTabStrip
                             ? t('sessionsFilter.worktreeTabs', { count: worktree.tabCount })
-                            : headerSession && isDataReady ? headerGit.subtitle : undefined}
-                        gitChanges={headerSession && isDataReady ? headerGit.changes : null}
+                            : headerSession && isDataReady ? headerGit.subtitle : undefined)}
+                        gitChanges={!testloopDots && headerSession && isDataReady ? headerGit.changes : null}
                         backdropVisible={headerBackdropVisible}
                         extraPathSegment={fileViewPath ?? undefined}
-                        rightSlot={(diffViewOpen || !!fileViewPath) ? headerRightSlot : headerRight}
+                        rightSlot={(diffViewOpen || !!fileViewPath) ? headerRightSlot : dotHeaderRight ?? headerRight}
                         onTitlePress={session ? () => router.push(`/session/${session.id}/info`) : undefined}
                         onBackPress={() => router.back()}
                     />

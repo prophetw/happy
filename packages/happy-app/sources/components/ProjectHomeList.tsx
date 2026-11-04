@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DotsSessionsGroup } from './DotsSessionsGroup';
 import {
     FlatList,
     LayoutAnimation,
@@ -186,6 +187,7 @@ export const ProjectHomeListView = React.memo(({
 
     const keyExtractor = React.useCallback((row: ProjectHomeRow) => {
         switch (row.type) {
+            case 'dots': return 'dots';
             case 'section': return `section-${row.id}`;
             case 'machine': return `machine-${row.machineId ?? 'unknown'}`;
             case 'bot': return `bot-${row.session.id}`;
@@ -200,6 +202,7 @@ export const ProjectHomeListView = React.memo(({
 
     const renderItem = React.useCallback(({ item }: { item: ProjectHomeRow }) => {
         switch (item.type) {
+            case 'dots': return <DotsSessionsGroup sessions={item.sessions} />;
             case 'section':
                 return (
                     <View style={styles.section}>

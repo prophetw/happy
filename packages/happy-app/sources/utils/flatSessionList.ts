@@ -31,7 +31,7 @@ export function buildFlatSessionRows(
     const rows: FlatSessionRowData[] = [];
 
     for (const item of items) {
-        if (item.type === 'active-sessions' || item.type === 'bots') {
+        if (item.type === 'dots' || item.type === 'active-sessions' || item.type === 'bots') {
             for (const session of item.sessions) {
                 rows.push(toFlatSessionRow(session));
             }
@@ -66,6 +66,9 @@ export function buildFlatSessionRows(
  * as the workspace.
  */
 export function toFlatSessionRow(session: SessionRowData): FlatSessionRowData {
+    if (session.testloopDotsKind) {
+        return { session, projectName: session.testloopDotsKind === 'workspace' ? '工作台入口' : 'Dot 专属对话', workspaceName: null };
+    }
     if (session.botId) {
         return {
             session,

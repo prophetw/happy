@@ -7,6 +7,7 @@ import { Session, Machine, GitStatus, SessionAgentModesPatch, SessionComposerPat
 import type { GitStatusFiles } from "./gitStatusFiles";
 import type { ProjectFilesList } from "./projectFiles";
 import { buildPathProjectGroups, buildProjectGroups, isProjectSession, type ProjectGroupData } from "./projectGroups";
+import { buildTestloopDotsListItem, testloopDotsKind } from './testloopDotsList';
 import {
     selectAgentFormCommunication,
     selectPendingCommunications,
@@ -137,6 +138,7 @@ interface SessionMessages {
 
 // Display-only row data — all primitives, cheap to deep-equal
 export interface SessionRowData {
+    testloopDotsKind?: 'workspace' | 'dot';
     attentionKind?: 'done' | 'permission' | 'question' | 'failed' | 'intervention';
     botId?: string | null;
     botUsername?: string | null;
@@ -221,7 +223,9 @@ function buildSessionRowData(
     const metadataBranch = session.metadata?.gitBranch;
     const projectAvatar = isHappyAgentSession(session) ? linkedProject?.avatar : null;
     const avatar = resolveSessionAvatar(session, projects);
+    const dotsKind = testloopDotsKind(session);
     return {
+        ...(dotsKind ? { testloopDotsKind: dotsKind } : {}),
         id: session.id,
         botId: session.metadata?.bot?.id ?? null,
         botUsername: session.metadata?.bot?.username ?? null,
@@ -271,6 +275,7 @@ function buildSessionRowData(
 
 // Unified list item type for SessionsList component
 export type SessionListViewItem =
+    | { type: 'dots'; sessions: SessionRowData[] }
     | { type: 'bots'; sessions: SessionRowData[] }
     | { type: 'header'; title: string }
     | { type: 'active-sessions'; sessions: SessionRowData[] }
@@ -406,6 +411,7 @@ function buildSessionListViewData(
 ): SessionListViewItem[] {
     const rigProjectSessions: Session[] = [];
     const botSessions: Session[] = [];
+    const dotSessions: Session[] = [];
     const rigPathSessions: Session[] = [];
     const happySessions: Session[] = [];
     const archivedSessions: Session[] = [];
@@ -419,6 +425,10 @@ function buildSessionListViewData(
         // The archive is a flat chronological tail, not part of any project.
         if (isSessionArchived(session, archivingSessionIds)) {
             archivedSessions.push(session);
+            return;
+        }
+        if (testloopDotsKind(session)) {
+            dotSessions.push(session);
             return;
         }
         if (session.metadata?.bot) {
@@ -452,6 +462,8 @@ function buildSessionListViewData(
 
     const listData: SessionListViewItem[] = [];
     const toRow = (session: Session) => buildSessionRowData(session, archivingSessionIds, unreadSessionIds, machines, projects);
+    const dotsItem = buildTestloopDotsListItem(dotSessions, toRow);
+    if (dotsItem) listData.push(dotsItem);
 
     if (botSessions.length > 0) {
         botSessions.sort((a, b) => {

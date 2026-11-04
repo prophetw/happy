@@ -22,7 +22,7 @@ vi.mock('@/sync/storage', () => ({
     },
 }));
 
-import { useVisibleSessionListViewData } from './useVisibleSessionListViewData';
+import { useHasArchivedSessions, useVisibleSessionListViewData } from './useVisibleSessionListViewData';
 
 // Only the fields the visibility filter reads; the real rows are built in
 // storage.ts.
@@ -66,6 +66,14 @@ beforeEach(() => {
 });
 
 describe('useVisibleSessionListViewData', () => {
+    it('keeps idle Dots separate and applies the archive preference to the group', () => {
+        mocks.data = [{ type: 'dots', sessions: [row('idle-dot'), row('retired-dot', { archived: true })] }];
+        mocks.hideArchivedSessions = true;
+        expect(useHasArchivedSessions()).toBe(true);
+        expect(useVisibleSessionListViewData()).toEqual([{ type: 'dots', sessions: [row('idle-dot')] }]);
+        mocks.data = [{ type: 'dots', sessions: [row('retired-dot', { archived: true })] }];
+        expect(useVisibleSessionListViewData()).toEqual([]);
+    });
     it('keeps idle and offline bots visible when archives are hidden', () => {
         mocks.data = [{ type: 'bots', sessions: [row('bot', { active: false })] }];
         mocks.hideArchivedSessions = true;

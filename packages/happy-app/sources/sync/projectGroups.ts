@@ -1,6 +1,7 @@
 import type { Session } from './storageTypes';
 import type { SessionRowData } from './storage';
 import { getRepoPath, getWorktreeName, isWorktreePath } from '@/utils/worktreePaths';
+import { testloopDotsKind } from './testloopDotsList';
 
 // One git worktree inside a project. `id` is empty and `name` is null for
 // the project's primary tree, which always sorts first.
@@ -33,6 +34,7 @@ export function isProjectSession(session: Session): boolean {
  * path. Happy-created worktree paths are nested under their main checkout,
  * giving CLI sessions the same project/worktree hierarchy as Rig without
  * merging identical paths from different computers.
+ * Hosted Dots have a separate directory and do not identify a development machine.
  */
 export function buildPathProjectGroups(
     sessions: Session[],
@@ -44,6 +46,7 @@ export function buildPathProjectGroups(
     const workspaces = new Map<string, ProjectWorkspaceGroup>();
 
     for (const session of sessions) {
+        if (testloopDotsKind(session)) continue;
         const machineId = session.metadata?.machineId ?? null;
         const sessionPath = session.metadata?.path?.trim() || '';
         const worktree = isWorktreePath(sessionPath);

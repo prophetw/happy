@@ -31,6 +31,7 @@ import { SessionShortcutHintBadge } from './ShortcutHints';
 import { ProviderIcon } from './ProviderIcon';
 import { buildSessionProjectDisplayGroups } from '@/utils/sessionDisplayOrder';
 import { isMachineOnline } from '@/utils/machineUtils';
+import { DotsSessionsGroup } from './DotsSessionsGroup';
 
 const MACHINE_ACCENT_COLORS = ['#3B82F6', '#8B5CF6', '#14B8A6', '#D97706'];
 
@@ -551,7 +552,8 @@ export function SessionsList({
         if (flatSessionList) {
             // A chat list should always float the thing the user just replied
             // to, so the canonical layout is ordered by recent activity.
-            const flatRows = buildFlatSessionRows(groupedRows, { sortByActivity: true });
+            const dotsItems = groupedRows.filter(item => item.type === 'dots');
+            const flatRows = buildFlatSessionRows(groupedRows.filter(item => item.type !== 'dots'), { sortByActivity: true });
             const flatItems = flatRows.map<SessionListDisplayItem>((row, index) => ({
                 type: 'flat-session',
                 row,
@@ -575,7 +577,7 @@ export function SessionsList({
             const flatToggle = archiveToggle.map<SessionListDisplayItem>((item) => (
                 item.type === 'archive-toggle' ? { ...item, banded: true } : item
             ));
-            return [...flatItems, ...flatToggle, ...flatArchived];
+            return [...dotsItems, ...flatItems, ...flatToggle, ...flatArchived];
         }
 
         const machineGroups = buildSessionProjectDisplayGroups(
@@ -623,6 +625,7 @@ export function SessionsList({
 
     const keyExtractor = React.useCallback((item: SessionListDisplayItem, index: number) => {
         switch (item.type) {
+            case 'dots': return 'dots';
             case 'bots': return 'bots';
             case 'machine-header': return `machine-header-${JSON.stringify(item.machineId)}`;
             case 'machine-project': return `project-${item.item.source}-${item.item.project.machineId ?? 'unknown'}-${item.item.project.id}`;
@@ -639,6 +642,7 @@ export function SessionsList({
 
     const renderItem = React.useCallback(({ item, index }: { item: SessionListDisplayItem, index: number }) => {
         switch (item.type) {
+            case 'dots': return <DotsSessionsGroup sessions={item.sessions} />;
             case 'bots':
                 return (
                     <View>

@@ -135,6 +135,8 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
     const content = (
         <Pressable
             style={[styles.row, selected && styles.rowSelected]}
+            accessibilityRole={session.testloopDotsKind ? 'button' : undefined}
+            accessibilityLabel={session.testloopDotsKind ? session.name : undefined}
             {...sessionPressHandlers}
             {...menuProps}
         >
