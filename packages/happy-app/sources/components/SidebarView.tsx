@@ -151,6 +151,16 @@ export const SidebarView = React.memo(() => {
 
             {/* Settings at bottom */}
             <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Dots 工作台"
+                testID="sidebar-dots-entry"
+                onPress={() => router.push('/dots')}
+                style={styles.settingsRow}
+            >
+                <Ionicons name="grid-outline" size={18} color={stylesheet.settingsText.color} />
+                <Text style={styles.settingsText}>Dots 工作台</Text>
+            </Pressable>
+            <Pressable
                 onPress={() => router.push('/settings')}
                 style={[
                     styles.settingsRow,

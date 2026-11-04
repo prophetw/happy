@@ -82,6 +82,7 @@ import { loadSessionAvatar } from './sessionAvatars';
 import { SessionAvatarHydrator } from './SessionAvatarHydrator';
 import { sessionAvatarDescriptorSchema, sessionAvatarRevisionSchema, sameSessionAvatar } from './sessionAvatarTypes';
 import { releaseSpawnedSession } from './spawnRequestId';
+import { fetchSessionDirectory, type SessionHydrationRecord } from './sessionDirectory';
 
 type V3GetSessionMessagesResponse = {
     messages: ApiMessage[];
@@ -1360,45 +1361,36 @@ class Sync {
         await Promise.all(decryptedRecords.map((record) => this.hydrateProjectAvatar(record)));
     };
 
-    private fetchSessions = async (sessionId?: string, signal?: AbortSignal) => {
+    private fetchSessions = async (sessionId?: string, signal?: AbortSignal, loadDirectory?: (
+        serverUrl: string, headers: Record<string, string>, signal: AbortSignal | undefined, isCurrent: () => boolean,
+    ) => Promise<SessionHydrationRecord[]>) => {
         if (!this.credentials) return;
         const encryption = this.encryption;
-        const avatarsBeforeFetch = storage.getState().sessions;
-
+        const token = this.credentials.token;
         const API_ENDPOINT = getServerUrl();
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions`, {
-            signal,
-            headers: {
-                'Authorization': `Bearer ${this.credentials.token}`,
-                'Content-Type': 'application/json',
-                'X-Happy-Client': getHappyClientId(),
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to fetch sessions: ${response.status}`);
+        const avatarsBeforeFetch = storage.getState().sessions;
+        const isCurrent = () => !signal?.aborted && this.encryption === encryption
+            && this.credentials?.token === token && getServerUrl() === API_ENDPOINT;
+        const scopeCurrent = () => {
+            if (isCurrent()) return true;
+            if (loadDirectory) throw new Error('Dots directory request canceled or account changed');
+            return false;
+        };
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'X-Happy-Client': getHappyClientId(),
+        };
+        let sessions: SessionHydrationRecord[];
+        if (loadDirectory) {
+            sessions = await loadDirectory(API_ENDPOINT, headers, signal, isCurrent);
+        } else {
+            const response = await fetch(`${API_ENDPOINT}/v1/sessions`, { signal, headers });
+            if (!response.ok) throw new Error(`Failed to fetch sessions: ${response.status}`);
+            const data = await response.json();
+            sessions = data.sessions as SessionHydrationRecord[];
         }
-
-        const data = await response.json();
-        if (signal?.aborted || this.encryption !== encryption) return;
-        const sessions = data.sessions as Array<{
-            id: string;
-            tag: string;
-            seq: number;
-            metadata: string;
-            metadataVersion: number;
-            agentState: string | null;
-            agentStateVersion: number;
-            dataEncryptionKey: string | null;
-            projectId?: string | null;
-            avatar?: unknown;
-            avatarVersion?: unknown;
-            active: boolean;
-            activeAt: number;
-            createdAt: number;
-            updatedAt: number;
-            lastMessage: ApiMessage | null;
-        }>;
+        if (!scopeCurrent()) return;
         // Reuse the existing list endpoint, but a send only needs its target.
         // Filtering before any crypto keeps old sessions out of its budget.
         const sessionsToHydrate = sessionId === undefined
@@ -1408,6 +1400,7 @@ class Sync {
         // Initialize all session encryptions first
         const sessionKeys = new Map<string, Uint8Array | null>();
         for (const session of sessionsToHydrate) {
+            if (!scopeCurrent()) return;
             if (session.dataEncryptionKey) {
                 let decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
                 if (!decrypted) {
@@ -1419,11 +1412,14 @@ class Sync {
                 sessionKeys.set(session.id, null);
             }
         }
+        if (!scopeCurrent()) return;
         await encryption.initializeSessions(sessionKeys);
+        if (!scopeCurrent()) return;
 
         // Decrypt sessions
         let decryptedSessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[] = [];
         for (const session of sessionsToHydrate) {
+            if (!scopeCurrent()) return;
             // Get session encryption (should always exist after initialization)
             const sessionEncryption = encryption.getSessionEncryption(session.id);
             if (!sessionEncryption) {
@@ -1460,7 +1456,7 @@ class Sync {
         }
 
         // Timed-out requests and old accounts must not publish a late snapshot.
-        if (signal?.aborted || this.encryption !== encryption) return;
+        if (!scopeCurrent()) return;
 
         // Thinking state exists only in activity ephemerals — the server
         // session record has no such field, so preserve whatever we already
@@ -1508,6 +1504,28 @@ class Sync {
 
     public refreshSessions = async () => {
         return this.sessionsSync.invalidateAndAwait();
+    }
+
+    /** Dots discovery supplements the recent v1 list without changing ordinary account sync. */
+    public refreshDotsSessions = async (signal?: AbortSignal): Promise<void> => {
+        if (!this.credentials) throw new Error('Not signed in.');
+        if (signal?.aborted) throw new Error('Dots directory request canceled');
+        const controller = new AbortController();
+        let rejectAbort!: (reason: Error) => void;
+        const interrupted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
+        const cancel = (message: string) => { controller.abort(); rejectAbort(new Error(message)); };
+        const onAbort = () => cancel('Dots directory request canceled');
+        signal?.addEventListener('abort', onAbort, { once: true });
+        const timeout = setTimeout(() => cancel('Timed out fetching Dots directory'), 12000);
+        try {
+            await Promise.race([
+                this.fetchSessions(undefined, controller.signal, (serverUrl, headers, requestSignal, isCurrent) =>
+                    fetchSessionDirectory({ serverUrl, headers, signal: requestSignal, isCurrent })),
+                interrupted,
+            ]);
+        } finally {
+            clearTimeout(timeout); signal?.removeEventListener('abort', onAbort); controller.abort();
+        }
     }
 
     public getCredentials() {

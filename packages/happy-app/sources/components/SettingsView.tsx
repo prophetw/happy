@@ -326,6 +326,19 @@ export const SettingsView = React.memo(function SettingsView({
                 />
             </ItemGroup> */}
 
+            <ItemGroup title="个人助理">
+                <Pressable accessibilityRole="button" accessibilityLabel="Dots 工作台" testID="settings-dots-entry"
+                    onPress={() => router.push('/dots')} style={{ flexDirection: 'row', alignItems: 'center',
+                        paddingHorizontal: 16, paddingVertical: 14, minHeight: 56, gap: 12 }}>
+                    <Ionicons name="grid-outline" size={29} color="#4f46e5" />
+                    <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={{ color: theme.colors.text, fontSize: 16 }}>Dots 工作台</Text>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>创建与管理个人助理</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                </Pressable>
+            </ItemGroup>
+
             {/* Features */}
             <ItemGroup title={t('settings.features')}>
                 <Item

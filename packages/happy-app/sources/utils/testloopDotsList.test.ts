@@ -6,6 +6,8 @@ import { buildProjectHomeRows } from './projectHomeList';
 import { buildTestloopDotsListItem, testloopDotsKind } from '@/sync/testloopDotsList';
 import { buildFlatSessionRows, toFlatSessionRow } from './flatSessionList';
 import { getSessionShortcutIdsInDisplayOrder } from './sessionDisplayOrder';
+import { isSessionArchived } from '@/sync/sessionArchive';
+import { rigMetadataFixture } from '@/sync/__testdata__/rigMetadata';
 
 const workspaceId = 'da58a731-14f3-4dd1-a6c3-cf832eaf3508';
 function session(id: string, marker?: Record<string, unknown>): Session {
@@ -67,5 +69,36 @@ describe('Dots presentation does not imply an unknown development machine', () =
         expect(rows.find(r => r.session.id === 'dot')!.session).toBe(group.sessions.find(s => s.id === 'dot'));
         expect(toFlatSessionRow(group.sessions[0])).toMatchObject({ projectName: '工作台入口', workspaceName: null });
         expect(toFlatSessionRow(group.sessions[1])).toMatchObject({ projectName: 'Dot 专属对话', workspaceName: null });
+    });
+});
+
+
+describe('session-list archive admission for hosted Dots', () => {
+    it.each([['workspace', workspace], ['Dot', dot]] as const)('keeps an inactive %s visible without a native heartbeat', (_name, value) => {
+        expect(value.active).toBe(false);
+        expect(isSessionArchived(value, new Set())).toBe(false);
+    });
+    it.each([['workspace', workspace], ['Dot', dot]] as const)('still applies explicit and optimistic user archive to a %s', (_name, value) => {
+        const archived = { ...value, metadata: { ...value.metadata!, lifecycleState: 'archived' as const } };
+        expect(isSessionArchived(archived, new Set())).toBe(true);
+        expect(isSessionArchived(value, new Set([value.id]))).toBe(true);
+    });
+    it('preserves the legacy Happy, Rig and invalid-marker archive rules', () => {
+        const ordinary = session('ordinary-inactive');
+        expect(isSessionArchived(ordinary, new Set())).toBe(true);
+        expect(isSessionArchived({ ...ordinary, active: true }, new Set())).toBe(false);
+        const invalid = session('invalid-dot', { schemaVersion: 1, kind: 'dot', workspaceId: 'invalid' });
+        expect(isSessionArchived(invalid, new Set())).toBe(true);
+        const rig = { ...session('disconnected-rig'), metadata: { ...rigMetadataFixture } };
+        expect(isSessionArchived(rig, new Set())).toBe(false);
+        expect(isSessionArchived(rig, new Set([rig.id]))).toBe(true);
+        expect(isSessionArchived({ ...rig, metadata: { ...rig.metadata, lifecycleState: 'archived' } }, new Set())).toBe(true);
+    });
+    it('admits inactive workspace and Dot through the real archive predicate before building the visible directory', () => {
+        const visible = [workspace, dot, session('ended-cli')].filter(value => !isSessionArchived(value, new Set()));
+        const group = buildTestloopDotsListItem(visible, row)!;
+        expect(group).not.toBeNull();
+        expect(group.sessions.map(value => value.id)).toEqual(['workspace', 'dot']);
+        expect(group.sessions.every(value => !value.active)).toBe(true);
     });
 });

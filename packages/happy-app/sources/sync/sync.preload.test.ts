@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     voiceMessages: vi.fn(),
     voiceReady: vi.fn(),
     loadAvatar: vi.fn(async () => null),
+    serverUrl: 'https://example.invalid',
 }));
 
 // Exercise the real Sync orchestration, locking and pagination with only the
@@ -49,7 +50,7 @@ vi.mock('@/sync/storage', () => ({ storage: { getState: () => ({
 vi.mock('@/sync/ops', () => ({ sessionSetAgentModes: mocks.setModes }));
 vi.mock('@/sync/persistence', () => ({ loadPendingSettings: () => ({}), savePendingSettings: vi.fn() }));
 vi.mock('@/sync/revenueCat', () => ({ RevenueCat: {}, LogLevel: {}, PaywallResult: {} }));
-vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://example.invalid' }));
+vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => mocks.serverUrl }));
 vi.mock('@/sync/relayMigrations', () => ({ waitForRelaySessionMigration: async () => {} }));
 vi.mock('@/sync/pushRegistration', () => ({ syncCurrentPushToken: vi.fn() }));
 vi.mock('@/sync/apiArtifacts', () => ({ fetchArtifact: vi.fn(), fetchArtifacts: vi.fn(), createArtifact: vi.fn(), updateArtifact: vi.fn() }));
@@ -93,6 +94,7 @@ async function waitForPreload() {
 
 beforeEach(() => {
     vi.resetAllMocks();
+    mocks.serverUrl = 'https://example.invalid';
     mocks.state = {
         sessions: { a: { id: 'a', permissionMode: 'auto', metadata: {} }, b: { id: 'b', permissionMode: 'auto', metadata: {} } },
         sessionMessages: {}, currentViewingSessionId: null,
@@ -268,6 +270,141 @@ describe('session avatar sync integration', () => {
         await fetching;
         expect(mocks.state.sessions.a.avatarDescriptor).toBeNull();
         expect(mocks.state.sessions.a.avatarUpdateSeq).toBe(11);
+    });
+});
+
+describe('Dots directory Sync integration', () => {
+    const workspaceMetadata = { summary: { text: '旧工作台' }, testloopDots: {
+        schemaVersion: 1, kind: 'workspace', workspaceId: '11111111-1111-4111-8111-111111111111',
+    } };
+    const row = (id: string, metadata: unknown = {}) => ({
+        id, seq: 1, metadata: JSON.stringify(metadata), metadataVersion: 1,
+        agentState: null, agentStateVersion: 0, dataEncryptionKey: null as string | null,
+        active: false, activeAt: 1, createdAt: 1, updatedAt: 1,
+    });
+    const complete = () => ({ sessions: [row('old-manager', workspaceMetadata)], hasNext: false, nextCursor: null });
+
+    beforeEach(() => {
+        engine.projectsSync = { invalidate: vi.fn() };
+        engine.attentionSync = { invalidate: vi.fn() };
+        engine.credentials = { token: 'test', secret: 'secret' };
+        engine.encryption = {
+            decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
+            initializeSessions: vi.fn(),
+            getSessionEncryption: vi.fn(() => ({
+                decryptMetadata: async (_version: number, text: string) => JSON.parse(text),
+                decryptAgentState: async () => null,
+            })),
+        };
+    });
+
+    it('hydrates an inactive old workspace beyond the recent-session cap using the shared keys/decryption/apply path', async () => {
+        const first = Array.from({ length: 200 }, (_, index) => row(`recent-${index}`));
+        const older = { ...row('old-manager', workspaceMetadata), dataEncryptionKey: 'encrypted-key' };
+        const fetcher = vi.fn()
+            .mockResolvedValueOnce(Response.json({ sessions: first, hasNext: true, nextCursor: 'cursor_v1_recent-199' }))
+            .mockResolvedValueOnce(Response.json({ sessions: [older], hasNext: false, nextCursor: null }));
+        vi.stubGlobal('fetch', fetcher);
+        await engine.refreshDotsSessions();
+        expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+            'https://example.invalid/v2/sessions?limit=200',
+            'https://example.invalid/v2/sessions?limit=200&cursor=cursor_v1_recent-199',
+        ]);
+        expect(engine.encryption.decryptEncryptionKey).toHaveBeenCalledExactlyOnceWith('encrypted-key');
+        const keys = engine.encryption.initializeSessions.mock.calls[0][0] as Map<string, Uint8Array | null>;
+        expect(keys.size).toBe(201);
+        expect(keys.get('old-manager')).toEqual(new Uint8Array([1, 2, 3]));
+        expect(mocks.state.sessions['old-manager']).toMatchObject({
+            metadata: workspaceMetadata, agentState: null, active: false, lastMessage: null,
+        });
+        expect(mocks.state.sessions.a).toBeDefined();
+        expect(mocks.state.sessions.b).toBeDefined();
+        expect(mocks.request).not.toHaveBeenCalled();
+    });
+
+    it('does not hydrate or publish a partial directory when a later page fails', async () => {
+        const before = mocks.state.sessions;
+        vi.stubGlobal('fetch', vi.fn()
+            .mockResolvedValueOnce(Response.json({ sessions: [row('first')], hasNext: true, nextCursor: 'cursor_v1_first' }))
+            .mockResolvedValueOnce(new Response('offline', { status: 503 })));
+        await expect(engine.refreshDotsSessions()).rejects.toThrow('503');
+        expect(engine.encryption.initializeSessions).not.toHaveBeenCalled();
+        expect(mocks.state.sessions).toBe(before);
+    });
+
+    it.each(['encryption', 'token', 'server'])('fences a %s change while session metadata is decrypting', async reason => {
+        const before = mocks.state.sessions;
+        let finish!: (metadata: unknown) => void;
+        const decryptMetadata = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+        engine.encryption.getSessionEncryption = () => ({ decryptMetadata, decryptAgentState: async () => null });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(complete())));
+        const pending = engine.refreshDotsSessions();
+        const rejected = expect(pending).rejects.toThrow('canceled or account changed');
+        await vi.waitFor(() => expect(decryptMetadata).toHaveBeenCalledOnce());
+        if (reason === 'encryption') engine.encryption = {};
+        if (reason === 'token') engine.credentials = { token: 'new-account', secret: 'secret' };
+        if (reason === 'server') mocks.serverUrl = 'https://another.invalid';
+        finish(workspaceMetadata);
+        await rejected;
+        expect(mocks.state.sessions).toBe(before);
+    });
+
+    it('rejects caller cancellation promptly and ignores a transport that resolves after abort', async () => {
+        const controller = new AbortController();
+        const before = mocks.state.sessions;
+        let finish!: (response: unknown) => void;
+        const fetcher = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+        vi.stubGlobal('fetch', fetcher);
+        const pending = engine.refreshDotsSessions(controller.signal);
+        const rejected = expect(pending).rejects.toThrow('canceled');
+        controller.abort();
+        await rejected;
+        expect((fetcher.mock.calls[0] as any)[1].signal.aborted).toBe(true);
+        const text = vi.fn(async () => JSON.stringify(complete()));
+        finish({ ok: true, text });
+        await Promise.resolve(); await Promise.resolve();
+        expect(text).not.toHaveBeenCalled();
+        expect(engine.encryption.initializeSessions).not.toHaveBeenCalled();
+        expect(mocks.state.sessions).toBe(before);
+    });
+
+    it('bounds an unresponsive fetch and ignores its late result', async () => {
+        vi.useFakeTimers();
+        const before = mocks.state.sessions;
+        let finish!: (response: unknown) => void;
+        const fetcher = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+        vi.stubGlobal('fetch', fetcher);
+        const pending = engine.refreshDotsSessions();
+        const rejected = expect(pending).rejects.toThrow('Timed out');
+        await vi.advanceTimersByTimeAsync(12000);
+        await rejected;
+        expect((fetcher.mock.calls[0] as any)[1].signal.aborted).toBe(true);
+        const text = vi.fn(async () => JSON.stringify(complete()));
+        finish({ ok: true, text });
+        await Promise.resolve(); await Promise.resolve();
+        expect(text).not.toHaveBeenCalled();
+        expect(engine.encryption.initializeSessions).not.toHaveBeenCalled();
+        expect(mocks.state.sessions).toBe(before);
+    });
+
+    it('rejects an unsigned or already canceled caller without fetching', async () => {
+        const fetcher = vi.fn();
+        vi.stubGlobal('fetch', fetcher);
+        engine.credentials = null;
+        await expect(engine.refreshDotsSessions()).rejects.toThrow('Not signed in');
+        engine.credentials = { token: 'test', secret: 'secret' };
+        const controller = new AbortController(); controller.abort();
+        await expect(engine.refreshDotsSessions(controller.signal)).rejects.toThrow('canceled');
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('retains v1 as the ordinary refresh source and merges previously supplemented sessions', async () => {
+        mocks.state.sessions['old-manager'] = { id: 'old-manager', metadata: workspaceMetadata, active: false };
+        const fetcher = vi.fn(async (_url: string) => Response.json({ sessions: [row('a')] }));
+        vi.stubGlobal('fetch', fetcher);
+        await engine.fetchSessions();
+        expect(fetcher.mock.calls[0][0]).toBe('https://example.invalid/v1/sessions');
+        expect(mocks.state.sessions['old-manager'].metadata).toEqual(workspaceMetadata);
     });
 });
 

@@ -93,6 +93,15 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="dots"
+                options={{
+                    headerShown: true,
+                    header: createPlainHeader,
+                    headerTitle: 'Dots 工作台',
+                    headerTransparent: Platform.OS === 'ios',
+                }}
+            />
+            <Stack.Screen
                 name="session/[id]/message/[messageId]"
                 options={{
                     headerShown: true,
