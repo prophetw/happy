@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore Happy TLS after boot or container replacement
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=60
+AccuracySec=10
+Unit=REPLACE_TLS_PREFIX-ensure.service
+[Install]
+WantedBy=timers.target

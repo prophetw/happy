@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "role": "caller",
+  "endpoint": "https://szsp.suitbim.com.cn:7100/happy-control/v1",
+  "registration": {
+    "id": "assistant-rest",
+    "userID": "REPLACE_APPROVED_HAPPY_USER_ID",
+    "name": "Approved REST assistant",
+    "publicKey": "REPLACE_APPROVED_ASSISTANT_PUBLIC_KEY_PEM"
+  },
+  "identityRef": "assistant-rest",
+  "grantID": "REPLACE_OWNER_APPROVED_GRANT_ID",
+  "secrets": {
+    "type": "encrypted-pkcs8-credentials",
+    "credentialsDirectory": "/run/happy-control-caller/credentials",
+    "keys": {
+      "assistant-rest": {
+        "encryptedPKCS8": "/run/happy-control-caller/assistant.encrypted.pem",
+        "passphraseCredential": "assistant-key-passphrase"
+      }
+    }
+  }
+}

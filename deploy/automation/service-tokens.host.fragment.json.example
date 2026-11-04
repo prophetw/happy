@@ -1,0 +1,13 @@
+{
+  "serviceTokens": {
+    "maxGrantMs": 2592000000,
+    "clients": [
+      {
+        "id": "partner_backend_demo",
+        "userID": "REPLACE_WITH_APPROVING_HAPPY_USER_ID",
+        "name": "待登记的合作方后端",
+        "generation": "REPLACE_WITH_NON_SECRET_IDENTITY_GENERATION"
+      }
+    ]
+  }
+}

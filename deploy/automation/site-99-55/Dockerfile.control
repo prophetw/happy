@@ -1,0 +1,40 @@
+# Review-only build definition. Supply an approved Node 22 Debian image pinned by digest.
+ARG CONTROL_NODE_IMAGE
+FROM ${CONTROL_NODE_IMAGE} AS build
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+RUN test "$NPM_REGISTRY" = "https://registry.npmmirror.com"
+ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_IGNORE_SCRIPTS=true
+RUN node -e 'if (Number(process.versions.node.split(".")[0]) !== 22) process.exit(1)'
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+WORKDIR /repo
+# No local .npmrc/auth/credentials is copied into the image.
+RUN printf 'registry=https://registry.npmmirror.com\nnode-linker=isolated\nshamefully-hoist=false\n' > .npmrc
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/happy-agent/package.json packages/happy-agent/
+COPY packages/happy-wire/package.json packages/happy-wire/
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter happy-agent... --config.node-linker=isolated --config.shamefully-hoist=false
+COPY packages/happy-wire/src packages/happy-wire/src
+COPY packages/happy-wire/tsconfig.json packages/happy-wire/
+COPY packages/happy-agent/src packages/happy-agent/src
+COPY packages/happy-agent/tsconfig.json packages/happy-agent/
+COPY packages/happy-agent/bin/happy-control.mjs packages/happy-agent/bin/happy-control-call.mjs packages/happy-agent/bin/happy-agent.mjs packages/happy-agent/bin/
+RUN pnpm --filter @slopus/happy-wire build && pnpm --filter happy-agent build
+# Preserve the workspace layout and lockfile, with only production dependencies.
+# Do not use legacy deploy: it re-resolves metadata even after a frozen install.
+RUN mkdir -p /out/packages/happy-agent /out/packages/happy-wire \
+    && cp package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc /out/ \
+    && cp -a packages/happy-agent/dist packages/happy-agent/bin packages/happy-agent/package.json /out/packages/happy-agent/ \
+    && cp -a packages/happy-wire/dist packages/happy-wire/package.json /out/packages/happy-wire/ \
+    && cd /out \
+    && pnpm install --prod --offline --frozen-lockfile --ignore-scripts --filter happy-agent... --config.node-linker=isolated --config.shamefully-hoist=false
+COPY deploy/automation/site-99-55/healthcheck.mjs /out/healthcheck.mjs
+
+FROM ${CONTROL_NODE_IMAGE} AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build --chown=1000:1000 /out/ /app/
+USER 1000:1000
+ENTRYPOINT ["node", "/app/packages/happy-agent/bin/happy-control.mjs"]
+CMD ["--config", "/etc/happy-control/host.json"]

@@ -1,0 +1,22 @@
+# 4090Wsl2 only. Not installed; this replaces the existing daemon launch mode during an approved window.
+[Unit]
+Description=Happy trusted outbound REST worker
+After=network-online.target
+[Service]
+Type=simple
+User=REPLACE_APPROVED_EXISTING_HAPPY_OWNER
+WorkingDirectory=/opt/happy-worker
+ExecStart=/usr/bin/node /opt/happy-worker/packages/happy-cli/bin/happy-control-worker.mjs --config /etc/happy-control/worker.json
+# Explicitly approved root-only persistent unlock material; systemd delivers private runtime copies.
+LoadCredential=worker-passphrase:/etc/happy-control/secure/worker/worker-passphrase
+LoadCredential=worker-encrypted-key:/etc/happy-control/secure/worker/worker.encrypted.pem
+UnsetEnvironment=CREDENTIALS_DIRECTORY
+KillMode=process
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=yes
+# PrivateTmp is intentionally omitted: preserve the existing agent's /tmp-visible project behavior.
+[Install]
+WantedBy=multi-user.target

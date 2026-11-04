@@ -130,6 +130,7 @@ export type ResumeFallback = z.infer<typeof ResumeFallbackSchema>;
 export type ResumeSessionOptions = { model?: string; permissionMode?: string; fallback?: ResumeFallback; fallbackReason?: string };
 
 type MachineRpcHandlers = {
+    automationControl?: (input: unknown) => Promise<unknown>;
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     resumeSession?: (sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>;
     stopSession: (sessionId: string) => boolean;
@@ -203,11 +204,13 @@ export class ApiMachineClient {
     }
 
     setRPCHandlers({
+        automationControl,
         spawnSession,
         resumeSession,
         stopSession,
         requestShutdown
     }: MachineRpcHandlers) {
+        if (automationControl) this.rpcHandlerManager.registerHandler('automation-control', automationControl);
         this.resumeSessionHandler = resumeSession ?? null;
 
         // Register spawn session handler

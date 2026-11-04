@@ -3,6 +3,8 @@
 This folder documents how Happy works internally, with a focus on protocol, backend architecture, deployment, and the CLI tool. Start here.
 
 ## Index
+
+- [Happy 服务授权：用户创建与业务后端接入](features/automation-service-access.md)：Web / App 当前入口、最长30天令牌交付、业务REST调用、回执与撤销。
 - protocol.md: Wire protocol (WebSocket), payload formats, sequencing, and concurrency rules.
 - realtime-sync-and-rpc.md: High-level overview of realtime socket management and RPC control flow.
 - api.md: HTTP endpoints and authentication flows.

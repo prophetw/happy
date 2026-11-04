@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Happy dedicated TLS leaves locally
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=1800
+Persistent=true
+Unit=REPLACE_TLS_PREFIX-renew.service
+[Install]
+WantedBy=timers.target

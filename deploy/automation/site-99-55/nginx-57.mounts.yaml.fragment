@@ -1,0 +1,20 @@
+# Merge into the VERIFIED existing Compose service on 99.57, not a standalone Compose file.
+# Existing service name and mount availability are NOT verified by this local example.
+services:
+  REPLACE_WITH_VERIFIED_EXISTING_NGINX_SERVICE_NAME:
+    volumes:
+      - type: bind
+        source: /run/happy-control-proxy-pki/server-ca.crt
+        target: /etc/nginx/happy-control-pki/server-ca.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/happy-control-proxy-pki/client.crt
+        target: /etc/nginx/happy-control-pki/client.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/happy-control-proxy-pki/client.key
+        target: /etc/nginx/happy-control-pki/client.key
+        read_only: true
+        bind: {create_host_path: false}

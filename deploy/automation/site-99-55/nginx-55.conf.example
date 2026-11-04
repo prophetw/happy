@@ -1,0 +1,48 @@
+# Standalone NGINX for Happy only. No existing 99.55 NGINX config is replaced.
+worker_processes auto;
+pid /tmp/nginx.pid;
+error_log stderr crit;
+events { worker_connections 256; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    client_max_body_size 32m;
+    server_tokens off;
+    server {
+        listen 9443 ssl;
+        server_name happy-control-55.internal;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_certificate /etc/happy-control/pki/server.crt;
+        ssl_certificate_key /etc/happy-control/pki/server.key;
+        # Dedicated CA that issues the approved 99.57 client certificate only.
+        ssl_client_certificate /etc/happy-control/pki/client-ca.crt;
+        ssl_verify_client on;
+        ssl_verify_depth 2;
+        ssl_session_cache off;
+        ssl_session_tickets off;
+        # Actual source IP through the existing Docker NAT must be verified at rollout.
+        allow 192.168.99.57;
+        deny all;
+
+        location ^~ /happy-control/v1/ {
+            # No URI/trailing slash: preserve the complete signed path and query.
+            proxy_pass http://127.0.0.1:9010;
+            proxy_http_version 1.1;
+            proxy_set_header Host $http_host;
+            proxy_set_header Connection "";
+            proxy_set_header Authorization $http_authorization;
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_max_temp_file_size 0;
+            proxy_connect_timeout 3s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 90s;
+        }
+        # Only REST is enabled in this site plan. Probe paths are local to the control container.
+        location / { return 404; }
+    }
+}

@@ -1,0 +1,23 @@
+# Review-only snippet inside the EXISTING HTTPS server. Do not replace /happy/ or /home-relay/.
+# No trailing URI in proxy_pass: both /happy-control/... and original query MUST survive.
+location ^~ /happy-control/ {
+    proxy_pass http://127.0.0.1:9010;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Connection "";
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 90s;
+    client_max_body_size 32m;
+    # Worker result includes redacted log pages. App still limits other routes to 256 KiB.
+    # Never log Authorization, request body, OAuth query strings, task text or result text.
+    access_log off;
+}
+location = /.well-known/oauth-protected-resource/happy-control/mcp {
+    proxy_pass http://127.0.0.1:9010;
+    proxy_set_header Host $http_host;
+    access_log off;
+}
+# /livez and /readyz are loopback service probes, not public proxy routes.
+# Keep existing certificate/TLS/security settings; no cert/host/port is implied by this sample.

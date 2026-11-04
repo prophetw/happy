@@ -1,0 +1,373 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T06:53:22.291915+00:00",
+  "status": "DEPLOYED_OWNER_AND_RECIPIENT_BACKEND_ACCEPTANCE_PENDING",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "baseCommit": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "sourceTree": "d587ffdf686c46509cc59a4cc88a63991ad638a1",
+  "sourceKind": "git-tree-snapshot-not-commit",
+  "remoteForkMainChecked": "aa8b0dcef288cfe094ff58afc46f2d0e8b919737",
+  "remoteDifference": "one deployment documentation commit; no application feature difference; no merge/rebase/push",
+  "artifacts": {
+    "run": "20261104T064226Z-service-token",
+    "sourceTree": "d587ffdf686c46509cc59a4cc88a63991ad638a1",
+    "sourceKind": "git-tree-snapshot-not-commit",
+    "controlImageID": "sha256:a9e59fb0cde80557db85b7e0be9b75e11cc17fc5bcc68361ca82a4a622e41563",
+    "imageArchiveSHA256": "cafadceda0f6f87a2bc56fb7715c7e96d41d4628d0a5357936ce7e8cb4e186bf",
+    "sourceArchiveSHA256": "6fe4537e963f1d6ccbe7f4be63bf9da752cd4018f76bd2953d8f43057c9ac5b2",
+    "webArchiveSHA256": "8bcf1db660c57e46c993e095fc0956e4b3e3855e0c92bba5cf2a48794c730623",
+    "webIndexSHA256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c",
+    "nativeChecks": 52,
+    "expectedOldControlImage": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8",
+    "expectedGatewayImage": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+    "expectedHostSHA256": "a1e830328687aaa84461f22beec60ac0485e529e509fb7f4ef05dbada7a30316",
+    "expectedWebTarget": ".happy-releases/20261104T033914Z-automation-ui",
+    "expectedWebIndexSHA256": "9f61f569d80cd4c33cea673a9142c35ee2f25d937f2543f1ab33323685740870",
+    "serviceIdentity": {
+      "id": "service-backend-test",
+      "name": "后端联调测试",
+      "generation": "service_backend_test_20261104_v1"
+    },
+    "backendCredentialHosting": "not configured; owner-only browser test and no grant/token minted by assistant"
+  },
+  "controlActivation": {
+    "status": {
+      "run": "20261104T064226Z-service-token",
+      "phase": "healthy",
+      "success": true,
+      "newFeatureEnabled": true,
+      "stateRestored": false,
+      "rollback": "not-needed",
+      "relayUnchanged": true,
+      "containers": {
+        "happy-control-control-1": {
+          "id": "1d093ca054a27f5a231a9b060ea2666b9e803f1bf2475c968c97ef2b1d890b8b",
+          "imageID": "sha256:a9e59fb0cde80557db85b7e0be9b75e11cc17fc5bcc68361ca82a4a622e41563",
+          "started": "2026-11-04T06:49:58.270741348Z"
+        },
+        "happy-control-gateway-1": {
+          "id": "569248861c18a4fa4997daed9c56831da51b33cb3de50337cf98923ad427e5bc",
+          "imageID": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+          "started": "2026-11-04T06:50:03.905394336Z"
+        }
+      }
+    },
+    "pairService": [
+      "MainPID=1281634",
+      "ActiveState=active",
+      "SubState=running"
+    ]
+  },
+  "webActivation": {
+    "run": "20261104T064226Z-service-token",
+    "switched": true,
+    "target": ".happy-releases/20261104T064226Z-service-token",
+    "indexSHA256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c",
+    "nginxReloadedOrRecreated": false,
+    "nginxID": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2",
+    "nginxStarted": "2026-10-03T03:07:09.378319788Z",
+    "previousTarget": ".happy-releases/20261104T033914Z-automation-ui"
+  },
+  "liveVerification": {
+    "timestamp": "2026-11-04T06:53:22.291915+00:00",
+    "http": {
+      "/happy/_expo/static/js/web/__expo-metro-runtime-0c48b0beee2d3ce6030b475fcc5b1846.js": {
+        "status": 200,
+        "contentType": "application/javascript; charset=utf-8",
+        "bytes": 3802
+      },
+      "/happy/_expo/static/js/web/__common-2a461d9b466434e966df7667a1049a5b.js": {
+        "status": 200,
+        "contentType": "application/javascript; charset=utf-8",
+        "bytes": 3164668
+      },
+      "/happy/_expo/static/js/web/index-d21d11ca36be40aae219cdc8780a540f.js": {
+        "status": 200,
+        "contentType": "application/javascript; charset=utf-8",
+        "bytes": 10064151
+      },
+      "/happy/": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "sha256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c"
+      },
+      "/happy/settings/automation-service": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "sha256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c"
+      },
+      "/happy/settings/automation": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "sha256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c"
+      },
+      "/happy-control/v1/compatibility": {
+        "status": 200,
+        "contentType": "application/json; charset=utf-8",
+        "data": {
+          "protocol": 1,
+          "worker": 1,
+          "core": 1,
+          "approval": 1,
+          "httpMcp": null,
+          "auth": "ed25519-proof-v1",
+          "serviceTokens": {
+            "protocol": 1,
+            "maxGrantMs": 2592000000,
+            "oneTimeDelivery": true
+          }
+        }
+      },
+      "/happy-control/v1/openapi.json": {
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      "/home-relay/health": {
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      "/happy-control/v1/service-connections/options": {
+        "status": 403,
+        "errorCode": "OWNER_ORIGIN_REQUIRED"
+      },
+      "/happy-control/v1/service-connections/options (same-origin)": {
+        "status": 401,
+        "errorCode": "OWNER_AUTH_REQUIRED"
+      },
+      "/happy-control/v1/machines": {
+        "status": 401,
+        "errorCode": "AUTH_REQUIRED"
+      },
+      "/happy/canvaskit.wasm": {
+        "status": 200,
+        "wasmMagic": true,
+        "contentType": "application/wasm"
+      }
+    },
+    "hosts": {
+      "55": {
+        "containers": {
+          "happy-control-control-1": {
+            "id": "1d093ca054a27f5a231a9b060ea2666b9e803f1bf2475c968c97ef2b1d890b8b",
+            "imageID": "sha256:a9e59fb0cde80557db85b7e0be9b75e11cc17fc5bcc68361ca82a4a622e41563",
+            "started": "2026-11-04T06:49:58.270741348Z",
+            "health": "healthy"
+          },
+          "happy-control-gateway-1": {
+            "id": "569248861c18a4fa4997daed9c56831da51b33cb3de50337cf98923ad427e5bc",
+            "imageID": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+            "started": "2026-11-04T06:50:03.905394336Z",
+            "health": null
+          },
+          "happy-relay-relay-1": {
+            "id": "039f621e3b26385473957bd96d4fcd1d96a1021910cfe4bc215cad56e878c224",
+            "imageID": "sha256:c235c83318d20ab2b7b2804c77f006db931a596c7365a1b63c8a399d32161801",
+            "started": "2026-11-04T03:36:44.59580502Z",
+            "health": "healthy"
+          }
+        },
+        "grantCounts": {
+          "approvedUnexpired": 0,
+          "serviceConnections": 0,
+          "serviceTokenRecords": 0
+        },
+        "originalSignedMaxGrantMs": 3600000,
+        "serviceMaxGrantMs": 2592000000,
+        "hostSHA256": "09f04e4f82125a89d32884430c3e2424eb24bb0d22d7e8212e0390eb94e9644b",
+        "release": "/data/code/happy-control/releases/20261104T064226Z-service-token",
+        "proxyConfigUnchanged": true,
+        "stateWasNeverReplaced": true
+      },
+      "57": {
+        "nginxID": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2",
+        "nginxStarted": "2026-10-03T03:07:09.378319788Z",
+        "mainConfigUnchanged": true,
+        "mainConfigInode": 33705044,
+        "routeSHA256": "bde29b4c109951df94fb6aaacb7974384dccd6812a6727a6040ec660088fe06d",
+        "webTarget": ".happy-releases/20261104T064226Z-service-token",
+        "freeMB": 2129,
+        "nginxReloadedOrRecreated": false
+      }
+    }
+  },
+  "worker": {
+    "service": {
+      "MainPID": "737095",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "recentStateEvents": [
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      },
+      {
+        "event": "automation-worker",
+        "state": "connected"
+      }
+    ],
+    "projectCanonical": "/home/dev/code/happy-automation-test"
+  },
+  "statePreservation": {
+    "priorDurableStateFilesUnchanged": 6,
+    "expectedExpiryTransitions": [
+      {
+        "connectionID": "391cb63d-9b3b-4394-b6c4-80ac5d579112",
+        "transition": "approved -> expired",
+        "onlyStateFieldChangedHashVerified": true,
+        "expiresAt": 1793767088716
+      }
+    ],
+    "unexpectedChanges": [],
+    "proofTTLPruningExcluded": true,
+    "stateCheckpointKind": "metadata-hash-list-only-not-recovery-backup",
+    "stateWasNeverReplaced": true
+  },
+  "verification": {
+    "freshImageBuiltFromIsolatedArchive": true,
+    "hostNodeModulesCopied": false,
+    "dependencyInstall": "Docker build: frozen lockfile and production install; npmmirror; no claim of fresh install for entire monorepo",
+    "nativeImageIntegration": {
+      "event": "completed",
+      "passed": 52,
+      "image": "sha256:a9e59fb0cde80557db85b7e0be9b75e11cc17fc5bcc68361ca82a4a622e41563",
+      "nodeVersion": "v22.23.2",
+      "nginxVersion": "nginx version: nginx/1.30.1",
+      "realHappyAuth": false,
+      "productionDeployed": false
+    },
+    "nativeCleanup": {
+      "event": "cleanup",
+      "runID": "happy-control-fixture-c9da84be",
+      "remainingContainers": 0,
+      "remainingNetworks": 0,
+      "testKeysRemoved": true,
+      "errors": [],
+      "retainedLocalImage": "sha256:a9e59fb0cde80557db85b7e0be9b75e11cc17fc5bcc68361ca82a4a622e41563"
+    },
+    "liveAnonymousBrowser": {
+      "checks": 40,
+      "profiles": 4,
+      "routes": [
+        "/happy/settings/automation",
+        "/happy/settings/automation-service"
+      ],
+      "artifacts": [
+        "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/automation-live-2026-11-04T06-50-53-248Z",
+        "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/service-token-live-20261104"
+      ],
+      "runtimeErrors": [],
+      "failedRequests": [],
+      "browserClosed": true,
+      "realLogin": false,
+      "realApproval": false
+    },
+    "independentReadOnlyDeploymentReview": "passed; stop-attempt recovery and config/source binding guards fixed before activation",
+    "previousApplicationVerification": "48 backend + 22 frontend tests, typechecks, build/export and local fixture browser results retained in validation.service-token-local-2026-11-04.json; not repeated for unchanged application source",
+    "ciQueriedOrRun": false
+  },
+  "serviceRegistration": {
+    "id": "service-backend-test",
+    "name": "后端联调测试",
+    "generation": "service_backend_test_20261104_v1",
+    "ownerUserID": "cmvdmlu0z0000my1dszidaamz",
+    "identityOnlyNoAccessUntilOwnerApproval": true,
+    "serviceMaxGrantMs": 2592000000,
+    "signedMaxGrantMsUnchanged": 3600000,
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "projectID": "automation-test",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "existingSessionIDs": [],
+    "uiMethodsDefault": "read-only; create/send/cancel require explicit owner selection"
+  },
+  "ownerNextStep": {
+    "url": "https://szsp.suitbim.com.cn:7100/happy/settings/automation-service",
+    "steps": [
+      "Log in to Happy personally, reopen service authorization page",
+      "Select 后端联调测试, automation-test, required methods and expiry; recommend short first test then at most 30 days",
+      "Create pending request, review and explicitly approve within five minutes",
+      "Generate once and deliver only through approved recipient-backend secret storage; never paste into chat, URL or logs"
+    ],
+    "realGrantOrTokenCreatedByAssistant": false,
+    "grantCountsAtVerification": {
+      "approvedUnexpired": 0,
+      "serviceConnections": 0,
+      "serviceTokenRecords": 0
+    },
+    "recipientSecretProviderOrSecureHandoff": "not configured by this deployment"
+  },
+  "rollback": {
+    "actualFallbackUsed": false,
+    "preferred": "same new binary; owner revocation or disable serviceTokens; retain CURRENT state; Web can switch to retained previous target",
+    "automaticFailurePath": "new binary with previous feature-disabled host config, current state retained; independently reviewed but not exercised on real host",
+    "oldBinaryDowngradeCompatibility": "not verified; never blindly restore old state",
+    "checkpoint": "private file-hash metadata only, not a recovery backup",
+    "host55RolloutDirectory": "/data/code/happy-control/rollouts/20261104T064226Z-service-token",
+    "host55ArchivesDirectory": "/data/code/happy-control/archives",
+    "host57MetadataDirectory": "/root/bim-engine/script/happy-web-artifacts",
+    "activationScriptSHA256": "e3ebdebcb73285e15a3116eba52a32b386df02e8f173354fe3731116b840d77d"
+  },
+  "resolvedIntermediateFindings": [
+    "Artifact rename from /tmp to /data returned EXDEV before service changes; copied to private destination, fsynced and verified SHA before removing original",
+    "Anonymous owner endpoint initially expected 401 without Origin; verified CSRF policy requires 403 OWNER_ORIGIN_REQUIRED, same-origin without auth returns 401 OWNER_AUTH_REQUIRED; no guard relaxed",
+    "State hash comparison found prior approved but already expired connection changed by startup reconciliation; in-memory inverse state-field comparison matches previous SHA exactly, six other durable state files unchanged"
+  ],
+  "knownWarnings": [
+    "Existing dev/masked-progress Expo route warning once per browser profile; no new runtime errors or failed requests"
+  ],
+  "notVerified": [
+    "Real owner login/approval/one-time service token issuance on this new mode",
+    "Real third-party backend secret provider, handoff and end-to-end task/revoke acceptance",
+    "Native mobile distribution of the service-token page",
+    "Cloud assistant/WorkBuddy MCP registration; current site has httpMcp:null; service bearer is REST auth, not an OAuth token",
+    "Host reboot/disaster recovery and real-host fallback failure branch"
+  ],
+  "boundaries": {
+    "serviceConfigAndStaticWebDeployed": true,
+    "realGrantOrTokenCreatedByAssistant": false,
+    "happyAccountKeyReadOrExported": false,
+    "relayRestarted": false,
+    "workerOrDaemonRestarted": false,
+    "nginx57ReloadedOrRecreated": false,
+    "existingSessionsSentInstructions": false,
+    "newPublicPort": false,
+    "realBackendCredentialHosted": false,
+    "mcpRegistered": false,
+    "stateReplacedOrRestored": false,
+    "commitPushMerge": false
+  },
+  "git": {
+    "baselineStagedTree": "8de96258e7b4d2eadbd5b020e9ea8ff4b6e12b06",
+    "baselineStagedPaths": 134,
+    "onlyThisTurnPathsWillBeStaged": true,
+    "committed": false,
+    "pushed": false,
+    "merged": false
+  }
+}

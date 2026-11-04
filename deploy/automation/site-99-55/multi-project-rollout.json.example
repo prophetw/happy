@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "mode": "preparation-only",
+  "deploymentAuthorized": false,
+  "deploymentReady": false,
+  "origin": "https://szsp.suitbim.com.cn:7100",
+  "releaseLabel": "multi-project-11313dcc1ba0",
+  "source": {
+    "sourceTree": "11313dcc1ba0100d09a4fbfe4caeb17f750665c6",
+    "kind": "git-tree-snapshot-not-commit",
+    "baseCommit": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+    "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/multi-project-release-preparation/application-source-11313dcc1ba0.tar.gz",
+    "sha256": "bc422cd49feb66f6fb7edc35b69a5895e71047ce64bc852ed8af6dda6776443a",
+    "bytes": 126801849,
+    "members": 2419,
+    "includedPaths": [
+      "package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "packages/happy-agent",
+      "packages/happy-wire",
+      "packages/happy-app",
+      "packages/happy-cli",
+      "deploy/automation",
+      "docs/api/automation-control.openapi.json",
+      "docs/features/automation-control.md",
+      "docs/features/automation-service-access.md",
+      "AGENTS.md",
+      "DEPLOY.md",
+      "README.md"
+    ],
+    "containsUntrackedWorkingFiles": false,
+    "deployed": false,
+    "excludedPathsByFilename": [
+      "packages/happy-cli/.env.dev",
+      "packages/happy-cli/.env.integration-test",
+      "packages/happy-cli/.envrc.example"
+    ],
+    "excludedFileContentsInspected": false,
+    "exclusionsDoNotAffectImageAllowlistOrBuiltRuntimeFiles": true,
+    "sanitizedFromArchiveSHA256": "8593d01709e42c0f774a1cd606c62a5e719ce5425e6e5a69ba82e3c7b97f5cef"
+  },
+  "baseline": {
+    "observedAtUTC": "2026-11-04T07:37:38.135154+00:00",
+    "controlHost": "192.168.99.55",
+    "proxyHost": "192.168.99.57",
+    "workerHost": "4090Wsl2",
+    "controlImageID": "sha256:a9e59fb0cde80557db85b7e0be9b75e11cc17fc5bcc68361ca82a4a622e41563",
+    "gatewayImageID": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+    "hostSHA256": "09f04e4f82125a89d32884430c3e2424eb24bb0d22d7e8212e0390eb94e9644b",
+    "controlRelease": "/data/code/happy-control/releases/20261104T064226Z-service-token",
+    "webTarget": ".happy-releases/20261104T064226Z-service-token",
+    "webIndexSHA256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c",
+    "nginxContainerID": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2",
+    "nginxStartedAt": "2026-10-03T03:07:09.378319788Z",
+    "nginxConfigSHA256": "14f357ef5d8c9ad61226e365a5de7324206223fae98912d91e204bc712ec8049",
+    "nginxConfigInode": 33705044,
+    "proxyRouteSHA256": "bde29b4c109951df94fb6aaacb7974384dccd6812a6727a6040ec660088fe06d",
+    "workerPID": 737095,
+    "workerStartTicks": "40777009",
+    "workerEntry": "/home/dev/.local/share/happy-automation/releases/20261104T021514Z-worker/packages/happy-cli/bin/happy-control-worker.mjs",
+    "workerUnitSHA256": "b6c7d737181b42cf1bee2f61ab6f7edf9588a9cfbd473869f7424e7ed6395883",
+    "workerExistingDropIns": [],
+    "workerNodeExecutable": "/home/dev/.local/share/pnpm/nodejs/22.22.0/bin/node",
+    "originalSessionProcessCount": 2,
+    "refreshRequiredImmediatelyBeforeSwitch": true
+  },
+  "candidate": {
+    "controlImage": {
+      "built": true,
+      "imageID": "sha256:2df3bd95c982f20464f6edf51bf6d7239d26f724077f5c8eca36af3b863ac57d",
+      "tag": "happy-control-multi-project-11313dcc1ba0:local",
+      "baseImageID": "sha256:6e6261159fd399ebe5a3d556b7d89da9c85c873f3f270918aad6c8107da8b411",
+      "sourceTree": "11313dcc1ba0100d09a4fbfe4caeb17f750665c6",
+      "sourceArchiveSHA256": "bc422cd49feb66f6fb7edc35b69a5895e71047ce64bc852ed8af6dda6776443a",
+      "registry": "https://registry.npmmirror.com",
+      "deployed": false,
+      "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/multi-project-release-preparation/control-image.tar",
+      "archiveSHA256": "7b52d830442dc74422ba0d44481b7b41d16775e662d8c7389caedd3e0dc16940",
+      "archiveBytes": 266381824,
+      "originalBuildSourceArchiveSHA256": "8593d01709e42c0f774a1cd606c62a5e719ce5425e6e5a69ba82e3c7b97f5cef",
+      "distributedSourceArchiveSHA256": "bc422cd49feb66f6fb7edc35b69a5895e71047ce64bc852ed8af6dda6776443a",
+      "sourceArchiveEquivalence": "Only excluded dotenv-named members changed; they never enter the Docker COPY allowlist. Application code, manifests and lockfile bytes are unchanged."
+    },
+    "web": {
+      "exported": true,
+      "directory": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/multi-project-release-preparation/web",
+      "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/multi-project-release-preparation/web.tar.gz",
+      "sourceTree": "11313dcc1ba0100d09a4fbfe4caeb17f750665c6",
+      "indexSHA256": "0c010541569a51649a81964d60f9b5160990205c2f1c7a587996633102766323",
+      "archiveSHA256": "4d5c4c74a4cd6fb277f173c108c1ceb867b0e73bd0bdfecd0005d036fd28c43a",
+      "archiveBytes": 11121736,
+      "wasmFiles": 1,
+      "reusedInstalledDependencies": true,
+      "dotenvLoaded": false,
+      "serverURL": "https://szsp.suitbim.com.cn:7100/home-relay",
+      "basePath": "/happy",
+      "deployed": false,
+      "nativeOrOTA": false
+    },
+    "worker": {
+      "packaged": true,
+      "sourceTree": "11313dcc1ba0100d09a4fbfe4caeb17f750665c6",
+      "directory": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/multi-project-release-preparation/worker",
+      "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/multi-project-release-preparation/worker.tar.gz",
+      "archiveSHA256": "cfbd02694cd328cb2ff35453a54db81f3a1689997e31b764c4b8a8d537732cbd",
+      "archiveBytes": 873759761,
+      "productionDependenciesOnly": true,
+      "offlineFrozenInstall": true,
+      "selfContainedSymlinks": 1543,
+      "localToolsUnpacked": true,
+      "bootstrapAndWorkerExportsImportedWithoutInvocation": true,
+      "daemonStarted": false,
+      "deployed": false
+    },
+    "controlRelease": "/data/code/happy-control/releases/multi-project-11313dcc1ba0",
+    "webTarget": ".happy-releases/multi-project-11313dcc1ba0",
+    "workerRelease": "/home/dev/.local/share/happy-automation/releases/multi-project-11313dcc1ba0",
+    "workerEntry": "/home/dev/.local/share/happy-automation/releases/multi-project-11313dcc1ba0/packages/happy-cli/bin/happy-control-worker.mjs",
+    "workerDropIn": "/etc/systemd/system/happy-automation-worker.service.d/60-release-11313dcc1ba0.conf",
+    "workerDropInTemplate": "multi-project-worker-release.conf.example",
+    "workerDropInSHA256": "e3aaeeeb3958b206f0a87a7c9e664a185eeb76481ff73d28bb1efdde60410b77"
+  },
+  "scope": {
+    "version": 1,
+    "mode": "review-only",
+    "applied": false,
+    "workerID": "worker-4090wsl2",
+    "userID": "cmvdmlu0z0000my1dszidaamz",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "expectedProjects": [
+      {
+        "id": "automation-test",
+        "directory": "/home/dev/code/happy-automation-test",
+        "sessionIDs": []
+      }
+    ],
+    "candidateProjects": [
+      {
+        "id": "automation-test",
+        "directory": "/home/dev/code/happy-automation-test",
+        "sessionIDs": []
+      },
+      {
+        "id": "automation-test-b",
+        "directory": "/home/dev/code/happy-automation-test-b",
+        "sessionIDs": []
+      }
+    ],
+    "allowedChanges": [
+      "host.workers[matched workerID/userID/machineID].projects",
+      "worker.registration.projects"
+    ],
+    "preserveAllOtherFields": true,
+    "directoryPreparation": {
+      "path": "/home/dev/code/happy-automation-test-b",
+      "plannedByUser": true,
+      "created": false,
+      "owner": "dev",
+      "mode": "0700",
+      "mustVerifyRealpathAndNoPreexistingContentBeforeUse": true
+    },
+    "existingSessionIDs": [],
+    "createsOrApprovesGrant": false
+  },
+  "serviceIdentity": {
+    "reuseExistingID": "service-backend-test",
+    "generationUnchanged": true,
+    "signedClientAndWorkerKeysUnchanged": true,
+    "maxServiceGrantMs": 2592000000,
+    "signedMaxGrantMs": 3600000,
+    "grantCreated": false,
+    "approvalPerformed": false,
+    "sessionPolicy": "new sessions created by each grant only; no existing sessions"
+  },
+  "orderedStages": [
+    "recheck baseline and pin archive hashes",
+    "stage new releases privately; preserve old releases and CURRENT state",
+    "verify/create dedicated test-b directory only after deployment authorization; validate matching public scope append in both configs",
+    "switch REST/control gateway pair on 55; verify projectScopes=1 and unchanged relay",
+    "use independent oneshot with KillMode=process to stop/start EXISTING worker unit using only new release drop-in; no new account/device",
+    "observe same machine/new worker capability; compare original session PID/startTicks/cgroup identities",
+    "atomically switch 57 static symlink; no Nginx restart or reload",
+    "isolated anonymous live Web verification; owner personally creates/reviews/approves a fresh multi-project grant",
+    "real tasks only in A/B dedicated test sessions after owner approval; verify idempotence, cursor/turn and actual cancel stopped evidence"
+  ],
+  "workerSwitchGuards": {
+    "maintenanceAuthorizationRequired": true,
+    "independentControllerRequired": true,
+    "controllerKillMode": "process",
+    "mustRecheckMainPIDStartTicksEntryNodeMachineAndUnitHash": true,
+    "recordAndRecheckExistingSessionProcessIdentities": true,
+    "mustObserveOldPIDGoneAndOwnStateLockReleased": true,
+    "neverDeleteOrStealUnknownLocks": true,
+    "unknownOwnershipStopsRecovery": true,
+    "newPIDAndRuntimeDependencyPathsMustMatchCandidate": true,
+    "restoreOnlyOwnDropInIfItsHashUnchanged": true,
+    "doNotUseInitialMigrationScript": "worker-transition.py targets old unmanaged main daemon; do not run it for this existing managed worker upgrade",
+    "realHostSwitchOrRollbackVerified": false
+  },
+  "invariants": {
+    "newPublicPorts": false,
+    "changeTLSOrProxyRoutes": false,
+    "restartOrRecreate57Nginx": false,
+    "restartOrRecreateRelay": false,
+    "newHappyDeviceOrAccount": false,
+    "exportHappyMasterKey": false,
+    "createTokenOrGrantAutomatically": false,
+    "sendInstructionsToExistingSessions": false,
+    "touchAgentRuntimeBridge": false,
+    "publishNativeOrOTA": false,
+    "registerCloudMcp": false,
+    "commitPushMerge": false,
+    "restoreOldStateSnapshot": false,
+    "revokeOrForgetReceiptsOnRollback": false
+  },
+  "rollback": {
+    "preferred": "keep new REST binary and CURRENT state; revoke affected multi-project grants; restore Web symlink and matched worker entry only within controlled window",
+    "preserveCurrentStateReceiptsProofsAndRevocations": true,
+    "restoreOldState": false,
+    "automaticUnknownLockRecovery": false,
+    "workerFallbackRequiresUnitDropInOwnershipCheck": true,
+    "olderWorkerCannotExecuteMultiGrants": true,
+    "oldRESTImageStateCompatibilityTested": false,
+    "oldRESTDowngradeAllowedByThisPlan": false,
+    "stateCheckpointKind": "metadata inventory/hash list for audit; not a recovery backup"
+  },
+  "remainingApproval": [
+    "explicit deployment/worker maintenance window for this fixed snapshot and listed hosts/config delta",
+    "personal Happy approval of a NEW finite multi-project grant after deployment; deployment itself grants no API access"
+  ],
+  "preparedNotApplied": true
+}

@@ -2,6 +2,15 @@
 
 CLI client for controlling Happy Coder agents remotely.
 
+Assistant automation uses the scoped REST control process and trusted machine
+worker. The `happy-agent/automation` library exports the REST host, dedicated
+consent protocol, worker and thin MCP adapter. See [architecture, fixture, OpenAPI
+and hosting instructions](../../docs/features/automation-control.md).
+
+`happy-agent automation --policy <path>` remains an internal JSONL adapter.
+Real deployment, device/connection approval, secret-provider setup and MCP tool
+registration are explicit prerequisites; none happen automatically.
+
 Unlike `happy-cli` which both runs and controls agents, `happy-agent` only controls them — listing machines, spawning sessions on a machine, creating sessions, sending messages, reading history, monitoring state, and stopping sessions.
 
 ## Installation
@@ -188,3 +197,14 @@ This flow:
 ## License
 
 MIT
+
+
+## Scoped REST / HTTP MCP production adapter (local only)
+
+See `docs/features/automation-control.md` and `deploy/automation/`. `happy-agent/automation/production` exports explicit configuration, encrypted secret-provider, loopback-only host and standard OAuth resource-server HTTP MCP adapters. `bin/happy-control.mjs --config <private-config>` is an explicit future production entry, not an install/deploy action. OAuth AS and actual assistant platform registration are external prerequisites. No implicit Happy login, keys or grants are created.
+
+Isolated demonstration (synthetic auth, exits and cleans up):
+
+```sh
+pnpm exec tsx packages/happy-agent/examples/http-mcp-fixture.ts
+```

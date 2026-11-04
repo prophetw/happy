@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "role": "host",
+  "listen": { "host": "127.0.0.1", "port": 9010 },
+  "origin": "https://szsp.suitbim.com.cn:7100",
+  "relayURL": "https://szsp.suitbim.com.cn:7100/home-relay",
+  "stateDirectory": "/var/lib/happy-control",
+  "clients": [{
+    "id": "assistant-rest",
+    "userID": "REPLACE_APPROVED_HAPPY_USER_ID",
+    "name": "Approved REST assistant",
+    "publicKey": "REPLACE_APPROVED_ASSISTANT_PUBLIC_KEY_PEM"
+  }],
+  "workers": [{
+    "id": "worker-4090wsl2",
+    "userID": "REPLACE_APPROVED_HAPPY_USER_ID",
+    "name": "4090Wsl2 trusted worker",
+    "publicKey": "REPLACE_APPROVED_WORKER_PUBLIC_KEY_PEM",
+    "machineID": "REPLACE_EXISTING_MACHINE_ID",
+    "projects": [{ "id": "automation-test", "directory": "/home/dev/code/happy-automation-test", "sessionIDs": [] }],
+    "methods": ["machines.list", "sessions.list", "tasks.create", "requests.get", "sessions.send", "sessions.status", "sessions.logs", "sessions.result", "sessions.cancel"],
+    "protocol": 1
+  }],
+  "maxGrantMs": 3600000,
+  "ipRateLimit": 12000
+}

@@ -1,0 +1,328 @@
+{
+  "status": "TRIAL_INFRASTRUCTURE_DEPLOYED_AND_TARGET_VERIFIED_NO_AUTOMATION_AUTHORIZATION",
+  "deploymentDate": "2026-11-04",
+  "scope": "99.55 new REST/gateway plus 99.57 optional memory route; no existing UI/relay/daemon replaced",
+  "releaseSource": {
+    "sourceTree": "e13c5e8689e0a3a4125d18c3f4725e92961c0d03",
+    "branch": "clever-ocean",
+    "head": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+    "fetchedForkMain": "aa8b0dcef288cfe094ff58afc46f2d0e8b919737",
+    "missingForkMainCommits": [
+      "aa8b0dce docs: rewrite DEPLOY.md as deployment entry, record 2026-10-30 web release"
+    ],
+    "sourceArchiveSha256": "2d42731f702c8a0ca46df1fbfffdc374ec46227bf12cb52ab52a0aea4ccc9ab6",
+    "controlImageID": "sha256:d0f250c5cd866d18c2214edf9b6ee9d0c7b3ea7b49e4526b501dc492be227503",
+    "server55": {
+      "docker": "27.3.0",
+      "systemd": "239",
+      "compose": "2.27.3",
+      "unitSyntaxExit": 0,
+      "composeRenderExit": 0,
+      "composeBinarySha256": "a0d30a63ddb6bc77ccb68bf0eb9adebba2f8b1d8615dc8c986b924e80b9a7aed"
+    },
+    "server57": {
+      "nginx": "1.30.1",
+      "container": "bim-nginx-1.30",
+      "syntaxExit": 0,
+      "config": "/root/bim-engine/script/http.nginx.1.30.1.prod.conf",
+      "configSha256": "4af354aa705a1ce2aa09d15a12fbcef470a75d5f3ebdf2f1e53e6c8c00fee57a",
+      "runtimePkiMounted": false
+    },
+    "baselineHttp": {
+      "happy": 200,
+      "relay": 200,
+      "control": 404,
+      "tlsVerify": 0
+    },
+    "realGrantsCreated": false,
+    "pending": null,
+    "accountOrAutomationCredentialsCreated": false,
+    "temporaryInternalTlsCreated": true,
+    "phase": "closed-registration trial deployed",
+    "trialArtifactsInstalled": true
+  },
+  "authorization": {
+    "offMainSnapshotExplicitlyApproved": true,
+    "noCommitPushMerge": true,
+    "temporary24HourTmpfsMtlsExplicitlyApproved": true,
+    "registeredClients": 0,
+    "registeredWorkers": 0,
+    "realHappyGrants": 0,
+    "gatewayTlsIsNotHappyOrRestIdentity": true
+  },
+  "runtimeConfigDeltas": {
+    "osOperator": "root; container processes uid1000",
+    "composePlugin": "private runtime link to approved release/tools/docker-compose copy, sha256 a0d30a63ddb6bc77ccb68bf0eb9adebba2f8b1d8615dc8c986b924e80b9a7aed",
+    "imageReferences": "immutable local sha256 image IDs imported with docker save/load; no registry push or pull",
+    "limitsOverride": "/etc/happy-control/trial-limits.yaml: control 512MiB/1CPU/128pids, gateway 128MiB/0.5CPU/128pids",
+    "successExitStatus130": "observed Compose SIGINT exit on explicit stop; classified success only for main process; Restart=always retained",
+    "outerRoute": "optional /dev/shm/happy-control-trial/routes/*.conf in existing 7100 server; keys and active location only in tmpfs"
+  },
+  "final": {
+    "http": {
+      "/happy/": 200,
+      "/home-relay/health": 200,
+      "/happy-control/v1/compatibility": 200,
+      "/readyz": 404
+    },
+    "unauthorizedContractChecks": [
+      {
+        "method": "GET",
+        "path": "/machines?limit=1",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "GET",
+        "path": "/sessions?limit=1",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "POST",
+        "path": "/tasks",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/not-registered/messages",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/not-registered/events?after_seq=0&limit=1",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/not-registered/result?turnID=not-registered&after_seq=0",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/not-registered/cancel",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "GET",
+        "path": "/requests/deployment-unauthorized-probe",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": false
+      },
+      {
+        "method": "GET",
+        "path": "/machines?limit=1",
+        "http": 401,
+        "jsonVersion": 1,
+        "errorCode": "AUTH_REQUIRED",
+        "syntheticCookie": true
+      }
+    ],
+    "host55": {
+      "unitState": "Result=success\nNRestarts=0\nActiveState=active\nSubState=running",
+      "members": {
+        "control": {
+          "id": "dcba4356a55b",
+          "image": "sha256:d0f250c5cd866d18c2214edf9b6ee9d0c7b3ea7b49e4526b501dc492be227503",
+          "limits": "536870912 1000000000 128",
+          "namespace": "net:[4026533703]"
+        },
+        "gateway": {
+          "id": "88e3c39ad12b",
+          "image": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+          "limits": "134217728 500000000 128",
+          "namespace": "net:[4026533703]"
+        }
+      },
+      "closedRegistrations": true,
+      "enabledAtBoot": false,
+      "caPrivateKeyExists": false,
+      "relay": "a844973c17f5081e64f336aaf71fb04ec2ba23efde7c0d8f3613c608b3861797 2026-10-18T06:34:39.020830448Z healthy",
+      "unitSha256": "ff0a1518adb07676f5877c81a5754a710b1d6d122a4d389f3ef1c770b95e9ed1",
+      "hostMemoryMetadata": [
+        "MemTotal:       32609480 kB",
+        "MemAvailable:   20576576 kB"
+      ],
+      "expiryTimer": "NextElapseUSecRealtime=Thu 2026-11-05 00:01:00 CST\nActiveState=active"
+    },
+    "host57": {
+      "nginx": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2 2026-10-03T03:07:09.378319788Z",
+      "mainSha256": "44c4772c084bdf98da61816265c3d55dcb92efa090b3cdb54e4916c8b72e6551",
+      "nginxSyntaxExit": 0,
+      "clientKeyStorageFilesystem": "tmpfs",
+      "clientKeyMode": "0 600",
+      "expiryTimer": "NextElapseUSecRealtime=Thu 2026-11-05 00:01:00 CST\nActiveState=active"
+    },
+    "realHappyGrantsCreated": false,
+    "realWorkerOrDaemonUpdated": false,
+    "ciUsed": false
+  },
+  "mtls": {
+    "checks": {
+      "correct_chain_and_client": {
+        "exit": 0,
+        "http": "200"
+      },
+      "missing_client": {
+        "exit": 0,
+        "http": "400"
+      },
+      "wrong_server_name": {
+        "exit": 51,
+        "http": "000"
+      },
+      "wrong_server_ca": {
+        "exit": 60,
+        "http": "000"
+      },
+      "untrusted_client": {
+        "exit": 0,
+        "http": "400"
+      }
+    },
+    "negativeProbeKeyDeleted": true
+  },
+  "recovery": {
+    "directControlRestart": {
+      "state": "Result=success; NRestarts=1; ActiveState=active",
+      "bothRecreated": true,
+      "namespaceShared": true,
+      "publicCompatibility": 200
+    },
+    "gatewaySigkill": {
+      "state": "Result=success; NRestarts=2; ActiveState=active",
+      "bothRecreated": true,
+      "namespaceShared": true,
+      "publicCompatibility": 200
+    },
+    "manualStop": {
+      "remainedStoppedBeyondRestartDelay": true,
+      "bothMembersStopped": true
+    },
+    "bootstrapLimit": {
+      "journalEvidence": {
+        "rateLimitObserved": true,
+        "startupRejections": 3
+      },
+      "noRestartBeyondDelay": true,
+      "unit": "Result=exit-code\nNRestarts=3\nActiveState=failed\nSubState=failed",
+      "bothMembersStopped": true,
+      "publicHttp": 502,
+      "ownerLockManuallyRemoved": false
+    },
+    "restored": {
+      "unit": "Result=success\nNRestarts=0\nActiveState=active\nSubState=running",
+      "entryHttp": 200,
+      "validConfigRestored": true
+    },
+    "originalRelayUnchanged": true
+  },
+  "routeWithdrawal": {
+    "withdrawnRouteHttp": 404,
+    "originalHappyAndRelayWhileWithdrawn": 200,
+    "restoredRouteHttp": 200,
+    "nginx": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2 2026-10-03T03:07:09.378319788Z",
+    "privateKeysDeletedOrRegenerated": false
+  },
+  "pki": {
+    "caPrivateKeyDestroyed": true,
+    "serverExpiry": "notBefore=Nov  3 16:06:00 2026 GMT\nnotAfter=Nov  4 16:06:00 2026 GMT",
+    "caFingerprint": "SHA256 Fingerprint=23:7B:87:BC:19:26:F9:6A:9F:25:A6:F1:11:B8:4C:28:7D:02:AD:8F:6D:B3:3C:F2:A8:43:CA:A1:00:48:10:5B",
+    "proxyClientChainValid": true,
+    "serverPrivateKeyHost": "99.55 tmpfs",
+    "clientPrivateKeyHost": "99.57 tmpfs",
+    "realHappyGrants": 0
+  },
+  "expiryTimers": [
+    {
+      "host": 55,
+      "calendar": "2026-11-04 16:01:00 UTC",
+      "timer": "happy-control-trial-expire-e13c5e86.timer",
+      "timerState": "NextElapseUSecRealtime=Thu 2026-11-05 00:01:00 CST\nActiveState=active",
+      "cleanupCheck": {
+        "policyValid": true,
+        "stopExecuted": false
+      },
+      "runtimeOnlyTimer": true,
+      "cleanupScriptSha256": "c09bf6be77f2cfc54a86e9dab90252082ca1271a8c0f1cfc395ac574af7a959c"
+    },
+    {
+      "host": 57,
+      "calendar": "2026-11-04 16:01:00 UTC",
+      "timer": "happy-control-trial-expire-e13c5e86.timer",
+      "timerState": "NextElapseUSecRealtime=Thu 2026-11-05 00:01:00 CST\nActiveState=active",
+      "cleanupCheck": {
+        "policyValid": true,
+        "routeWithdrawn": false
+      },
+      "runtimeOnlyTimer": true,
+      "cleanupScriptSha256": "aa55998501a7e319225adc99d845622609358a76d8f52021591190e30927f703"
+    }
+  ],
+  "nginxBackup": "/root/bim-engine/script/backups/happy-control-trial-e13c5e8689e0-before.conf",
+  "serverPaths": {
+    "55release": "/data/code/happy-control/releases/trial-e13c5e8689e0",
+    "55state": "/data/code/happy-control/state",
+    "55unit": "/etc/systemd/system/happy-control-pair.service",
+    "55config": "/data/code/happy-control/config/host.json",
+    "55cleanup": "/etc/happy-control/expire-trial.py",
+    "57main": "/root/bim-engine/script/http.nginx.1.30.1.prod.conf",
+    "57memory": "/dev/shm/happy-control-trial",
+    "57cleanup": "/root/bim-engine/script/happy-control-trial-e13c5e86-cleanup.py"
+  },
+  "resolvedFindings": [
+    "OS default OpenSSL v3_ca plus explicit addext duplicated BasicConstraints; invalid untrusted chain discarded before activation, explicit request config produced single extension and all chain/purpose verifies passed; CA signer private key destroyed",
+    "Anolis curl SAN mismatch exit51 (not60); recorded actual verification failure with HTTP000, no verification disabled",
+    "Docker cp API cannot access container tmpfs; transferred only within 99.57 via Docker exec stdin directly into memory, umask077, directory0700; no key left 99.57",
+    "Compose explicit stop returned130 and systemd reported failed although both containers stopped; SuccessExitStatus130 fixes main exit classification, manual stop reverified with both stopped and delay exceeded",
+    "systemd239 preserves Result=exit-code at start limit; verified three actual startup rejections, NRestarts3, Start request repeated too quickly journal evidence, both stopped, no restart after delay, public502; restored valid config",
+    "reset-failed on normally inactive GC-unloaded unit returns not-loaded; confirmed stopped/success, no failed state bypassed"
+  ],
+  "verification": {
+    "originalLocalNativeChecks": 38,
+    "latestLocalContractTests": 14,
+    "realTargetSystemdDockerNginxAndMtls": true,
+    "realTargetUnauthorizedJsonChecks": 9,
+    "independentReadOnlyReview": "completed; main-process exit130 classification reviewed; no outstanding must-fix items",
+    "ciUsed": false,
+    "freshImageBuildThisDeployment": false,
+    "controlImageBuildOrigin": "reused previously validated production-Dockerfile artifact by exact image ID; no fresh build/install claimed"
+  },
+  "notVerifiedOrNotAuthorized": [
+    "actual Happy owner approval UI/QR and real grant creation",
+    "4090Wsl2 trusted worker/daemon update",
+    "authorized create/send/logs/result/cancel and actual process-stop evidence on a real isolated task",
+    "cloud caller signing credential hosting or MCP/connector registration",
+    "hard-killed control stale-owner-lock recovery on target (fixture preserves lock; no auto unlock)",
+    "live but hung/unhealthy process automatic recovery",
+    "future scheduled cleanup execution (timers active and --check passed; withdrawal/reload separately actually tested)",
+    "host reboot recovery or persistent secret provider; trial unit disabled at boot; missing memory route leaves existing site available",
+    "full existing WebSocket/live-session continuity; only unchanged original container identities/start times and specified HTTP smoke were checked"
+  ],
+  "productionReadyForTaskUse": false,
+  "trialInfrastructureLive": true,
+  "committed": false,
+  "pushed": false,
+  "merged": false
+}

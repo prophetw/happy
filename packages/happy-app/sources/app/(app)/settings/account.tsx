@@ -19,6 +19,7 @@ import { sync } from '@/sync/sync';
 import { useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/Switch';
 import { useConnectAccount } from '@/hooks/useConnectAccount';
+import { router } from 'expo-router';
 import { getDisplayName } from '@/sync/profile';
 import { Image } from 'expo-image';
 import { useHappyAction } from '@/hooks/useHappyAction';
@@ -315,6 +316,7 @@ export default React.memo(() => {
             <ItemList>
                 {/* Account Info */}
                 <ItemGroup title={t('settingsAccount.accountInformation')}>
+                    <Item title="助手连接" subtitle="审查扫码授权、有限范围和有效期，或撤销访问" onPress={() => router.push('/settings/automation')} />
                     <Item
                         title={t('settingsAccount.status')}
                         detail={auth.isAuthenticated ? t('settingsAccount.statusActive') : t('settingsAccount.statusNotAuthenticated')}

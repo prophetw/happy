@@ -13,7 +13,8 @@
   },
   "bin": {
     "happy": "./bin/happy.mjs",
-    "happy-mcp": "./bin/happy-mcp.mjs"
+    "happy-mcp": "./bin/happy-mcp.mjs",
+    "happy-control-worker": "./bin/happy-control-worker.mjs"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -48,6 +49,12 @@
         "types": "./dist/codex/happyMcpStdioBridge.d.mts",
         "default": "./dist/codex/happyMcpStdioBridge.mjs"
       }
+    },
+    "./daemon/automationMain": {
+      "import": {
+        "types": "./dist/daemon/automationMain.d.mts",
+        "default": "./dist/daemon/automationMain.mjs"
+      }
     }
   },
   "files": [
@@ -66,7 +73,7 @@
     "bundle:webapp": "node scripts/bundle-webapp.cjs",
     "build:capability": "sh scripts/build-capability.sh",
     "test:capability-lifetime": "node scripts/test-capability-parent-lifetime.cjs",
-    "build": "shx rm -rf dist && tsc --noEmit && pkgroll",
+    "build": "pnpm --filter happy-agent build && shx rm -rf dist && tsc --noEmit && pkgroll",
     "test": "pnpm run build && vitest run --project unit",
     "test:integration": "pnpm run build && vitest run --project integration-empty --project integration-plan-mode --project integration-authenticated",
     "cli:install": "node scripts/install-local.cjs",
@@ -110,7 +117,8 @@
     "tmp": "^0.2.5",
     "tweetnacl": "^1.0.3",
     "ws": "^8.19.0",
-    "zod": "^4.0.0"
+    "zod": "^4.0.0",
+    "happy-agent": "workspace:*"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
@@ -127,7 +135,8 @@
     "ts-node": "^10",
     "tsx": "^4.20.6",
     "typescript": "5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@anthropic-ai/sdk": "0.110.0"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org"

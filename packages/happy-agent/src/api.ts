@@ -128,7 +128,7 @@ export function resolveMachineEncryption(
 
 // --- Decrypt helpers ---
 
-function decryptField(
+export function decryptField(
     encrypted: string | null,
     encryption: RecordEncryption,
 ): unknown | null {
@@ -140,7 +140,7 @@ function decryptField(
     return decryptLegacy(data, encryption.key);
 }
 
-function decryptSession(raw: RawSession, creds: Credentials): DecryptedSession {
+export function decryptSession(raw: RawSession, creds: Credentials): DecryptedSession {
     const encryption = resolveSessionEncryption(raw, creds);
     return {
         id: raw.id,
@@ -156,7 +156,7 @@ function decryptSession(raw: RawSession, creds: Credentials): DecryptedSession {
     };
 }
 
-function decryptMachine(raw: RawMachine, creds: Credentials): DecryptedMachine {
+export function decryptMachine(raw: RawMachine, creds: Credentials): DecryptedMachine {
     const encryption = resolveMachineEncryption(raw, creds);
     return {
         id: raw.id,

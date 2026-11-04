@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "mode": "review-only",
+  "origin": "https://szsp.suitbim.com.cn:7100",
+  "applicationSource": {
+    "kind": "git-tree-snapshot-not-commit",
+    "tree": "d587ffdf686c46509cc59a4cc88a63991ad638a1",
+    "baseCommit": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+    "localValidation": "validation.service-token-local-2026-11-04.json"
+  },
+  "baseline": {
+    "liveRecheckedThisPreparation": false,
+    "evidence": ["validation.production-2026-11-04.json", "validation.ui-2026-11-04.json", "validation.worker-2026-11-04.json"],
+    "controlHost": "192.168.99.55",
+    "proxyHost": "192.168.99.57",
+    "workerHost": "4090Wsl2",
+    "controlImageID": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8",
+    "gatewayImageID": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+    "webTarget": ".happy-releases/20261104T033914Z-automation-ui",
+    "webIndexSHA256": "9f61f569d80cd4c33cea673a9142c35ee2f25d937f2543f1ab33323685740870"
+  },
+  "candidate": {
+    "imageReferenceKind": "local-docker-image-id-pull-never",
+    "controlImageID": null,
+    "controlImageArchiveSHA256": null,
+    "webArchiveSHA256": null,
+    "webIndexSHA256": "c91f1a558c5cab48e17775f7da1f45dea5f1d6c4c954a5a163bfbf82b9e5459c",
+    "webTarget": ".happy-releases/REPLACE_RELEASE_LABEL-service-tokens"
+  },
+  "paths": {
+    "controlUnit": "happy-control-pair.service",
+    "releaseLink": "/data/code/happy-control/release",
+    "hostConfig": "/data/code/happy-control/config/host.json",
+    "deployEnv": "/etc/happy-control/deploy.env",
+    "stateDirectory": "/data/code/happy-control/state",
+    "runtimePKI": "/run/happy-control/pki",
+    "webLink": "/root/bim-engine/web/html/happy",
+    "webArtifacts": "/root/bim-engine/script/happy-web-artifacts"
+  },
+  "hostPatch": {
+    "serviceTokens": {
+      "maxGrantMs": 2592000000,
+      "clients": [{
+        "id": "REPLACE_SERVICE_ID",
+        "userID": "REPLACE_HAPPY_OWNER_USER_ID",
+        "name": "REPLACE_SERVICE_DISPLAY_NAME",
+        "generation": "REPLACE_PUBLIC_IDENTITY_GENERATION"
+      }]
+    }
+  },
+  "proposedAcceptanceScope": {
+    "approved": false,
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "projectID": "automation-test",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "methods": ["machines.list", "sessions.list", "tasks.create", "requests.get", "sessions.send", "sessions.status", "sessions.logs", "sessions.result", "sessions.cancel"],
+    "sessionIDs": [],
+    "recommendedInitialGrantMs": 3600000
+  },
+  "invariants": {
+    "signedMaxGrantMs": 3600000,
+    "restBind": "127.0.0.1:9010",
+    "privateGatewayBind": "192.168.99.55:9011",
+    "routePrefix": "/happy-control/v1/",
+    "reuseExistingTLS": true,
+    "changeProxyRoutes": false,
+    "restartOrRecreateExistingNginx": false,
+    "restartOrRecreateRelay": false,
+    "updateWorker": false,
+    "registerMcp": false,
+    "preferredRecovery": "revoke-services-keep-new-binary",
+    "downgradeRequiresStateCompatibilityTest": true,
+    "preserveCurrentStateAndRevocationsOnRollback": true,
+    "revokeServiceGrantsBeforeDowngrade": true,
+    "rollbackConfigAndImageTogether": true
+  },
+  "externalBackend": {
+    "secretProvider": null,
+    "secureDeliveryChannel": null,
+    "credentialsProvidedInChatOrURL": false
+  }
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { runAutomation } from './automation/main';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from './config';
@@ -501,6 +502,11 @@ program
             client.close();
         }
     });
+
+program.command('automation')
+    .description('Scoped JSONL stdio control connector (requires existing device authorization)')
+    .requiredOption('--policy <path>', 'Explicit local allowlist policy file')
+    .action(async (opts: { policy: string }) => runAutomation(opts.policy));
 
 program.parseAsync(process.argv).catch(err => {
     console.error(err instanceof Error ? err.message : String(err));

@@ -1,0 +1,381 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T02:56:16.584618+00:00",
+  "status": "EXISTING_MACHINE_WORKER_CONNECTED_REAL_SCOPED_TASK_CONTROL_VERIFIED",
+  "readyForAssistantTaskExecution": true,
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "authorization": {
+    "maintenanceWindowExplicitlyAuthorized": true,
+    "existingMachineReused": true,
+    "newHappyDeviceOrMachine": false,
+    "ownerAutomationGrantApproved": true,
+    "browserAutomationPermissionReceived": true
+  },
+  "worker": {
+    "service": "happy-automation-worker.service",
+    "servicePath": "/etc/systemd/system/happy-automation-worker.service",
+    "release": "/home/dev/.local/share/happy-automation/releases/20261104T021514Z-worker",
+    "runtimeNode": "v22.22.0",
+    "cliVersion": "1.2.5",
+    "protocol": 1,
+    "projectID": "automation-test",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "allowedMethods": [
+      "machines.list",
+      "sessions.list",
+      "tasks.create",
+      "requests.get",
+      "sessions.send",
+      "sessions.status",
+      "sessions.logs",
+      "sessions.result",
+      "sessions.cancel"
+    ],
+    "existingSessionScope": [],
+    "runtime": {
+      "workerPID": 737095,
+      "workerConnected": true,
+      "workerCgroup": "0::/system.slice/happy-automation-worker.service",
+      "rootControllerCompleted": true,
+      "taskGrantCreated": false
+    },
+    "privateConfig": "/etc/happy-control/worker.json",
+    "persistentCredentialDirectory": "/etc/happy-control/secure/worker",
+    "signingKeyEncrypted": true,
+    "runtimeCredentialProvider": "systemd LoadCredential, UID1000 private copies; encrypted PKCS8 signer",
+    "killMode": "process",
+    "bootEnabled": true,
+    "rootOnlyPlaintextUnlockExceptionPreviouslyApproved": true,
+    "accountKeyExported": false
+  },
+  "source": {
+    "typedSDKDependency": "existing locked @anthropic-ai/sdk 0.110.0; type-only devDependency declaration",
+    "lockfileAddedLines": 3,
+    "install": "frozen isolated install; 842 existing store packages reused, ignore-scripts; no dependency points into mutable worktree",
+    "artifactManifestSHA256": "2cb42010863afb6329be630161ed56a880da023774f4f2587cee90b349f51caf",
+    "mainSourceDistUntouched": true,
+    "commitCreated": false,
+    "pushed": false,
+    "merged": false,
+    "ciQueriedOrRun": false,
+    "snapshot": {
+      "sourceTree": "54125962a08cf61cca35b1263d9a746df5706d46",
+      "sourceArchive": "/data/code/happy-control/archives/worker-web-source-54125962a08c.tar",
+      "archiveSHA256": "8718c5a548a671bdce29195c78c5cd8571bb5a4815bd0f4f47ddaf63c0c15e1b",
+      "restRuntimeImageChanged": false
+    },
+    "fetchedForkMain": "aa8b0dcef288cfe094ff58afc46f2d0e8b919737",
+    "forkMainOnlyMissingDeployDocumentationCommit": true
+  },
+  "actualChecks": {
+    "initialTransition": {
+      "transition": {
+        "version": 1,
+        "operation": "20261104T024624Z",
+        "stages": [
+          {
+            "stage": "preflight",
+            "at": 1793760422
+          },
+          {
+            "stage": "requesting-original-graceful-stop",
+            "at": 1793760422
+          },
+          {
+            "stage": "original-daemon-exited",
+            "at": 1793760422
+          },
+          {
+            "stage": "new-worker-start-requested",
+            "at": 1793760422
+          },
+          {
+            "stage": "worker-connected",
+            "at": 1793760425
+          }
+        ],
+        "newHappyDevice": false,
+        "realGrantCreated": false,
+        "originalDaemonPID": 2847327,
+        "independentRecoveryCgroup": true,
+        "stage": "worker-connected",
+        "originalSessionProcessCount": 21,
+        "workerPID": 697530,
+        "workerEnabled": true,
+        "unchangedOriginalSessions": 21,
+        "changedOriginalSessionPIDs": [],
+        "userApprovalPending": true
+      },
+      "workerUnit": [
+        "MainPID=697530",
+        "ActiveState=active",
+        "SubState=running"
+      ]
+    },
+    "postIndependentController": {
+      "controllerExited": true,
+      "workerAliveAfterControllerExit": true,
+      "workerPID": 697530,
+      "workerCgroup": "0::/system.slice/happy-automation-worker.service",
+      "expectedWorkerEntryVerified": true,
+      "credentialDirectoryEnvNotInherited": true,
+      "existingSessionsPreserved": 21,
+      "workerBootEnabled": true,
+      "rollbackUsed": false
+    },
+    "managedDaemonStopStart": {
+      "managedWorkerStop": [
+        "Result=success",
+        "ExecMainStatus=0",
+        "ActiveState=inactive"
+      ],
+      "stateAndLockNaturallyRemoved": true,
+      "previousWorkerPID": 697530,
+      "restartedWorkerPID": 737095,
+      "sameMachineConnected": true,
+      "credentialsRecreatedBySystemd": true,
+      "unknownMetadataDeleted": false
+    },
+    "originalSessionPIDStarttimeCgroupUnchangedAfterStopStart": 21,
+    "changedOriginalSessionPIDs": [],
+    "normalClientExistingIdentityAndCipherPreflight": {
+      "existingMachineDecryptable": true,
+      "encryptionVariant": "dataKey",
+      "newRegistration": false
+    },
+    "initialRemoteDaemonPortAndPID": {
+      "sameExistingMachine": true,
+      "remoteDaemonPortMatchesLocal": true,
+      "remoteDaemonPIDMatchesLocal": true,
+      "encryptionMode": "dataKey",
+      "workerPID": 697530
+    },
+    "realSignedWorkerBusyProbe": {
+      "signedWorkerChannel": true,
+      "busyProbeOnly": true,
+      "taskDispatched": false,
+      "grantCreated": false
+    },
+    "systemdCredentialFixture": {
+      "providerSigned": true,
+      "uid": 1000,
+      "directoryUID": 1000,
+      "keyUID": 1000,
+      "keyMode": 256
+    },
+    "recoveryChildSurvivedRootOneshot": {
+      "oneshotInactive": true,
+      "recoveryChildSurvivedSupervisorExit": true,
+      "childCgroup": "0::/system.slice/happy-worker-recovery-fixture.service",
+      "mainOnlyKillModeTested": true
+    },
+    "finalArtifactSpawnHelper": {
+      "finalArtifactNativeSpawnHelper": true,
+      "isolatedAuthFixture": true
+    },
+    "web": {
+      "webPublished": true,
+      "newTarget": ".happy-releases/20261104T023150Z-automation",
+      "previousTarget": ".happy-releases/20261030T061425Z-4ffff7a1db67",
+      "entryScripts": [
+        {
+          "path": "/happy/_expo/static/js/web/__expo-metro-runtime-0c48b0beee2d3ce6030b475fcc5b1846.js",
+          "status": 200
+        },
+        {
+          "path": "/happy/_expo/static/js/web/__common-a2ebfa9b54fe6f1f20efc4cbd99f8855.js",
+          "status": 200
+        },
+        {
+          "path": "/happy/_expo/static/js/web/index-650652a076df7878d23568ceb53b972d.js",
+          "status": 200
+        }
+      ],
+      "wasmHeaderAndMIMEVerified": true,
+      "approvalRouteServesCurrentIndex": true,
+      "relayHealth": 200,
+      "restCompatibility": 200,
+      "nginx": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2 2026-10-03T03:07:09.378319788Z",
+      "browserOrRealQRCodeTested": false
+    },
+    "isolatedBrowser": {
+      "atUTC": "2026-11-04T03:22:18.202Z",
+      "scope": "fresh anonymous contexts; same-origin GET/HEAD only; no real login, grant approval or tasks",
+      "playwright": "1.61.1",
+      "browser": "bundled Chromium; non-persistent contexts; closed after verification",
+      "profiles": [
+        {
+          "name": "desktop",
+          "documentStatus": 200,
+          "checks": {
+            "approvalPageRendered": true,
+            "connectionIDPreserved": true,
+            "approveButtonAbsent": true,
+            "expectedOwnerAuthBoundary": true,
+            "noHorizontalOverflow": true,
+            "ownerAuthRequiredOnReview": true,
+            "noAuthProtectedRequest": true,
+            "assetResponsesValid": true,
+            "noUnexpectedHttpFailure": true,
+            "noRuntimeErrors": true,
+            "noNetworkFailures": true
+          },
+          "resourceResponses": 17,
+          "consoleErrors": 0,
+          "pageErrors": 0,
+          "failedRequests": 0,
+          "blockedRequests": 0
+        },
+        {
+          "name": "mobile",
+          "documentStatus": 200,
+          "checks": {
+            "approvalPageRendered": true,
+            "connectionIDPreserved": true,
+            "approveButtonAbsent": true,
+            "expectedOwnerAuthBoundary": true,
+            "noHorizontalOverflow": true,
+            "ownerAuthRequiredOnReview": true,
+            "noAuthProtectedRequest": true,
+            "assetResponsesValid": true,
+            "noUnexpectedHttpFailure": true,
+            "noRuntimeErrors": true,
+            "noNetworkFailures": true
+          },
+          "resourceResponses": 17,
+          "consoleErrors": 0,
+          "pageErrors": 0,
+          "failedRequests": 0,
+          "blockedRequests": 0
+        }
+      ],
+      "expectedBoundary": "OWNER_AUTH_REQUIRED; no approve button; no protected REST request without owner credentials",
+      "knownWarning": {
+        "message": "No route named dev/masked-progress exists in nested children",
+        "source": "packages/happy-app/sources/app/(app)/_layout.tsx:364",
+        "alreadyPresentAtHEAD": true,
+        "impact": "one console warning per profile; approval page renders; unrelated development route not exercised or changed"
+      },
+      "localArtifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/automation-approval-20261104",
+      "authenticatedConsentVerified": false,
+      "realAccountLoginPerformed": false,
+      "realApprovalPerformed": false,
+      "realTaskPerformed": false
+    },
+    "webApprovalUIUpdate": {
+      "evidence": "validation.ui-2026-11-04.json",
+      "sourceTree": "4a6c33187645dfab3ef961a0b8ff1ce7ffae52f8",
+      "liveAnonymousChecks": 20,
+      "loopbackScenarios": 15,
+      "realOwnerApprovalPerformedByAssistant": false
+    },
+    "realTaskControl": {
+      "evidence": "validation.task-2026-11-04.json",
+      "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+      "checks": 29,
+      "processStopped": true,
+      "interruptedTurnOutcome": "unknown"
+    }
+  },
+  "codeReview": "independent read-only review; no remaining mandatory fixes, then actual PID/cgroup/channel verified",
+  "tests": {
+    "CLIManagedWorkerContracts": 27,
+    "signedClientAbort": 1,
+    "transitionSafetyPython": 4,
+    "isolatedFullCLITypecheckAndPkgroll": "passed",
+    "nativeArtifactVersionAndChildHelp": "passed",
+    "realAccountQRCode": "not performed by assistant",
+    "realBrowserUI": "passed: fresh anonymous desktop + mobile viewport, 22 checks; authenticated consent/QR/approval not verified",
+    "realOwnerApprovalAndTaskCreateSendCancel": "passed: actual approved scope, two completed turns, persistent receipts/cursors/idempotence and actual stopped process; interrupted turn result remains unknown"
+  },
+  "safetyFixes": [
+    "cancel signed fetches before worker shutdown; bound relay announcement and drain",
+    "local state and lock cleanup verify PID/UID/original FD inode; preserve unknown ownership",
+    "managed heartbeat stops writes after shutdown or foreign owner detection",
+    "provider.close in managed teardown; same machine gets current runtime control port",
+    "independent root transition unit and worker both use KillMode=process; PID/starttime/exe/cgroup guards",
+    "only per-operation verified dead metadata may be archived for rollback; no generic stale-lock stealing",
+    "partial/unknown old-session changes reject enable and stop further rollout; no session commands sent",
+    "static switch retains 83 previous hashed assets; atomic symlink rollback; no original Nginx recreation"
+  ],
+  "intermediateFailures": [
+    "isolated install exposed undeclared type-only Anthropic SDK; declaration fixed using same locked version, frozen install/build passed",
+    "package-manager lockfile-only operation attempted broad dependency resolution; discarded its lock/package drift and restored worktree dependencies to original frozen versions plus the three-line declaration; original main node_modules distinct and untouched",
+    "first artifact smoke imported the executable index chunk rather than pure run chunk; it failed inside isolated fake HOME/fixture.invalid only; replaced by exact bundled spawn-helper test without real authentication"
+  ],
+  "pending": [
+    "live expiry/revocation/reboot/reconnect fault acceptance not performed; no automatic renewal or scope extension",
+    "interrupted third turn result remains unknown without terminal event, independently confirmed process stopped",
+    "dedicated cloud connector/MCP registration remains unconfigured; existing exec+fixed operator SSH signed REST invocation actually exercised"
+  ],
+  "preserved": {
+    "originalSessionProcesses": 21,
+    "bridgeInstructionsOrInterruptionsSent": false,
+    "globalHappySymlinkChanged": false,
+    "originalRelayRestartedOrUpdated": false,
+    "original57NginxRecreated": false,
+    "credentialValuesPrintedOrCommitted": false
+  },
+  "lastUpdatedUTC": "2026-11-04T03:56:05.190711+00:00",
+  "previousPendingConnection": {
+    "connectionID": "e8e8178f-f493-4be8-8c79-a22b3ccb2a33",
+    "state": "pending",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "methods": [
+      "machines.list",
+      "sessions.list",
+      "tasks.create",
+      "requests.get",
+      "sessions.send",
+      "sessions.status",
+      "sessions.logs",
+      "sessions.result",
+      "sessions.cancel"
+    ],
+    "existingSessionIDs": [],
+    "expiresAt": 1793765042330,
+    "pendingUntil": 1793762043887,
+    "clientRequestDeniedUntilOwnerApproval": "GRANT_NOT_APPROVED",
+    "approvalURL": "https://szsp.suitbim.com.cn:7100/happy/settings/automation?connection=e8e8178f-f493-4be8-8c79-a22b3ccb2a33",
+    "ownerApprovalPerformedByAssistant": false,
+    "approvalWindowElapsedAtBrowserCheck": "2026-11-04T03:22:18.202Z",
+    "serverStateRequeriedAfterBrowserCheck": false
+  },
+  "readyScope": "only current approved connection and automation-test; expires 2026-11-04 12:38:08 UTC+8",
+  "connection": {
+    "id": "391cb63d-9b3b-4394-b6c4-80ac5d579112",
+    "state": "approved",
+    "clientID": "assistant-rest",
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "projectID": "automation-test",
+    "methods": [
+      "machines.list",
+      "sessions.list",
+      "tasks.create",
+      "requests.get",
+      "sessions.send",
+      "sessions.status",
+      "sessions.logs",
+      "sessions.result",
+      "sessions.cancel"
+    ],
+    "sessionIDs": [],
+    "expiresAt": 1793767088716,
+    "pendingUntil": 1793764090287,
+    "ok": true,
+    "approvalURL": "https://szsp.suitbim.com.cn:7100/happy/settings/automation?connection=391cb63d-9b3b-4394-b6c4-80ac5d579112",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "ownerApprovalPerformedByAssistant": false,
+    "callerPinnedToExactConnection": true
+  },
+  "historicalGrantCountsBeforeApproval": {
+    "asOfUTC": "2026-11-04T03:44:21.587897+00:00",
+    "approved": 0,
+    "pending": 1
+  },
+  "verifiedApprovedConnectionID": "391cb63d-9b3b-4394-b6c4-80ac5d579112"
+}

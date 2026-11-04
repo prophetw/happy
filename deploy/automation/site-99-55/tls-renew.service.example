@@ -1,0 +1,12 @@
+[Unit]
+Description=Happy dedicated TLS local renewal
+After=docker.service network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+TimeoutStartSec=90
+ExecStart=/usr/bin/python3 /usr/local/libexec/happy-control-tls-maintain.py --config /etc/REPLACE_TLS_CONFIGURATION/tls.json renew
+NoNewPrivileges=true
+PrivateTmp=true

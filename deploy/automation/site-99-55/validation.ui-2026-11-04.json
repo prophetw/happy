@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T03:44:21.587897+00:00",
+  "status": "WEB_APPROVAL_UI_UPDATED_OWNER_APPROVAL_PENDING",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "sourceTree": "4a6c33187645dfab3ef961a0b8ff1ce7ffae52f8",
+  "sourceKind": "git-tree-snapshot-not-commit",
+  "baseCommit": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "web": {
+    "target": ".happy-releases/20261104T033914Z-automation-ui",
+    "previousTarget": ".happy-releases/20261104T023150Z-automation",
+    "indexSHA256": "9f61f569d80cd4c33cea673a9142c35ee2f25d937f2543f1ab33323685740870",
+    "retainedPriorAssets": 135,
+    "nginxRecreatedOrReloaded": false,
+    "httpChecks": [
+      {
+        "route": "/happy/_expo/static/js/web/__expo-metro-runtime-0c48b0beee2d3ce6030b475fcc5b1846.js",
+        "status": 200
+      },
+      {
+        "route": "/happy/_expo/static/js/web/__common-b336b98da455805039f71f9ef5477496.js",
+        "status": 200
+      },
+      {
+        "route": "/happy/_expo/static/js/web/index-25911fcbb66af6cccb877597f34b6907.js",
+        "status": 200
+      },
+      {
+        "route": "/happy/",
+        "status": 200
+      },
+      {
+        "route": "/happy/settings/automation",
+        "status": 200
+      },
+      {
+        "route": "/home-relay/health",
+        "status": 200
+      },
+      {
+        "route": "/happy-control/v1/compatibility",
+        "status": 200
+      }
+    ],
+    "wasmMagicAndMIME": true
+  },
+  "tests": {
+    "directContracts": 14,
+    "appTypecheck": "passed",
+    "webExport": "passed",
+    "loopbackBrowserScenarios": 15,
+    "liveAnonymousBrowserChecks": 20,
+    "independentReview": "no remaining mandatory fixes"
+  },
+  "uiChanges": [
+    "Chinese scope and method labels; exact methods remain visible",
+    "fingerprints/IDs and QR expanded on demand",
+    "Chinese font fallback, mobile wrapping, dark theme",
+    "expired/revoked states and expired pending deadline fail closed",
+    "explicit login boundary; account login never grants automation access",
+    "lost mutation reply uses readback and unknown state, never automatic retry",
+    "request generations prevent stale responses from overwriting current consent"
+  ],
+  "artifacts": {
+    "loopback": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/automation-ui-2026-11-04T03-37-33-642Z",
+    "liveAnonymous": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/automation-live-2026-11-04T03-40-32-461Z"
+  },
+  "pendingConnection": {
+    "id": "391cb63d-9b3b-4394-b6c4-80ac5d579112",
+    "state": "pending",
+    "clientID": "assistant-rest",
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "projectID": "automation-test",
+    "methods": [
+      "machines.list",
+      "sessions.list",
+      "tasks.create",
+      "requests.get",
+      "sessions.send",
+      "sessions.status",
+      "sessions.logs",
+      "sessions.result",
+      "sessions.cancel"
+    ],
+    "sessionIDs": [],
+    "expiresAt": 1793767088716,
+    "pendingUntil": 1793764090287,
+    "ok": true,
+    "approvalURL": "https://szsp.suitbim.com.cn:7100/happy/settings/automation?connection=391cb63d-9b3b-4394-b6c4-80ac5d579112",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "ownerApprovalPerformedByAssistant": false,
+    "callerPinnedToExactConnection": true
+  },
+  "signedProbe": {
+    "ok": false,
+    "errorCode": "GRANT_NOT_APPROVED"
+  },
+  "knownWarnings": [
+    "one existing dev/masked-progress route warning per live profile, already present at HEAD"
+  ],
+  "unexpectedExternalChange": {
+    "initialHistoricalRelayIdentityPreservationCheck": "FAILED: original relay container no longer matches",
+    "observedRelayID": "039f621e3b26385473957bd96d4fcd1d96a1021910cfe4bc215cad56e878c224",
+    "observedRelayImageID": "sha256:c235c83318d20ab2b7b2804c77f006db931a596c7365a1b63c8a399d32161801",
+    "observedRelayStartedUTC": "2026-11-04T03:36:44.59580502Z",
+    "staticCandidatePreparedUTC": "20261104T033914Z-automation-ui",
+    "relayHealth": "healthy; HTTPS health 200",
+    "workerPID": 737095,
+    "workerActive": true,
+    "workerChannelObserved": "connected after external change",
+    "actor": "not attributed; no relay mutation in this UI operation",
+    "nginxIDAndStartPreserved": true
+  },
+  "notVerified": [
+    "real Happy QR login",
+    "owner approval performed by human",
+    "real task create/send/result/cancel acceptance",
+    "dedicated MCP platform registration"
+  ],
+  "realOwnerApprovalPerformedByAssistant": false,
+  "git": {
+    "staged": true,
+    "committed": false,
+    "pushed": false,
+    "merged": false
+  },
+  "ciQueriedOrRun": false
+}

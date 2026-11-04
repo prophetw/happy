@@ -1,0 +1,19 @@
+# Not installed. WSL systemd availability, existing daemon ownership and update window need verification.
+# This runs the EXISTING daemon with outbound worker enabled; NOT a second concurrent daemon.
+[Unit]
+Description=Happy trusted outbound automation worker
+After=network-online.target
+[Service]
+Type=simple
+# Replace with the approved existing Happy owner; never guess an account name.
+User=APPROVED_EXISTING_USER
+WorkingDirectory=/opt/happy-worker
+ExecStart=/usr/bin/node /opt/happy-worker/packages/happy-cli/bin/happy-control-worker.mjs --config /etc/happy-control/worker.json
+Restart=on-failure
+RestartSec=10
+UMask=0077
+# LoadCredentialEncrypted=worker-passphrase:/etc/credstore.encrypted/happy-worker-passphrase
+NoNewPrivileges=yes
+PrivateTmp=yes
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "role": "host",
+  "listen": { "host": "127.0.0.1", "port": 9010 },
+  "origin": "https://control.example.invalid",
+  "relayURL": "https://control.example.invalid/home-relay",
+  "stateDirectory": "/var/lib/happy-control",
+  "clients": [],
+  "workers": [],
+  "maxGrantMs": 3600000,
+  "ipRateLimit": 12000
+}

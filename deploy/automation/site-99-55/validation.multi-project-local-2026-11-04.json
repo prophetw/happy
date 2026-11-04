@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T07:33:14.618946+00:00",
+  "status": "LOCAL_MULTI_PROJECT_SCOPES_VERIFIED_NOT_DEPLOYED",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "head": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "baselineStagedTree": "5e4795b73bc788b9e290e72b61c2af1aa740fe86",
+  "baselineStagedPaths": 137,
+  "contract": {
+    "credentialModeUnchanged": "service-token-v1",
+    "signedSingleProjectShapeUnchanged": true,
+    "legacySingleProjectGrantsDoNotExpand": true,
+    "multiProjectScopeVersion": 2,
+    "projectsMin": 2,
+    "projectsMax": 32,
+    "sameWorkerAndMachine": true,
+    "methodsAndExpirySharedBySelection": true,
+    "newSessionsOnlyByDefault": true,
+    "frozenBinding": "all selected project IDs and realpath directories in original approval digest",
+    "approvalAcknowledgement": "scopeVersion=2 required; old pages 426 PROJECT_SCOPE_APPROVAL_UPGRADE_REQUIRED",
+    "taskCreation": "one explicit approved projectID for each task; no new RPC",
+    "idempotency": "unchanged client/grant/requestID namespace across every selected project; different target/content conflicts",
+    "oldWorkerBehavior": "no dispatch or queued multi-project delivery without signed projectScopes=1 capability; 426 WORKER_PROJECT_SCOPE_UPGRADE_REQUIRED",
+    "workerNegotiation": "public compatibility.projectScopes=1; old gateways receive legacy poll; periodic 30-second recheck and downgrade renegotiation",
+    "existingProtocol": "core/worker/daemon channel stays 1; multi-project worker code update required",
+    "revocation": "any binding mismatch invalidates whole grant; no partial restoration or implicit widening"
+  },
+  "validation": {
+    "backendContracts": 61,
+    "backendFiles": 4,
+    "backendCommand": "pnpm --dir packages/happy-agent exec vitest run src/automation/rest/serviceTokens.test.ts src/automation/rest/gateway.test.ts src/automation/production/production.test.ts src/automation/rest/multiProject.test.ts --no-file-parallelism --testTimeout=15000 --reporter=dot",
+    "newMultiProjectContracts": 13,
+    "frontendTests": 27,
+    "frontendFiles": 3,
+    "agentTypecheckAndBuild": "passed",
+    "appTypecheck": "passed",
+    "browserFixture": {
+      "fixtureOnly": true,
+      "realAccountOrGrant": false,
+      "publicListener": false,
+      "checks": [
+        "desktop:multi-project-checkbox+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+revoke+no-plaintext-persistence",
+        "mobile:multi-project-checkbox+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+revoke+no-plaintext-persistence"
+      ],
+      "errors": [],
+      "networkFailures": [],
+      "browserClosed": true,
+      "loopbackServersClosed": true
+    },
+    "browserArtifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/service-access-2026-11-04T07-24-09-521Z",
+    "openAPIVersion": "1.3.0",
+    "openAPIGeneratedFromSource": true,
+    "documentationExamplesAndRelativeLinks": "passed",
+    "independentReadOnlyReview": "passed; no substantive blockers",
+    "newDependenciesOrLockChanges": false,
+    "cleanDependencyInstall": "not repeated; no dependency changes; existing installed dependencies used",
+    "fullExpoWebExport": "not run this local implementation turn; actual source routes/components bundled in isolated esbuild fixture and App typecheck passed"
+  },
+  "coverage": [
+    "exact multi-checkbox selection; empty/max/old-worker guard; reset on worker change",
+    "every selected directory visible before explicit bound approval",
+    "one service token for separate tasks in two projects, encrypted synthetic relay",
+    "unselected registered third project, cross-user/machine/worker/method/session/grant denial",
+    "local worker independent complete binding and canonical path checks",
+    "same-ID concurrent dedup and cross-project requestID conflict; receipts survive restart",
+    "persistent message acknowledgement, incremental cursor and explicit turn evidence",
+    "cancel_requested vs process unknown/stopped; expiry/revocation and no resurrection",
+    "downgrade while queued, old server poll compatibility, periodic discovery of upgrade"
+  ],
+  "resolvedIntermediateFindings": [
+    "Direct-worker negative fixture initially supplied pending consent and correctly failed GRANT_REVOKED; fixed fixture to read actual approved grant before exercising scope denials",
+    "100ms dispatch fixture deadline did not prove execution began; now use bounded 1000ms plus observed spawn barrier and read-only reconciliation",
+    "Original MCP integration default 5-second harness budget timed out twice; temporary phase instrumentation completed every business assertion in about 3.3 seconds; final 61 contracts use explicit 15-second harness allowance, with all production/runtime limits and assertions unchanged; diagnostic source file removed"
+  ],
+  "knownWarnings": [
+    "Existing pkgroll outside-dist bin/empty-index warnings; build exits 0",
+    "Existing react-test-renderer deprecation warnings; UI tests pass"
+  ],
+  "notVerified": [
+    "Deployment of multi-project REST/Web/worker; running site remains prior single-project version",
+    "Additional real project registration, real owner approval or multi-project service credential issuance",
+    "Native App publication",
+    "Fresh dependency installation, new production image and full exported Web artifact for this feature"
+  ],
+  "boundaries": {
+    "deployed": false,
+    "liveConfigurationChanged": false,
+    "workerDaemonRelayRestarted": false,
+    "realGrantOrTokenCreated": false,
+    "realAccountMaterialsRead": false,
+    "existingSessionsReceivedInstructions": false,
+    "publicListenerOpened": false,
+    "mcpRegistrationChanged": false,
+    "ciQueriedOrRun": false,
+    "committed": false,
+    "pushed": false,
+    "merged": false
+  },
+  "files": {
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/schema.ts": "86552a1780878067b1901c6b92deb7ad4ced69954bec21b28613e38394ec306e",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/grants.ts": "30387eba3028e71bc0eba15e96704acc4ed54ad57f73c302ae49fa147f951bb9",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/gateway.ts": "512f3bf484fb382424feec2fcca4609dad68a25a0a340108a11a780d9cfad59e",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/worker.ts": "0abda1dc83421f23cc0738b340c22b75017441e042300da8f96460d8cf44d647",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/openapi.ts": "203c435a0732e38cf25863e9f10642f791dc5a94925d7d4ccf9c4e355d833967",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/multiProject.test.ts": "73899c69e224c11a594a19a4ef2af83b6168a4c1f77869f291e7afb315607071",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/examples/rest-fixture.ts": "5a537aef2da756225b4e371d4ff738c76213943fd24fc21446ee805028da40e0",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/automationApproval.ts": "95c42e91c3c624cd404912d15ef4d2eadbafbb90812fd4c1a5106c27794ed475",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/components/automation/ServiceAccess.tsx": "0e09126e1b57902a2748d9ff38c7adbc3eb8f81d3c6ac78cd96bff2116b22541",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/app/(app)/settings/automation.tsx": "c2c9b2ecaefc78acc77d95132d8664a1734c342b7fb5caff51cd5a17a8a6313d",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/automationApproval.test.ts": "af0b4ccc5e44cc9abc630efcfc0ad9b281e6c51a5cc8008c9fd7d6797ccb9fc3",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/automationConsentUI.test.ts": "903abec430c58e74208eca114c333d891452a7c7550fa2eb52316f93205f61fb",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/serviceAccessUI.test.ts": "59fd57c3b83c157f104dea5ce301f1dc2915a0233dac46d30d64af2c8a7db00f",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/scripts/service-access.e2e.mjs": "9120dbbeed03e7ce090829914b03da4d536efabddddf5bdeba6dbe2c7626e1aa",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/docs/api/automation-control.openapi.json": "ff50011e9e9da678727765f9e1032c797c6f0d3c0dadfba6db3f541ab057f549",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/docs/features/automation-control.md": "389624f7cece929d90980b272834288d153a825cea018a93114fb81eceea6083",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/docs/features/automation-service-access.md": "a8126db8d75fc453bd34601d4dba3e5453f10d7c9337d5b7a2855b4251a82a0e"
+  }
+}

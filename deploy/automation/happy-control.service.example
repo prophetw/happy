@@ -1,0 +1,24 @@
+# Not installed. Needs a separately approved dedicated OS user, paths, Node>=22 and encrypted credentials.
+[Unit]
+Description=Happy scoped REST and HTTP MCP (parallel to relay)
+After=network-online.target
+[Service]
+Type=simple
+User=happy-control
+Group=happy-control
+WorkingDirectory=/opt/happy-control
+ExecStart=/usr/bin/node /opt/happy-control/packages/happy-agent/bin/happy-control.mjs --config /etc/happy-control/host.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+StateDirectory=happy-control
+StateDirectoryMode=0700
+# Use systemd-creds/vault provisioning OUTSIDE this repository and only after approval.
+# LoadCredentialEncrypted=assistant-passphrase:/etc/credstore.encrypted/happy-assistant-passphrase
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+[Install]
+WantedBy=multi-user.target

@@ -141,6 +141,24 @@ export class ApiClient {
    * Register or update machine with the server
    * Returns the current machine state from the server with decrypted metadata and daemonState
    */
+  /** Production automation preflight: never registers/recreates a missing machine or downgrades offline. */
+  async getExistingAutomationMachine(machineId: string): Promise<Machine> {
+    try {
+      if (this.credential.encryption.type !== 'dataKey') throw new Error();
+      const response = await axios.get(`${configuration.serverUrl}/v1/machines`, {
+        headers: { Authorization: `Bearer ${this.credential.token}` }, timeout: 10000, maxRedirects: 0,
+      });
+      const raw = response.data.find((m: { id: string }) => m.id === machineId);
+      if (!raw?.dataEncryptionKey || !raw.metadata) throw new Error();
+      const key = this.credential.encryption.machineKey;
+      const metadata = decrypt(key, 'dataKey', decodeBase64(raw.metadata));
+      if (!metadata || typeof metadata !== 'object') throw new Error();
+      return { id: raw.id, encryptionKey: key, encryptionVariant: 'dataKey', metadata,
+        metadataVersion: raw.metadataVersion || 0, daemonState: raw.daemonState ? decrypt(key, 'dataKey', decodeBase64(raw.daemonState)) : null,
+        daemonStateVersion: raw.daemonStateVersion || 0 };
+    } catch { throw new Error('AUTOMATION_EXISTING_MACHINE_UNVERIFIED'); }
+  }
+
   async getOrCreateMachine(opts: {
     machineId: string,
     metadata: MachineMetadata,

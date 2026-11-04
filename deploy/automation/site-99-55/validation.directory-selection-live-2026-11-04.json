@@ -1,0 +1,515 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T09:48:02.515040+00:00",
+  "status": "DIRECTORY_SELECTION_REST_WEB_WORKER_DEPLOYED_OWNER_APPROVAL_PENDING",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "baseCommit": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "applicationSourceTree": "d8758551bf3b482093b251c1cc9af16add8a216e",
+  "sourceKind": "user-authorized fixed git-tree snapshot, not a commit",
+  "sourceArchiveSHA256": "1b334fadb760f921a55d2eeb58f2cc3d4dedf71ddcb737e97900762c31f42ce0",
+  "sourceArchiveExcludedFilenames": [
+    "packages/happy-cli/.env.dev",
+    "packages/happy-cli/.env.integration-test",
+    "packages/happy-cli/.envrc.example"
+  ],
+  "excludedContentsInspected": false,
+  "gitFetchThisDeployment": {
+    "forkMain": "aa8b0dcef288cfe094ff58afc46f2d0e8b919737",
+    "headToForkMainDifferences": [
+      "DEPLOY.md",
+      "docs/deployment.md"
+    ],
+    "applicationFeatureDifference": false,
+    "mergeRebaseCommitPush": false
+  },
+  "deploymentAuthorization": "User explicitly approved /home/dev/code as the directory selection root and deployment of REST/Web/worker; existing snapshot and dedicated root-only credential exceptions retained. No authority to personally approve a service grant/token.",
+  "scope": {
+    "workerID": "worker-4090wsl2",
+    "userID": "cmvdmlu0z0000my1dszidaamz",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "directorySelection": {
+      "roots": [
+        "/home/dev/code"
+      ]
+    },
+    "registeredProjectsUnchanged": [
+      {
+        "id": "automation-test",
+        "directory": "/home/dev/code/happy-automation-test",
+        "sessionIDs": []
+      },
+      {
+        "id": "automation-test-b",
+        "directory": "/home/dev/code/happy-automation-test-b",
+        "sessionIDs": []
+      }
+    ],
+    "methodsAndExistingSessionPolicyUnchanged": true,
+    "rootItselfSelectable": false,
+    "tokensOnlyBindExplicitlySelectedDirectories": true,
+    "existingGrantsExpanded": false,
+    "newGrantCreatedByAssistant": false
+  },
+  "control": {
+    "activation": {
+      "controller": {
+        "run": "20261104T093203Z-directory-selection",
+        "phase": "healthy",
+        "success": true,
+        "newFeatureEnabled": true,
+        "stateRestored": false,
+        "rollback": "not-needed",
+        "relayUnchanged": true,
+        "containers": {
+          "happy-control-control-1": {
+            "id": "32d14bb2167f62fcee399539150f109b2799c1dc7b3e5fc4dfef8c5e7749e57d",
+            "imageID": "sha256:f90df9320d17e84a8d41b19deef651babb4031115102cc3b144098d39e04b985",
+            "started": "2026-11-04T09:39:43.099316326Z"
+          },
+          "happy-control-gateway-1": {
+            "id": "4b63ff284c03b20dfbf2a677f63f9f67f90c4aeb9fe9da4ee4904b23585244da",
+            "imageID": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+            "started": "2026-11-04T09:39:48.74028495Z"
+          }
+        }
+      },
+      "publicCompatibility": {
+        "version": 1,
+        "ok": true,
+        "data": {
+          "protocol": 1,
+          "worker": 1,
+          "core": 1,
+          "approval": 1,
+          "projectScopes": 1,
+          "directoryScopes": 1,
+          "httpMcp": null,
+          "auth": "ed25519-proof-v1",
+          "serviceTokens": {
+            "protocol": 1,
+            "maxGrantMs": 2592000000,
+            "oneTimeDelivery": true
+          }
+        }
+      }
+    },
+    "root": "/data/code/happy-control/rollouts/20261104T093203Z-directory-selection",
+    "controller": {
+      "path": "/data/code/happy-control/rollouts/20261104T093203Z-directory-selection/activate.py",
+      "sha256": "87bde62da3ecceb6158a1d4d5a5e64a644ad9eef4c5032958bd2134850026bef",
+      "activated": false
+    },
+    "sourceRelease": "/data/code/happy-control/releases/directory-selection-d8758551bf3b",
+    "image": {
+      "built": true,
+      "imageID": "sha256:f90df9320d17e84a8d41b19deef651babb4031115102cc3b144098d39e04b985",
+      "tag": "happy-control-directory-selection-d8758551bf3b:local",
+      "baseImageID": "sha256:6e6261159fd399ebe5a3d556b7d89da9c85c873f3f270918aad6c8107da8b411",
+      "sourceTree": "d8758551bf3b482093b251c1cc9af16add8a216e",
+      "sourceArchiveSHA256": "1b334fadb760f921a55d2eeb58f2cc3d4dedf71ddcb737e97900762c31f42ce0",
+      "registry": "https://registry.npmmirror.com",
+      "deployed": false,
+      "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-selection-release-d8758551bf3b/control-image.tar",
+      "archiveSHA256": "f2a655532f92adc881ea76aab0ab90938bab2d02a52c77c63f68b200273ca375",
+      "archiveBytes": 266411008
+    },
+    "stateRestored": false
+  },
+  "worker": {
+    "activation": {
+      "version": 1,
+      "phase": "worker-connected",
+      "success": true,
+      "rollback": "not-needed",
+      "accountOrGrantCreated": false,
+      "protectedSessionCount": 1,
+      "worker": {
+        "pid": 3634349,
+        "startTicks": "43186774",
+        "entry": "/home/dev/.local/share/happy-automation/releases/directory-selection-d8758551bf3b/packages/happy-cli/bin/happy-control-worker.mjs",
+        "invocationID": "5ffe42fc18294168b529d385978b1b1b"
+      },
+      "changedOriginalSessionPIDs": [],
+      "originalSessionCount": 1
+    },
+    "maintenanceRoot": "/var/lib/happy-automation-maintenance/20261104T093203Z-directory-selection",
+    "release": "/home/dev/.local/share/happy-automation/releases/directory-selection-d8758551bf3b",
+    "entry": "/home/dev/.local/share/happy-automation/releases/directory-selection-d8758551bf3b/packages/happy-cli/bin/happy-control-worker.mjs",
+    "newDropIn": "/etc/systemd/system/happy-automation-worker.service.d/70-release-d8758551bf3b.conf",
+    "priorDropIns": [
+      {
+        "path": "/etc/systemd/system/happy-automation-worker.service.d/60-release-11313dcc1ba0.conf",
+        "sha256": "e3aaeeeb3958b206f0a87a7c9e664a185eeb76481ff73d28bb1efdde60410b77",
+        "uid": 0,
+        "mode": "0o600"
+      }
+    ],
+    "controllerSHA256": "e4728cb68eac9c2e911394c223888b6da86332b121c96a6adb3ea7003af23158",
+    "controllerOutsideApplicationSnapshot": true,
+    "controllerProvenance": "Application artifact tree was frozen before the small maintenance-controller extension. This independently reviewed current script is separately hash pinned in the private plan and deployed as an operator tool, not part of the application image.",
+    "privateConfigMetadata": {
+      "owner": "dev:dev",
+      "mode": "0400"
+    },
+    "normalExistingCredentialsUsedByWorkerBoot": true,
+    "accountAuthOrPrivateKeyValuesReadByAssistant": false,
+    "newHappyAccountDeviceOrWorkerIdentity": false,
+    "actualFailureRecoveryExercised": false,
+    "artifact": {
+      "packaged": true,
+      "sourceTree": "d8758551bf3b482093b251c1cc9af16add8a216e",
+      "directory": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-selection-release-d8758551bf3b/worker",
+      "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-selection-release-d8758551bf3b/worker.tar.gz",
+      "archiveSHA256": "065d39cb715b22dd7afe17793b78ff11e641216cc01890f5fbe4607218db335a",
+      "archiveBytes": 873767036,
+      "productionDependenciesOnly": true,
+      "offlineFrozenInstall": true,
+      "selfContainedSymlinks": 1543,
+      "localToolsUnpacked": true,
+      "bootstrapAndWorkerExportsImportedWithoutInvocation": true,
+      "daemonStarted": false,
+      "deployed": false
+    }
+  },
+  "web": {
+    "activation": {
+      "switched": true,
+      "target": ".happy-releases/directory-selection-d8758551bf3b",
+      "oldTarget": ".happy-releases/multi-project-11313dcc1ba0",
+      "indexSHA256": "1ab2eb70d500998219ba00e648a13206e9c079e69038df3f462c0303933023fd",
+      "nginxReloadedOrRecreated": false,
+      "nginxID": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2",
+      "nginxStarted": "2026-10-03T03:07:09.378319788Z"
+    },
+    "artifact": {
+      "exported": true,
+      "directory": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-selection-release-d8758551bf3b/web",
+      "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-selection-release-d8758551bf3b/web.tar.gz",
+      "sourceTree": "d8758551bf3b482093b251c1cc9af16add8a216e",
+      "indexSHA256": "1ab2eb70d500998219ba00e648a13206e9c079e69038df3f462c0303933023fd",
+      "archiveSHA256": "093b822a0f3791c8be9720c460cc26400d71453d1b0ac23a04cf04afbe1179c2",
+      "archiveBytes": 11121939,
+      "wasmFiles": 1,
+      "reusedInstalledDependencies": true,
+      "dotenvLoaded": false,
+      "serverURL": "https://szsp.suitbim.com.cn:7100/home-relay",
+      "basePath": "/happy",
+      "deployed": false,
+      "nativeOrOTA": false
+    },
+    "nginx57ReloadedOrRecreated": false
+  },
+  "liveVerification": {
+    "55": {
+      "containers": {
+        "happy-control-control-1": {
+          "id": "32d14bb2167f62fcee399539150f109b2799c1dc7b3e5fc4dfef8c5e7749e57d",
+          "imageID": "sha256:f90df9320d17e84a8d41b19deef651babb4031115102cc3b144098d39e04b985",
+          "started": "2026-11-04T09:39:43.099316326Z",
+          "health": "healthy"
+        },
+        "happy-control-gateway-1": {
+          "id": "4b63ff284c03b20dfbf2a677f63f9f67f90c4aeb9fe9da4ee4904b23585244da",
+          "imageID": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+          "started": "2026-11-04T09:39:48.74028495Z",
+          "health": null
+        },
+        "happy-relay-relay-1": {
+          "id": "039f621e3b26385473957bd96d4fcd1d96a1021910cfe4bc215cad56e878c224",
+          "imageID": "sha256:c235c83318d20ab2b7b2804c77f006db931a596c7365a1b63c8a399d32161801",
+          "started": "2026-11-04T03:36:44.59580502Z",
+          "health": "healthy"
+        }
+      },
+      "grantCounts": {
+        "activeServiceGrants": 4,
+        "activeSignedGrants": 0,
+        "v2Grants": 2,
+        "v3Grants": 0
+      },
+      "priorDurableStateFilesUnchanged": 16,
+      "expectedExpiryTransitions": [],
+      "stateRestored": false,
+      "hostPublicScope": [
+        {
+          "id": "automation-test",
+          "directory": "/home/dev/code/happy-automation-test",
+          "sessionIDs": []
+        },
+        {
+          "id": "automation-test-b",
+          "directory": "/home/dev/code/happy-automation-test-b",
+          "sessionIDs": []
+        }
+      ],
+      "directorySelection": {
+        "roots": [
+          "/home/dev/code"
+        ]
+      },
+      "sourceRelease": "/data/code/happy-control/releases/directory-selection-d8758551bf3b",
+      "originalServiceIdentityAndLimitsPreserved": true
+    },
+    "57": {
+      "nginxID": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2",
+      "nginxStarted": "2026-10-03T03:07:09.378319788Z",
+      "mainConfigInode": 33705044,
+      "routeSHA256": "bde29b4c109951df94fb6aaacb7974384dccd6812a6727a6040ec660088fe06d",
+      "webTarget": ".happy-releases/directory-selection-d8758551bf3b",
+      "nginxReloadedOrRecreated": false,
+      "freeMB": 1703
+    },
+    "4090": {
+      "worker": {
+        "pid": 3634349,
+        "startTicks": "43186774",
+        "entry": "/home/dev/.local/share/happy-automation/releases/directory-selection-d8758551bf3b/packages/happy-cli/bin/happy-control-worker.mjs",
+        "invocationID": "5ffe42fc18294168b529d385978b1b1b"
+      },
+      "sameMachineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+      "connected": true,
+      "changedOriginalSessionPIDs": [],
+      "originalSessionCount": 1,
+      "configMode": "0o400",
+      "configUID": 1000,
+      "projects": [
+        {
+          "id": "automation-test",
+          "directory": "/home/dev/code/happy-automation-test",
+          "uid": 1000,
+          "mode": "0o700"
+        },
+        {
+          "id": "automation-test-b",
+          "directory": "/home/dev/code/happy-automation-test-b",
+          "uid": 1000,
+          "mode": "0o700"
+        }
+      ],
+      "baseUnitUnchanged": true,
+      "priorDropInsPreserved": true,
+      "onlyOwnNewReleaseDropInAdded": true,
+      "directorySelection": {
+        "roots": [
+          "/home/dev/code"
+        ]
+      },
+      "existingCredentialProviderAndIdentityConfigUnchanged": true,
+      "packagedCodeHashesMatched": true,
+      "recentWorkerEvents": [
+        {
+          "state": "connected"
+        },
+        {
+          "state": "connected"
+        },
+        {
+          "state": "connected"
+        },
+        {
+          "state": "connected"
+        },
+        {
+          "state": "connected"
+        }
+      ],
+      "directoryScopesEvidence": "new compiled worker bundle/config + fresh public directoryScopes=1 + current signed poll connected; owner options not queried; capability handshake inferred from pinned code and successful channel"
+    }
+  },
+  "publicHTTPS": {
+    "/happy/": {
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "sha256": "1ab2eb70d500998219ba00e648a13206e9c079e69038df3f462c0303933023fd"
+    },
+    "/happy/settings/automation-service": {
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "sha256": "1ab2eb70d500998219ba00e648a13206e9c079e69038df3f462c0303933023fd"
+    },
+    "/happy-control/v1/compatibility": {
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "data": {
+        "protocol": 1,
+        "worker": 1,
+        "core": 1,
+        "approval": 1,
+        "projectScopes": 1,
+        "directoryScopes": 1,
+        "httpMcp": null,
+        "auth": "ed25519-proof-v1",
+        "serviceTokens": {
+          "protocol": 1,
+          "maxGrantMs": 2592000000,
+          "oneTimeDelivery": true
+        }
+      }
+    },
+    "/happy-control/v1/openapi.json": {
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "version": "1.4.0"
+    },
+    "/home-relay/health": {
+      "status": 200,
+      "contentType": "application/json; charset=utf-8"
+    }
+  },
+  "validation": {
+    "priorApplicationTestsReused": {
+      "backend": 73,
+      "ui": 31,
+      "sourceAndDependenciesUnchanged": true
+    },
+    "freshIsolatedWorkerInstallBuild": {
+      "built": true,
+      "sourceTree": "d8758551bf3b482093b251c1cc9af16add8a216e",
+      "freshIsolatedInstall": true,
+      "offlineFrozenInstall": true,
+      "lockfileUnchanged": true,
+      "daemonStarted": false
+    },
+    "productionDependencyInstall": "offline frozen lockfile, no registry downloads; 1543 links remain within release",
+    "completeExpoWebExport": true,
+    "appDependenciesReused": true,
+    "dotenvLoaded": false,
+    "workerReleaseSwitchSafetyTests": 14,
+    "nativeExactImage": {
+      "completion": {
+        "event": "completed",
+        "passed": 76,
+        "image": "sha256:f90df9320d17e84a8d41b19deef651babb4031115102cc3b144098d39e04b985",
+        "nodeVersion": "v22.23.2",
+        "nginxVersion": "nginx version: nginx/1.30.1",
+        "realHappyAuth": false,
+        "productionDeployed": false
+      },
+      "cleanup": {
+        "event": "cleanup",
+        "runID": "happy-control-fixture-fcd249e7",
+        "remainingContainers": 0,
+        "remainingNetworks": 0,
+        "testKeysRemoved": true,
+        "errors": [],
+        "retainedLocalImage": "sha256:f90df9320d17e84a8d41b19deef651babb4031115102cc3b144098d39e04b985"
+      }
+    },
+    "liveAnonymousBrowsers": {
+      "expectedEntryJS": "index-af0a055a11c65dfc061e84d766689337.js",
+      "reports": [
+        {
+          "artifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-selection-live-20261104",
+          "profiles": 2,
+          "checks": 20,
+          "newEntryJSObserved": true
+        },
+        {
+          "artifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/automation-live-2026-11-04T09-42-51-881Z",
+          "profiles": 2,
+          "checks": 20,
+          "newEntryJSObserved": true
+        }
+      ],
+      "checks": 40,
+      "profiles": 4
+    },
+    "independentReadOnlyReview": "passed for operation controller, prior-drop-in recovery, exact root config delta and activation scripts; earlier application review also passed",
+    "ciQueriedOrRun": false,
+    "maintenanceControllersCompleted": {
+      "55": {
+        "Result": "success",
+        "ExecMainStatus": "0",
+        "ActiveState": "inactive",
+        "SubState": "dead"
+      },
+      "4090": {
+        "Result": "success",
+        "ExecMainStatus": "0",
+        "ActiveState": "inactive",
+        "SubState": "dead"
+      }
+    }
+  },
+  "grantAndTaskBoundary": {
+    "preSwitch": {
+      "grantCounts": {
+        "activeServiceGrants": 4,
+        "activeSignedGrants": 0,
+        "v2Grants": 2,
+        "v3Grants": 0
+      },
+      "last30SecondsTaskMutationCounts": {},
+      "rawContentRetained": false
+    },
+    "postSwitch": {
+      "activeServiceGrants": 4,
+      "activeSignedGrants": 0,
+      "v2Grants": 2,
+      "v3Grants": 0
+    },
+    "priorDurableFilesUnchanged": 16,
+    "expiryTransitions": [],
+    "newV3GrantRecords": 0,
+    "instructionsOrCancelsSentToExistingSessions": false,
+    "realTaskAcceptancePerformed": false,
+    "noTokenGrantOrNewCredentialsIssuedByAssistant": true
+  },
+  "intermediateFindings": [
+    "Controller initially assumed no earlier drop-in; added prior root-owned hash pinning and preservation so only the new 70-release overlay can be withdrawn. Explicitly rejects any pre-existing directorySelection for this approved none-to-root transition. 14 safety tests and independent review passed.",
+    "A first exact-image fixture was intentionally interrupted after 57 checks to apply the reviewed Origin-negative-test fix; it was NOT counted as passing. Only its exact Node child was signalled, and teardown reported zero containers/networks and temporary keys removed.",
+    "A subsequent native fixture hit WORKER_UNAVAILABLE on a receipt GET immediately after REST recovery, before the new signed poll. Audit order identified a worker-presence race, not a successful receipt result. The fixture now waits for fresh signed worker capabilities through owner options before the SAME read-only lookup. All final 76 native checks passed.",
+    "Directory scenario uses a separate bounded pair-supervisor test budget while retaining the same state, preserving the original hard-crash retry-limit contract."
+  ],
+  "rollback": {
+    "used": false,
+    "controlPreferred": "Retain new control binary and CURRENT state; remove only the reviewed directorySelection delta if needed. Do not restore old state or blindly downgrade binary.",
+    "worker": "Retain original 60-release drop-in and base unit; remove only owned new 70-release under independent controller and restore only reviewed public config delta, keeping current journal/credentials.",
+    "web": "Atomic restore retained previous static target; no Nginx reload required.",
+    "oldControlBinaryStateCompatibilityVerified": false,
+    "actualHostFailureBranchExercised": false,
+    "unknownLocksNeverDeletedOrStolen": true,
+    "privateMetadataCheckpointNotRecoveryBackup": true
+  },
+  "nextOwnerSteps": {
+    "url": "https://szsp.suitbim.com.cn:7100/happy/settings/automation-service",
+    "steps": [
+      "Refresh updated Web and personally log in",
+      "Select service and 4090 machine; choose existing registered projects or browse/input concrete directories strictly under /home/dev/code; repeat to select multiple, at most 32",
+      "Click 让 Worker 核实所选目录, check returned canonical directories and create the pending request within 120 seconds",
+      "Personally review exact directory/method/session/expiry binding and approve scopeVersion=3; optionally issue token once and deliver only to receiving backend secret provider"
+    ],
+    "oldTokensRequireNewGrantToAddDirectories": true,
+    "cloudAssistantMcpAndBackendCredentialHostingConfigured": false
+  },
+  "notVerified": [
+    "Actual owner login/scan and the real E2EE directory RPC browser connection; previous functional browser transport was fixture mocked",
+    "Personal v3 approval/token issuance and receiving backend real tasks across selected directories, revocation and expiry",
+    "Actual host failure/rollback branches or full host restart; successful controlled worker replacement and original session identity preservation were observed",
+    "Native App/OTA publication or WorkBuddy/cloud MCP registration",
+    "OS filesystem sandboxing or immutable inode binding; scope binds canonical paths and normal agent/OS permissions still apply"
+  ],
+  "boundaries": {
+    "authorizedRootPolicyAppliedBothSides": true,
+    "restWebWorkerDeployed": true,
+    "relayRestartedOrEncryptionChanged": false,
+    "nginx57ReloadedOrRecreated": false,
+    "newPublicPortsOrProxyRoutes": false,
+    "newTLSOrSigningCredentials": false,
+    "newAccountDeviceTokenGrant": false,
+    "happyMasterKeyExported": false,
+    "existingSessionInstructionOrCancel": false,
+    "agentRuntimeBridgeTouched": false,
+    "globalHappyOrOriginalMainDistChanged": false,
+    "stateRestoredOrReplaced": false,
+    "nativeOrOTAOrMcpPublished": false,
+    "ciQueriedOrRun": false,
+    "commitPushMerge": false
+  },
+  "git": {
+    "baselineStagedPaths": 154,
+    "otherStagedChangesPreserved": true,
+    "commitPushMerge": false
+  }
+}

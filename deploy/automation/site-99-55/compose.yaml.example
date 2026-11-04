@@ -1,0 +1,101 @@
+# Review-only. Explicit profile + digest-pinned images + external paths are mandatory.
+# No connection to the existing happy-relay Compose project or its data volumes.
+name: happy-control
+
+services:
+  control:
+    profiles: [approved-deployment]
+    image: ${CONTROL_IMAGE:?Set an approved built control image by digest}
+    user: "1000:1000"
+    init: true
+    # The host service owns pair recovery. Never resurrect only one namespace member.
+    restart: "no"
+    pull_policy: never
+    stop_grace_period: 30s
+    labels:
+      com.happy.automation.managed-pair: site-99-55-v1
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      NODE_ENV: production
+    command: ["--config", "/etc/happy-control/host.json"]
+    # This publishes NGINX's 9443 inside the SHARED namespace, never REST's 9010.
+    ports:
+      - target: 9443
+        published: "9011"
+        host_ip: 192.168.99.55
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: ${CONTROL_CONFIG_DIRECTORY:?Set the approved config directory}/host.json
+        target: /etc/happy-control/host.json
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CONTROL_STATE_DIRECTORY:?Set an approved private state directory}
+        target: /var/lib/happy-control
+        bind: {create_host_path: false}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=1000,gid=1000
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.mjs"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+      start_period: 15s
+    networks: [control]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  gateway:
+    profiles: [approved-deployment]
+    image: ${CONTROL_NGINX_IMAGE:?Set an approved NGINX image by digest}
+    user: "1000:1000"
+    # NGINX and REST share loopback; a normal bridge would not reach 127.0.0.1:9010.
+    network_mode: service:control
+    depends_on:
+      control:
+        condition: service_healthy
+    # The host service owns pair recovery. Never resurrect only one namespace member.
+    restart: "no"
+    pull_policy: never
+    stop_grace_period: 30s
+    labels:
+      com.happy.automation.managed-pair: site-99-55-v1
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    entrypoint: [nginx]
+    command: ["-g", "daemon off;", "-c", "/etc/nginx/nginx.conf"]
+    volumes:
+      - type: bind
+        source: ${CONTROL_CONFIG_DIRECTORY:?Set the approved config directory}/nginx-55.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind: {create_host_path: false}
+      # Mount leaf materials individually. CA signing keys and 99.57 client.key stay outside.
+      - type: bind
+        source: ${CONTROL_PKI_DIRECTORY:?Set approved internal TLS credential directory}/server.crt
+        target: /etc/happy-control/pki/server.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CONTROL_PKI_DIRECTORY:?Set approved internal TLS credential directory}/server.key
+        target: /etc/happy-control/pki/server.key
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${CONTROL_PKI_DIRECTORY:?Set approved internal TLS credential directory}/client-ca.crt
+        target: /etc/happy-control/pki/client-ca.crt
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=1000,gid=1000
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  control: {}

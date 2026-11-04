@@ -9,7 +9,9 @@
   "bugs": "https://github.com/slopus/happy/issues",
   "repository": "slopus/happy",
   "bin": {
-    "happy-agent": "./bin/happy-agent.mjs"
+    "happy-agent": "./bin/happy-agent.mjs",
+    "happy-control": "./bin/happy-control.mjs",
+    "happy-control-call": "./bin/happy-control-call.mjs"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -23,6 +25,22 @@
       "import": {
         "types": "./dist/index.d.mts",
         "default": "./dist/index.mjs"
+      }
+    },
+    "./automation": {
+      "import": {
+        "types": "./dist/automation/rest/index.d.mts",
+        "default": "./dist/automation/rest/index.mjs"
+      },
+      "require": {
+        "types": "./dist/automation/rest/index.d.cts",
+        "default": "./dist/automation/rest/index.cjs"
+      }
+    },
+    "./automation/production": {
+      "import": {
+        "types": "./dist/automation/production/index.d.mts",
+        "default": "./dist/automation/production/index.mjs"
       }
     }
   },
@@ -47,7 +65,11 @@
     "commander": "^13.1.0",
     "qrcode-terminal": "^0.12.0",
     "socket.io-client": "^4.8.1",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "fastify": "^5.6.2",
+    "zod": "^4.0.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "jose": "6.2.2"
   },
   "devDependencies": {
     "@types/node": ">=20",

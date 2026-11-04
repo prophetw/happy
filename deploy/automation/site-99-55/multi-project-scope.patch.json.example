@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "mode": "review-only",
+  "applied": false,
+  "workerID": "worker-4090wsl2",
+  "userID": "cmvdmlu0z0000my1dszidaamz",
+  "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+  "expectedProjects": [
+    {
+      "id": "automation-test",
+      "directory": "/home/dev/code/happy-automation-test",
+      "sessionIDs": []
+    }
+  ],
+  "candidateProjects": [
+    {
+      "id": "automation-test",
+      "directory": "/home/dev/code/happy-automation-test",
+      "sessionIDs": []
+    },
+    {
+      "id": "automation-test-b",
+      "directory": "/home/dev/code/happy-automation-test-b",
+      "sessionIDs": []
+    }
+  ],
+  "allowedChanges": [
+    "host.workers[matched workerID/userID/machineID].projects",
+    "worker.registration.projects"
+  ],
+  "preserveAllOtherFields": true,
+  "directoryPreparation": {
+    "path": "/home/dev/code/happy-automation-test-b",
+    "plannedByUser": true,
+    "created": false,
+    "owner": "dev",
+    "mode": "0700",
+    "mustVerifyRealpathAndNoPreexistingContentBeforeUse": true
+  },
+  "existingSessionIDs": [],
+  "createsOrApprovesGrant": false
+}

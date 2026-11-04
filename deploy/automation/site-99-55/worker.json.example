@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "role": "worker",
+  "endpoint": "https://szsp.suitbim.com.cn:7100/happy-control/v1",
+  "relayURL": "https://szsp.suitbim.com.cn:7100/home-relay",
+  "happyHomeDirectory": "/home/REPLACE_APPROVED_HAPPY_OWNER/.happy",
+  "identityRef": "worker-signing-key",
+  "registration": {
+    "id": "worker-4090wsl2",
+    "userID": "REPLACE_APPROVED_HAPPY_USER_ID",
+    "name": "4090Wsl2 trusted worker",
+    "publicKey": "REPLACE_APPROVED_WORKER_PUBLIC_KEY_PEM",
+    "machineID": "REPLACE_EXISTING_MACHINE_ID",
+    "projects": [{ "id": "automation-test", "directory": "/home/dev/code/happy-automation-test", "sessionIDs": [] }],
+    "methods": ["machines.list", "sessions.list", "tasks.create", "requests.get", "sessions.send", "sessions.status", "sessions.logs", "sessions.result", "sessions.cancel"],
+    "protocol": 1
+  },
+  "secrets": {
+    "type": "encrypted-pkcs8-credentials",
+    "credentialsDirectory": "/run/credentials/happy-automation-worker.service",
+    "keys": {
+      "worker-signing-key": {
+        "encryptedPKCS8": "/run/credentials/happy-automation-worker.service/worker-encrypted-key",
+        "passphraseCredential": "worker-passphrase"
+      }
+    }
+  }
+}

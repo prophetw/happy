@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T04:47:18.648508+00:00",
+  "status": "LOCAL_IMPLEMENTATION_VERIFIED_NOT_DEPLOYED",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "head": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "baselineStagedTree": "83b78354a08a80670c115067cb0d3c4e2a341c7f",
+  "feature": {
+    "mode": "service-token-v1",
+    "enabledByDefault": false,
+    "maxServiceGrantMs": 2592000000,
+    "signedDefaultGrantMsUnchanged": 3600000,
+    "signedConfigCeilingMsUnchanged": 604800000,
+    "serviceCredentialEntropyBits": 256,
+    "persistentCredentialMaterial": "SHA-256 digest and non-secret immutable grant/identity/expiry metadata only",
+    "rotation": "revoke old connection, create and explicitly approve a new one",
+    "approvalModeAcknowledgementRequired": true,
+    "oldApprovalPageBehavior": "426 SERVICE_TOKEN_APPROVAL_UPGRADE_REQUIRED",
+    "serviceRegistration": "explicit non-secret operator config, unique id/user/name/generation; not public self-registration",
+    "scope": "existing user/worker/machine/project/method/session checks at gateway and worker; new sessions only by default; project control scope is not an OS sandbox"
+  },
+  "endpoints": {
+    "GET /happy-control/v1/service-connections/options": "owner-only registered identity/scope choices",
+    "POST /happy-control/v1/service-connections": "owner-only pending service consent, same approval TTL",
+    "POST /happy-control/v1/connections/{id}/service-token": "owner-only one-time delivery after bound approval",
+    "existingTaskEndpoints": "optional service Bearer or existing HappyProof; existing core, receipts, cursor, cancel semantics"
+  },
+  "verification": {
+    "backendContractTests": 48,
+    "backendTestFiles": 3,
+    "frontendTests": 22,
+    "frontendTestFiles": 3,
+    "agentTypecheckAndBuild": "passed",
+    "appTypecheck": "passed",
+    "webExport": "passed, local only",
+    "builtAutomationLibraryImport": "passed, no launcher executed",
+    "binWrapperImportTargets": "actual production/index.mjs target exists; exported productionMain/restCallerMain functions imported without invocation",
+    "browserEndToEnd": {
+      "artifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/service-access-2026-11-04T04-41-37-664Z",
+      "scenarios": 2,
+      "errors": [],
+      "networkFailures": [],
+      "browserClosed": true,
+      "loopbackServersClosed": true
+    },
+    "compiledWebAnonymousSmoke": {
+      "artifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/service-export-20261104",
+      "checks": 2,
+      "errors": [],
+      "failures": [],
+      "blocked": [],
+      "browserClosed": true,
+      "loopbackClosed": true
+    },
+    "independentReadOnlyReview": "passed after credential lifecycle, provider-error sanitization, path-normalization and explicit-mode compatibility fixes",
+    "cleanInstall": "not repeated; no dependency or lockfile changes for this feature; reused existing installed dependencies"
+  },
+  "coverage": [
+    "explicit opt-in / unchanged signed defaults / 30-day ceiling",
+    "owner origin and user; exact digest/challenge and service mode acknowledgement",
+    "one-time concurrent delivery and lost-response no redisplay/reissue",
+    "no raw token in durable store/audit/URL/browser persistence; naked credential redaction",
+    "provider failure not_sent; dispatch timeout unknown and original-request reconciliation",
+    "cross-user/project/machine/method/session and cross-grant rejection",
+    "real loopback REST -> trusted fixture worker -> existing control/journal -> encrypted synthetic relay",
+    "create/send durable acknowledgements, concurrent same-ID dedup and changed payload conflict",
+    "incremental cursor and main-turn-only final result",
+    "cancel ack vs unknown process vs explicit stopped proof",
+    "revocation in-flight, restart expiry/revocation, identity generation change, disable/re-enable cannot restore",
+    "metadata corruption causes auth/readiness/startup failure",
+    "background/account identity/navigation blur clears UI secret; stale replies and retained handlers cannot restore/copy",
+    "provider exceptions and encoded path traversal rejected without exposing credentials"
+  ],
+  "knownWarnings": [
+    {
+      "source": "pkgroll",
+      "message": "bin wrappers outside dist and empty index chunks",
+      "assessment": "build exit 0; actual bin import targets verified; no package publish performed"
+    },
+    {
+      "source": "Expo Metro",
+      "message": "@noble/hashes/crypto.js export fallback and NO_COLOR/FORCE_COLOR warning",
+      "assessment": "same warnings present in previous UI export log; current full compiled anonymous pages and fixture authenticated UI run without errors"
+    }
+  ],
+  "intermediateFailuresResolved": [
+    "An owner-auth test omitted Origin and expected 401; actual CSRF guard correctly returned 403. Fixture now supplies same-origin to exercise token-not-owner rejection.",
+    "End-to-end default 5-second test timeout was insufficient under parallel fsync-heavy fixtures; isolated run reproduced success, final suite is serial with bounded 15-second end-to-end allowance.",
+    "Artificial very short dispatch timeout did not prove OS dispatch began. Replaced with a controlled spawn barrier and observed dispatch before timeout, then read-only reconciliation.",
+    "Added explicit web aria-checked after browser fixture found missing checkbox state.",
+    "Closed reviewed UI credential retention on identity change/navigation blur/background and tested delayed replies.",
+    "Sanitized backend provider failures as not_sent and blocked encoded traversal before credential reads; regression tests verify zero reads/fetches."
+  ],
+  "boundaries": {
+    "realTokenOrGrantCreated": false,
+    "realServiceIdentityOrAccountCreated": false,
+    "happyAuthMaterialsReadOrExported": false,
+    "realPairingOrLogin": false,
+    "liveServiceConfigChanged": false,
+    "deployedOrPublished": false,
+    "daemonRelayOrWorkerRestarted": false,
+    "existingSessionsReceivedInstructions": false,
+    "publicListenerOpened": false,
+    "externalConnectorRegistered": false,
+    "ciQueriedOrRun": false,
+    "commitPushOrMerge": false
+  },
+  "notVerified": [
+    "real HTTPS/proxy deployment of service-token mode",
+    "real owner/account approval or real service token issuance",
+    "real third-party backend secret-provider and secure credential handoff",
+    "native/mobile publication",
+    "WorkBuddy/MCP registration or OAuth issuer; service bearer does not authenticate current HTTP MCP"
+  ],
+  "files": [
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/README.md",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/docs/api/automation-control.openapi.json",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/docs/features/automation-control.md",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/examples/rest-fixture.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/control.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/production/config.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/production/host.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/auth.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/gateway.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/grants.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/index.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/openapi.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/schema.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/scripts/automation-approval.e2e.mjs",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/app/(app)/settings/automation.tsx",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/automationApproval.test.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/automationApproval.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/automationConsentUI.test.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/service-tokens.host.fragment.json.example",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/examples/service-token-backend.mjs",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/serviceTokens.test.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-agent/src/automation/rest/serviceTokens.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/scripts/service-access.e2e.mjs",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/app/(app)/settings/automation-service.tsx",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/auth/serviceAccessUI.test.ts",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/packages/happy-app/sources/components/automation/ServiceAccess.tsx",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/validation.service-token-local-2026-11-04.json"
+  ],
+  "git": {
+    "originalStagedPaths": 120,
+    "originalStagedPathsWillBePreserved": true,
+    "onlyTaskPathsStaged": true,
+    "committed": false,
+    "pushed": false,
+    "merged": false
+  }
+}

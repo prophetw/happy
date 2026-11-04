@@ -1,0 +1,393 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T01:47:13.315257+00:00",
+  "status": "PRODUCTION_REST_INFRASTRUCTURE_RUNNING_SIGNED_CALL_DENIED_WITHOUT_OWNER_GRANT",
+  "readyForAssistantTaskExecution": false,
+  "authorization": {
+    "persistentDedicatedTLSAndUnlockMaterialRootOnlyExplicitlyApproved": true,
+    "plaintextServiceMaterialException": true,
+    "signingPrivateKeyMustRemainEncrypted": true,
+    "workerChoice": "existing Happy machine; wait for shared daemon maintenance window",
+    "newHappyDeviceCreated": false,
+    "realHappyGrantCreated": false
+  },
+  "source": {
+    "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+    "branch": "clever-ocean",
+    "head": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+    "fetchedForkMain": "aa8b0dcef288cfe094ff58afc46f2d0e8b919737",
+    "missingForkCommitIsDeployDocumentationOnly": true,
+    "fixedRelease": {
+      "release": "/data/code/happy-control/releases/production-6adf8875e081",
+      "previousRelease": "/data/code/happy-control/releases/production-9b6e0a25f612",
+      "sourceTree": "6adf8875e0819b642dff6e7dd0dd8b480387f509",
+      "archiveSHA256": "da40a3497c082d6473bd3661453d4b4e48dbaf098974ecc82d95d63afdc21b3e",
+      "archiveContains": [
+        "deploy/automation",
+        "packages/happy-agent",
+        "packages/happy-wire",
+        "docs/api",
+        "docs/features/automation-control.md",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml"
+      ],
+      "immutableImageUnchanged": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8",
+      "onlyChangesSinceTestedSnapshot": [
+        "caller Docker log-driver=none",
+        "related fixture",
+        "deployment documentation"
+      ],
+      "archiveStored": "/data/code/happy-control/archives/source-6adf8875e081.tar"
+    },
+    "commitCreated": false,
+    "pushed": false,
+    "merged": false
+  },
+  "runningControlImage": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8",
+  "runtimeGatewayImage": "sha256:62217789446a0bb2b68d9f65538a7f4246b7041505f42383e5e29f0112644eb3",
+  "network": {
+    "origin": "https://szsp.suitbim.com.cn:7100",
+    "restPrefix": "/happy-control/v1",
+    "publicEntryHost": "192.168.99.57",
+    "controlHost": "192.168.99.55",
+    "internalMTLS": "192.168.99.55:9011 -> gateway:9443 -> shared loopback REST 127.0.0.1:9010",
+    "fullPathAndQuerySigned": true,
+    "arbitraryShellEndpoint": false,
+    "relayE2EEChanged": false
+  },
+  "actualServicesAndGrantCounts": {
+    "55": {
+      "host": 55,
+      "tlsTimers": {
+        "ensure": {
+          "active": "active",
+          "enabled": "enabled"
+        },
+        "renew": {
+          "active": "active",
+          "enabled": "enabled"
+        }
+      },
+      "rootOnlyPersistentCredentialMetadata": {
+        "tls": {
+          "uid": 0,
+          "mode": "0o700"
+        },
+        "issuer.encrypted.pem": {
+          "uid": 0,
+          "mode": "0o400"
+        },
+        "issuer.passphrase": {
+          "uid": 0,
+          "mode": "0o400"
+        },
+        "server.key": {
+          "uid": 0,
+          "mode": "0o400"
+        }
+      },
+      "helperSHA256": "eb02c481f83f394467e2a1ec429a16bf99f48e28bc6d99f7bce7849bff02d57c",
+      "trialExpiryTimer": "inactive",
+      "clients": 1,
+      "workers": 0,
+      "grantStates": [],
+      "maxGrantMs": 3600000,
+      "pairBootEnabled": "enabled",
+      "pairState": "active"
+    },
+    "57": {
+      "host": 57,
+      "tlsTimers": {
+        "ensure": {
+          "active": "active",
+          "enabled": "enabled"
+        },
+        "renew": {
+          "active": "active",
+          "enabled": "enabled"
+        }
+      },
+      "rootOnlyPersistentCredentialMetadata": {
+        "tls": {
+          "uid": 0,
+          "mode": "0o700"
+        },
+        "issuer.encrypted.pem": {
+          "uid": 0,
+          "mode": "0o400"
+        },
+        "issuer.passphrase": {
+          "uid": 0,
+          "mode": "0o400"
+        },
+        "client.key": {
+          "uid": 0,
+          "mode": "0o400"
+        }
+      },
+      "helperSHA256": "eb02c481f83f394467e2a1ec429a16bf99f48e28bc6d99f7bce7849bff02d57c",
+      "trialExpiryTimer": "inactive"
+    }
+  },
+  "tls": {
+    "separateLocalIssuers": true,
+    "issuerDays": 1825,
+    "leafDays": 30,
+    "renewBelowDays": 14,
+    "issuerManualRotationRequiredBelowDays": 90,
+    "oldTrialPeerRootsRemoved": true,
+    "bothTrialExpiryTimersRetiredAfterNewChainVerification": true,
+    "forcedLeafRotation55": {
+      "host": 55,
+      "sourceSHA256": "185f932dd20c619f47bf561e7a136a75e6b88c794eecd93856e2d96c94a01f3e",
+      "data": {
+        "issued": true,
+        "leaf": {
+          "notAfter": "2026-12-04T01:18:44+00:00",
+          "expiresEpoch": 1796347124,
+          "serial": "2CA46153EE96E4691ED4F4A53F92CDA7A8A7BF40",
+          "sha256": "774804f52ed992101df81fb022130626665fb3723b293527f2e5e2a27d90f7e1"
+        },
+        "runtime": {
+          "changed": true,
+          "nginxReloaded": true,
+          "gatewayRunning": true,
+          "wireLeafVerified": true,
+          "leaf": {
+            "notAfter": "2026-12-04T01:18:44+00:00",
+            "expiresEpoch": 1796347124,
+            "serial": "2CA46153EE96E4691ED4F4A53F92CDA7A8A7BF40",
+            "sha256": "774804f52ed992101df81fb022130626665fb3723b293527f2e5e2a27d90f7e1"
+          }
+        }
+      }
+    },
+    "forcedLeafRotation57": {
+      "host": 57,
+      "sourceSHA256": "185f932dd20c619f47bf561e7a136a75e6b88c794eecd93856e2d96c94a01f3e",
+      "data": {
+        "issued": true,
+        "leaf": {
+          "notAfter": "2026-12-04T01:18:46+00:00",
+          "expiresEpoch": 1796347126,
+          "serial": "3546412DDD43696521DB1204ADD98D4B51B3ACF9",
+          "sha256": "94a5f2047d28caa0d04c4f78d0e1a5c743d576c50d0b0b7e9eed65fc37d83239"
+        },
+        "runtime": {
+          "changed": true,
+          "nginxReloaded": true,
+          "externalReadiness": "not-checked",
+          "leaf": {
+            "notAfter": "2026-12-04T01:18:46+00:00",
+            "expiresEpoch": 1796347126,
+            "serial": "3546412DDD43696521DB1204ADD98D4B51B3ACF9",
+            "sha256": "94a5f2047d28caa0d04c4f78d0e1a5c743d576c50d0b0b7e9eed65fc37d83239"
+          }
+        }
+      }
+    },
+    "finalNoopEnsure55": {
+      "host": 55,
+      "helperSHA256": "eb02c481f83f394467e2a1ec429a16bf99f48e28bc6d99f7bce7849bff02d57c",
+      "ensure": {
+        "changed": false,
+        "nginxReloaded": false,
+        "gatewayRunning": true,
+        "wireLeafVerified": false,
+        "leaf": {
+          "notAfter": "2026-12-04T01:18:44+00:00",
+          "expiresEpoch": 1796347124,
+          "serial": "2CA46153EE96E4691ED4F4A53F92CDA7A8A7BF40",
+          "sha256": "774804f52ed992101df81fb022130626665fb3723b293527f2e5e2a27d90f7e1"
+        }
+      }
+    },
+    "finalNoopEnsure57": {
+      "host": 57,
+      "helperSHA256": "eb02c481f83f394467e2a1ec429a16bf99f48e28bc6d99f7bce7849bff02d57c",
+      "ensure": {
+        "changed": false,
+        "nginxReloaded": false,
+        "externalReadiness": "not-checked",
+        "leaf": {
+          "notAfter": "2026-12-04T01:18:46+00:00",
+          "expiresEpoch": 1796347126,
+          "serial": "3546412DDD43696521DB1204ADD98D4B51B3ACF9",
+          "sha256": "94a5f2047d28caa0d04c4f78d0e1a5c743d576c50d0b0b7e9eed65fc37d83239"
+        }
+      }
+    },
+    "realWholeHostRebootTested": false,
+    "futureScheduledRenewalObserved": false,
+    "publicSiteCertificateRenewalChanged": false,
+    "crlOrOCSPImplemented": false
+  },
+  "actualChecks": {
+    "httpsAndDirectNewClientMTLS": {
+      "observed": {
+        "/happy/": "200",
+        "/home-relay/health": "200",
+        "/happy-control/v1/compatibility": "200",
+        "/happy-control/v1/machines?limit=1": "401"
+      },
+      "newClientLeafDirectMTLS": 200,
+      "nginx": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2 2026-10-03T03:07:09.378319788Z"
+    },
+    "systemdFinalImageStopStart": {
+      "fixedImageRealSystemdStop": [
+        "Result=success",
+        "ActiveState=inactive",
+        "SubState=dead"
+      ],
+      "bothStopped": true,
+      "ownerNaturallyRemoved": true,
+      "noRestartDuringExplicitStopSeconds": 12,
+      "finalStart": "active",
+      "image": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8",
+      "release": "/data/code/happy-control/releases/production-9b6e0a25f612",
+      "manualOwnerRecoveries": 1,
+      "realHostRebootTested": false
+    },
+    "proxyMissingMemoryRestore": {
+      "proxyMemoryLossRecovery": "404 -> 200",
+      "originalNginx": "b9339d9e511c79dace61a9e8dd259b568053512bcd469855b210b4d1066408e2 2026-10-03T03:07:09.378319788Z",
+      "ensureTimer": "active",
+      "renewTimer": "active",
+      "originalWeb": "200",
+      "relayHealth": "200",
+      "containerRestarted": false,
+      "realHostRebootTested": false
+    },
+    "signedCallerWithoutGrant": {
+      "signedRestResponse": {
+        "version": 1,
+        "ok": false,
+        "error": {
+          "code": "NOT_FOUND",
+          "retryable": false
+        }
+      },
+      "remainingCallerContainers": 0,
+      "runtimeCredentialDirectories": 0,
+      "realGrantCreated": false
+    },
+    "callerInstalledSource": {
+      "callerSHA256": "b54f17b0738067a8df8ba0e091d6f425a270eaaaf83f14d5abf6c099d3f2f873",
+      "dockerTaskOutputLogging": "none"
+    },
+    "singleManualOwnerRecovery": {
+      "oneTimeManualOwnerRecovery": true,
+      "backup": "/data/code/happy-control/retired-owners/owner-before-signal-fix-20261104.json",
+      "stateProofsUnchanged": true,
+      "originalOwnerVerifiedAbsent": true,
+      "runningRWStateHolders": 0,
+      "ownUnitRestartRequested": true
+    },
+    "directEndpointFrom4090": {
+      "source": "4090Wsl2 existing execution environment",
+      "url": "https://szsp.suitbim.com.cn:7100/happy-control/v1/compatibility",
+      "proxyOrDNSOverrideUsed": false,
+      "httpsVerificationDisabled": false,
+      "compatibilityPassed": true,
+      "curlExit": 0
+    }
+  },
+  "caller": {
+    "entry": "root@192.168.99.55 python3 /usr/local/libexec/happy-control-call.py",
+    "transport": "existing authorized execution tool + existing operator SSH -> fixed JSON adapter -> independent signed REST",
+    "newOperatorSSHGrantCreated": false,
+    "dedicatedLeastPrivilegeSSHPrincipalConfigured": false,
+    "newMCPToolRegistration": false,
+    "signingKeyStorage": "encrypted PKCS8 under /etc/happy-control/secure/assistant; root-only unlock file explicitly approved; per-call controlled tmpfs load",
+    "taskOutputDockerLogging": "none",
+    "noLiveOwnerGrantConfigured": true,
+    "automaticMutationRetry": false,
+    "timeoutCleanupUnconfirmed": "retain private tmpfs and return cleanup_unknown with requestID; do not claim task stopped"
+  },
+  "verification": {
+    "minimumSufficientLocalTests": {
+      "productionContracts": 12,
+      "callerContracts": 7,
+      "shutdownChildProcessRegressions": 2,
+      "tlsPythonFixtures": 10,
+      "rootCallerPythonFixtures": 7,
+      "appConsentContracts": 6,
+      "cliMetadataFixtures": 4,
+      "siteConfigAndPairContracts": 7
+    },
+    "nativeContainerIntegration": {
+      "event": "completed",
+      "passed": 38,
+      "image": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8",
+      "nodeVersion": "v22.23.2",
+      "nginxVersion": "nginx version: nginx/1.31.6",
+      "realHappyAuth": false,
+      "productionDeployed": false
+    },
+    "containerCleanup": {
+      "event": "cleanup",
+      "runID": "happy-control-fixture-cab0d7d7",
+      "remainingContainers": 0,
+      "remainingNetworks": 0,
+      "testKeysRemoved": true,
+      "errors": [],
+      "retainedLocalImage": "sha256:5001a76ccc7779a7139578419118d2f902d131ab82f877e71278d8688b09baf8"
+    },
+    "happyAgentAndWireBuild": "passed isolated production Docker build; final happy-agent local build/typecheck also passed",
+    "cliTypecheck": "passed",
+    "appTypecheck": "passed",
+    "appWebExport": "passed local export only",
+    "dependencyInstallEvidence": "locked npmmirror Docker build context excludes host node_modules; cached dependency layers may be reused, not claimed no-cache fresh install",
+    "independentReview": "final read-only review of main/host/bin/caller and public production evidence: no new mandatory fixes",
+    "ciQueriedOrRun": false,
+    "buildWarnings": [
+      "pkgroll ignores wrapper bins outside dist; explicit Docker COPY preserves them and the real installed caller executed successfully",
+      "empty index chunks reported, build exit 0"
+    ]
+  },
+  "intermediateFailures": [
+    {
+      "failure": "prior owner lock rejected first upgrade; own systemd retry limit stopped both new components",
+      "handling": "verified unit stopped and no running container RW mount to state or ancestor; guarded same-filesystem atomic archive of exactly one owner lock; state/proofs preserved; no automatic lock cleanup"
+    },
+    {
+      "candidate": "sha256:e030782eb1db7bdea88eb69659ed13359c56fa89e33f64015dea0d4be7c6c648",
+      "failure": "native fixture failed after 20 checks during restart; candidate not deployed",
+      "handling": "startup signal window added to deterministic regression; final 5001 image passed all 38; original failed process exit details were unavailable after cleanup, so no unique root-cause claim for that event"
+    },
+    {
+      "failure": "one combined production run exceeded existing 5000ms integration timeout",
+      "handling": "same final source isolated serial production run passed all 12; timeout was not hidden or globally increased"
+    },
+    {
+      "failure": "initial proxy withdraw check expected 404 immediately after asynchronous reload",
+      "handling": "runtime was not deleted; route/timers restored; corrected bounded observation test passed 404 -> memory recreation -> 200"
+    }
+  ],
+  "completionLevels": {
+    "libraryAndConfig": "verified",
+    "isolatedSimulatedEndToEnd": "verified; mock owner/relay/worker/daemon",
+    "realServerInfrastructure": "verified including signed denial; original relay/NGINX container identities retained",
+    "realAccountQRCodeAndAutomationApproval": "not performed; current web UI not replaced",
+    "trustedWorkerAndRealTaskExecution": "pending user-selected daemon maintenance window",
+    "dedicatedCloudMCPRegistration": "not configured; current fixed SSH REST adapter was actually exercised"
+  },
+  "pending": [
+    "shared daemon maintenance window: isolate/build exact CLI artifact, prepare existing-machine worker identity/provider, then supervised daemon transition; do not interrupt bridge tasks beforehand",
+    "publish and browser-verify approved web consent UI; current export is local and not a real QR or browser acceptance",
+    "owner approves exact machine/project realpath/methods/new dedicated sessions/expiry, no existing-session scope by default; deployment policy still 1 hour",
+    "single isolated real task: create/send/requestID receipt/cursor/turn result/cancel actual-stop evidence; unavailable/unknown must stay honest",
+    "dedicated external connector/tool registration and credential hosting if moving beyond this session existing operator SSH adapter",
+    "CA backup/incident recovery and public HTTPS certificate renewal operational acceptance; no whole-host reboot test performed"
+  ],
+  "preserved": {
+    "originalHappyStaticSiteNotReplaced": true,
+    "originalRelayNotReplacedOrRestarted": true,
+    "original57NginxNotRecreated": true,
+    "shared4090DaemonNotUpdatedOrRestarted": true,
+    "bridgeOrDailySessionTestInstructionsSent": false,
+    "HappyAccountKeyExported": false,
+    "credentialValuesPrinted": false
+  }
+}

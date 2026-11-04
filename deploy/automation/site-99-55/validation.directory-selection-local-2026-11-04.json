@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T09:15:47.135490+00:00",
+  "status": "LOCAL_DIRECTORY_SELECTION_VERIFIED_NOT_DEPLOYED",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "baseCommit": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "baselineIndexTree": "82f07f8893187369d5a12ebdf8c1bd69fefbc2b3",
+  "baselineStagedPaths": 149,
+  "implementation": {
+    "scopeVersion": 3,
+    "openapiVersion": "1.4.0",
+    "workerChannelProtocol": 1,
+    "capability": "directoryScopes=1 on REST and fresh signed worker poll; explicit directorySelection.roots on both sides",
+    "reuse": [
+      "existing DirectoryPicker/WebDirectoryPicker and machineListDirectory owner E2EE RPC",
+      "existing outbound signed worker poll/auth",
+      "existing service grants, single-delivery service tokens, automation control/journal/receipts"
+    ],
+    "newDependencies": false,
+    "rootPolicyDefaultsToDisabled": true,
+    "configurationMutatedByPage": false,
+    "oldGrantsExpanded": false,
+    "selection": {
+      "ownerOnly": true,
+      "ttlMs": 120000,
+      "oneUse": true,
+      "bindings": [
+        "user",
+        "client",
+        "worker",
+        "machine",
+        "worker public key",
+        "every canonical project directory"
+      ],
+      "storage": "existing private proofs store; proof:directory-selection and proof:directory-used pruned by existing TTL logic"
+    },
+    "pathChecks": [
+      "normalized absolute POSIX paths",
+      "existing directories only",
+      "strict descendants of explicit roots",
+      "no declared root itself even with overlapping roots",
+      "canonical root identity",
+      "symlink escape and duplicate canonical directory denied",
+      "worker rechecks before approval and every operation"
+    ],
+    "sessionScope": "new grant-owned dedicated sessions only; no pre-existing sessions for v3"
+  },
+  "validation": {
+    "backend": {
+      "files": 5,
+      "testsPassed": 73,
+      "command": "pnpm --dir packages/happy-agent exec vitest run src/automation/rest/directories.test.ts src/automation/rest/multiProject.test.ts src/automation/rest/serviceTokens.test.ts src/automation/rest/gateway.test.ts src/automation/production/production.test.ts --testTimeout=15000 --reporter=dot"
+    },
+    "ui": {
+      "files": 3,
+      "testsPassed": 31,
+      "command": "pnpm --dir packages/happy-app exec vitest run sources/auth/serviceAccessUI.test.ts sources/auth/automationApproval.test.ts sources/auth/automationConsentUI.test.ts --reporter=dot"
+    },
+    "agentTypecheckAndBuild": "passed; pre-existing bin outside-dist / empty index chunk warnings retained, not errors",
+    "appTypecheck": "passed",
+    "cliTypecheck": "passed",
+    "openapiAndConfigSchemaConsistency": "passed",
+    "browser": {
+      "command": "pnpm --dir packages/happy-app exec node --import tsx scripts/directory-service-access.e2e.mjs",
+      "scenarios": 2,
+      "profiles": [
+        "desktop 1440x1000",
+        "mobile 390x844"
+      ],
+      "fixtureEscapeNegativeCases": 2,
+      "actualComponents": [
+        "ServiceConnectionForm",
+        "DirectoryPicker.web",
+        "WebDirectoryPicker",
+        "consent page",
+        "one-time token delivery"
+      ],
+      "realEncryptedDirectoryRPC": false,
+      "directoryRPCTransportMock": true,
+      "report": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/directory-service-access-2026-11-04T09-12-38-418Z/report.json",
+      "errors": [],
+      "networkFailures": [],
+      "browserAndLoopbackServersClosed": true,
+      "scenariosCover": [
+        "browse and select two unregistered paths",
+        "signed worker canonical verification",
+        "explicit v3 bound approval",
+        "one simulated token on both directories",
+        "unselected directory denied",
+        "durable request/ack/results",
+        "cancel requested with unknown then confirmed stopped",
+        "revocation and absence of plaintext token in state/logs/browser persistence"
+      ]
+    },
+    "independentReadOnlyReview": "passed after 426 error mapping, nested root deny, canonical fixture isolation and accurate directory RPC mock evidence fixes",
+    "ciQueriedOrRun": false
+  },
+  "intermediateFindings": [
+    "Initial UI suite needed DirectoryPicker native UI mocking and unknown-scope test updated from v3 to v4; fixed, final 31 passed.",
+    "New full-stack long-flow and existing SDK HTTP MCP scenario exceeded default 5 second unit budget; confirmed multi-request integration flow and used existing 15 second long-flow budget. Final 73 passed.",
+    "Type errors in new fixture import/literal fixture types and partial consent casts fixed; all final typechecks passed.",
+    "Browser harness initially resolved native localization/transport modules; selected existing web picker and mocked owner directory RPC/localization transport boundary. The actual browser UI and signed REST worker flow are exercised.",
+    "One early browser run completed both business scenarios but reported a generic requestfailed without URL diagnostics; original cause unproven. Added path/error diagnostics and network-idle cleanup; subsequent diagnostic/final runs had zero console/network errors.",
+    "Independent review found queued capability downgrade HTTP mapping, overlapping root self-selection and fixture canonical containment gaps; all fixed and relevant contracts/browsers passed."
+  ],
+  "notVerified": [
+    "Real owner login/scan, actual E2EE machine directory RPC and real new v3 grant/token",
+    "Live REST/Web/worker deployment or real project root policy",
+    "Full Expo production export/native App/OTA build or publish",
+    "Real backend tasks and actual filesystem races/OS sandboxing; scope binds paths, not immutable inodes",
+    "WorkBuddy/cloud MCP registration and receiving backend credential hosting"
+  ],
+  "boundaries": {
+    "productionServicesOrConfigTouched": false,
+    "realAccountGrantTokenOrDeviceCreated": false,
+    "realCredentialsReadOrPrinted": false,
+    "relayEncryptionChanged": false,
+    "instructionsSentToExistingSessions": false,
+    "agentRuntimeBridgeTouched": false,
+    "publicListener": false,
+    "newExternalConnections": false,
+    "newDependencies": false,
+    "ciQueriedOrRun": false,
+    "commitPushMerge": false
+  },
+  "codeInputSHA256": {
+    "packages/happy-agent/examples/rest-fixture.ts": "014f0ca75b60697a558ac55cd58d2b321b018e920a0e91e0de2ad8a0b1ca0c82",
+    "packages/happy-agent/src/automation/production/config.ts": "74e30768936c2535cd039af103dd4862c1efa1c862d1c7e7f39148d52b166c63",
+    "packages/happy-agent/src/automation/rest/gateway.ts": "788c6a10b58c4a29307bdc9830d2b8cb910c3addfd56b63122ae8022270d3a60",
+    "packages/happy-agent/src/automation/rest/grants.ts": "a78278ccead666a09416f216e1246fb1dcb6c2460d261383f87827ffda8aa35b",
+    "packages/happy-agent/src/automation/rest/openapi.ts": "24bb0edb2a8354132c1d2dea5b4ddabd2bad4918faded5bfeaeef381e48ee4fc",
+    "packages/happy-agent/src/automation/rest/schema.ts": "6549afebf9836ded68837c0bad78c9f2dddd5fbab035f5753c7a601e6e8a6259",
+    "packages/happy-agent/src/automation/rest/worker.ts": "540ece1c6b848f8b8563b355deffd8ab375df6da2fbd199172128b8a4a3798f8",
+    "packages/happy-app/sources/app/(app)/settings/automation.tsx": "6ed469bb5889d3fc7ea1e96664ab252300aaeb981c920e10b2de67daab964f88",
+    "packages/happy-app/sources/auth/automationApproval.test.ts": "e10e01ddf39f87310961bb66929569b1b6bd074dee1e50fb9a73e19abae74da4",
+    "packages/happy-app/sources/auth/automationApproval.ts": "de2dd4b2e122581b28bb5429115a2d81bc6f41b52ca003bc103fe4b9cc5fd3fe",
+    "packages/happy-app/sources/auth/automationConsentUI.test.ts": "b00371b27b991f08d255adbce339c5b7dd40415afc6334d7bfb6e1c4fe17ca99",
+    "packages/happy-app/sources/auth/serviceAccessUI.test.ts": "f9e6bd31ebb88fd966a9de4eca58fd52cf899ae6508ed730deec72dbf6f7f39e",
+    "packages/happy-app/sources/components/automation/ServiceAccess.tsx": "6a5b9c9e2ca5f1d1d37c4dd3a8963926df0135b3114e6441cb143898172505ab",
+    "packages/happy-agent/src/automation/rest/directories.test.ts": "04479d27f7c578506b05f6ef7b14fdd253cdfc91412be55202d7a48576554071",
+    "packages/happy-agent/src/automation/rest/directories.ts": "76defc09d5aded8b58277f880641f0e415433a36e2d0daa50e2ef9d89b2eb6b8",
+    "packages/happy-app/scripts/directory-service-access.e2e.mjs": "342d080223bbc9f324fade3d5fc54a4c9f5484c10295685670f34f7341171081"
+  },
+  "nextDeploymentNeeds": [
+    "Explicit allowed roots for matched user/worker/machine on both REST and worker; /home/dev/code is only an inert example",
+    "Coordinated REST/Web/worker release and approved worker maintenance window; existing state/credentials/grants retained",
+    "Owner personally reviews exact directories/methods/session scope/expiry and issues one-time service token via receiving backend secret provider"
+  ]
+}

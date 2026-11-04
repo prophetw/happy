@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "role": "proxy",
+  "directory": "/etc/happy-control-proxy/secure/tls",
+  "runtime": "/dev/shm/happy-control-production",
+  "container": "bim-nginx-1.30",
+  "routeFile": "/etc/happy-control-proxy/route.conf"
+}

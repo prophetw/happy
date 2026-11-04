@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "role": "server",
+  "directory": "/etc/happy-control/secure/tls",
+  "runtime": "/run/happy-control/pki"
+}

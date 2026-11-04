@@ -1,0 +1,45 @@
+# Not installed. Approve operator, paths, image digests and runtime PKI before activation.
+[Unit]
+Description=Happy scoped REST and NGINX managed pair
+Requires=docker.service
+After=docker.service network-online.target
+PartOf=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Foreground Compose can return 130 when systemd sends SIGINT after an explicit stop.
+SuccessExitStatus=130
+# This OS operator needs Docker access; it is NOT a Happy account or REST API identity.
+User=REPLACE_DOCKER_OPERATOR
+WorkingDirectory=/
+RuntimeDirectory=happy-control-docker-cli
+RuntimeDirectoryMode=0700
+# Never inherit an operator's remote context or TLS/credential directory.
+UnsetEnvironment=DOCKER_CONTEXT DOCKER_HOST DOCKER_CONFIG DOCKER_TLS_VERIFY DOCKER_CERT_PATH
+# deploy.env contains only public image refs and paths, never tokens or private keys.
+# Approved Compose binary is copied once into release/tools; no account Docker config is reused.
+ExecStartPre=/usr/bin/install -d -m 0700 /run/happy-control-docker-cli/cli-plugins
+ExecStartPre=/usr/bin/ln -sfn /data/code/happy-control/release/tools/docker-compose /run/happy-control-docker-cli/cli-plugins/docker-compose
+ExecStartPre=/usr/bin/docker --host unix:///var/run/docker.sock --config /run/happy-control-docker-cli compose --project-name happy-control --env-file /etc/happy-control/deploy.env -f /data/code/happy-control/release/deploy/automation/site-99-55/compose.yaml.example --profile approved-deployment config --quiet
+# Foreground is essential: either container exit terminates the group, including startup failure.
+ExecStart=/usr/bin/docker --host unix:///var/run/docker.sock --config /run/happy-control-docker-cli compose --project-name happy-control --env-file /etc/happy-control/deploy.env -f /data/code/happy-control/release/deploy/automation/site-99-55/compose.yaml.example --profile approved-deployment up --force-recreate --abort-on-container-exit --no-build --pull never --no-color control gateway
+# Stop never reparses deploy.env/Compose. Exact project + service + owner label; no remove/prune.
+# systemd consumes $$ into a literal $, then /bin/sh evaluates the bounded stop-only script.
+ExecStop=/bin/sh -ec 'failed=0; for member in gateway control; do ids=$$(/usr/bin/docker --host unix:///var/run/docker.sock --config /run/happy-control-docker-cli ps -q --filter label=com.docker.compose.project=happy-control --filter label=com.docker.compose.service=$$member --filter label=com.happy.automation.managed-pair=site-99-55-v1) || { failed=1; continue; }; if [ -n "$$ids" ]; then /usr/bin/docker --host unix:///var/run/docker.sock --config /run/happy-control-docker-cli stop --time 25 $$ids || failed=1; fi; done; exit $$failed'
+# Also stop both when startup fails. No release file, account credential or state access needed.
+ExecStopPost=/bin/sh -ec 'failed=0; for member in gateway control; do ids=$$(/usr/bin/docker --host unix:///var/run/docker.sock --config /run/happy-control-docker-cli ps -q --filter label=com.docker.compose.project=happy-control --filter label=com.docker.compose.service=$$member --filter label=com.happy.automation.managed-pair=site-99-55-v1) || { failed=1; continue; }; if [ -n "$$ids" ]; then /usr/bin/docker --host unix:///var/run/docker.sock --config /run/happy-control-docker-cli stop --time 25 $$ids || failed=1; fi; done; exit $$failed'
+# Always covers exit 0 and nonzero; systemctl stop explicitly suppresses restart.
+Restart=always
+RestartSec=10
+TimeoutStopSec=120
+KillSignal=SIGINT
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

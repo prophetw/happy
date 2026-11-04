@@ -1,0 +1,13 @@
+# Derive the exact server/proxy unit name and private config path before installation.
+[Unit]
+Description=Happy dedicated TLS local maintenance
+After=docker.service network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+TimeoutStartSec=90
+ExecStart=/usr/bin/python3 /usr/local/libexec/happy-control-tls-maintain.py --config /etc/REPLACE_TLS_CONFIGURATION/tls.json ensure
+NoNewPrivileges=true
+PrivateTmp=true

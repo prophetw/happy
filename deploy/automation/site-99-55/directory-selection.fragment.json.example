@@ -1,0 +1,6 @@
+{
+  "note": "INERT example only: add directorySelection to the matching host workers[] entry and worker registration; preserve identities, keys, existing projects/methods and all other configuration. Requires an explicitly approved root scope and coordinated REST/Web/worker upgrade. Does not create grants or grant root-tree access.",
+  "directorySelection": {
+    "roots": ["/home/dev/code"]
+  }
+}

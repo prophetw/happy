@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T06:09:10.869167+00:00",
+  "status": "LOCAL_ROLLOUT_CONFIGURATION_PREPARED_NOT_DEPLOYED",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "head": "d64659a0955a65b99f860abb7ee05ff6086cda82",
+  "publicPlanReview": {
+    "publicPlanValid": true,
+    "publicPlanComplete": false,
+    "deploymentReady": false,
+    "mode": "review-only",
+    "missingFields": [
+      "candidate.controlImageID",
+      "candidate.controlImageArchiveSHA256",
+      "candidate.webArchiveSHA256",
+      "candidate.webTarget",
+      "hostPatch.serviceTokens.clients.0.id",
+      "hostPatch.serviceTokens.clients.0.userID",
+      "hostPatch.serviceTokens.clients.0.name",
+      "hostPatch.serviceTokens.clients.0.generation",
+      "externalBackend.secretProvider",
+      "externalBackend.secureDeliveryChannel"
+    ],
+    "requires": [
+      "explicit deployment authorization",
+      "live baseline/TLS/network and worker scope verification",
+      "immutable artifact load/build verification",
+      "real identity and scope approval",
+      "backend secret-provider and secure handoff verification"
+    ],
+    "serverContacted": false,
+    "secretsRead": false,
+    "realGrantCreated": false
+  },
+  "sourceArchive": {
+    "sourceTree": "d587ffdf686c46509cc59a4cc88a63991ad638a1",
+    "kind": "git-tree-snapshot-not-commit",
+    "archive": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/service-token-rollout-preparation/application-source-d587ffdf686c.tar.gz",
+    "sha256": "6fe4537e963f1d6ccbe7f4be63bf9da752cd4018f76bd2953d8f43057c9ac5b2",
+    "bytes": 126837086,
+    "members": 2413,
+    "includedPaths": [
+      "package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "packages/happy-agent",
+      "packages/happy-wire",
+      "packages/happy-app",
+      "deploy/automation",
+      "docs/api/automation-control.openapi.json",
+      "docs/features/automation-control.md",
+      "AGENTS.md",
+      "DEPLOY.md",
+      "README.md",
+      "packages/happy-cli"
+    ],
+    "containsUntrackedWorkingFiles": false,
+    "deployed": false,
+    "fixtureDaemonSourceIncluded": true
+  },
+  "plannedChanges": {
+    "192.168.99.55": [
+      "candidate control image after isolated image acceptance",
+      "add approved serviceTokens public config only; preserve signed default/state/TLS/pair supervisor"
+    ],
+    "192.168.99.57": [
+      "new isolated static Web directory and atomic symlink after digest/assets checks"
+    ],
+    "4090Wsl2": []
+  },
+  "invariants": {
+    "signedMaxGrantMs": 3600000,
+    "restBind": "127.0.0.1:9010",
+    "privateGatewayBind": "192.168.99.55:9011",
+    "routePrefix": "/happy-control/v1/",
+    "reuseExistingTLS": true,
+    "changeProxyRoutes": false,
+    "restartOrRecreateExistingNginx": false,
+    "restartOrRecreateRelay": false,
+    "updateWorker": false,
+    "registerMcp": false,
+    "preferredRecovery": "revoke-services-keep-new-binary",
+    "downgradeRequiresStateCompatibilityTest": true,
+    "preserveCurrentStateAndRevocationsOnRollback": true,
+    "revokeServiceGrantsBeforeDowngrade": true,
+    "rollbackConfigAndImageTogether": true
+  },
+  "proposedAcceptanceScope": {
+    "approved": false,
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "projectID": "automation-test",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "methods": [
+      "machines.list",
+      "sessions.list",
+      "tasks.create",
+      "requests.get",
+      "sessions.send",
+      "sessions.status",
+      "sessions.logs",
+      "sessions.result",
+      "sessions.cancel"
+    ],
+    "sessionIDs": [],
+    "recommendedInitialGrantMs": 3600000
+  },
+  "verification": {
+    "nodeContractTests": 6,
+    "failed": 0,
+    "nodeSyntaxCheck": "passed",
+    "existingProxyTemplateContracts": "passed; unchanged routes cover new REST paths",
+    "publicHostPatchAgainstBuiltSchema": "passed on public-only fixture with synthetic public key; signed policy/clients/workers unchanged",
+    "draftRejection": "incomplete host patch rejected; no apply/deploy command",
+    "independentReadOnlyReview": "passed; source archive saved per review advice",
+    "applicationTestsBuildsAndBrowser": "unchanged application; reused prior local implementation evidence, not rerun",
+    "productionImageBuildOrIntegration": "not performed",
+    "dependencyInstall": "none"
+  },
+  "notVerified": [
+    "current server/process/image/config/static/TLS state (historical baselines only)",
+    "candidate control image ID and archive checksum",
+    "candidate Web archive checksum and final release target",
+    "real service owner/id/name/generation",
+    "backend secret-provider and secure handoff references",
+    "real consent/grant/token",
+    "old-binary compatibility with additive current state before image downgrade"
+  ],
+  "rollback": {
+    "preferred": "revoke service grants and keep new binary; optionally disable feature then controlled pair restart",
+    "imageDowngrade": "extra isolated state-compatibility verification required; restore matched old config and image together",
+    "state": "keep current state, revocations/proof tombstones/receipts; never restore old checkpoint as normal rollback",
+    "scope": "do not cancel daily or bridge sessions"
+  },
+  "boundaries": {
+    "deploymentHostsContacted": false,
+    "credentialFilesReadOrPrinted": false,
+    "realPrivateKeysTokensGrantsAccountsCreated": false,
+    "installedOrDeployed": false,
+    "listenersOpened": false,
+    "servicesRestartedOrReconfigured": false,
+    "mcpRegistered": false,
+    "workerOrRelayChanged": false,
+    "ciQueriedOrRun": false,
+    "commitPushOrMerge": false
+  },
+  "files": [
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/service-token-rollout.json.example",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/service-token-plan.mjs",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/service-token-plan.test.mjs",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/service-token-rollout.md",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/README.md",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/docs/features/automation-control.md",
+    "/home/dev/code/happy/.dev/worktree/clever-ocean/deploy/automation/site-99-55/validation.service-token-plan-local-2026-11-04.json"
+  ],
+  "git": {
+    "originalStagedPaths": 129,
+    "preserved": true,
+    "taskPathsStaged": true,
+    "committed": false,
+    "pushed": false,
+    "merged": false
+  }
+}

@@ -1,0 +1,6 @@
+# Review only. Do not install during preparation; use an approved independent maintenance controller.
+# Existing User, KillMode=process, credential delivery, environment and restart policy are inherited.
+[Service]
+WorkingDirectory=/home/dev/.local/share/happy-automation/releases/multi-project-11313dcc1ba0/packages/happy-cli
+ExecStart=
+ExecStart=/home/dev/.local/share/pnpm/nodejs/22.22.0/bin/node /home/dev/.local/share/happy-automation/releases/multi-project-11313dcc1ba0/packages/happy-cli/bin/happy-control-worker.mjs --config /etc/happy-control/worker.json

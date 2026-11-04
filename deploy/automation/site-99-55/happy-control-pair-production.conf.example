@@ -1,0 +1,4 @@
+# Optional drop-in after explicitly approved root-only persistent TLS provisioning.
+# The trial unit without this drop-in deliberately fails after losing runtime TLS.
+[Service]
+ExecStartPre=/usr/bin/python3 /usr/local/libexec/happy-control-tls-maintain.py --config /etc/happy-control/tls.json ensure

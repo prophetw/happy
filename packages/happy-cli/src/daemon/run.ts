@@ -1,4 +1,8 @@
 import fs from 'fs/promises';
+import { cleanupAutomationDaemon } from './automationShutdown';
+import { createAutomationControl, observeOwnedProcess } from './automationControl';
+import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock } from './automationBootstrap';
+import { startDaemonAutomation, type DaemonAutomationOptions } from './automationWorker';
 import os from 'os';
 import * as tmp from 'tmp';
 import axios from 'axios';
@@ -14,7 +18,7 @@ import { startCaffeinate, stopCaffeinate } from '@/utils/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
-import { writeDaemonState, DaemonLocallyPersistedState, readDaemonState, acquireDaemonLock, releaseDaemonLock, readPersistedSessions, persistSession, markSessionStopped } from '@/persistence';
+import { writeDaemonState, DaemonLocallyPersistedState, readDaemonState, acquireDaemonLock, releaseDaemonLock, readPersistedSessions, readCredentials, readSettings, persistSession, markSessionStopped } from '@/persistence';
 import type { PersistedSession } from '@/persistence';
 
 import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
@@ -59,11 +63,12 @@ export const initialMachineMetadata: MachineMetadata = {
   resumeSupport: { ...detectResumeSupport(), rpcAvailable: true },
 };
 
-export async function startDaemon(): Promise<void> {
+export async function startDaemon(options: { automation?: DaemonAutomationOptions; existingOnly?: boolean; closeAutomationCredentials?: () => Promise<void> } = {}): Promise<void> {
   // The daemon may have been launched from a session process. Keep its normal
   // environment, but never let session lineage or reconnect state reach a
   // later, unrelated child session.
   const ambientEnvironment = sanitizeSessionEnvironment(process.env);
+  let managedReplacementExitCode = 0;
 
   // We don't have cleanup function at the time of server construction
   // Control flow is:
@@ -74,9 +79,12 @@ export async function startDaemon(): Promise<void> {
   //
   // In case the setup malfunctions - our signal handlers will not properly
   // shut down. We will force exit the process with code 1.
+  let shutdownRequested = false;
   let requestShutdown: (source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
   let resolvesWhenShutdownRequested = new Promise<({ source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
     requestShutdown = (source, errorMessage) => {
+      if (shutdownRequested) return;
+      shutdownRequested = true;
       logger.debug(`[DAEMON RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
 
       // Fallback - in case startup malfunctions - we will force exit the process with code 1
@@ -87,7 +95,7 @@ export async function startDaemon(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 100))
 
         process.exit(1);
-      }, 1_000);
+      }, options.existingOnly ? 25_000 : 1_000);
 
       // Start graceful shutdown
       resolve({ source, errorMessage });
@@ -132,22 +140,26 @@ export async function startDaemon(): Promise<void> {
 
   // Check if already running
   // Check if running daemon version matches current CLI version
-  const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledHappyVersion();
-  if (!runningDaemonVersionMatches) {
-    // TODO: This hand-rolled self-restart path is awkward to reason about and awkward to test.
-    // We should probably migrate this daemon to native system service management
-    // (launchd/systemd, similar to OpenClaw's model), so startup/start-at-login and upgrades
-    // are owned by the OS instead of by the daemon trying to replace itself in-process.
-    logger.debug('[DAEMON RUN] Daemon version mismatch detected, restarting daemon with current CLI version');
-    await stopDaemon();
+  if (options.existingOnly) {
+    await assertNoAutomationDaemonState(configuration.daemonStateFile);
   } else {
-    logger.debug('[DAEMON RUN] Daemon version matches, keeping existing daemon');
-    console.log('Daemon already running with matching version');
-    process.exit(0);
+    const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledHappyVersion();
+    if (!runningDaemonVersionMatches) {
+      // TODO: This hand-rolled self-restart path is awkward to reason about and awkward to test.
+      // We should probably migrate this daemon to native system service management
+      // (launchd/systemd, similar to OpenClaw's model), so startup/start-at-login and upgrades
+      // are owned by the OS instead of by the daemon trying to replace itself in-process.
+      logger.debug('[DAEMON RUN] Daemon version mismatch detected, restarting daemon with current CLI version');
+      await stopDaemon();
+    } else {
+      logger.debug('[DAEMON RUN] Daemon version matches, keeping existing daemon');
+      console.log('Daemon already running with matching version');
+      process.exit(0);
+    }
   }
 
   // Acquire exclusive lock (proves daemon is running)
-  const daemonLockHandle = await acquireDaemonLock(5, 200);
+  const daemonLockHandle = options.existingOnly ? await acquireAutomationDaemonLock(configuration.daemonLockFile) : await acquireDaemonLock(5, 200);
   if (!daemonLockHandle) {
     logger.warn('[DAEMON RUN] Failed to acquire daemon lock; daemon startup did not complete');
     process.exit(1);
@@ -161,7 +173,7 @@ export async function startDaemon(): Promise<void> {
     // Happy Agent is a machine-level service shared by the mobile app and
     // Happy Terminal. Start it concurrently and keep this daemon boot path
     // independent from its install/download/network state.
-    startHappyTerminalDaemon();
+    if (!options.existingOnly) startHappyTerminalDaemon();
 
     // Start caffeinate
     const caffeinateStarted = startCaffeinate();
@@ -170,7 +182,9 @@ export async function startDaemon(): Promise<void> {
     }
 
     // Ensure auth and machine registration BEFORE anything else
-    const { credentials, machineId } = await authAndSetupMachineIfNeeded();
+    const { credentials, machineId } = options.existingOnly
+      ? await existingAutomationAuth(options.automation?.registration.machineID, { credentials: readCredentials, settings: readSettings })
+      : await authAndSetupMachineIfNeeded();
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
 
     // Setup state - key by PID
@@ -1049,11 +1063,12 @@ export async function startDaemon(): Promise<void> {
     };
 
     // Get or create machine
-    const machine = await api.getOrCreateMachine({
+    const machine = options.existingOnly ? await api.getExistingAutomationMachine(machineId) : await api.getOrCreateMachine({
       machineId,
       metadata: initialMachineMetadata,
       daemonState: initialDaemonState
     });
+    if (options.existingOnly) machine.daemonState = initialDaemonState;
     logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
     // Create realtime machine session
@@ -1061,7 +1076,22 @@ export async function startDaemon(): Promise<void> {
     connectionReady = () => apiMachine.isReady();
 
     // Set RPC handlers
+    const automationControl = createAutomationControl({
+        directory: join(configuration.happyHomeDir, 'automation-receipts', machineId),
+        // Use the existing spawn path without exposing env, shell, tokens or permission overrides.
+        spawn: directory => spawnSession({ directory, agent: 'codex', approvedNewDirectoryCreation: false,
+          permissionMode: 'default', modelMode: 'gpt-6.1-sol', effortLevel: 'high' }),
+        stop: stopSession,
+        observe: sessionID => {
+          const tracked = getCurrentChildren().find(s => s.happySessionId === sessionID)
+            ?? sessionIdToFinishedSession.get(sessionID);
+          return observeOwnedProcess(tracked ? { pid: tracked.pid,
+            owned: tracked.startedBy === 'daemon' && !!tracked.childProcess,
+            stopping: stoppingPids.has(tracked.pid) } : undefined);
+        },
+      });
     apiMachine.setRPCHandlers({
+      automationControl,
       spawnSession,
       resumeSession,
       stopSession,
@@ -1070,6 +1100,10 @@ export async function startDaemon(): Promise<void> {
 
     // Connect to server
     apiMachine.connect();
+    const automationWorker = options.automation ? await startDaemonAutomation(options.automation, {
+      machine, token: credentials.token, serverUrl: configuration.serverUrl, happyHomeDir: configuration.happyHomeDir,
+      sessions: () => [...sessionIdToFinishedSession.values(), ...getCurrentChildren()], control: automationControl,
+    }) : null;
 
     // Every 60 seconds:
     // 1. Prune stale sessions
@@ -1079,7 +1113,7 @@ export async function startDaemon(): Promise<void> {
     const heartbeatIntervalMs = parseInt(process.env.HAPPY_DAEMON_HEARTBEAT_INTERVAL || '60000');
     let heartbeatRunning = false
     const restartOnStaleVersionAndHeartbeat = setInterval(async () => {
-      if (heartbeatRunning) {
+      if (heartbeatRunning || (options.existingOnly && shutdownRequested)) {
         return;
       }
       heartbeatRunning = true;
@@ -1108,6 +1142,12 @@ export async function startDaemon(): Promise<void> {
         } catch {
           // File temporarily missing (e.g. mid-install) — retry on next heartbeat.
         }
+      }
+      if (bundleReplaced && bundleReplacementAction(options.existingOnly ?? false) === 'supervisor') {
+        clearInterval(restartOnStaleVersionAndHeartbeat);
+        managedReplacementExitCode = 75;
+        requestShutdown('os-signal'); // supervisor must restart with the same explicit automation configuration
+        return;
       }
       if (bundleReplaced) {
         // TODO: We probably do not want to keep this in-process self-restart logic long-term.
@@ -1146,9 +1186,11 @@ export async function startDaemon(): Promise<void> {
       if (daemonState && daemonState.pid !== process.pid) {
         logger.debug('[DAEMON RUN] Somehow a different daemon was started without killing us. We should kill ourselves.')
         requestShutdown('exception', 'A different daemon was started without killing us. We should kill ourselves.')
+        if (options.existingOnly) return;
       }
 
       // Heartbeat
+      if (options.existingOnly && shutdownRequested) { heartbeatRunning = false; return; }
       try {
         const updatedState: DaemonLocallyPersistedState = {
           pid: process.pid,
@@ -1172,6 +1214,22 @@ export async function startDaemon(): Promise<void> {
     // Setup signal handlers
     const cleanupAndShutdown = async (source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
       logger.debug(`[DAEMON RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
+
+      if (options.existingOnly) {
+        clearInterval(restartOnStaleVersionAndHeartbeat);
+        const result = await cleanupAutomationDaemon({
+          stopWorker: async () => { await automationWorker?.stop(); },
+          closeCredentials: options.closeAutomationCredentials,
+          announce: () => apiMachine.updateDaemonState(state => ({ ...state, status: 'shutting-down', shutdownRequestedAt: Date.now(), shutdownSource: source })),
+          disconnect: () => apiMachine.shutdown(), stopControl: stopControlServer,
+          clearState: () => clearOwnedAutomationState(configuration.daemonStateFile, configuration.daemonLockFile, daemonLockHandle),
+          releaseLock: () => releaseOwnedAutomationLock(configuration.daemonStateFile, configuration.daemonLockFile, daemonLockHandle),
+          stopCaffeinate,
+        }, (phase, outcome) => logger.debug(`[DAEMON RUN] Managed shutdown ${phase}: ${outcome}`));
+        process.exit(result.localOwnershipReleased ? managedReplacementExitCode : 1);
+      }
+
+      await automationWorker?.stop();
 
       // Clear health check interval
       if (restartOnStaleVersionAndHeartbeat) {
@@ -1197,7 +1255,7 @@ export async function startDaemon(): Promise<void> {
       await releaseDaemonLock(daemonLockHandle);
 
       logger.debug('[DAEMON RUN] Cleanup completed, exiting process');
-      process.exit(0);
+      process.exit(managedReplacementExitCode);
     };
 
     logger.debug('[DAEMON RUN] Daemon started successfully, waiting for shutdown request');

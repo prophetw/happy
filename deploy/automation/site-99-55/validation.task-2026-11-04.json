@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T03:56:05.190711+00:00",
+  "status": "REAL_TASK_CONTROL_VERIFIED_INTERRUPTED_TURN_RESULT_UNKNOWN",
+  "worktree": "/home/dev/code/happy/.dev/worktree/clever-ocean",
+  "branch": "clever-ocean",
+  "scope": {
+    "id": "391cb63d-9b3b-4394-b6c4-80ac5d579112",
+    "clientID": "assistant-rest",
+    "workerID": "worker-4090wsl2",
+    "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+    "projectID": "automation-test",
+    "projectRealpath": "/home/dev/code/happy-automation-test",
+    "methods": [
+      "machines.list",
+      "sessions.list",
+      "tasks.create",
+      "requests.get",
+      "sessions.send",
+      "sessions.status",
+      "sessions.logs",
+      "sessions.result",
+      "sessions.cancel"
+    ],
+    "sessionIDs": [],
+    "expiresAt": 1793767088716
+  },
+  "authorization": {
+    "ownerConfirmedApprovalInChat": true,
+    "approvedGrantProvedBySuccessfulSignedREST": true,
+    "ownerApprovalPerformedByAssistant": false,
+    "credentialsExportedOrPrinted": false
+  },
+  "invocationChain": "existing assistant exec -> existing operator SSH -> fixed bounded signer adapter on 99.55 -> signed REST via 99.57 HTTPS -> 99.55 control -> outbound trusted 4090Wsl2 worker -> existing daemon/relay ciphertext transport",
+  "task": {
+    "taskID": "accept_20261104_034800_create",
+    "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+    "requestIDs": {
+      "create": "accept_20261104_034800_create",
+      "sendA": "accept_20261104_034800_send_a",
+      "sendB": "accept_20261104_034800_send_b",
+      "sendCancel": "accept_20261104_034800_send_cancel",
+      "cancel": "accept_20261104_034800_cancel"
+    },
+    "createReceipt": {
+      "requestID": "accept_20261104_034800_create",
+      "taskID": "accept_20261104_034800_create",
+      "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+      "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+      "state": "confirmed",
+      "process": "running"
+    },
+    "agentModel": "gpt-6.1-sol",
+    "effort": "high",
+    "runtimeArgumentsVerified": true
+  },
+  "checks": {
+    "sessionsList": true,
+    "sessionPagination": true,
+    "createConfirmed": true,
+    "persistentCreateReceipt": true,
+    "createdProcessRunning": true,
+    "createSameIDSameSession": true,
+    "deny-project": true,
+    "deny-machine": true,
+    "deny-session": true,
+    "turnADurableSendAck": true,
+    "turnASendDedupAndConflict": true,
+    "turnACursorMonotonic": true,
+    "turnACompleted": true,
+    "turnAResultAttributed": true,
+    "turnBDurableSendAck": true,
+    "turnBSendDedupAndConflict": true,
+    "turnBCursorMonotonic": true,
+    "turnBCompleted": true,
+    "turnBResultAttributed": true,
+    "cancelObservedDuringRunningTurn": true,
+    "cancelActualStopConfirmedViaReceipt": true,
+    "cancelActualStopConfirmedViaStatus": true,
+    "cancelAckSeparatedFromStop": true,
+    "oneDedicatedSessionOnly": true,
+    "machinesListOnlyGrantedMachine": true,
+    "threeDurableUserMessagesReadBackOnce": true,
+    "nativeParentAndProcessGroupESRCH": true,
+    "workerPIDUnchanged": true,
+    "noInstructionsOrCancelToExistingSessions": true
+  },
+  "checkCount": 29,
+  "normalTurns": [
+    {
+      "turnID": "mdoakxe3rtwl12iy5ilu5bzm",
+      "outcome": "completed",
+      "resultAttribution": "session_turn_only",
+      "reply": [
+        "HAPPY_REST_ACCEPT_A_accept_20261104_034800"
+      ],
+      "messageReceipt": {
+        "requestID": "accept_20261104_034800_send_a",
+        "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+        "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+        "state": "submitted",
+        "messageID": "cmw1kxsvp006qml1d57nortzs",
+        "seq": 1
+      }
+    },
+    {
+      "turnID": "ll2ch0a94h1xtk2uf63ar2xo",
+      "outcome": "completed",
+      "resultAttribution": "session_turn_only",
+      "reply": [
+        "HAPPY_REST_ACCEPT_B_accept_20261104_034800"
+      ],
+      "messageReceipt": {
+        "requestID": "accept_20261104_034800_send_b",
+        "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+        "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+        "state": "submitted",
+        "messageID": "cmw1kybut006yml1dm26bv715",
+        "seq": 8
+      }
+    }
+  ],
+  "cancel": {
+    "observedDuringRunningTurn": true,
+    "initialAck": {
+      "requestID": "accept_20261104_034800_cancel",
+      "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+      "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+      "state": "cancel_requested",
+      "process": "stopping"
+    },
+    "confirmedReceipt": {
+      "requestID": "accept_20261104_034800_cancel",
+      "machineID": "9c2c1c7e-28f3-4e9c-a77a-3064f31c3386",
+      "sessionID": "cmw1kwkr40062ml1dq4vabqsr",
+      "state": "cancel_requested",
+      "process": "stopped",
+      "safeToRetrySameRequestID": false
+    },
+    "directStatusProcess": "stopped",
+    "processPID": 1725440,
+    "processGroup": 1725440,
+    "nativeProbes": {
+      "parent": "ESRCH",
+      "group": "ESRCH"
+    },
+    "remainingKnownGroupPIDs": [],
+    "interruptedTurnID": "erz32bxrsjq6osdbuizg9ys6",
+    "interruptedTurnResultReady": false,
+    "interruptedTurnOutcome": "unknown"
+  },
+  "safety": {
+    "onlyOneDedicatedSession": true,
+    "testPromptToolOrFilesystemActionsRequested": false,
+    "noMutationAddressedExistingSessions": true,
+    "workerPIDBeforeAndAfter": 737095,
+    "workerActiveAfter": true,
+    "otherDaemonOwnedSessionsObservedBeforeCancel": 0,
+    "otherOriginalSessionLivenessNotRechecked": true,
+    "realRevocationOrExpiryTested": false,
+    "servicesRestartedOrRedeployed": false,
+    "ciQueriedOrRun": false
+  },
+  "trace": {
+    "localArtifacts": "/home/dev/code/happy/.dev/worktree/clever-ocean/.e2e-artifacts/rest-live-20261104T034800Z",
+    "recordedCalls": 42,
+    "storedUserMessageCount": 3,
+    "storedUserMessagesReadBackOnce": true
+  },
+  "limitations": [
+    "Interrupted turn has no terminal event: result stays ready=false/outcome=unknown despite confirmed stopped process",
+    "Real Happy account QR login itself was not observed by assistant",
+    "Real expiry/revocation/reboot/reconnect fault tests not performed in this live acceptance; prior fixture coverage only",
+    "Dedicated MCP platform registration remains unconfigured; actual current invocation uses existing privileged operator SSH to the fixed signer",
+    "Grant expires at 2026-11-04 12:38:08 UTC+8; only automation-test project and sessions created by this grant are authorized"
+  ],
+  "git": {
+    "staged": true,
+    "committed": false,
+    "pushed": false,
+    "merged": false
+  }
+}

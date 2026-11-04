@@ -1,0 +1,110 @@
+{
+  "status": "LOCAL_PAIR_EXIT_RECOVERY_VERIFIED_TARGET_SYSTEMD_UNVERIFIED",
+  "sessionDate": "2026-11-03",
+  "scope": "local isolated containers and synthetic identities only",
+  "images": {
+    "control": "sha256:d0f250c5cd866d18c2214edf9b6ee9d0c7b3ea7b49e4526b501dc492be227503",
+    "localTag": "happy-control-fixture-79cc7ca7:local",
+    "nodeBase": "sha256:6e6261159fd399ebe5a3d556b7d89da9c85c873f3f270918aad6c8107da8b411",
+    "nodeVersion": "22.23.2",
+    "nginx": "sha256:3dd08163706a20b20622f310ec10258cc96e9007ab357f7201955bc880ac17f4",
+    "nginxVersion": "1.31.6",
+    "registryPull": false,
+    "packageRegistry": "https://registry.npmmirror.com",
+    "builder": "local legacy builder, staged source context, 1 CPU and 2 GiB per RUN"
+  },
+  "checks": {
+    "nativeContainerChecksPassed": 38,
+    "siteContractTestsPassed": 6,
+    "processStopTestsPassed": 5,
+    "pairedPolicyTestsPassed": 3,
+    "isolatedSystemdUnitSyntaxExit": 0,
+    "sigintDuringDockerExec": {
+      "runID": "happy-control-fixture-906766e0",
+      "usesManagedPair": true,
+      "exit": 130,
+      "containersRemaining": 0,
+      "networksRemaining": 0,
+      "testKeysRemoved": true
+    },
+    "sigintDuringNonProcessWait": {
+      "runID": "happy-control-fixture-e04a964f",
+      "usesManagedPair": true,
+      "exit": 130,
+      "containersRemaining": 0,
+      "networksRemaining": 0,
+      "testKeysRemoved": true
+    },
+    "dockerBuildCliTermination": {
+      "exit": 143,
+      "ownedBuildContainerObserved": true,
+      "daemonRemovedContainer": true,
+      "containersRemaining": 0
+    }
+  },
+  "previousUnmanagedRestart": {
+    "method": "docker restart controlID; gateway ID and StartedAt unchanged",
+    "namespaceSharedBefore": true,
+    "namespaceSharedAfter": false,
+    "entryRecoveredWithin15Seconds": false,
+    "pairedForceRecreateRecovered": true
+  },
+  "managedPairRecovery": {
+    "foregroundComposeActuallyExecuted": true,
+    "unitStopScriptActuallyExecuted": true,
+    "dockerRestartPolicy": "no for both members",
+    "controlDirectRestart": "foreground exit 0; both IDs recreated; shared namespace and HTTPS entry recovered",
+    "gatewaySigkill": "foreground exit 137; both IDs recreated; shared namespace and HTTPS entry recovered",
+    "outerProxyManuallyReloadedDuringRecovery": false,
+    "fixtureOnlyDnsRefresh": "Docker DNS valid=1s; production connects to stable host IP",
+    "grantReceiptAndDedupPreserved": true,
+    "revocationAndExpiryPreserved": true,
+    "stopWithComposeConfigRemoved": "both members confirmed stopped individually",
+    "stopScope": "exact project + service + owner label; wrong-project and wrong-service fixture neighbours remained running",
+    "dockerEndpoint": "explicit local Unix socket and isolated credential-free CLI config",
+    "manualStopInFixtureDoesNotRestart": true,
+    "hardControlSigkill": {
+      "attempts": 3,
+      "bothMembersStopped": true,
+      "ownerLockPreserved": true,
+      "externalHttpStatus": 504,
+      "manualRecoveryRequired": true
+    },
+    "restartPolicyBoundary": "fresh fixture supervisor per independent scenario; counts up to 3; not a complete systemd 300-second window simulation",
+    "fixtureRetryDelayMs": 250,
+    "productionRetryDelayMs": 10000,
+    "productionStartLimit": "3 starts per 300 seconds; real manager not activated",
+    "actualSystemdActivated": false,
+    "automaticRecoveryReadyOnTarget": false,
+    "uncoveredFailure": "process stays alive but unhealthy/hung; Docker daemon unavailable or permission/stop failure cannot prove components stopped"
+  },
+  "fixtureBoundaries": {
+    "realHappyLogin": false,
+    "realAccountGrant": false,
+    "realRelayDatabase": false,
+    "realMachineDaemonOrAgent": false,
+    "ownerAuth": "temporary HTTPS profile fixture",
+    "worker": "HTTPWorkerRunner with host mock transport and receipt function",
+    "relay": "in-memory synthetic encrypted records",
+    "cancelEvidence": "mock process remains unknown"
+  },
+  "cleanup": {
+    "normalRunID": "happy-control-fixture-9aefe3dd",
+    "containersRemaining": 0,
+    "networksRemaining": 0,
+    "testKeysRemoved": true,
+    "localControlImageRetainedForReview": true
+  },
+  "unverified": [
+    "target Docker 27 and exact NGINX 1.30.1",
+    "production PKI and secret-provider projection",
+    "target source IP and firewall rules",
+    "real target systemd start/stop/start-limit, Docker restart propagation and host reboot",
+    "automatic recovery from live-but-unhealthy process, daemon/permission/stop failure or hard-crash stale lock",
+    "real Happy approval UI/phone/daemon/relay integration",
+    "actual cloud caller key hosting and registration"
+  ],
+  "productionDeployed": false,
+  "resolvedFixtureAssertion": "initial 502-only check failed after 34 passes; instrumented rerun observed 504 upstream timeout; now accepts 502/504 and independently confirms BOTH members stopped",
+  "ciUsed": false
+}

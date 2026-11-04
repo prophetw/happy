@@ -1,0 +1,8 @@
+{
+  "workerID": "worker-4090wsl2",
+  "machineID": "REPLACE_EXISTING_MACHINE_ID",
+  "projectID": "automation-test",
+  "methods": ["machines.list", "sessions.list", "tasks.create", "requests.get", "sessions.send", "sessions.status", "sessions.logs", "sessions.result", "sessions.cancel"],
+  "sessionIDs": [],
+  "expiresAt": 0
+}
