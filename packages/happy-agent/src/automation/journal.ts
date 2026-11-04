@@ -7,6 +7,8 @@ export type RecordEntry = {
     requestID: string; fingerprint: string; method: string; machineID: string;
     sessionID?: string; directory?: string; state: string; messageID?: string; seq?: number;
     cursor?: number;
+    /** Raw requested launch options (tasks.create only); never credentials or prompts. */
+    options?: { agent?: string; model?: string; permissionMode?: string; effort?: string };
 };
 export const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 /** Single-writer claim across processes; no prompt, credential or plaintext log persistence. */

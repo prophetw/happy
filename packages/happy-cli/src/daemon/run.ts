@@ -40,6 +40,7 @@ import {
 } from './sessionEnvironment';
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode, spawnWebhookTimeoutMs } from './spawnModeArgs';
+import { AUTOMATION_DEFAULT_AGENT, buildAutomationCatalog } from './automationOptions';
 import { hasPersistedProcessConflict, isPersistedSessionStopped, isPidAlive, machineBootTimeMs } from './sessionLiveness';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
@@ -1078,9 +1079,19 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     // Set RPC handlers
     const automationControl = createAutomationControl({
         directory: join(configuration.happyHomeDir, 'automation-receipts', machineId),
-        // Use the existing spawn path without exposing env, shell, tokens or permission overrides.
-        spawn: directory => spawnSession({ directory, agent: 'codex', approvedNewDirectoryCreation: false,
-          permissionMode: 'default', modelMode: 'gpt-6.1-sol', effortLevel: 'high' }),
+        // Delegated launches stay inside the owner's allowlist; omitted options
+        // reproduce the original fixed codex launch exactly.
+        spawn: (directory, launch) => spawnSession({ directory, agent: launch.agent as SpawnSessionOptions['agent'],
+          approvedNewDirectoryCreation: false, permissionMode: launch.permissionMode,
+          modelMode: launch.model, effortLevel: launch.effort || undefined }),
+        options: () => {
+            const catalog = buildAutomationCatalog(apiMachine.machineMetadata).map(entry => ({
+                agent: entry.agent, models: entry.models.map(m => m.key), permissionModes: entry.permissionModes.map(m => m.key),
+                efforts: entry.efforts, defaultModel: entry.defaultModel, defaultPermissionMode: entry.defaultPermissionMode,
+                defaultEffort: entry.defaultEffort,
+            }));
+            return { defaultAgent: AUTOMATION_DEFAULT_AGENT, catalog, policy: options.automation?.registration.launchOptions };
+        },
         stop: stopSession,
         observe: sessionID => {
           const tracked = getCurrentChildren().find(s => s.happySessionId === sessionID)

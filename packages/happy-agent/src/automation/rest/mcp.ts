@@ -5,13 +5,15 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { hash } from '../journal';
 import { ProofClient } from './client';
 import { ApiError, identifier, scopeSchema } from './schema';
+import { taskOptionsSchema } from './options';
 
 const page = { cursor: z.string().max(256).optional(), limit: z.number().int().min(1).max(200).optional() };
 const events = { sessionID: identifier, after_seq: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).optional() };
 export const toolContracts = {
     happy_machines: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/machines', query: true },
     happy_sessions: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/sessions', query: true },
-    happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier }).strict(), route: (_: any) => '/tasks' },
+    happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional() }).strict(), route: (_: any) => '/tasks' },
+    happy_options: { method: 'GET', schema: z.object({ machineID: identifier }).strict(), route: (_: any) => '/options', query: true },
     happy_send: { method: 'POST', schema: z.object({ sessionID: identifier, requestID: identifier, text: z.string().min(1).max(100000) }).strict(), route: (a: any) => `/sessions/${a.sessionID}/messages`, omit: 'sessionID' },
     happy_status: { method: 'GET', schema: z.object(events).strict(), route: (a: any) => `/sessions/${a.sessionID}/status`, query: true, omit: 'sessionID' },
     happy_events: { method: 'GET', schema: z.object(events).strict(), route: (a: any) => `/sessions/${a.sessionID}/events`, query: true, omit: 'sessionID' },
@@ -32,11 +34,12 @@ export async function callControlTool(client: ProofClient, grantID: string, name
     return client.request(contract.method, route, contract.method === 'POST' ? values : undefined, grantID);
 }
 /** Create/send stay two durable operations, with deterministic child IDs visible on uncertainty. */
-export async function startTask(client: ProofClient, grantID: string, input: { requestID: string; machineID: string; projectID: string; text: string }) {
+export async function startTask(client: ProofClient, grantID: string, input: { requestID: string; machineID: string; projectID: string; text: string;
+    options?: { agent?: string; model?: string; permissionMode?: string; effort?: string } }) {
     identifier.parse(input.requestID);
     const requests = { create: hash(`${input.requestID}:create`), send: hash(`${input.requestID}:send`) };
     let created: any;
-    try { created = await callControlTool(client, grantID, 'happy_create_task', { requestID: requests.create, machineID: input.machineID, projectID: input.projectID }); }
+    try { created = await callControlTool(client, grantID, 'happy_create_task', { requestID: requests.create, machineID: input.machineID, projectID: input.projectID, ...(input.options ? { options: input.options } : {}) }); }
     catch { return { requests, phase: 'create', result: { ok: false, error: { code: 'CONTROL_UNAVAILABLE_OR_UNKNOWN', retryable: false } } }; }
     if (!created.ok || created.data?.state !== 'confirmed' || !created.data?.sessionID) return { requests, phase: 'create', result: created };
     let sent: any;

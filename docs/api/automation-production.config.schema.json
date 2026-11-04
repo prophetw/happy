@@ -233,13 +233,69 @@
                     "sessions.status",
                     "sessions.logs",
                     "sessions.result",
-                    "sessions.cancel"
+                    "sessions.cancel",
+                    "options.list"
                   ]
                 }
               },
               "protocol": {
                 "type": "number",
                 "const": 1
+              },
+              "launchOptions": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "number",
+                    "const": 1
+                  },
+                  "agents": {
+                    "minItems": 1,
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "agent": {
+                          "type": "string",
+                          "enum": [
+                            "claude",
+                            "codex"
+                          ]
+                        },
+                        "models": {
+                          "default": [],
+                          "maxItems": 128,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                          }
+                        },
+                        "permissionModes": {
+                          "default": [],
+                          "maxItems": 16,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                          }
+                        }
+                      },
+                      "required": [
+                        "agent",
+                        "models",
+                        "permissionModes"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "version",
+                  "agents"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -497,7 +553,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -514,6 +571,56 @@
                         "type": "integer",
                         "exclusiveMinimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [
@@ -709,13 +816,69 @@
                   "sessions.status",
                   "sessions.logs",
                   "sessions.result",
-                  "sessions.cancel"
+                  "sessions.cancel",
+                  "options.list"
                 ]
               }
             },
             "protocol": {
               "type": "number",
               "const": 1
+            },
+            "launchOptions": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number",
+                  "const": 1
+                },
+                "agents": {
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "type": "string",
+                        "enum": [
+                          "claude",
+                          "codex"
+                        ]
+                      },
+                      "models": {
+                        "default": [],
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        }
+                      },
+                      "permissionModes": {
+                        "default": [],
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "models",
+                      "permissionModes"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "version",
+                "agents"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -904,7 +1067,8 @@
                   "sessions.status",
                   "sessions.logs",
                   "sessions.result",
-                  "sessions.cancel"
+                  "sessions.cancel",
+                  "options.list"
                 ]
               }
             },
@@ -921,6 +1085,56 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "agents": {
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "type": "string",
+                        "enum": [
+                          "claude",
+                          "codex"
+                        ]
+                      },
+                      "models": {
+                        "default": [],
+                        "maxItems": 128,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        }
+                      },
+                      "permissionModes": {
+                        "default": [],
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "models",
+                      "permissionModes"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "agents"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [

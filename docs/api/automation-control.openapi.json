@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Happy scoped automation control",
-    "version": "1.4.0",
-    "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. HTTP MCP OAuth and relay authentication are unchanged; service bearers do not authenticate MCP, owner or worker endpoints."
+    "version": "1.5.0",
+    "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. tasks.create accepts owner-allowlisted launch options (agent/model/permissionMode/effort) discovered via /options; grants may only narrow the worker allowlist. HTTP MCP OAuth and relay authentication are unchanged; service bearers do not authenticate MCP, owner or worker endpoints."
   },
   "servers": [
     {
@@ -56,7 +56,8 @@
                         "sessions.status",
                         "sessions.logs",
                         "sessions.result",
-                        "sessions.cancel"
+                        "sessions.cancel",
+                        "options.list"
                       ]
                     }
                   },
@@ -73,6 +74,56 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "options": {
+                    "type": "object",
+                    "properties": {
+                      "agents": {
+                        "minItems": 1,
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "agent": {
+                              "type": "string",
+                              "enum": [
+                                "claude",
+                                "codex"
+                              ]
+                            },
+                            "models": {
+                              "default": [],
+                              "maxItems": 128,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                              }
+                            },
+                            "permissionModes": {
+                              "default": [],
+                              "maxItems": 16,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                              }
+                            }
+                          },
+                          "required": [
+                            "agent",
+                            "models",
+                            "permissionModes"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "agents"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -1241,7 +1292,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -1258,6 +1310,56 @@
                         "type": "integer",
                         "exclusiveMinimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       },
                       "clientID": {
                         "type": "string",
@@ -1301,7 +1403,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -1318,6 +1421,56 @@
                         "type": "integer",
                         "exclusiveMinimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       },
                       "scopeVersion": {
                         "type": "number",
@@ -1375,7 +1528,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -1392,6 +1546,56 @@
                         "type": "integer",
                         "exclusiveMinimum": 0,
                         "maximum": 9007199254740991
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       },
                       "scopeVersion": {
                         "type": "number",
@@ -1483,7 +1687,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -1495,6 +1700,56 @@
                           "type": "string",
                           "pattern": "^[A-Za-z0-9_-]{1,128}$"
                         }
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       },
                       "clientID": {
                         "type": "string",
@@ -1543,7 +1798,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -1555,6 +1811,56 @@
                           "type": "string",
                           "pattern": "^[A-Za-z0-9_-]{1,128}$"
                         }
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       },
                       "scopeVersion": {
                         "type": "number",
@@ -1617,7 +1923,8 @@
                             "sessions.status",
                             "sessions.logs",
                             "sessions.result",
-                            "sessions.cancel"
+                            "sessions.cancel",
+                            "options.list"
                           ]
                         }
                       },
@@ -1629,6 +1936,56 @@
                           "type": "string",
                           "pattern": "^[A-Za-z0-9_-]{1,128}$"
                         }
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "agents": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string",
+                                  "enum": [
+                                    "claude",
+                                    "codex"
+                                  ]
+                                },
+                                "models": {
+                                  "default": [],
+                                  "maxItems": 128,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                },
+                                "permissionModes": {
+                                  "default": [],
+                                  "maxItems": 16,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "models",
+                                "permissionModes"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "agents"
+                        ],
+                        "additionalProperties": false
                       },
                       "scopeVersion": {
                         "type": "number",
@@ -2488,7 +2845,7 @@
     "/tasks": {
       "post": {
         "operationId": "createTask",
-        "description": "tasks.create; one explicit projectID selected from this grant, creates empty dedicated session. Send text separately with another stable requestID. Idempotency remains grant-wide: reusing one requestID for a different selected project conflicts.",
+        "description": "tasks.create; one explicit projectID selected from this grant, creates empty dedicated session. Optional options {agent,model,permissionMode,effort} select launch overrides; every override must be inside the worker allowlist AND this grant’s approved options subset (else OPTION_DENIED). Omit options for the worker defaults. Send text separately with another stable requestID. Idempotency remains grant-wide: reusing one requestID for a different selected project or different options conflicts.",
         "security": [
           {
             "ClientProof": []
@@ -2517,6 +2874,31 @@
                   "projectID": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                  },
+                  "options": {
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "type": "string",
+                        "enum": [
+                          "claude",
+                          "codex"
+                        ]
+                      },
+                      "model": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                      },
+                      "permissionMode": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                      },
+                      "effort": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -2529,6 +2911,143 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Mutation outcome uncertain: query the SAME requestID; no automatic redispatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "401",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "409",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "413",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "426": {
+            "description": "426",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "503",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options": {
+      "get": {
+        "operationId": "taskOptions",
+        "description": "options.list; discover selectable launch options for the grant-bound machine. Returns defaultAgent plus per-agent models/permissionModes/efforts (keys) already narrowed to this grant, with defaultModel/defaultPermissionMode/defaultEffort. Empty lists mean defaults only. Requires a worker/daemon with the options capability; older workers answer UNSUPPORTED_VERSION.",
+        "security": [
+          {
+            "ClientProof": []
+          },
+          {
+            "ServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "machineID",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "200",

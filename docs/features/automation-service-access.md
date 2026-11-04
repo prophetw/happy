@@ -93,6 +93,7 @@
 | 列机器 | `GET /machines?limit=100` | `machines.list` |
 | 列可访问会话 | `GET /sessions?limit=100` | `sessions.list` |
 | 创建空任务会话 | `POST /tasks` | `tasks.create` |
+| 发现可选启动项（v1.5.0） | `GET /options?machineID={绑定机器}` | `options.list` |
 | 发送首条或后续指令 | `POST /sessions/{sessionID}/messages` | `sessions.send` |
 | 按原 requestID 回查 | `GET /requests/{requestID}` | `requests.get` |
 | 查询任务状态 | `GET /tasks/{taskID}` 或 `GET /sessions/{sessionID}/status` | `sessions.status` |
@@ -100,7 +101,7 @@
 | 指定 turn 的最终结果 | `GET /sessions/{sessionID}/result?turnID={turnID}&after_seq=0&limit=100` | `sessions.result` |
 | 请求停止 | `POST /sessions/{sessionID}/cancel` | `sessions.cancel` |
 
-当前 v1 任务控制适配 Codex 专用会话，不提供任意 shell 执行接口，也不接受调用方任意指定工作目录、代理或模型。
+任务控制适配 Codex 与 Claude 专用会话（Claude 需 worker 白名单显式允许），不提供任意 shell 执行接口，也不接受调用方任意指定工作目录或代理。v1.5.0 起 `POST /tasks` 可携带可选 `options {agent,model,permissionMode,effort}`：每个显式值都必须同时在 worker 白名单与本 grant 的 options 子集内，否则返回 `OPTION_DENIED`；不传时保持固定默认启动。可选值与默认值通过 `GET /options` 按 grant 过滤后发现；`yolo`/`bypassPermissions` 等放权模式只有 owner 显式列入白名单才可用。详见 `happy-control-api-usage.md` 5.1 节。
 
 创建和发送是两步：`POST /tasks` 每次仍必须明确传入一个获准的 `projectID`，只创建该目录中的专用空会话，不接收项目数组或任务正文。先等待 `state=confirmed` 和明确的 `sessionID`，再发送指令。对返回的实际 ID 操作，不自行拼出 sessionID，也不能把其他授权的会话拿来使用。
 

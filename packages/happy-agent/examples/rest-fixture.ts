@@ -9,12 +9,22 @@ import { HTTPWorkerRunner } from '../src/automation/rest/worker';
 import { methods } from '../src/automation/control';
 import { encrypt, decrypt, encodeBase64, decodeBase64 } from '../src/encryption';
 import { createAutomationControl } from '../../happy-cli/src/daemon/automationControl';
+import type { LaunchOptionsPolicy, OptionCatalogEntry } from '../src/automation/rest/options';
+
+/** Synthetic keys-only catalog; no real Codex/Claude installation is consulted. */
+const fixtureCatalog: OptionCatalogEntry[] = [
+    { agent: 'codex', models: ['gpt-6.1-sol', 'gpt-6-sol'], permissionModes: ['default', 'auto', 'safe-yolo', 'read-only', 'yolo'],
+        efforts: ['low', 'medium', 'high'], defaultModel: 'gpt-6.1-sol', defaultPermissionMode: 'default', defaultEffort: 'high' },
+    { agent: 'claude', models: ['default', 'claude-opus-5'], permissionModes: ['default', 'auto', 'acceptEdits', 'plan', 'bypassPermissions'],
+        efforts: ['low', 'medium', 'high'], defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '' },
+];
 import type { Transport } from '../src/automation/relay';
 import type { DecryptedSession, DecryptedMachine } from '../src/api';
 
 /** Isolated real loopback HTTP + real receipts + synthetic encrypted relay. Never reads Happy home. */
 export async function fixtureRig(options: { timeoutMs?: number; clock?: () => number; externalIdentity?: import('../src/automation/rest/schema').ExternalIdentity;
-    origin?: string; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig } = {}) {
+    origin?: string; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig;
+    launchOptions?: LaunchOptionsPolicy } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'happy-rest-fixture-')), project = join(dir, 'project'); mkdirSync(project);
     const projectB = join(dir, 'project-b'), projectC = join(dir, 'project-c'); mkdirSync(projectB); mkdirSync(projectC);
     const now = options.clock ?? Date.now;
@@ -24,7 +34,8 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     const registration = { id: workerIdentity.id, userID: 'userA', name: 'Fixture worker', publicKey: workerIdentity.publicKey, machineID: 'machineA',
         projects: [{ id: 'projectA', directory: project, sessionIDs: ['existing'] }, ...(options.multipleProjects ? [
             { id: 'projectB', directory: projectB, sessionIDs: ['existingB'] }, { id: 'projectC', directory: projectC, sessionIDs: ['existingC'] },
-        ] : [])], ...(options.directorySelection ? { directorySelection: { roots: [dir] } } : {}), methods: [...methods], protocol: 1 as const };
+        ] : [])], ...(options.directorySelection ? { directorySelection: { roots: [dir] } } : {}), methods: [...methods], protocol: 1 as const,
+        ...(options.launchOptions ? { launchOptions: options.launchOptions } : {}) };
     const audit: unknown[] = [];
     const gatewayOptions = { directory: join(dir, 'gateway'), origin: options.origin ?? 'http://127.0.0.1', clients: [clientRegistration,
         { id: otherIdentity.id, userID: 'userB', name: 'Other user', publicKey: otherIdentity.publicKey }], workers: [registration],
@@ -43,9 +54,10 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     const sessions: DecryptedSession[] = [];
     const ciphertext = new Map<string, { id: string; seq: number; localId: string | null; c: string }[]>();
     let spawnCount = 0, sendCount = 0, processState = 'running', spawnDelay = 0, loseAck = false;
+    const launches: { directory: string; options: unknown }[] = [];
     let spawnBarrier: Promise<void> | undefined, releaseSpawn: (() => void) | undefined;
-    function addSession(id: string, directory = project) {
-        const s = { id, metadata: { machineId: 'machineA', path: directory, flavor: 'codex' }, agentState: {}, encryption, active: true } as DecryptedSession;
+    function addSession(id: string, directory = project, flavor = 'codex') {
+        const s = { id, metadata: { machineId: 'machineA', path: directory, flavor }, agentState: {}, encryption, active: true } as DecryptedSession;
         sessions.push(s); ciphertext.set(id, []); return s;
     }
     addSession('existing'); addSession('foreign', join(dir, 'different-project'));
@@ -55,7 +67,8 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
         const m = { id: `message_${list.length+1}`, seq: list.length+1, localId, c: encodeBase64(encrypt(key, 'dataKey', content)) }; list.push(m); return m;
     }
     const control = createAutomationControl({ directory: join(dir, 'daemon'),
-        spawn: async directory => { const number = ++spawnCount; if (spawnBarrier) await spawnBarrier; if (spawnDelay) await new Promise(r => setTimeout(r, spawnDelay)); return { type: 'success', sessionId: addSession(`session_${number}`, directory).id }; },
+        spawn: async (directory, launch) => { launches.push({ directory, options: launch }); const number = ++spawnCount; if (spawnBarrier) await spawnBarrier; if (spawnDelay) await new Promise(r => setTimeout(r, spawnDelay)); return { type: 'success', sessionId: addSession(`session_${number}`, directory, launch.agent).id }; },
+        options: () => ({ defaultAgent: 'codex', catalog: fixtureCatalog, policy: options.launchOptions }),
         stop: () => { processState = 'unknown'; return true; }, observe: () => processState as 'running' | 'stopping' | 'stopped' | 'unknown' });
     const transport: Transport = {
         machines: async () => [machine], sessions: async () => ({ sessions, nextCursor: null }),
@@ -83,7 +96,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
             origin: gatewayOptions.origin, authorization: `Bearer fixture-owner-${user}`,
         }, ...(body === undefined ? {} : { payload: body }) }); return { status: response.statusCode, body: response.json() };
     }
-    async function connect(scope: Partial<{ methods: typeof methods[number][]; expiresAt: number; sessionIDs: string[] }> = {}) {
+    async function connect(scope: Partial<{ methods: typeof methods[number][]; expiresAt: number; sessionIDs: string[]; options: import('../src/automation/rest/options').ConnectionOptions }> = {}) {
         const pending = await client.request('POST', '/connections', { workerID: 'worker', machineID: 'machineA', projectID: 'projectA', methods: [...methods], sessionIDs: [], expiresAt: now()+60000, ...scope });
         if (!pending.ok) throw new Error(`fixture setup: ${pending.error.code}`);
         const consent = await ownerRequest(`/connections/${pending.data.id}/consent`);
@@ -93,7 +106,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     return {
         dir, project, projectB, projectC, registration, gatewayOptions, clientIdentity, workerIdentity, otherIdentity, clientRegistration, transport, ciphertext, audit, statuses, addSession,
         get gateway() { return gateway; }, get client() { return client; }, get workerClient() { return workerClient; }, get address() { return address; },
-        get spawnCount() { return spawnCount; }, get sendCount() { return sendCount; },
+        get spawnCount() { return spawnCount; }, get sendCount() { return sendCount; }, get launches() { return launches; },
         pauseSpawn() { spawnBarrier = new Promise<void>(resolve => { releaseSpawn = resolve; }); return () => { releaseSpawn?.(); spawnBarrier = undefined; }; },
         delaySpawn(ms: number) { spawnDelay = ms; }, loseSendAck() { loseAck = true; }, setProcess(state: string) { processState = state; },
         complete(sessionID: string, turnID = 'turn1', outcome = 'completed', text = 'fixture result') {

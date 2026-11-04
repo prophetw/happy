@@ -1,8 +1,9 @@
 import { Journal, hash, type RecordEntry } from './journal';
 import { ControlError, type Transport } from './relay';
 import type { DecryptedSession } from '../api';
+import { taskOptionsSchema } from './rest/options';
 
-export const methods = ['machines.list', 'sessions.list', 'tasks.create', 'requests.get', 'sessions.send', 'sessions.status', 'sessions.logs', 'sessions.result', 'sessions.cancel'] as const;
+export const methods = ['machines.list', 'sessions.list', 'tasks.create', 'requests.get', 'sessions.send', 'sessions.status', 'sessions.logs', 'sessions.result', 'sessions.cancel', 'options.list'] as const;
 export type Policy = {
     version: 1; serverUrl: string; methods: string[];
     machines: { id: string; directories: string[] }[];
@@ -87,7 +88,9 @@ export class AutomationControl {
                 if (!this.policy.sessionIDs.includes(sessionID) && !this.journal.entries().some(e => e.method === 'tasks.create' && e.sessionID === sessionID
                     && e.machineID === obj(session.metadata).machineId && e.directory === obj(session.metadata).path
                     && this.policy.machines.some(m => m.id === e.machineID && m.directories.includes(e.directory!)))) throw new ControlError('FORBIDDEN');
-                if (obj(session.metadata).flavor !== 'codex') throw new ControlError('UNSUPPORTED_AGENT');
+                // Delegated launches support codex and claude; any other flavor
+                // stays outside the automation contract.
+                if (!['codex', 'claude'].includes(String(obj(session.metadata).flavor))) throw new ControlError('UNSUPPORTED_AGENT');
                 return session;
             }
             if (page.nextCursor === cursor) throw new ControlError('INVALID_RELAY_RESPONSE');
@@ -99,6 +102,7 @@ export class AutomationControl {
         this.allowedEntry(entry);
         const reply = await this.transport.rpc(await this.machine(entry.machineID), {
             version: 1, operation, requestID: entry.requestID, directory: entry.directory, sessionID: entry.sessionID,
+            ...(entry.options ? { options: entry.options } : {}),
         });
         if (reply.errorCode === 'NOT_FOUND' && operation === 'request') return { state: 'unavailable', safeToRetrySameRequestID: true };
         if (reply.errorCode) throw new ControlError(String(reply.errorCode));
@@ -138,7 +142,8 @@ export class AutomationControl {
             if (!this.policy.methods.includes(req.method)) throw new ControlError('FORBIDDEN');
             const fields: Record<string, string[]> = {
                 'machines.list': ['cursor', 'limit'], 'sessions.list': ['cursor', 'limit'],
-                'tasks.create': ['machineID', 'directory'], 'requests.get': [],
+                'tasks.create': ['machineID', 'directory', 'options'], 'requests.get': [],
+                'options.list': ['machineID'],
                 'sessions.send': ['sessionID', 'taskID', 'text'], 'sessions.cancel': ['sessionID', 'taskID'],
                 'sessions.status': ['sessionID', 'taskID', 'cursor', 'limit'], 'sessions.logs': ['sessionID', 'taskID', 'cursor', 'limit'],
                 'sessions.result': ['sessionID', 'taskID', 'cursor', 'limit', 'turnID'],
@@ -173,6 +178,13 @@ export class AutomationControl {
             const entry = this.journal.get(id(req.requestID));
             if (!entry) throw new ControlError('NOT_FOUND');
             return this.lookup(entry);
+        }
+        if (method === 'options.list') {
+            // Read-only catalog discovery. The scoped worker narrows the reply
+            // to what this grant may actually select before it leaves the machine.
+            const reply = await this.transport.rpc(await this.machine(id(req.machineID)), { version: 1, operation: 'options' });
+            if (reply.errorCode) throw new ControlError(String(reply.errorCode));
+            return reply;
         }
         let sessionID: string | undefined;
         if (method !== 'tasks.create') {
@@ -211,7 +223,12 @@ export class AutomationControl {
             const machineID = id(req.machineID), directory = req.directory;
             if (typeof directory !== 'string' || !this.allowedMachine(machineID).directories.includes(directory)) throw new ControlError('FORBIDDEN');
             if (req.text !== undefined) throw new ControlError('SEND_SEPARATELY');
-            entry = { requestID, method, machineID, directory, fingerprint: hash(JSON.stringify({ method, machineID, directory })), state: 'unknown' };
+            const parsed = taskOptionsSchema.safeParse(req.options ?? {});
+            if (!parsed.success) throw new ControlError('INVALID_REQUEST');
+            // Fixed key order keeps the idempotency fingerprint stable across callers.
+            const options = { agent: parsed.data.agent, model: parsed.data.model, permissionMode: parsed.data.permissionMode, effort: parsed.data.effort };
+            entry = { requestID, method, machineID, directory, options,
+                fingerprint: hash(JSON.stringify({ method, machineID, directory, options })), state: 'unknown' };
         } else {
             const session = await this.session(sessionID!);
             if (method === 'sessions.send' && (typeof req.text !== 'string' || !req.text.trim() || req.text.length > 100000)) throw new ControlError('INVALID_REQUEST');
@@ -236,6 +253,8 @@ export class AutomationControl {
         if (reply.sessionID !== undefined) entry.sessionID = id(reply.sessionID);
         entry.state = receiptState(reply.state);
         this.journal.save(entry);
-        return { ...this.receipt(entry), process: processState(reply.process) };
+        // The daemon echoes the fully-resolved launch selection on create.
+        return { ...this.receipt(entry), process: processState(reply.process),
+            ...(method === 'tasks.create' && reply.options && typeof reply.options === 'object' ? { options: reply.options } : {}) };
     }
 }

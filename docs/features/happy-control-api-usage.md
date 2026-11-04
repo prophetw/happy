@@ -6,6 +6,8 @@
 >
 > 本文依据 2026-11-04 线上 `/openapi.json`、`/compatibility` 实测结果及 `clever-ocean` 分支实现整理。
 > 未持有真实服务令牌，**需要鉴权的示例响应仅表示契约形状，未做线上端到端实测**；实际字段以响应为准。
+>
+> **版本提示**：文中启动选项（`/options`、`tasks.create` 的 `options`、授权白名单）为代码库 OpenAPI `1.5.0` 新增能力，需要控制端、worker 和 daemon 都部署到支持版本；旧组合的行为见「5.1 创建空会话」。其余章节描述的线上版本仍为 `1.3.0`。
 
 `/happy-control/v1/` 根路径本身返回 `404 NOT_FOUND`，这是正常行为，不是服务未启动。请直接调用具体路由，或先用 `/compatibility` 做只读探活。
 
@@ -26,10 +28,10 @@ Happy Control 是 Happy 的**受控自动化 REST 接口**：获授权的外部�
 
 - 不是 Happy 账号登录接口，不能换取或操作账号主密钥；
 - 不是任意 shell / 任意 RPC 执行接口；
-- 不支持调用方指定工作目录、模型、代理或权限模式；
+- 不支持调用方指定工作目录；agent、模型、权限模式只能在 **owner 配置的允许清单**内选择（见 5.1 的启动选项），未配置清单时一律使用固定默认启动；
 - 不是文件系统沙箱；项目范围约束的是控制入口和会话访问，执行代理仍遵循原有权限确认机制。
 
-当前 v1 任务控制只适配 **Codex 专用会话**；其他 agent 会返回 `UNSUPPORTED_AGENT`。
+任务控制适配 **Codex 与 Claude 专用会话**（Claude 需要 worker 白名单显式允许，既有会话也需相应授权）；其他 agent 会返回 `UNSUPPORTED_AGENT`。
 
 ---
 
@@ -65,7 +67,9 @@ Happy Control 是 Happy 的**受控自动化 REST 接口**：获授权的外部�
   - `sessions.result`
   - `sessions.cancel`
   - `requests.get`
+  - `options.list`（v1.5.0 起，发现可选择的启动选项）
 - 允许访问的既有 `sessionIDs`（可为空，默认只访问本 grant 新建的会话）；
+- 可选的启动选项子集 `options`（v1.5.0 起）：按 agent 列出允许的 `models` / `permissionModes`，只能比 worker 白名单更窄，审批 digest 会绑定它；
 - `expiresAt`（epoch 毫秒）。
 
 多项目授权中的所有项目共用同一套 methods、期限和撤销状态；每个任务仍需明确指定一个 `projectID`。
@@ -219,7 +223,49 @@ curl -sS -X POST "$BASE/tasks" \
 
 - 必须指定**一个**获准的 `projectID`；
 - 不能在创建请求里附带任务正文；
-- `requestID` 在同一 grant 内必须唯一且稳定；同一 ID 配不同参数会返回 `REQUEST_ID_CONFLICT`。
+- `requestID` 在同一 grant 内必须唯一且稳定；同一 ID 配不同参数（包括不同的 `options`）会返回 `REQUEST_ID_CONFLICT`。
+
+**可选启动选项（v1.5.0）**：body 可额外携带 `options`，四个字段都可省略，省略的字段使用 worker 默认值：
+
+```json
+{
+  "requestID": "job_1001_create",
+  "machineID": "machine_demo",
+  "projectID": "project_demo",
+  "options": { "agent": "codex", "model": "gpt-6-sol", "permissionMode": "yolo", "effort": "low" }
+}
+```
+
+- 每个显式给出的值都必须同时在 **worker 白名单**和**本 grant 的 options 子集**内，否则返回 `OPTION_DENIED`，不会创建任何会话；
+- `permissionMode: "yolo"`（Codex）/ `"bypassPermissions"`（Claude）等放权模式只有 owner 在白名单中显式列出才可用，调用方不能借此提权；
+- 不传 `options` 时保持原固定默认启动（Codex + `gpt-6.1-sol` + `default` + `high`），旧调用方行为不变；
+- worker 未配置白名单时，任何 `options` 覆盖都返回 `OPTION_DENIED`；daemon 不支持 options 能力时返回 426 `UNSUPPORTED_VERSION`；
+- 成功响应的 `data.options` 回显完整解析后的启动选择（含默认值），可据此核对实际生效配置。
+
+**发现可选项**：先调用 `GET /options?machineID=<绑定机器>`（需要 `options.list` 方法），返回已按本 grant 过滤的可选值和默认值，供用户选择：
+
+```json
+{
+  "version": 1,
+  "ok": true,
+  "data": {
+    "defaultAgent": "codex",
+    "agents": [
+      {
+        "agent": "codex",
+        "models": ["gpt-6.1-sol", "gpt-6-sol"],
+        "permissionModes": ["default", "auto", "yolo"],
+        "efforts": ["low", "medium", "high"],
+        "defaultModel": "gpt-6.1-sol",
+        "defaultPermissionMode": "default",
+        "defaultEffort": "high"
+      }
+    ]
+  }
+}
+```
+
+`models` / `permissionModes` 为空数组表示该 agent 只能用默认启动（无白名单的旧 worker 即如此）；`defaultEffort` 为空字符串表示不向 CLI 传 effort 参数。模型目录来自 daemon 实际安装的 Codex/Claude 目录刷新，随安装变化。
 
 成功响应示意：
 
@@ -468,6 +514,7 @@ curl -sS "$BASE/requests/job_1001_create" \
 | 401 | `OWNER_AUTH_REQUIRED` | owner 接口需要 Happy 登录，不是给后端用的 |
 | 403 | `OWNER_ORIGIN_REQUIRED` | owner 接口只允许同源 Web 请求 |
 | 403 | `SCOPE_DENIED` | 方法、机器、项目或会话不在批准范围 |
+| 403 | `OPTION_DENIED` | v1.5.0：启动选项不在 worker 白名单或本 grant options 子集内，或模型/effort 不在当前目录中；改用 `GET /options` 返回的可选值 |
 | 403 | `GRANT_NOT_APPROVED` | 授权尚未批准 |
 | 403 | `GRANT_EXPIRED` | 授权已到期；请用户重新授权，不能自动续期 |
 | 403 | `GRANT_REVOKED` | 授权已撤销；停止调用 |
@@ -488,7 +535,8 @@ curl -sS "$BASE/requests/job_1001_create" \
 - HTTP `202` 表示“修改结果不确定”；响应体仍是 `ok:false` + `UNAVAILABLE_OR_UNKNOWN`，必须按原 `requestID` 回查。
 - `TASK_NOT_CONFIRMED`：`taskID` 存在但会话尚未确认；先查询创建回执。
 - `TARGET_CONFLICT`：请求中的 `taskID` 与 `sessionID` 不一致；停止并核对。
-- `UNSUPPORTED_AGENT`：目标会话不是当前支持的 Codex 专用会话。
+- `UNSUPPORTED_AGENT`：目标会话不是当前支持的 Codex/Claude 会话。
+- `UNSUPPORTED_VERSION`（426）：worker/daemon 版本不支持所请求能力（例如 options 发现或带覆盖的创建）；升级或保持默认启动。
 - 401 区分“缺少凭据”和“凭据无效”；403 区分范围、到期、撤销；409 区分参数冲突和批准/签名重放。
 
 ---
@@ -547,7 +595,8 @@ curl -sS "$BASE/requests/job_1001_create" \
 | 普通请求体 | 最大 256 KiB |
 | 分页 | machines/sessions 单页最多 200；日志/状态/结果请求最多 500，服务端可能收窄到 100 |
 | 限流 | 服务身份约 240 次/分钟；单 IP 约 12000 次/分钟（以部署配置为准） |
-| 支持的 agent | 当前仅 Codex 专用会话 |
+| 支持的 agent | Codex、Claude 专用会话（Claude 需 worker 白名单允许；其他 agent 返回 `UNSUPPORTED_AGENT`） |
+| 启动选项 | 仅 worker 白名单与 grant options 子集内的值；未配置白名单时仅固定默认启动 |
 | 离线排队 | 不支持；worker 离线时返回 `WORKER_UNAVAILABLE` |
 | 权限确认 | `waitingForPermission=true` 时必须由用户在 Happy 中处理 |
 

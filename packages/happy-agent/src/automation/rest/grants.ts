@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { hash } from '../journal';
 import { canonicalBody, serviceClientFingerprint } from './auth';
 import { ApiError, checkBoundProjects, checkScopeProjects, scopeSchema, serviceScopeSchema, MAX_SERVICE_GRANT_MS, type Connection, type Registration, type ServiceClientRegistration, type Scope, type WorkerRegistration } from './schema';
+import { validateGrantOptions } from './options';
 import { MetadataStore } from './store';
 
 export class Grants {
@@ -19,6 +20,8 @@ export class Grants {
         const worker = this.workers.find(w => w.id === scope.workerID && w.userID === client.userID);
         if (!worker || scope.expiresAt > now + maxGrantMs) throw new ApiError('SCOPE_DENIED', 403);
         const projects = checkScopeProjects(scope, worker, now);
+        // A grant can only narrow the worker's owner-configured launch allowlist.
+        if (!validateGrantOptions(scope.options, worker.launchOptions)) throw new ApiError('SCOPE_DENIED', 403);
         const binding = 'projectIDs' in scope ? { projects: projects.map(p => ({ id: p.id, directory: p.directory })) } : { projectDirectory: projects[0].directory };
         const workerFingerprint = hash(worker.publicKey);
         const externalIdentity = 'externalIdentity' in client ? client.externalIdentity : undefined;
@@ -83,6 +86,8 @@ export class Grants {
         this.checkClient(c);
         try { checkBoundProjects(c, worker, this.now()); }
         catch (error) { if (error instanceof ApiError) this.invalidate(c, error.code); throw error; }
+        // Owner allowlist shrinkage revokes grants that can no longer be honoured.
+        if (!validateGrantOptions(c.options, worker.launchOptions)) this.invalidate(c, 'SCOPE_DENIED');
         return c;
     }
     checkMethod(c: Pick<Scope, 'methods'>, method: string) { if (!c.methods.includes(method as Scope['methods'][number])) throw new ApiError('SCOPE_DENIED', 403); }

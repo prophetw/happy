@@ -31,7 +31,7 @@ export function createDaemonTransport(bindings: DaemonTransportBindings): Transp
 
         },
         rpc: async (machine, input) => {
-            if (machine.id !== bindings.machine().id || input.version !== 1 || !['capabilities', 'create', 'request', 'status', 'cancel'].includes(String(input.operation))) throw new ControlError('UNSUPPORTED_VERSION');
+            if (machine.id !== bindings.machine().id || input.version !== 1 || !['capabilities', 'create', 'request', 'status', 'cancel', 'options'].includes(String(input.operation))) throw new ControlError('UNSUPPORTED_VERSION');
             const result = await bindings.control(input);
             if (!result || typeof result !== 'object' || !('version' in result) || result.version !== 1) throw new ControlError('UNSUPPORTED_VERSION');
             return result as Record<string, unknown>;

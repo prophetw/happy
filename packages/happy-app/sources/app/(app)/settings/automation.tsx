@@ -20,6 +20,7 @@ const methodLabels: Record<string, string> = {
     'machines.list': '查看授权机器', 'sessions.list': '列出授权会话', 'tasks.create': '创建专用任务',
     'requests.get': '查询操作回执', 'sessions.send': '追加任务指令', 'sessions.status': '查看任务状态',
     'sessions.logs': '读取增量日志', 'sessions.result': '读取任务结果', 'sessions.cancel': '请求停止任务',
+    'options.list': '发现可选启动项',
 };
 const stateLabels: Record<string, string> = { pending: '待你确认', approved: '已授权', expired: '已过期', revoked: '已撤销' };
 const errorLabels: Record<string, string> = {
@@ -176,6 +177,8 @@ export default function AutomationConnections() {
                                 <Detail label={consent.scopeVersion !== undefined ? `工作目录 ${index + 1}` : '工作目录'} value={project.directory} />
                             </View>)}
                             <Detail label="可访问的会话" value={consent.sessionIDs.length ? `本连接新建的专用会话，以及以下既有会话：${consent.sessionIDs.join(', ')}` : '仅本连接新建的专用会话；不含任何既有会话'} />
+                            {!!consent.options?.agents.length && <Detail label="允许的启动选项（默认启动始终可用）" value={consent.options.agents.map(a =>
+                                `${a.agent}：模型 [${a.models.length ? a.models.join(', ') : '仅默认'}]；权限模式 [${a.permissionModes.length ? a.permissionModes.join(', ') : '仅默认'}]`).join('\n')} />}
                             <Detail label="授权到期" value={formatTime(consent.expiresAt)} />
                             {state === 'pending' && <Detail label="请在此时间前确认" value={formatTime(consent.pendingUntil)} />}
                         </View>

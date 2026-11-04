@@ -537,6 +537,11 @@ export class ApiMachineClient {
 
     private registeredRpcMethods = new Set<string>();
 
+    /** Latest decrypted metadata, including periodically refreshed model catalogs. */
+    get machineMetadata(): MachineMetadata | null {
+        return this.machine.metadata;
+    }
+
     isReady(): boolean {
         return this.socket?.connected === true
             && this.registeredRpcMethods.has(`${this.machine.id}:spawn-happy-session`)

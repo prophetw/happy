@@ -7,6 +7,7 @@ import { canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { projectResponse } from './projection';
 import { ApiError, checkBoundProjects, type Connection, type WorkerRegistration } from './schema';
+import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
 
@@ -77,6 +78,30 @@ export class ScopedWorker {
         const capabilities = await wrapped.rpc(machine, { version: 1, operation: 'capabilities' });
         if (capabilities.version !== 1 || !Array.isArray(capabilities.operations)
             || !['create', 'request', 'status', 'cancel'].every(op => (capabilities.operations as unknown[]).includes(op))) throw new ApiError('UNSUPPORTED_VERSION', 426);
+        // Launch-option catalog is served by the daemon that actually spawns;
+        // a daemon without it cannot honour overrides or discovery.
+        const catalog = async (): Promise<OptionCatalog> => {
+            if (!(capabilities.operations as unknown[]).includes('options')) throw new ApiError('UNSUPPORTED_VERSION', 426);
+            const reply = await wrapped.rpc(machine, { version: 1, operation: 'options' });
+            const parsed = optionCatalogSchema.safeParse(reply);
+            if (!parsed.success) throw new ApiError('UNSUPPORTED_VERSION', 426);
+            return parsed.data;
+        };
+        if (command.method === 'options.list') {
+            if (command.machineID !== live.machineID) throw new ApiError('SCOPE_DENIED', 403);
+            const reply = await catalog();
+            // Only the options this grant may select leave the machine.
+            return { version: 1, ok: true, data: filterCatalogForGrant(reply, this.registration.launchOptions, live.options) };
+        }
+        if (command.method === 'tasks.create') {
+            const requested = taskOptionsSchema.parse(command.options ?? {});
+            const anyOverride = Object.values(requested).some(v => v !== undefined);
+            if (anyOverride || this.registration.launchOptions || live.options) {
+                const reply = await catalog();
+                try { resolveTaskOptions(requested, this.registration.launchOptions, live.options, reply.defaultAgent, reply.agents); }
+                catch (error) { if (error instanceof OptionsDenied) throw new ApiError('OPTION_DENIED', 403); throw error; }
+            }
+        }
         const core = new AutomationControl(wrapped, policy, new Journal(join(this.directory, hash(`${live.clientID}\n${live.id}`))));
         const result = await core.handle(command);
         await check(); return result;

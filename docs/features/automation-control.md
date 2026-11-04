@@ -29,10 +29,39 @@ REST 控制组件和 connector 会看见批准范围内的任务明文。Happy r
 | `packages/happy-cli/src/daemon/automationControl.ts` | 持久创建/取消回执、实际停止观察 |
 | `packages/happy-cli/src/daemon/automationWorker.ts`、`run.ts` | 显式 opt-in 启动接线，验证实际 Happy owner 与机器；默认不启用 |
 | `automation/rest/mcp.ts`、`client.ts` | 固定 MCP 输入输出到 REST 的映射，不提供 shell/fetch/任意 RPC |
+| `automation/rest/options.ts`、`happy-cli/src/daemon/automationOptions.ts` | 启动选项白名单/解析/按 grant 过滤；daemon 侧目录来自机器元数据中的 Codex/Claude 模型目录 |
 | `happy-app/sources/auth/automationApproval.ts`、`app/(app)/settings/automation.tsx` | 同站点专用批准/扫码/撤销页面；不访问账号 secret |
 | `docs/api/automation-control.openapi.json` | 从 `automation/rest/openapi.ts` 生成的 OpenAPI 3.1 |
 
 现有扫码账号登录的源码：`authQRStart.ts` → `/v1/auth/account/request` → 手机 `useConnectAccount.ts` → `/account/response` → `authQRWait.ts` → `TokenStorage`。该流程授予完整账号客户端，Web 保存于 localStorage，不能复用于本自动化 grant。现有 persistent Happy token 没有 exp，24h 是验证缓存 TTL；本方案不改变这套登录/注销语义。
+
+## 任务启动选项与权限白名单（v1.5.0，代码库新增，未部署验收）
+
+委派任务可以在 owner 明确允许的范围内选择 agent（`codex`/`claude`）、模型、权限模式和 effort；`yolo`/`bypassPermissions` 等放权模式因此不再是"永不暴露"，而是"只有 owner 列入白名单才可委派"。默认行为完全不变：不传 `options` 时仍按原固定参数启动 Codex 会话，未配置白名单的 worker 拒绝一切覆盖（`OPTION_DENIED`）。
+
+三层强制，任何一层都不能被调用方绕过：
+
+1. **授权创建/审批**：`POST /connections` 与 `POST /service-connections` 可携带 `options` 子集；grants 校验它必须是 worker 注册表 `launchOptions` 的子集，否则 `SCOPE_DENIED`。digest 绑定该子集，审批页展示即冻结。worker 白名单在注册表（host/worker 配置的 `launchOptions`）中由 owner 维护；白名单收缩会使不再可满足的旧 grant 在校验时撤销。
+2. **worker 执行前**：`ScopedWorker` 通过 daemon `options` RPC 取回实时目录，把请求的覆盖值同时对 worker 白名单、grant 子集和目录解析（`resolveTaskOptions`），失败返回 403 `OPTION_DENIED`。`options.list` 只返回按本 grant 过滤后的可选键与默认值（`filterCatalogForGrant`），不泄露其他 agent/模型的可用性。
+3. **daemon 最终解析**：`automationControl` 在真正 spawn 前用同一份白名单和本机模型目录再解析一次，不信任 worker 的单方判断；解析结果写入回执 `options` 并回显给调用方。幂等 fingerprint 覆盖规范化后的请求选项，同 `requestID` 不同选项返回 `REQUEST_ID_CONFLICT`。
+
+白名单在 host 与 worker 配置共用的 worker 注册表中声明（`launchOptions`，见 `docs/api/automation-production.config.schema.json`），例如：
+
+```json
+{
+  "launchOptions": {
+    "version": 1,
+    "agents": [
+      { "agent": "codex", "models": ["gpt-6.1-sol", "gpt-6-sol"], "permissionModes": ["auto", "yolo"] },
+      { "agent": "claude", "models": ["claude-opus-5"], "permissionModes": ["acceptEdits"] }
+    ]
+  }
+}
+```
+
+`models`/`permissionModes` 列出的是"允许调用方覆盖的值"，默认启动不需要列入；需要放权委派时才加入 `yolo`（Codex）或 `bypassPermissions`（Claude）。worker 注册的 `methods` 含 `options.list` 时，调用方才能通过 `GET /options` 发现这些可选项；服务授权创建页会把该能力列为可勾选的只读操作。
+
+兼容性：daemon `capabilities.operations` 只有在新版才包含 `options`；缺此能力时，发现与任何带覆盖的创建都返回 426 `UNSUPPORTED_VERSION`，纯默认创建不受影响。目录只含键（模型 ID、模式 ID），不经过自由文本投影；Claude 会话同 Codex 一样支持后续 send/status/logs（其他 flavor 仍 `UNSUPPORTED_AGENT`）。白名单约束的是"覆盖值"，owner 已配置的环境默认启动始终有效。另注意：创建回执的幂等 fingerprint 现在包含规范化后的请求选项，daemon 升级前写入的旧回执若用同一 `requestID` 重发创建，会返回 `REQUEST_ID_CONFLICT` 而不是直接重放；按原 `requestID` 查询回执即可核实原结果，不要换新 ID 重派。
 
 ## 独立助手连接协议
 

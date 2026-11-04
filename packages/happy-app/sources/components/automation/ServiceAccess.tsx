@@ -9,7 +9,7 @@ import { DirectoryPicker } from '@/components/DirectoryPicker';
 
 type API = ReturnType<typeof automationApprovalApi>;
 const day = 24 * 3600000;
-const labels: Record<string, string> = { 'machines.list': '查看机器', 'sessions.list': '列出会话', 'tasks.create': '创建任务', 'requests.get': '查询回执', 'sessions.send': '追加指令', 'sessions.status': '查看状态', 'sessions.logs': '读取日志', 'sessions.result': '读取结果', 'sessions.cancel': '取消任务' };
+const labels: Record<string, string> = { 'machines.list': '查看机器', 'sessions.list': '列出会话', 'tasks.create': '创建任务', 'requests.get': '查询回执', 'sessions.send': '追加指令', 'sessions.status': '查看状态', 'sessions.logs': '读取日志', 'sessions.result': '读取结果', 'sessions.cancel': '取消任务', 'options.list': '发现启动选项' };
 const readOnly = (methods: string[]) => methods.filter(m => !['tasks.create', 'sessions.send', 'sessions.cancel'].includes(m));
 function Button({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
     return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[styles.button, disabled && { opacity: 0.5 }]}><Text style={styles.text}>{label}</Text></Pressable>;

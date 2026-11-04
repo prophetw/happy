@@ -1,12 +1,16 @@
 import { z } from 'zod';
 import { directorySelectionSchema, externalIdentitySchema, identifier, method, scopeSchema, serviceTokensConfigSchema } from '../rest/schema';
+import { launchOptionsPolicySchema } from '../rest/options';
 import { privateRead } from '../rest/privateFs';
 
 const https = z.string().url().refine(s => { const u = new URL(s); return u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash; }, 'HTTPS endpoint required');
 const absolute = z.string().startsWith('/').max(4096);
 const publicKey = z.string().startsWith('-----BEGIN PUBLIC KEY-----').max(4096);
 export const registrationSchema = z.object({ id: identifier, userID: identifier, name: z.string().min(1).max(128), publicKey, externalIdentity: externalIdentitySchema.optional() }).strict();
-export const workerRegistrationSchema = registrationSchema.extend({ machineID: identifier, directorySelection: directorySelectionSchema.optional(), projects: z.array(z.object({ id: identifier, directory: absolute, sessionIDs: z.array(identifier).max(100) }).strict()).min(1), methods: z.array(method).min(1), protocol: z.literal(1) }).strict();
+export const workerRegistrationSchema = registrationSchema.extend({ machineID: identifier, directorySelection: directorySelectionSchema.optional(), projects: z.array(z.object({ id: identifier, directory: absolute, sessionIDs: z.array(identifier).max(100) }).strict()).min(1), methods: z.array(method).min(1), protocol: z.literal(1),
+    // Owner-approved launch allowlist for delegated tasks. Absent = fixed
+    // defaults only; any requested override is denied.
+    launchOptions: launchOptionsPolicySchema.optional() }).strict();
 const provider = z.object({ type: z.literal('encrypted-pkcs8-credentials'), credentialsDirectory: absolute,
     keys: z.record(identifier, z.object({ encryptedPKCS8: absolute, passphraseCredential: identifier }).strict()) }).strict();
 const oauth = z.object({ issuer: https, jwksURL: https, resource: https.refine(s => new URL(s).pathname === '/happy-control/mcp'), scope: z.literal('happy:control'),

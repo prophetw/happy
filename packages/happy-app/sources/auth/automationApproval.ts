@@ -6,6 +6,8 @@ export interface AutomationConsent {
     methods: string[]; sessionIDs: string[]; expiresAt: number; pendingUntil: number;
     externalIdentity?: { issuer: string; subject: string; tenant: string; oauthClientID: string };
     credentialMode?: 'service-token-v1';
+    /** Owner-approved launch option subset (v1.5.0). Absent = worker allowlist/defaults only. */
+    options?: { agents: { agent: string; models: string[]; permissionModes: string[] }[] };
     serviceToken?: { issued: boolean; issuedAt?: number; expiresAt?: number };
     state: string; digest: string; challenge: string; disclosure: string;
 }

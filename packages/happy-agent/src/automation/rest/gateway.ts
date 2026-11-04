@@ -10,7 +10,7 @@ import { MetadataStore } from './store';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
-import { ApiError, approvalSchema, createTaskSchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
+import { ApiError, approvalSchema, createTaskSchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
@@ -131,7 +131,7 @@ export function createGateway(options: GatewayOptions) {
         if (result?.ok === false) {
             const code = typeof result.error?.code === 'string' && /^[A-Z_]+$/.test(result.error.code) ? result.error.code : 'INVALID_WORKER_RESPONSE';
             if (code !== 'UNAVAILABLE_OR_UNKNOWN' || !mutation) {
-                const status = code === 'FORBIDDEN' || code === 'SCOPE_DENIED' || code === 'GRANT_REVOKED' ? 403
+                const status = code === 'FORBIDDEN' || code === 'SCOPE_DENIED' || code === 'GRANT_REVOKED' || code === 'OPTION_DENIED' ? 403
                     : code === 'NOT_FOUND' ? 404 : code === 'REQUEST_ID_CONFLICT' ? 409 : ['UNSUPPORTED_VERSION', 'WORKER_PROJECT_SCOPE_UPGRADE_REQUIRED', 'WORKER_DIRECTORY_SCOPE_UPGRADE_REQUIRED'].includes(code) ? 426
                     : code === 'UNAVAILABLE_OR_UNKNOWN' ? 503 : 400;
                 throw new ApiError(code, status);
@@ -250,11 +250,17 @@ export function createGateway(options: GatewayOptions) {
     app.get(`${base}/openapi.json`, async () => openapi);
     app.get(`${base}/capabilities`, async req => { await invoke(active(req, 'machines.list'), { method: 'machines.list', limit: 1 }); return ok({ protocol: 1, auth: 'ed25519-proof-v1', worker: 1, core: 1, offlineQueue: false }); });
     app.get(`${base}/machines`, async req => invoke(active(req, 'machines.list'), { method: 'machines.list', ...querySchema.parse(req.query) }));
+    app.get(`${base}/options`, async req => {
+        const c = active(req, 'options.list'), query = taskOptionsQuerySchema.parse(req.query);
+        if (query.machineID !== c.machineID) throw new ApiError('SCOPE_DENIED', 403);
+        return invoke(c, { method: 'options.list', machineID: query.machineID });
+    });
     app.get(`${base}/sessions`, async req => invoke(active(req, 'sessions.list'), { method: 'sessions.list', ...querySchema.parse(req.query) }));
     app.post(`${base}/tasks`, async (req, reply) => {
         const c = active(req, 'tasks.create'), body = createTaskSchema.parse(req.body);
         if (body.machineID !== c.machineID || !scopeProjectIDs(c).includes(body.projectID)) throw new ApiError('SCOPE_DENIED', 403);
-        const result = await invoke(c, { method: 'tasks.create', requestID: body.requestID, machineID: c.machineID, projectID: body.projectID }, true);
+        const result = await invoke(c, { method: 'tasks.create', requestID: body.requestID, machineID: c.machineID, projectID: body.projectID,
+            ...(body.options ? { options: body.options } : {}) }, true);
         return reply.code(result?.ok ? 200 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
     });
     for (const [suffix, methodName] of [['messages', 'sessions.send'], ['cancel', 'sessions.cancel']] as const) {

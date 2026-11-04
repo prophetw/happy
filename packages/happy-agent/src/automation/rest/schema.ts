@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { posix } from 'node:path';
 import { hash } from '../journal';
 import { methods } from '../control';
+import { taskOptionsSchema, connectionOptionsSchema, launchOptionsPolicySchema } from './options';
 
 export const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const method = z.enum(methods);
@@ -10,6 +11,8 @@ export const scopeSchema = z.object({
     methods: z.array(method).min(1).max(16).refine(a => new Set(a).size === a.length),
     sessionIDs: z.array(identifier).max(100).default([]),
     expiresAt: z.number().int().positive(),
+    /** Requested launch-option subset; the grant can only narrow the worker allowlist. */
+    options: connectionOptionsSchema.optional(),
 }).strict();
 export type Scope = z.infer<typeof scopeSchema>;
 export const MAX_SCOPE_PROJECTS = 32;
@@ -47,6 +50,8 @@ export const serviceConnectionSchema = z.union([
 export type WorkerRegistration = Registration & {
     machineID: string; projects: { id: string; directory: string; sessionIDs: string[] }[];
     methods: string[]; protocol: 1; directorySelection?: z.infer<typeof directorySelectionSchema>;
+    /** Owner-configured launch allowlist for delegated tasks on this machine. */
+    launchOptions?: z.infer<typeof launchOptionsPolicySchema>;
 };
 export type Connection = Omit<Scope, 'projectID'> & {
     projectID?: string; projectDirectory?: string;
@@ -54,13 +59,16 @@ export type Connection = Omit<Scope, 'projectID'> & {
     id: string; clientID: string; userID: string; clientName: string; clientFingerprint: string; workerFingerprint: string;
     externalIdentity?: ExternalIdentity;
     credentialMode?: 'service-token-v1';
+    /** Owner-approved launch-option subset. Absent = worker allowlist only. */
+    options?: z.infer<typeof connectionOptionsSchema>;
     state: 'pending' | 'approved' | 'revoked' | 'expired'; createdAt: number; pendingUntil: number;
     digest: string; challenge: string;
 };
 export const approvalSchema = z.object({ digest: z.string().length(64), challenge: identifier, credentialMode: z.literal('service-token-v1').optional(), scopeVersion: z.union([z.literal(2), z.literal(3)]).optional() }).strict();
 export const mutationSchema = z.object({ requestID: identifier }).strict();
-export const createTaskSchema = mutationSchema.extend({ machineID: identifier, projectID: identifier }).strict();
+export const createTaskSchema = mutationSchema.extend({ machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional() }).strict();
 export const sendSchema = mutationSchema.extend({ text: z.string().min(1).max(100000) }).strict();
+export const taskOptionsQuerySchema = z.object({ machineID: identifier }).strict();
 export const workerPollSchema = z.object({ protocol: z.literal(1), busy: z.boolean().optional(), projectScopes: z.literal(1).optional(), directoryScopes: z.literal(1).optional() }).strict();
 export const workerCheckSchema = z.object({ jobID: identifier }).strict();
 export const workerResultSchema = workerCheckSchema.extend({ result: z.unknown() }).strict();
