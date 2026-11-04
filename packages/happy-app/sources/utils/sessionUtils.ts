@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Session } from '@/sync/storageTypes';
 import { resolveSessionState } from '@/sync/sessionState';
+import { readTestloopDotsMetadata } from '@/sync/testloopDots';
 import type { SessionState } from '@/sync/sessionState';
 import { t } from '@/text';
 import { buildResumeCommand, buildResumeCommandBlock, ResumeCommandBlock } from './resumeCommand';
@@ -72,7 +73,7 @@ export function useSessionStatus(session: Session): SessionStatus {
         return {
             state,
             isConnected: true,
-            statusText: vibingMessage,
+            statusText: readTestloopDotsMetadata(session.metadata) ? `${t('status.running')}…` : vibingMessage,
             shouldShowStatus: true,
             statusColor: '#007AFF',
             statusDotColor: '#007AFF',

@@ -879,6 +879,7 @@ export function SessionViewLoaded({
     const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
     const flavor = composerSession?.metadata?.flavor;
     const isRig = isRigMetadata(session?.metadata);
+    const canAbort = !readTestloopDotsMetadata(session?.metadata) && rigCanAbort(session?.metadata);
     const {
         availableModes,
         permissionMode,
@@ -1220,8 +1221,8 @@ export function SessionViewLoaded({
                 ) ? () => handleSend('steer') : undefined}
                 onMicPress={(embedded || isDisconnected) ? undefined : micButtonState.onMicPress}
                 isMicActive={(embedded || isDisconnected) ? false : micButtonState.isMicActive}
-                onAbort={!session || isDisconnected || !rigCanAbort(session.metadata) ? undefined : handleAbort}
-                showAbortButton={!!session && rigCanAbort(session.metadata) && (
+                onAbort={!session || isDisconnected || !canAbort ? undefined : handleAbort}
+                showAbortButton={!!session && canAbort && (
                     sessionStatus.state === 'thinking'
                     // A pending selection or permission request parks the agent inside
                     // a tool call. Keep Stop reachable on every platform while either
