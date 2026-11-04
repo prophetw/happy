@@ -7,7 +7,7 @@
 > 本文依据 2026-11-04 线上 `/openapi.json`、`/compatibility` 实测结果及 `clever-ocean` 分支实现整理。
 > 未持有真实服务令牌，**需要鉴权的示例响应仅表示契约形状，未做线上端到端实测**；实际字段以响应为准。
 >
-> **版本提示**：文中启动选项（`/options`、`tasks.create` 的 `options`、授权白名单）为代码库 OpenAPI `1.5.0` 新增能力，需要控制端、worker 和 daemon 都部署到支持版本；旧组合的行为见「5.1 创建空会话」。其余章节描述的线上版本仍为 `1.3.0`。
+> **版本提示**：启动选项（`/options`、`tasks.create` 的 `options`、授权白名单）为 OpenAPI `1.5.0` 能力，已于 2026-11-05 部署到 55 REST / 57 Web / 4090 worker（现网白名单为 Codex 已安装 8 模型 + `auto/safe-yolo/read-only/yolo`）。带非默认模型或 yolo 的真实生产任务尚未做端到端实测；旧 worker/daemon 组合的行为见「5.1 创建空会话」。其余章节描述的实测基线为线上版本 `1.3.0` 时期。
 
 `/happy-control/v1/` 根路径本身返回 `404 NOT_FOUND`，这是正常行为，不是服务未启动。请直接调用具体路由，或先用 `/compatibility` 做只读探活。
 

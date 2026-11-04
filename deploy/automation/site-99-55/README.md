@@ -1,5 +1,13 @@
 # 99.55 REST / 99.57 HTTPS：长期服务，测试范围任务控制已验证
 
+## 委派启动选项与白名单已上线（2026-11-05，真实选项任务待本人验收）
+
+已从干净发布 clone 发布提交 `6448352712dd46c256d90a1109fc7b41c92814b6`（fork/main）。55 REST 为镜像 `sha256:7835f543d6cf…`，公开 OpenAPI **1.5.0**、新增 `GET /options`（`options.list` 方法）；4090 受管 worker 已切到 `releases/launch-options-64483527`（80-release drop-in，PID 2872400），同 machine connected，10 个原会话进程身份全部保持。57 Web 由另一任务基于同一 SHA 发布，已核实 entry JS 含本次批准页改动，未重复切换。
+
+`tasks.create` 现可携带可选 `options {agent,model,permissionMode,effort}`；省略时保持原固定 Codex 默认启动。host/worker 双边 `launchOptions` 一致：Codex 已安装 8 个模型 + `auto/safe-yolo/read-only/yolo`，methods 增加 `options.list`；未配置 grant 子集的旧授权继承该白名单，**含 yolo 的委派现已对这些授权开放**，不再只是默认启动。Claude 未列入现网白名单。grant 子集审批、worker 实时目录解析、daemon 独立解析三层强制，越权值返回 `OPTION_DENIED`；旧 daemon 无 options 能力时返回 426。
+
+过程中两次切换中止均已查明并修复（属主变更导致 55 短暂 502 已恢复；test-b 目录被外部删除导致旧 worker 重启拒绝已按登记恢复空目录；控制器漏发 start 导致误判已修复并经 dry-run 验证）。55 回退材料在 `/data/code/happy-control/rollouts/20261104T-launch-options-64483527`，4090 切换控制器与证据在发布 clone 的 `.e2e-artifacts/launch-options-release/`。真实 owner 批准 options 子集、`/options` 实测和带非默认模型/yolo 的生产任务**尚未验收**（助手不持有也不签发令牌）；Claude 委派、真实回滚演练未做。完整记录：`validation.launch-options-live-2026-11-05.json`。
+
 ## 默认30天期限的时钟偏差修复已上线（2026-11-04）
 
 已提交修复并同步个人 `fork/main`，从干净的 `main` 发布 `05e5e80b882b9d4e7ca028fe8c0c27177da23104`。创建页改传 `expiresInMs`，服务端计算到期时间；旧 `expiresAt` 格式仍兼容，配置的时长上限保持。明确的范围拒绝和目录核实失效分别提示，网络结果未知仍禁止重复提交。现场日志确认创建返回403；默认30天加客户端快1秒的同类问题已复现修复，但原两次线上请求的具体错误码和时钟差未记录，不能断言原始根因已完全确认。

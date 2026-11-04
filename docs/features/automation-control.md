@@ -35,7 +35,9 @@ REST 控制组件和 connector 会看见批准范围内的任务明文。Happy r
 
 现有扫码账号登录的源码：`authQRStart.ts` → `/v1/auth/account/request` → 手机 `useConnectAccount.ts` → `/account/response` → `authQRWait.ts` → `TokenStorage`。该流程授予完整账号客户端，Web 保存于 localStorage，不能复用于本自动化 grant。现有 persistent Happy token 没有 exp，24h 是验证缓存 TTL；本方案不改变这套登录/注销语义。
 
-## 任务启动选项与权限白名单（v1.5.0，代码库新增，未部署验收）
+## 任务启动选项与权限白名单（v1.5.0，已部署，真实选项任务待本人验收）
+
+> 部署状态（2026-11-05）：55 REST、57 Web、4090 worker 均已上线本节能力，白名单为 Codex 已安装 8 模型 + `auto/safe-yolo/read-only/yolo`，现网未开放 Claude。真实 owner 批准的 options 任务与 `/options` 实测仍待本人验收，证据见 `deploy/automation/site-99-55/validation.launch-options-live-2026-11-05.json`。
 
 委派任务可以在 owner 明确允许的范围内选择 agent（`codex`/`claude`）、模型、权限模式和 effort；`yolo`/`bypassPermissions` 等放权模式因此不再是"永不暴露"，而是"只有 owner 列入白名单才可委派"。默认行为完全不变：不传 `options` 时仍按原固定参数启动 Codex 会话，未配置白名单的 worker 拒绝一切覆盖（`OPTION_DENIED`）。
 

@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-04T16:55:00Z",
+  "status": "deployed-rest-web-worker; real-grant-task-acceptance-pending-owner",
+  "commit": "6448352712dd46c256d90a1109fc7b41c92814b6",
+  "applicationSourceTree": "6448352712dd46c256d90a1109fc7b41c92814b6^{tree}",
+  "sourceKind": "committed fork/main, clean release clone /home/dev/code/happy-release-launch-options, HEAD == fork/main verified",
+  "deploymentAuthorization": "User asked to commit, push and release the allowlisted launch options feature; owner later executed the privileged worker switch twice after root-cause fixes. No service grant/token was created or approved by the assistant.",
+  "feature": {
+    "openapi": "1.5.0",
+    "discovery": "GET /happy-control/v1/options?machineID=... (options.list method, MCP happy_options)",
+    "create": "tasks.create optional options {agent,model,permissionMode,effort}; omitted fields keep legacy codex/gpt-6.1-sol/default/high launch",
+    "enforcement": "grant subset at approval, ScopedWorker resolution against live catalog, daemon independent resolution before spawn; OPTION_DENIED on any unlisted override",
+    "claudeDelegatedSessions": "code supports claude send/status/logs; production allowlist intentionally codex-only"
+  },
+  "allowlist": {
+    "hostAndWorkerIdentical": true,
+    "agents": [{ "agent": "codex",
+      "models": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+      "permissionModes": ["auto", "safe-yolo", "read-only", "yolo"] }],
+    "catalogProvenance": "read-only discoverCodexModels() on 4090 (8 installed models, currentCode gpt-6.1-sol)",
+    "methodsAdded": ["options.list"],
+    "schemaValidation": "before/candidate host.json and worker.json both parse hostConfigSchema/workerConfigSchema",
+    "existingGrants": "no options subset on existing grants; they inherit the worker allowlist for new tasks. Old sessions/methods/expiry unchanged; no grant revoked by reconcile."
+  },
+  "control55": {
+    "image": "sha256:7835f543d6cf1f91bfba2553ef002a3ab9938132cfc43dadecf1bd3de3fa8c3b",
+    "imageRevisionLabel": "6448352712dd46c256d90a1109fc7b41c92814b6",
+    "archive": "/data/code/happy-control/archives/20261104T-launch-options-64483527-image.tar",
+    "archiveSHA256": "55f08f2fe001698700cc9874e8df7b22e019f461cde1fd9014e00dd75b8f36da",
+    "deployEnv": "/etc/happy-control/deploy.env CONTROL_IMAGE pinned to the new image ID; CONTROL_NGINX_IMAGE unchanged",
+    "hostConfig": "/data/code/happy-control/config/host.json uid/gid 1000:1000 mode 0600 preserved",
+    "publicVerification": {
+      "compatibility": "200 protocol=1 projectScopes=1 directoryScopes=1 serviceTokens.protocol=1",
+      "openapi": "200 version 1.5.0, /options present, tasks.create options present",
+      "anonymousProtectedEndpoint": "GET /machines without credentials = 401",
+      "controlContainer": "happy-control-control-1 healthy, gateway up, relay container untouched",
+      "workerPoll": "HTTP 200 after rollout"
+    },
+    "incident": "First restart used install -o root on host.json; container rejected with PRIVATE_MATERIAL_UNAVAILABLE and brief 502. Restored uid/gid 1000:1000, reset-failed + start recovered. No state/config content was lost; relay and 57 nginx not restarted.",
+    "rollbackMaterials": "/data/code/happy-control/rollouts/20261104T-launch-options-64483527/{before-host.json,before-deploy.env,candidate-host.json}; previous image 291d992cddea retained locally"
+  },
+  "web57": {
+    "currentTarget": ".happy-releases/20261104T141830Z-6448352712dd",
+    "deployedByOtherTaskSameCommit": true,
+    "verification": "release entry JS contains options.list and the new approval labels; live /happy/ entry JS index-5cc3fbd906b10181e379f1ea72031ea9.js matches and returns 200; /happy/, /happy/settings/automation, /happy/settings/automation-service all 200",
+    "action": "No second switch performed; concurrent same-SHA deployment verified instead of overwritten",
+    "localArtifact": "happy-web-builder:launch-options-64483527 built as fallback; web.tar.gz sha256 56448af5539efe356054c8053f51c62e61176abbe2c8afc4b65335116ffd5541 (unused)"
+  },
+  "worker4090": {
+    "release": "/home/dev/.local/share/happy-automation/releases/launch-options-64483527",
+    "entry": "/home/dev/.local/share/happy-automation/releases/launch-options-64483527/packages/happy-cli/bin/happy-control-worker.mjs",
+    "packageVerification": "527 production packages, offline frozen install, 1543 symlinks all self-contained, tools/unpacked present, bootstrap imports do not start a daemon",
+    "dropIn": "/etc/systemd/system/happy-automation-worker.service.d/80-release-6448352712dd.conf (60/70 preserved)",
+    "workerConfig": "/etc/happy-control/worker.json dev:dev 0400, methods=10 incl options.list, launchOptions codex-only",
+    "running": { "pid": 2872400, "invocationID": "c479a9fdc59641a4b70de683766649fc", "activeState": "active" },
+    "readiness": "daemon /status connected with the original machineID 9c2c1c7e-28f3-4e9c-a77a-3064f31c3386 and automation-worker connected journal event",
+    "sessionProtection": "originalSessionCount=10, changedOriginalSessionPIDs=[] (KillMode=process, no session was signaled)",
+    "accountOrGrantCreated": false
+  },
+  "incidentsAndFixes": [
+    "attempt-1 aborted: controller compared live config against the already-mutated expected object (always unequal) and its early-failure rollback stopped the healthy old worker. Old worker then could not restart because /home/dev/code/happy-automation-test-b had been deleted externally; restored the registered empty directory dev:dev 0700. Fixed delta check to compare live==baseline and candidate==expected, and early failures now abort without touching the service.",
+    "attempt-2 reported STARTED_WORKER_FAILED: root journal proved the new worker was never started at all; run() was missing systemctl start after install. Added start, re-pinned baseline to the then-running old worker, added --dry-run preflight (all checks passed) and automatic full-journal capture on failure.",
+    "Final attempt succeeded: worker-connected, original sessions unchanged."
+  ],
+  "verification": {
+    "releaseCloneTests": "happy-agent rest/options+gateway+adapters 38 passed; happy-cli daemon automationControl 9 passed",
+    "mainWorkspaceTests": "happy-agent automation rest+control+relay 95 passed; happy-cli daemon automation 14 passed; happy-app tsc and 19 approval tests passed",
+    "preexistingFailures": "production.test.ts umask-077 assertion and the 5s MCP timeout also fail on the clean baseline; unrelated to this change",
+    "workerDryRun": "candidate hashes, config delta, live ownership and drop-in expectations verified read-only before the successful switch"
+  },
+  "notVerified": [
+    "Real owner-approved grant with options subset, /options response against the live grant, and an actual delegated task launched with a non-default model/permissionMode (yolo) on production. Requires the owner's approval and a one-time service token; the assistant never holds it.",
+    "Claude delegated launch on production (deliberately not in the allowlist).",
+    "Actual rollback drill of REST or worker; rollback materials exist but were not exercised."
+  ],
+  "rollback": {
+    "rest": "Restore before-host.json (uid/gid 1000:1000 0600) and before-deploy.env CONTROL_IMAGE=sha256:291d992cddea..., systemctl restart happy-control-pair; keep current state, do not restore snapshots",
+    "worker": "Remove only 80-release-6448352712dd.conf, restore before-worker.json, daemon-reload, start; 60/70 drop-ins retained",
+    "web": "Target switch only if a newer regression appears; keep the current same-SHA release"
+  }
+}
