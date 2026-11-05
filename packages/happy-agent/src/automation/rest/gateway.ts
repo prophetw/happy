@@ -10,13 +10,13 @@ import { MetadataStore } from './store';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
-import { ApiError, approvalSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
+import { ApiError, approvalSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
 type PendingJob = Job & { resolve: (value: any) => void; timer: ReturnType<typeof setTimeout>; delivered: boolean };
 export type GatewayOptions = {
-    directory: string; origin: string; clients: Registration[]; workers: WorkerRegistration[];
+    directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
     verifyOwner: (authorization: string | undefined) => Promise<string>;
     now?: () => number; timeoutMs?: number; maxGrantMs?: number;
     // Mandatory sink. Only a fixed, non-content projection is passed.
@@ -27,8 +27,10 @@ export type GatewayOptions = {
 const base = '/happy-control/v1';
 const failure = (code: string) => ({ version: 1, ok: false, error: { code, retryable: false } });
 export function createGateway(options: GatewayOptions) {
-    const origin = new URL(options.origin).origin;
-    if (origin !== options.origin || (new URL(origin).protocol !== 'https:' && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin))) throw new ApiError('INVALID_ORIGIN');
+    const origin = parseBrowserOrigin(options.origin);
+    const parsedAdditionalOrigins = additionalBrowserOriginsSchema.safeParse(options.additionalBrowserOrigins);
+    if (!parsedAdditionalOrigins.success) throw new ApiError('INVALID_ORIGIN');
+    const additionalBrowserOrigins = new Set(parsedAdditionalOrigins.data), browserOrigins = new Set([origin, ...parsedAdditionalOrigins.data]);
     const registrations = [...options.clients, ...options.workers];
     for (const registration of registrations) {
         identifier.parse(registration.id); identifier.parse(registration.userID);
@@ -55,9 +57,17 @@ export function createGateway(options: GatewayOptions) {
     app.addHook('onRequest', async (req, reply) => {
         if (now() - prunedAt > 60000) { proofs.pruneExpired(now()); prunedAt = now(); for (const [key, value] of counters) if (value.until < now()) counters.delete(key); }
         if (req.url !== '/livez' && req.url !== '/readyz') limit(`ip:${req.ip}`, options.ipRateLimit ?? 12000);
-        if (req.headers.origin && req.headers.origin !== origin) throw new ApiError('ORIGIN_DENIED', 403);
+        const requestOrigin = req.headers.origin;
+        if (requestOrigin && !browserOrigins.has(requestOrigin)) throw new ApiError('ORIGIN_DENIED', 403);
         reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
-        // No wildcard CORS or cookies. Browser approval is same-origin only.
+        if (requestOrigin && additionalBrowserOrigins.has(requestOrigin)) {
+            reply.header('Access-Control-Allow-Origin', requestOrigin).header('Vary', 'Origin');
+            if (req.method === 'OPTIONS' && req.url.startsWith(`${base}/`)) return reply
+                .header('Access-Control-Allow-Methods', 'GET, POST, DELETE')
+                .header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+                .code(204).send();
+        }
+        // Exact additional origins only. No wildcard CORS or cookies.
     });
     app.addHook('onResponse', async (req, reply) => { try { options.audit({ method: req.routeOptions.url ?? '<unmatched>', principalID: principals.get(req), status: reply.statusCode }); } catch { auditHealthy = false; } });
     app.setErrorHandler((error, _req, reply) => {
@@ -75,7 +85,8 @@ export function createGateway(options: GatewayOptions) {
         limit(`${kind}:${auth.registration.id}`, kind === 'worker' ? 1200 : 240); return auth;
     };
     async function owner(req: FastifyRequest) {
-        if (req.headers.origin !== origin && !(req.headers.origin === undefined && req.headers['sec-fetch-site'] === 'same-origin')) throw new ApiError('OWNER_ORIGIN_REQUIRED', 403);
+        if ((req.headers.origin !== undefined && !browserOrigins.has(req.headers.origin))
+            || (req.headers.origin === undefined && req.headers['sec-fetch-site'] !== 'same-origin')) throw new ApiError('OWNER_ORIGIN_REQUIRED', 403);
         // A service credential must never be forwarded to the Happy account verifier/relay.
         if (isServiceAuthorization(req.headers.authorization)) throw new ApiError('OWNER_AUTH_REQUIRED', 401);
         const userID = await options.verifyOwner(req.headers.authorization);

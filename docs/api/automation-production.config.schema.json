@@ -35,6 +35,18 @@
           "type": "string",
           "format": "uri"
         },
+        "additionalBrowserOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "Exact canonical HTTPS origin, or loopback HTTP origin using 127.0.0.1 or localhost. Paths, credentials, query/fragment, wildcard and non-normalized forms are rejected."
+          },
+          "maxItems": 16,
+          "uniqueItems": true,
+          "default": []
+        },
         "relayURL": {
           "type": "string",
           "format": "uri"

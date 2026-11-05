@@ -3,6 +3,7 @@
   "role": "host",
   "listen": { "host": "127.0.0.1", "port": 9010 },
   "origin": "https://control.example.invalid",
+  "additionalBrowserOrigins": [],
   "relayURL": "https://control.example.invalid/home-relay",
   "stateDirectory": "/var/lib/happy-control",
   "clients": [],

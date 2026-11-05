@@ -17,6 +17,7 @@ export async function validatePublicConfig({ host, worker, grant }, now = Date.n
     const { hostConfigSchema, workerConfigSchema } = await import(pathToFileURL(join(root, 'packages/happy-agent/dist/automation/production/index.mjs')).href);
     const h = hostConfigSchema.parse(host), w = workerConfigSchema.parse(worker);
     assert.equal(h.origin, 'https://szsp.suitbim.com.cn:7100');
+    assert.deepEqual(h.additionalBrowserOrigins, ['http://localhost:8989']);
     assert.equal(h.relayURL, h.origin + '/home-relay');
     assert.equal(w.relayURL, h.relayURL);
     assert.equal(w.endpoint, h.origin + '/happy-control/v1');

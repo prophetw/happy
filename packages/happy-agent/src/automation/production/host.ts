@@ -19,7 +19,7 @@ export async function prepareHost(input: HostConfig, audit: Parameters<typeof cr
             const identity = await provider.identity(b.identityRef, b.clientID, registration.publicKey);
             return { ...b, registration, client: new ProofClient(config.mcp!.controlURL, identity, 'client') };
         }));
-        gateway = createGateway({ directory: config.stateDirectory, origin: config.origin, clients: config.clients, workers: config.workers,
+        gateway = createGateway({ directory: config.stateDirectory, origin: config.origin, additionalBrowserOrigins: config.additionalBrowserOrigins, clients: config.clients, workers: config.workers,
             httpMcp: !!config.mcp, maxGrantMs: config.maxGrantMs, serviceTokens: config.serviceTokens, ipRateLimit: config.ipRateLimit, verifyOwner: happyOwnerVerifier(config.relayURL), audit });
         if (config.mcp) mountHttpMcp(gateway.app, { resource: config.mcp.oauth.resource, issuer: config.mcp.oauth.issuer,
             oauthScope: config.mcp.oauth.scope, verify: oauthVerifier(config.mcp.oauth), bindings });

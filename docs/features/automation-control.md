@@ -282,7 +282,7 @@ pnpm exec vitest run sources/auth/automationApproval.test.ts sources/auth/automa
 
 `happy-agent/automation` 是无 CLI parse 副作用的库入口，导出：
 
-- `createGateway(options)`：返回 Fastify app，不自动 listen；传入固定 origin、非秘密注册表、受限存储目录、owner verifier 和脱敏 audit sink。单进程文件存储不可用于多副本网关。
+- `createGateway(options)`：返回 Fastify app，不自动 listen；传入固定主 origin、可选 `additionalBrowserOrigins` 精确白名单、非秘密注册表、受限存储目录、owner verifier 和脱敏 audit sink。单进程文件存储不可用于多副本网关。
 - `ProofClient(baseURL, identity, actor)`：identity 由宿主 secret provider 提供 signer（兼容既有 KeyObject）；不从工具参数/URL 取密钥。正式只接受 HTTPS，loopback 例外须显式仅用于 fixture。
 - `createDaemonTransport(bindings)`、`HTTPWorkerRunner`：daemon 自己提供既有 token、machine、已知记录密钥和原 control callback。不会导出凭据到网关。
 - `createControlMcp(client, grantProvider)` / `connectControlStdio()`：注册 SDK MCP 工具，grantProvider 由宿主保存已批准的非秘密连接 ID。
@@ -299,7 +299,7 @@ MCP 固定工具：happy_machines、happy_sessions、happy_create_task、happy_s
 
 - 服务端只保存非秘密 grant/intent/指纹与过期 nonce；目录 0700、文件 0600，fsync 和原子替换。任务文本/结果不持久明文。锁目录只允许一个网关进程；崩溃留下的 owner lock 不自动抢占，需先核验旧进程再由操作方处理。
 - nonce 清理与限流惰性进行，没有后台维护进程。grant/receipt 不自动清空，保留幂等历史。注册表公钥轮换不允许继续使用旧 grant。
-- 同站点 owner 请求需要正确 Origin 或 same-origin Fetch Metadata。automation API 必须独立 proof；不使用 cookie 认证。CORS 无通配授权，普通消息体限 256KiB；worker/result 单独限 32MiB，发送前先投影脱敏；日志请求 limit 最多 500，但每页实际最多 100 条以约束最坏 JSON 字节数，按 nextCursor/hasMore 继续。按 IP/身份/配对请求限流；部署前按实际并发配置，不能靠代理伪造身份。
+- 同站点 owner 请求需要正确 Origin 或 same-origin Fetch Metadata。默认仍只接受固定主 origin；确需本地 Web 开发时，可在 host 配置 `additionalBrowserOrigins` 显式加入最多16个规范化 HTTPS 或 loopback HTTP Origin（例如 `http://localhost:8989`），不接受通配符、路径、凭据、query/hash、重复项或非 loopback HTTP。额外 Origin 的 `/happy-control/v1/` 预检返回空204，固定允许 GET/POST/DELETE 与 Authorization/Content-Type，响应只回显该精确 Origin 并带 `Vary: Origin`；不启用 credentialed CORS。预检不执行 owner 鉴权或变更，所有实际 owner 请求仍逐个验证 Happy Bearer。automation API 必须独立 proof；不使用 cookie 认证。普通消息体限 256KiB；worker/result 单独限 32MiB，发送前先投影脱敏；日志请求 limit 最多 500，但每页实际最多 100 条以约束最坏 JSON 字节数，按 nextCursor/hasMore 继续。按 IP/身份/配对请求限流；部署前按实际并发配置，不能靠代理伪造身份。
 - audit sink 只接收路由模板、已验证的非秘密身份 ID 和状态，不接收 body/header/原始错误；worker 状态回调也只接收固定 code。文本脱敏不能识别任意自然语言中的秘密，批准范围内的内容本来就会交给获准助手。
 - 首版单进程网关、Unix/WSL、生产建议 Node >=22；不支持多副本文件共享。正式 worker 要求 dataKey 模式，只能访问 daemon 已知记录密钥的会话；未知/legacy 记录拒绝，不退回复制账号主密钥。
 - relay 继续使用已有 v2 sessions / v3 messages / 唯一 localId。新 core/worker/proof 都是协议 1；能力实时探测，不按未变的 npm 版本号猜测。旧 App 登录和普通 CLI/daemon 路径保留。

@@ -13,6 +13,7 @@ async function setup(options: Record<string, unknown> = {}) {
     const { fixtureRig } = await import(fixturePath); const rig = await fixtureRig(options); rigs.push(rig); return rig;
 }
 const base = '/happy-control/v1';
+const localOrigin = 'http://localhost:8989';
 const create = (r: any, grant: string, requestID = 'create1') => r.client.request('POST', '/tasks', { requestID, machineID: 'machineA', projectID: 'projectA' }, grant);
 
 describe('independent approval/authentication', () => {
@@ -95,6 +96,46 @@ describe('independent approval/authentication', () => {
         expect((await r.gateway.app.inject({ method: 'GET', url: `${base}/connections`, headers: { origin: 'https://evil.invalid', authorization: 'Bearer fixture-owner-A' } })).statusCode).toBe(403);
         expect((await r.workerClient.request('POST', '/worker/poll', { protocol: 0 })).error.code).toBe('UNSUPPORTED_PROTOCOL');
         expect((await r.gateway.app.inject({ method: 'POST', url: `${base}/tasks`, payload: 'x'.repeat(300000), headers: { 'content-type': 'application/json' } })).statusCode).toBeGreaterThanOrEqual(400);
+    });
+    it('allows an exact additional browser origin for preflight and real owner approval without bypassing authentication', async () => {
+        const r = await setup({ additionalBrowserOrigins: [localOrigin] });
+        let ownerCalls = 0; const verifyOwner = r.gatewayOptions.verifyOwner;
+        r.gatewayOptions.verifyOwner = async (authorization: string | undefined) => { ownerCalls++; return verifyOwner(authorization); };
+        const pending = await r.client.request('POST', '/connections', { workerID: 'worker', machineID: 'machineA', projectID: 'projectA', methods: ['machines.list'], expiresAt: Date.now()+60000 });
+        const preflight = await r.gateway.app.inject({ method: 'OPTIONS', url: `${base}/connections/${pending.data.id}/approve`, headers: {
+            origin: localOrigin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type',
+        } });
+        expect(preflight.statusCode).toBe(204); expect(preflight.body).toBe('');
+        expect(preflight.headers).toMatchObject({ 'access-control-allow-origin': localOrigin, vary: 'Origin',
+            'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'Authorization, Content-Type' });
+        expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
+        expect(ownerCalls).toBe(0); expect(r.gateway.grants.get(pending.data.id).state).toBe('pending');
+        const compatibility = await r.gateway.app.inject({ method: 'GET', url: `${base}/compatibility`, headers: { origin: localOrigin } });
+        expect(compatibility.statusCode).toBe(200); expect(compatibility.headers['access-control-allow-origin']).toBe(localOrigin);
+        expect(compatibility.headers.vary).toBe('Origin'); expect(compatibility.headers['access-control-allow-credentials']).toBeUndefined();
+        const consent = await r.ownerRequest(`/connections/${pending.data.id}/consent`, 'GET', undefined, 'A', localOrigin);
+        expect(consent.status).toBe(200); expect(consent.headers['access-control-allow-origin']).toBe(localOrigin);
+        const approved = await r.ownerRequest(`/connections/${pending.data.id}/approve`, 'POST', { digest: consent.body.data.digest, challenge: consent.body.data.challenge }, 'A', localOrigin);
+        expect(approved.status).toBe(200); expect(approved.body.data.state).toBe('approved'); expect(ownerCalls).toBe(2);
+        const invalid = await r.gateway.app.inject({ method: 'GET', url: `${base}/connections`, headers: { origin: localOrigin, authorization: 'Bearer invalid' } });
+        expect(invalid.statusCode).toBe(503); expect(invalid.headers['access-control-allow-origin']).toBe(localOrigin); expect(ownerCalls).toBe(3);
+        expect((await r.ownerRequest('/connections')).status).toBe(200);
+    });
+    it('keeps additional browser origins disabled by default and rejects malformed or multiple origins', async () => {
+        const r = await setup();
+        for (const origin of [localOrigin, 'https://evil.invalid', 'null', 'https://good.invalid https://evil.invalid']) {
+            for (const method of ['OPTIONS', 'GET']) {
+                const response = await r.gateway.app.inject({ method, url: `${base}/compatibility`, headers: { origin, 'access-control-request-method': 'GET' } });
+                expect(response.statusCode).toBe(403); expect(response.headers['access-control-allow-origin']).toBeUndefined();
+            }
+        }
+        expect((await r.gateway.app.inject({ method: 'OPTIONS', url: `${base}/compatibility`, headers: { origin: r.gatewayOptions.origin } })).statusCode).toBe(404);
+    });
+    it('rejects invalid additional browser origins before acquiring the state lock', async () => {
+        const r = await setup(), { createGateway } = await import('./gateway');
+        for (const values of [['*'], [localOrigin, localOrigin], ['http://example.com'], [`${localOrigin}/`], ['http://user@localhost:8989'], [`${localOrigin}/path`], ['https://example.com:443']]) {
+            expect(() => createGateway({ ...r.gatewayOptions, additionalBrowserOrigins: values })).toThrow('INVALID_ORIGIN');
+        }
     });
 });
 

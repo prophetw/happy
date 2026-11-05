@@ -23,7 +23,7 @@ import type { DecryptedSession, DecryptedMachine } from '../src/api';
 
 /** Isolated real loopback HTTP + real receipts + synthetic encrypted relay. Never reads Happy home. */
 export async function fixtureRig(options: { timeoutMs?: number; clock?: () => number; externalIdentity?: import('../src/automation/rest/schema').ExternalIdentity;
-    origin?: string; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig;
+    origin?: string; additionalBrowserOrigins?: string[]; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig;
     launchOptions?: LaunchOptionsPolicy; catalog?: () => OptionCatalogEntry[] } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'happy-rest-fixture-')), project = join(dir, 'project'); mkdirSync(project);
     const projectB = join(dir, 'project-b'), projectC = join(dir, 'project-c'); mkdirSync(projectB); mkdirSync(projectC);
@@ -37,7 +37,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
         ] : [])], ...(options.directorySelection ? { directorySelection: { roots: [dir] } } : {}), methods: [...methods], protocol: 1 as const,
         ...(options.launchOptions ? { launchOptions: options.launchOptions } : {}) };
     const audit: unknown[] = [];
-    const gatewayOptions = { directory: join(dir, 'gateway'), origin: options.origin ?? 'http://127.0.0.1', clients: [clientRegistration,
+    const gatewayOptions = { directory: join(dir, 'gateway'), origin: options.origin ?? 'http://127.0.0.1', additionalBrowserOrigins: options.additionalBrowserOrigins, clients: [clientRegistration,
         { id: otherIdentity.id, userID: 'userB', name: 'Other user', publicKey: otherIdentity.publicKey }], workers: [registration],
         now, timeoutMs: options.timeoutMs ?? 5000, serviceTokens: options.serviceTokens, audit: (e: unknown) => { audit.push(e); },
         verifyOwner: async (authorization: string | undefined) => {
@@ -91,10 +91,10 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
         await runner.pollOnce(); running = runner.run(abort.signal, options.workerIntervalMs ?? 2, s => { statuses.push(s); });
     }
     async function stopWorker() { abort?.abort(); await running; abort = undefined; running = undefined; }
-    async function ownerRequest(route: string, method = 'GET', body?: unknown, user = 'A') {
+    async function ownerRequest(route: string, method = 'GET', body?: unknown, user = 'A', origin = gatewayOptions.origin) {
         const response = await gateway.app.inject({ method: method as any, url: `/happy-control/v1${route}`, headers: {
-            origin: gatewayOptions.origin, authorization: `Bearer fixture-owner-${user}`,
-        }, ...(body === undefined ? {} : { payload: body }) }); return { status: response.statusCode, body: response.json() };
+            origin, authorization: `Bearer fixture-owner-${user}`,
+        }, ...(body === undefined ? {} : { payload: body }) }); return { status: response.statusCode, body: response.json(), headers: response.headers };
     }
     async function connect(scope: Partial<{ methods: typeof methods[number][]; expiresAt: number; sessionIDs: string[]; options: import('../src/automation/rest/options').ConnectionOptions }> = {}) {
         const pending = await client.request('POST', '/connections', { workerID: 'worker', machineID: 'machineA', projectID: 'projectA', methods: [...methods], sessionIDs: [], expiresAt: now()+60000, ...scope });

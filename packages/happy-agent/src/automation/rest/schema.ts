@@ -80,6 +80,19 @@ export const querySchema = z.object({
 export class ApiError extends Error {
     constructor(readonly code: string, readonly status = 400) { super(code); }
 }
+const loopbackHttpOrigin = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+export function parseBrowserOrigin(value: string): string {
+    try {
+        const origin = new URL(value).origin;
+        if (origin === value && (new URL(origin).protocol === 'https:' || loopbackHttpOrigin.test(origin))) return origin;
+    } catch { /* Normalize every malformed or unsafe origin to the public configuration error. */ }
+    throw new ApiError('INVALID_ORIGIN');
+}
+export const browserOriginSchema = z.string().max(2048).refine(value => {
+    try { parseBrowserOrigin(value); return true; } catch { return false; }
+});
+export const additionalBrowserOriginsSchema = z.array(browserOriginSchema).max(16)
+    .refine(values => new Set(values).size === values.length).default([]);
 export function checkScope(scope: Scope, worker: WorkerRegistration, now: number) {
     return checkScopeProjects(scope, worker, now)[0];
 }

@@ -133,7 +133,7 @@ async function main() {
     const { fixtureRig } = await import('../../../packages/happy-agent/examples/rest-fixture.ts');
     const { ProofClient, HTTPWorkerRunner } = await import('../../../packages/happy-agent/src/automation/rest/index.ts');
     rig = await fixtureRig({ multipleProjects: true, directorySelection: true });
-    privateFile(join(configDir, 'host.json'), JSON.stringify({ version: 1, role: 'host', listen: { host: '127.0.0.1', port: 9010 }, origin: 'https://localhost', relayURL: 'https://fixture-owner:8443', stateDirectory: '/var/lib/happy-control', clients: [rig.clientRegistration], workers: [rig.registration],
+    privateFile(join(configDir, 'host.json'), JSON.stringify({ version: 1, role: 'host', listen: { host: '127.0.0.1', port: 9010 }, origin: 'https://localhost', additionalBrowserOrigins: ['http://localhost:8989'], relayURL: 'https://fixture-owner:8443', stateDirectory: '/var/lib/happy-control', clients: [rig.clientRegistration], workers: [rig.registration],
         serviceTokens: { maxGrantMs: 2592000000, clients: [{ id: 'fixture-service', userID: 'userA', name: 'Isolated backend fixture', generation: 'fixture_v1' }] } }));
     const badConfig = join(directory, 'invalid-host.json');
     const validHost = JSON.parse(readFileSync(join(configDir, 'host.json'), 'utf8'));
@@ -197,6 +197,15 @@ async function main() {
     const workerClient = new ProofClient(outside + '/happy-control/v1', rig.workerIdentity, 'worker', { fetch: fetchTLS });
     const compatibility = async () => { const r = await httpsCall(outside + '/happy-control/v1/compatibility', { ca }); return r.status === 200; };
     check('two-native-nginx-hops-verified-tls-mtls', await until(compatibility));
+    const browserOrigin = 'http://localhost:8989';
+    const preflight = await httpsCall(outside + '/happy-control/v1/connections/example/approve', { ca, method: 'OPTIONS', headers: { origin: browserOrigin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' } });
+    check('image-localhost-preflight-exact-cors', preflight.status === 204 && preflight.body === '' && preflight.headers['access-control-allow-origin'] === browserOrigin
+        && preflight.headers.vary === 'Origin' && preflight.headers['access-control-allow-methods'] === 'GET, POST, DELETE'
+        && preflight.headers['access-control-allow-headers'] === 'Authorization, Content-Type' && preflight.headers['access-control-allow-credentials'] === undefined);
+    const localCompatibility = await httpsCall(outside + '/happy-control/v1/compatibility', { ca, headers: { origin: browserOrigin } });
+    check('image-localhost-compatibility-cors', localCompatibility.status === 200 && localCompatibility.headers['access-control-allow-origin'] === browserOrigin && localCompatibility.headers['access-control-allow-credentials'] === undefined);
+    const foreignPreflight = await httpsCall(outside + '/happy-control/v1/compatibility', { ca, method: 'OPTIONS', headers: { origin: 'https://evil.invalid', 'access-control-request-method': 'GET' } });
+    check('image-foreign-preflight-denied-without-cors', foreignPreflight.status === 403 && foreignPreflight.headers['access-control-allow-origin'] === undefined);
     if (interruptSmoke) {
         emit('interrupt_smoke_started');
         const timer = setTimeout(() => process.kill(process.pid, 'SIGINT'), 250);
@@ -214,10 +223,12 @@ async function main() {
     check('wrong-upstream-ca-denied', (await httpsCall(outside + '/happy-control/v1/compatibility', { ca })).status === 502);
     await outerConfig(template57); check('verified-tls-recovers', await until(compatibility));
     check('probes-not-public', (await httpsCall(outside + '/readyz', { ca })).status === 404);
-    const ownerRequest = async (route, method = 'GET', body) => {
-        const result = await httpsCall(outside + '/happy-control/v1' + route, { ca, method, headers: { origin: 'https://localhost', authorization: 'Bearer fixture-owner-A', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const ownerRequest = async (route, method = 'GET', body, origin = 'https://localhost') => {
+        const result = await httpsCall(outside + '/happy-control/v1' + route, { ca, method, headers: { origin, authorization: 'Bearer fixture-owner-A', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
         return { status: result.status, ...JSON.parse(result.body) };
     };
+    const localOwnerList = await ownerRequest('/connections', 'GET', undefined, browserOrigin);
+    check('image-localhost-owner-list', localOwnerList.status === 200 && localOwnerList.ok === true);
     const waitForWorker = () => until(async () => {
         const value = await ownerRequest('/service-connections/options');
         return value.ok && value.data.workers.some(w => w.id === 'worker' && w.projectScopes === 1 && w.directoryScopes === 1);

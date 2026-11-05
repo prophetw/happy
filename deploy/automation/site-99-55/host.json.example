@@ -3,6 +3,7 @@
   "role": "host",
   "listen": { "host": "127.0.0.1", "port": 9010 },
   "origin": "https://szsp.suitbim.com.cn:7100",
+  "additionalBrowserOrigins": ["http://localhost:8989"],
   "relayURL": "https://szsp.suitbim.com.cn:7100/home-relay",
   "stateDirectory": "/var/lib/happy-control",
   "clients": [{

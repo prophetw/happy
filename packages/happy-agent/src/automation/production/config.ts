@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { directorySelectionSchema, externalIdentitySchema, identifier, method, scopeSchema, serviceTokensConfigSchema } from '../rest/schema';
+import { directorySelectionSchema, externalIdentitySchema, identifier, method, scopeSchema, serviceTokensConfigSchema, additionalBrowserOriginsSchema } from '../rest/schema';
 import { launchOptionsPolicySchema } from '../rest/options';
 import { privateRead } from '../rest/privateFs';
 
@@ -17,7 +17,7 @@ const oauth = z.object({ issuer: https, jwksURL: https, resource: https.refine(s
     tenantClaim: identifier.default('tenant_id'), algorithms: z.array(z.enum(['RS256', 'ES256', 'EdDSA'])).min(1).max(3) }).strict();
 export const hostConfigSchema = z.object({ version: z.literal(1), role: z.literal('host'),
     listen: z.object({ host: z.literal('127.0.0.1'), port: z.number().int().min(1024).max(65535) }).strict(),
-    origin: https.refine(s => new URL(s).origin === s), relayURL: https, stateDirectory: absolute,
+    origin: https.refine(s => new URL(s).origin === s), additionalBrowserOrigins: additionalBrowserOriginsSchema, relayURL: https, stateDirectory: absolute,
     clients: z.array(registrationSchema), workers: z.array(workerRegistrationSchema),
     // Default remains one hour. A longer finite policy still requires exact owner approval.
     maxGrantMs: z.number().int().min(1000).max(7 * 24 * 3600000).default(3600000),
@@ -38,7 +38,7 @@ export const callerConfigSchema = z.object({ version: z.literal(1), role: z.lite
     connectionScope: scopeSchema.optional(), secrets: provider }).strict().superRefine((c, ctx) => {
         if (!c.grantID && !c.connectionScope) ctx.addIssue({ code: 'custom', message: 'Explicit grant or connection scope required' });
     });
-export type HostConfig = z.infer<typeof hostConfigSchema>;
+export type HostConfig = z.input<typeof hostConfigSchema>;
 export type WorkerConfig = z.infer<typeof workerConfigSchema>;
 export type CallerConfig = z.infer<typeof callerConfigSchema>;
 export function readProductionConfig(path: string) {

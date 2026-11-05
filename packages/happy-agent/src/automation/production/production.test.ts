@@ -50,6 +50,20 @@ describe('production configuration and safe secret provider', () => {
         expect(() => hostConfigSchema.parse({ version: 1, role: 'host', listen: { host: '0.0.0.0', port: 9010 } })).toThrow();
         expect(() => workerConfigSchema.parse({ version: 1, role: 'worker', token: 'fixture-never-valid' })).toThrow();
     });
+    it('accepts only explicit additional browser origins and forwards them through the production host', async () => {
+        const dir = temp(), origin = 'http://localhost:8989';
+        const config = { version: 1 as const, role: 'host' as const, listen: { host: '127.0.0.1' as const, port: 9010 },
+            origin: 'https://fixture.invalid', relayURL: 'https://fixture.invalid/home-relay', stateDirectory: join(dir, 'state'), clients: [], workers: [] };
+        expect(hostConfigSchema.parse(config).additionalBrowserOrigins).toEqual([]);
+        expect(hostConfigSchema.parse({ ...config, additionalBrowserOrigins: [origin] }).additionalBrowserOrigins).toEqual([origin]);
+        for (const additionalBrowserOrigins of [['*'], [origin, origin], ['http://example.com'], [`${origin}/`], ['https://example.com:443'], Array.from({ length: 17 }, (_, i) => `https://origin-${i}.invalid`)]) {
+            expect(() => hostConfigSchema.parse({ ...config, additionalBrowserOrigins })).toThrow();
+        }
+        const host = await prepareHost({ ...config, additionalBrowserOrigins: [origin] }, () => {}); cleanup.push(() => host.app.close());
+        const allowed = await host.app.inject({ method: 'GET', url: '/happy-control/v1/compatibility', headers: { origin } });
+        expect(allowed.statusCode).toBe(200); expect(allowed.headers['access-control-allow-origin']).toBe(origin);
+        expect((await host.app.inject({ method: 'GET', url: '/happy-control/v1/compatibility', headers: { origin: 'https://evil.invalid' } })).statusCode).toBe(403);
+    });
     it('loads only encrypted private PKCS8 via a private service credential and returns a signer; rotation/pin failures close access', async () => {
         const dir = temp(), creds = join(dir, 'credentials'); mkdirSync(creds, { mode: 0o700 });
         const keys = generateKeyPairSync('ed25519'), pass = Buffer.from('fixture-only-short-lived-passphrase');
