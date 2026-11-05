@@ -1,3 +1,4 @@
+import { DotsMcpPanel } from './DotsMcpPanel';
 import * as React from 'react';
 import { ActivityIndicator, AppState, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { randomUUID } from 'expo-crypto';
@@ -11,7 +12,7 @@ import { dotsConnectionError, dotsConnectionStatus, dotsConnectionUsable, dotsPr
     requestDotsConnections, type DotsConnectionsView, type DotsConnectionRequest, type DotsConnectionPreview,
     type DotsConnection, type DotsConnectionBinding } from '@/sync/dotsConnections';
 
-type Screen = { kind: 'home' } | { kind: 'dot'; dotId: string }
+type Screen = { kind: 'mcp'; dotId: string } | { kind: 'home' } | { kind: 'dot'; dotId: string }
     | { kind: 'choose'; dotId: string; oldID?: string }
     | { kind: 'projects'; dotId: string; connectionID: string; oldID?: string }
     | { kind: 'credential'; oldID?: string; dotId?: string };
@@ -27,7 +28,7 @@ export function DotsConnectionsPanel({ sessionId, workspaceId, dotId, onClose }:
     const [renderScope, setRenderScope] = React.useState(accountScope);
     const [view, setView] = React.useState<DotsConnectionsView | null>(null);
     const [screen, setScreen] = React.useState<Screen>(dotId ? { kind: 'dot', dotId } : { kind: 'home' });
-    const [tab, setTab] = React.useState<'connections' | 'dots'>('connections');
+    const [tab, setTab] = React.useState<'connections' | 'dots' | 'mcp'>('connections');
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState<string | null>(null), [notice, setNotice] = React.useState<string | null>(null);
     const [name, setName] = React.useState(''), [endpoint, setEndpoint] = React.useState(''), [token, setToken] = React.useState('');
     const [preview, setPreview] = React.useState<DotsConnectionPreview | null>(null), [projectIDs, setProjectIDs] = React.useState<string[]>([]);
@@ -144,9 +145,10 @@ export function DotsConnectionsPanel({ sessionId, workspaceId, dotId, onClose }:
                             {button('关闭连接管理', onClose, false, false)}</View>
                     </View>
                     {screen.kind === 'home' && <View style={row}>{button('我的连接', () => setTab('connections'), tab === 'connections')}
-                        {button('Dot 授权', () => setTab('dots'), tab === 'dots')}{button('刷新连接与授权', () => void refresh())}</View>}
+                        {button('MCP 工具', () => setTab('mcp'), tab === 'mcp')}{button('Dot 授权', () => setTab('dots'), tab === 'dots')}{button('刷新连接与授权', () => void refresh())}</View>}
                 </View>
                 <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, gap: 16 }}>
+                    {(screen.kind === 'home' && tab === 'mcp' || screen.kind === 'mcp') && <DotsMcpPanel sessionId={sessionId} dotId={screen.kind === 'mcp' ? screen.dotId : undefined} current={current} />}
                     {busy && <ActivityIndicator />}
                     {error && <View style={card}><Text accessibilityRole="alert" style={{ ...text, color: '#b04b36' }}>{error}</Text>{button('刷新核对', () => void refresh())}</View>}
                     {notice && <Text accessibilityLiveRegion="polite" style={text}>{notice}</Text>}
@@ -179,6 +181,7 @@ export function DotsConnectionsPanel({ sessionId, workspaceId, dotId, onClose }:
                         </View>; })}
                         {!dot.bindings.length && <Text style={text}>尚未授权，先为此 Dot 选择连接。</Text>}
                         {button('选择连接', () => navigate({ kind: 'choose', dotId: dot.id }), true)}
+                        {button('管理 MCP 工具', () => navigate({ kind: 'mcp', dotId: dot.id }))}
                     </>}
                     {dot && screen.kind === 'choose' && <>
                         {heading(`为 ${dot.name} 选择连接`)}{old && <Text style={muted}>替换当前连接：{old.name}</Text>}

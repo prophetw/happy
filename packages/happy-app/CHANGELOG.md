@@ -1,3 +1,10 @@
+# November 5 - MCP tools for Dots
+
+Connect each Dot to the tools it needs. Requires the updated TestLoop host.
+
+- **Add MCP services** — configure HTTP or local stdio services, inspect their tools, and choose which Dots can use them.
+- **Paste a token** — save HTTP tokens securely on the host, replace or clear them when needed, without setting local environment variables.
+
 # October 26 - Model speed, explained
 
 Requires the updated Happy CLI.
