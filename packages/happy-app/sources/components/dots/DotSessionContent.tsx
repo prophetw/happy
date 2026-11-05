@@ -11,9 +11,11 @@ import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation
 import { testloopWorkStatus, type TestloopDotsMetadata } from '@/sync/testloopDots';
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
+import { DotObservationPanel } from './DotObservationPanel';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
-type Tab = 'chat' | 'work' | 'memory';
+type Tab = 'chat' | 'activity' | 'work' | 'memory' | 'basis';
+const tabLabels = { chat: '对话', activity: '活动', work: '工作', memory: '记忆', basis: '本轮依据' };
 
 /** Keep Happy's real conversation mounted while its host-backed work/memory panel changes. */
 export function DotSessionContent({ session, metadata, active, children, topInset = 0 }: {
@@ -28,7 +30,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [tab, setTab] = React.useState<Tab>('chat');
     const [managingConnections, setManagingConnections] = React.useState(false);
-    const [sideTab, setSideTab] = React.useState<'work' | 'memory'>('work'), [expanded, setExpanded] = React.useState(true);
+    const [sideTab, setSideTab] = React.useState<Exclude<Tab, 'chat'>>('activity'), [expanded, setExpanded] = React.useState(true);
     const [taskId, setTaskId] = React.useState<string | null>(null), [error, setError] = React.useState<string | null>(null);
     const [memoryEdit, setMemoryEdit] = React.useState<{ key: string; text: string; kind: string; json: boolean; expiresAt: string | null; existing: boolean } | null>(null);
     const [notice, setNotice] = React.useState<string | null>(null);
@@ -69,39 +71,38 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             </ScrollView>
         </View>
     </Modal>;
+    const observationPanel = <>
+        <DotObservationPanel key={`${metadata.dotId}:${wide ? sideTab : tab}`} sessionId={metadata.workspaceSessionId}
+            workspaceId={metadata.workspaceId} dotId={metadata.dotId} dotSessionId={session.id} active={Boolean(active && own && (wide ? expanded : tab !== 'chat'))}
+            mode={(wide ? sideTab : tab) === 'memory' ? 'memory' : (wide ? sideTab : tab) === 'basis' ? 'basis' : 'activity'}
+            presence={session.presence} onExecution={id => void openExecution(id)}
+            onEditMemory={(key, version) => {
+                if (!data.ready || !own) return;
+                setMemoryEdit({ key, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
+                    kind: version.kind, json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
+            }} onForgetMemory={key => {
+                if (data.ready && own) toConversation(`请忘记当前 Dot 的个人记忆 ${JSON.stringify(key)}，先展示变更供我确认。`);
+            }} onAddMemory={() => {
+                if (data.ready && own) setMemoryEdit({ key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
+            }} />
+    </>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
         <View style={{ padding: 14, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            {wide && (['work', 'memory'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{item === 'work' ? '工作' : '记忆'}</Text></Pressable>)}
-            {action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending))}
+            {wide && (['activity', 'work', 'memory', 'basis'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
+            {(wide ? sideTab : tab) === 'work' && action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending))}
             {action('可用连接与项目', () => setManagingConnections(true))}
         </View>
         <ScrollView contentContainerStyle={{ padding: 18, gap: 18 }}>
             {data.pending && !data.pending.timedOut && <ActivityIndicator />}
             {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
             {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}
-            {!detail ? <Text style={muted}>{data.ready && !data.pending ? '尚未收到这个 Dot 的工作与记忆快照。请核对宿主版本并刷新。' : '正在读取这个 Dot 的工作与记忆…'}</Text>
-                : (wide ? sideTab : tab) === 'work' ? <>
+            {(wide ? sideTab : tab) !== 'work' ? observationPanel : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
                     <Text style={heading}>工作项 · {detail.taskTotal}</Text>
                     {detail.tasks.map(task => <Pressable key={task.id} accessibilityRole="button" accessibilityLabel={`查看工作项：${task.title}`} onPress={() => setTaskId(task.id)} style={{ gap: 6, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                         <Text style={body}>{task.title}</Text><Text style={muted}>{testloopWorkStatus(task)}{task.projectID ? ` · ${task.projectID}` : ''}</Text>
                     </Pressable>)}
                     {!detail.tasks.length && <Text style={muted}>这个 Dot 还没有可查看的工作项。在对话中交办即可。</Text>}
                     {detail.taskTotal > detail.tasks.length && <Text style={muted}>当前展示最近 {detail.tasks.length} 项，其余工作可在对话中按名称或编号查询。</Text>}
-                </> : <>
-                    <Text style={heading}>这个 Dot 的记忆</Text>
-                    {!detail.memory ? <Text style={muted}>当前 Dot 未授权读取记忆。</Text> : <>
-                        {detail.memory.items.map(memory => <View key={memory.key} style={{ paddingVertical: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
-                            <Text style={body}>{memory.key}</Text><Text selectable style={body}>{typeof memory.value === 'string' ? memory.value : JSON.stringify(memory.value)}</Text>
-                            <Text style={muted}>第 {memory.revision} 版 · {memory.expired ? '已过期' : memory.verified ? '已确认' : '未确认'}</Text>
-                            {detail.memory?.access.includes('write') && action(`编辑记忆：${memory.key}`, () => setMemoryEdit({ key: memory.key,
-                                text: typeof memory.value === 'string' ? memory.value : JSON.stringify(memory.value), kind: memory.kind, json: typeof memory.value !== 'string', expiresAt: memory.expiresAt, existing: true }))}
-                            {detail.memory?.access.includes('forget') && action(`请求忘记：${memory.key}`, () => toConversation(`请忘记当前 Dot 的个人记忆 ${JSON.stringify(memory.key)}，先展示变更供我确认。`))}
-                        </View>)}
-                        {!detail.memory.items.length && <Text style={muted}>这个 Dot 尚未保存个人记忆。</Text>}
-                        {detail.memory.omittedCount > 0 && <Text style={muted}>共 {detail.memory.total} 项，另有 {detail.memory.omittedCount} 项可在对话中按名称查询。</Text>}
-                        {detail.memory.access.includes('write') && action('添加记忆', () => setMemoryEdit({ key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false }))}
-                        <Text style={muted}>记忆变更通过当前 Dot 的真实对话提交，沿用已有确认规则。</Text>
-                    </>}
                 </>}
             {view && <Text style={muted}>更新于 {new Date(view.asOf).toLocaleString()}</Text>}
         </ScrollView>
@@ -109,8 +110,8 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     return <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, minHeight: 0, paddingTop: topInset }}>
         {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${metadata.dotId}`} sessionId={metadata.workspaceSessionId} workspaceId={metadata.workspaceId} dotId={metadata.dotId} onClose={() => setManagingConnections(false)} />}
         {wide ? <View style={{ alignItems: 'flex-end', paddingHorizontal: 16 }}>{action(expanded ? '收起工作栏' : '展开工作栏', () => setExpanded(value => !value))}</View>
-            : <View accessibilityRole="tablist" style={{ flexDirection: 'row', padding: 8, gap: 8 }}>{(['chat', 'work', 'memory'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { flex: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
-                <Text style={body}>{{ chat: '对话', work: '工作', memory: '记忆' }[item]}</Text>
+            : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'activity', 'work', 'memory', 'basis'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { paddingHorizontal: 8, flexGrow: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
+                <Text style={body}>{tabLabels[item]}</Text>
             </Pressable>)}</View>}
         {notice && <Text accessibilityLiveRegion="polite" style={[muted, { paddingHorizontal: 16 }]}>{notice}</Text>}
         <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
