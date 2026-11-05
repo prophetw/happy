@@ -23,7 +23,7 @@ vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { color
 } } }) }));
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 const workspaceId = '11111111-1111-4111-8111-111111111111', dotId = '22222222-2222-4222-8222-222222222222';
-const view = () => ({ revision: 2, connections: [{ id: 'connection-a', name: '开发 REST', endpoint: 'https://control.example/happy-control/v1',
+const view = () => ({ revision: 2, capabilities: { credentialPreview: 1, replaceAuthorization: 1 }, connections: [{ id: 'connection-a', name: '开发 REST', endpoint: 'https://control.example/happy-control/v1',
     grantID: 'grant-a', machineID: 'machine-a', projects: [{ id: 'project-a', directory: '/code/a' }, { id: 'project-b', directory: '/code/b' }],
     methods: ['tasks.create', 'sessions.send'], expiresAt: Date.now() + 3600000, enabled: true, source: 'configured', checkedAt: new Date().toISOString(),
     error: null, credentialSource: 'stored', credentialConfigured: true, status: 'verified' }],
@@ -50,37 +50,73 @@ async function render(dot?: string) {
     const click = async (name: string) => act(async () => button(name).props.onPress());
     return { renderer, props, field, change, click, button };
 }
-it('uses workspace RPC and saves only the explicitly selected Dot project', async () => {
-    const f = await render();
+const preview = { endpoint: 'https://control.example/happy-control/v1', grantID: 'new-grant', machineID: 'machine-a',
+    projects: [{ id: 'project-a', directory: '/code/a' }, { id: 'project-b', directory: '/code/b' }],
+    methods: ['tasks.create'], expiresAt: Date.now() + 3600000, digest: 'verified-scope' };
+async function credentialForm(f: Awaited<ReturnType<typeof render>>) {
+    await f.click('添加连接'); await f.change('连接名称', '新连接');
+    await f.change('REST 服务地址', 'https://control.example/happy-control/v1/');
+    await f.change('服务访问令牌', 'hsvc1.fixture.secret');
+}
+it('chooses an existing connection and grants only the selected project', async () => {
+    const f = await render(dotId);
     expect(mocks.rpc).toHaveBeenCalledWith('workspace', 'testloop-rest-connections', { action: 'list' });
-    expect(f.button('代码助理 使用 开发 REST 的 project-b').props.accessibilityState.checked).toBe(false);
-    await f.click('代码助理 使用 开发 REST 的 project-b'); await f.click('保存 代码助理 的授权选择');
+    await f.click('选择连接'); await f.click('使用连接：开发 REST');
+    expect(f.button('启用项目 project-b').props.accessibilityState.checked).toBe(false);
+    await f.click('启用项目 project-b'); await f.click('保存项目选择');
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind', revision: 2, dotId,
         bindings: [{ connectionID: 'connection-a', projectIDs: ['project-b'] }] });
+    await f.click('返回'); expect(f.button('我的连接')).toBeTruthy();
 });
-it('masks the token, submits it only through RPC, then clears it after an unconfirmed save', async () => {
-    const f = await render(), token = 'hsvc1.fixture.secret';
-    await f.change('连接名称', '新连接'); await f.change('REST 服务地址', 'https://control.example/happy-control/v1'); await f.change('服务访问令牌', token);
+it('previews a masked credential without saving, then saves selected scope atomically', async () => {
+    const f = await render(); await credentialForm(f);
     expect(f.field('服务访问令牌').props.secureTextEntry).toBe(true);
-    mocks.rpc.mockRejectedValueOnce(new Error('transport interrupted')); await f.click('核验并保存连接');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'add', token, name: '新连接', revision: 2 });
-    expect(f.field('服务访问令牌').props.value).toBe('');
-    expect(JSON.stringify(f.renderer.toJSON())).not.toContain(token); expect(JSON.stringify(f.renderer.toJSON())).toContain('未确认操作结果');
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { preview } }); await f.click('验证授权');
+    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toEqual({ action: 'preview', endpoint: 'https://control.example/happy-control/v1/', token: 'hsvc1.fixture.secret' });
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'add')).toHaveLength(0);
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('hsvc1.fixture.secret');
+    await f.click('授权给 代码助理'); await f.click('全选项目'); await f.click('保存连接与授权');
+    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'add', name: '新连接', previewDigest: preview.digest,
+        token: 'hsvc1.fixture.secret', assignment: { dotId, projectIDs: ['project-a', 'project-b'] } });
 });
-it('clears the token on background', async () => {
-    const f = await render(); await f.change('服务访问令牌', 'temporary-token'); await act(async () => mocks.background?.('background'));
-    expect(f.field('服务访问令牌').props.value).toBe('');
+it('replaces an existing Dot grant through an explicit preview and project selection', async () => {
+    const bound = view(); bound.dots[0].bindings = [{ connectionID: 'connection-a', projectIDs: ['project-a'] }] as never;
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: bound });
+    const f = await render(dotId); await f.click('更新服务令牌：开发 REST');
+    await f.change('服务访问令牌', 'hsvc1.fixture.secret');
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { preview } }); await f.click('验证授权');
+    expect(f.button('保存并替换授权').props.disabled).toBe(true);
+    await f.click('全选项目'); await f.click('保存并替换授权');
+    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'replace', connectionID: 'connection-a',
+        assignments: [{ dotId, projectIDs: ['project-a', 'project-b'] }], previewDigest: preview.digest });
 });
-it('ignores a late old-account response', async () => {
-    const f = await render(); await f.change('连接名称', '旧账户连接'); await f.change('REST 服务地址', 'https://control.example/happy-control/v1'); await f.change('服务访问令牌', 'old-token');
+it('clears the token and offers a read-only refresh after an unconfirmed response', async () => {
+    const f = await render(); await credentialForm(f);
+    mocks.rpc.mockRejectedValueOnce(new Error('transport interrupted')); await f.click('验证授权');
+    expect(f.field('服务访问令牌').props.value).toBe('');
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('未收到保存结果');
+    await f.click('刷新核对'); expect(mocks.rpc.mock.calls.at(-1)?.[2]).toEqual({ action: 'list' });
+});
+it('invalidates a verified credential when the app enters the background', async () => {
+    const f = await render(); await credentialForm(f);
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { preview } }); await f.click('验证授权');
+    await act(async () => mocks.background?.('background'));
+    expect(f.field('服务访问令牌').props.value).toBe('');
+    expect(f.button('验证授权').props.disabled).toBe(true);
+});
+it('ignores a late old-account response and clears the credential form', async () => {
+    const f = await render(); await credentialForm(f);
     let resolve!: (value: unknown) => void;
-    mocks.rpc.mockImplementationOnce(() => new Promise(done => { resolve = done; })); await f.click('核验并保存连接');
+    mocks.rpc.mockImplementationOnce(() => new Promise(done => { resolve = done; })); await f.click('验证授权');
     mocks.credentials = { token: 'other-account', secret: 'other-secret' };
     await act(async () => f.renderer.update(React.createElement(DotsConnectionsPanel, f.props)));
-    const old = view(); old.connections[0].name = '旧账户响应'; await act(async () => resolve({ ok: true, data: old }));
-    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('旧账户响应'); expect(f.field('服务访问令牌').props.value).toBe('');
+    await act(async () => resolve({ ok: true, data: { preview } }));
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('核对授权与项目');
+    await f.click('添加连接'); expect(f.field('服务访问令牌').props.value).toBe('');
 });
-it('the Dot entry can explicitly remove all project bindings without collecting a credential', async () => {
-    const f = await render(dotId); expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0); await f.click('保存 代码助理 的授权选择');
+it('allows explicit removal from the Dot entry without collecting credentials', async () => {
+    const bound = view(); bound.dots[0].bindings = [{ connectionID: 'connection-a', projectIDs: ['project-a'] }] as never;
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: bound }); const f = await render(dotId);
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0); await f.click('解除连接：开发 REST');
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind', dotId, bindings: [] });
 });

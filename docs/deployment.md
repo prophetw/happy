@@ -1294,3 +1294,9 @@ Use `.env`/`.env.dev` to load local settings when running `pnpm --filter happy-s
 - Dockerfile: `Dockerfile.server`
 - Kubernetes manifests: `packages/happy-server/deploy`
 - Env usage: `packages/happy-server/sources` (`rg -n "process.env"`)
+
+### 连接管理与授权更换
+
+连接管理分为「我的连接」和「Dot 授权」。新令牌先只读验证，预览项目和到期日，再保存；可在 Dot 详情通过「更新服务令牌」同时保存新连接和项目选择，或通过「更换连接」使用已有连接。主列表展示项目名称，机器/授权ID与操作码放在连接详情，不可用连接折叠显示。
+
+此版本需同步升级 TestLoop 的 `testloop-rest-connections` RPC，支持 `preview`、带项目分配的 `add` 和原子 `replace`；前端按宿主能力标记开放新流程。更换只影响明确选择的 Dot 后续派工，不重写旧任务或会话授权。保存前重新核验授权范围；范围变化、过期写入或验证失败时保持原绑定。公网部署仍按上述干净源码与冷备流程执行；手机未执行 OTA 时不视为同步更新。
