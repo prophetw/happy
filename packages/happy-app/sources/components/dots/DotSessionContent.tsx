@@ -10,6 +10,7 @@ import type { Session } from '@/sync/storageTypes';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
 import { testloopWorkStatus, type TestloopDotsMetadata } from '@/sync/testloopDots';
 import { useDotsWorkspace } from './useDotsWorkspace';
+import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
 type Tab = 'chat' | 'work' | 'memory';
@@ -26,6 +27,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const navigate = useNavigateToSession();
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [tab, setTab] = React.useState<Tab>('chat');
+    const [managingConnections, setManagingConnections] = React.useState(false);
     const [sideTab, setSideTab] = React.useState<'work' | 'memory'>('work'), [expanded, setExpanded] = React.useState(true);
     const [taskId, setTaskId] = React.useState<string | null>(null), [error, setError] = React.useState<string | null>(null);
     const [memoryEdit, setMemoryEdit] = React.useState<{ key: string; text: string; kind: string; json: boolean; expiresAt: string | null; existing: boolean } | null>(null);
@@ -68,9 +70,10 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         </View>
     </Modal>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
-        <View style={{ padding: 14, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ padding: 14, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {wide && (['work', 'memory'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{item === 'work' ? '工作' : '记忆'}</Text></Pressable>)}
             {action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending))}
+            {action('可用连接与项目', () => setManagingConnections(true))}
         </View>
         <ScrollView contentContainerStyle={{ padding: 18, gap: 18 }}>
             {data.pending && !data.pending.timedOut && <ActivityIndicator />}
@@ -104,6 +107,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         </ScrollView>
     </View>;
     return <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, minHeight: 0, paddingTop: topInset }}>
+        {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${metadata.dotId}`} sessionId={metadata.workspaceSessionId} workspaceId={metadata.workspaceId} dotId={metadata.dotId} onClose={() => setManagingConnections(false)} />}
         {wide ? <View style={{ alignItems: 'flex-end', paddingHorizontal: 16 }}>{action(expanded ? '收起工作栏' : '展开工作栏', () => setExpanded(value => !value))}</View>
             : <View accessibilityRole="tablist" style={{ flexDirection: 'row', padding: 8, gap: 8 }}>{(['chat', 'work', 'memory'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { flex: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
                 <Text style={body}>{{ chat: '对话', work: '工作', memory: '记忆' }[item]}</Text>

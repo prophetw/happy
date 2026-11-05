@@ -2,6 +2,8 @@ import * as React from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import { useFocusEffect } from '@react-navigation/native';
+import { useLocalSearchParams } from 'expo-router';
+import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
@@ -34,6 +36,9 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
 }) {
     const { theme } = useUnistyles();
     const data = useDotsWorkspace(session.id, workspaceId, active);
+    const { connections } = useLocalSearchParams<{ connections?: string }>();
+    const [managingConnections, setManagingConnections] = React.useState(connections === '1');
+    React.useEffect(() => { if (connections === '1') setManagingConnections(true); }, [connections]);
     const navigate = useNavigateToSession();
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [creating, setCreating] = React.useState(false);
@@ -84,6 +89,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
             </View><Pressable accessibilityRole="button" accessibilityLabel="新建 Dot" disabled={!data.ready || Boolean(data.pending)} onPress={() => setCreating(true)}
                 style={[s.button, { backgroundColor: '#6650b7', opacity: data.ready && !data.pending ? 1 : 0.5 }]}><Text style={{ color: '#fff', fontWeight: '600' }}>＋ 新建 Dot</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={Boolean(data.pending)} onPress={() => data.retry()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="连接与授权" onPress={() => setManagingConnections(true)} style={s.button}><Text style={s.muted}>连接与授权</Text></Pressable>
             </View>
             {limits && <Text style={s.muted}>{limits}</Text>}
             {(data.error || openError) && <Text accessibilityRole="alert" style={s.muted}>{data.error || openError}</Text>}
@@ -109,13 +115,14 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 </View>
             </View>
         </ScrollView>
+        {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${workspaceId}`} sessionId={session.id} workspaceId={workspaceId} onClose={() => setManagingConnections(false)} />}
         <Modal visible={creating} transparent animationType="fade" onRequestClose={() => setCreating(false)}>
             <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', alignItems: 'center', padding: 18 }}>
                 <ScrollView keyboardShouldPersistTaps="handled" style={{ width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: theme.colors.surface, borderRadius: 18 }} contentContainerStyle={{ padding: 24, gap: 18 }}>
                     <Text accessibilityRole="header" style={s.heading}>创建一个 Dot</Text>
                     <Text style={s.muted}>名称</Text><TextInput accessibilityLabel="Dot 名称" value={name} onChangeText={setName} maxLength={80} editable={!data.pending} style={s.input} />
                     <Text style={s.muted}>长期职责</Text><TextInput accessibilityLabel="Dot 长期职责" value={instruction} onChangeText={setInstruction} maxLength={2000} multiline editable={!data.pending} style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} />
-                    <Text style={s.muted}>创建不消耗模型额度。之后在专属对话里持续交办。</Text>
+                    <Text style={s.muted}>创建不消耗模型额度。新 Dot 默认没有 REST 权限，创建后请在「连接与授权」中选择项目。</Text>
                     <Pressable accessibilityRole="button" accessibilityLabel="创建 Dot" disabled={!name.trim() || !instruction.trim() || Boolean(data.pending)} onPress={() => {
                         const requestId = randomUUID(); createId.current = requestId;
                         void data.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim() });

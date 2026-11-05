@@ -337,6 +337,9 @@ export const SettingsView = React.memo(function SettingsView({
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
                 </Pressable>
+                <Item title="Dots 连接与授权" subtitle="管理 REST 服务与每个助理可用的项目"
+                    icon={<Ionicons name="key-outline" size={29} color="#6650b7" />}
+                    onPress={() => router.push({ pathname: '/dots', params: { connections: '1' } })} />
             </ItemGroup>
 
             {/* Features */}
