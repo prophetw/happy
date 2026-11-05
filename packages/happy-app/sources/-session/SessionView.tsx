@@ -512,7 +512,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                             metadata={testloopDots} active={isFocused}
                             topInset={contentRunsUnderHeader ? safeArea.top + mobileHeaderHeight + tabStripHeight
                                 + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0) : 0}>
-                            {request => <SessionViewLoaded sessionId={sessionId} session={session} active={isFocused} embedded composeRequest={request} />}
+                            {request => <SessionViewLoaded sessionId={sessionId} session={session} active={isFocused} parentHandlesInsets composeRequest={request} />}
                         </DotSessionContent> : <SessionViewLoaded
                             key={routeId}
                             sessionId={sessionId}
@@ -781,6 +781,7 @@ export function SessionViewLoaded({
     pending = null,
     active = true,
     embedded = false,
+    parentHandlesInsets = false,
     headerAccessoryHeight = 0,
     onHeaderBackdropVisibilityChange,
     composeRequest,
@@ -796,6 +797,8 @@ export function SessionViewLoaded({
     pending?: PendingChat | null;
     active?: boolean;
     embedded?: boolean;
+    /** The Dots shell supplies top spacing without changing chat capabilities. */
+    parentHandlesInsets?: boolean;
     /** Chrome stacked under the header (the tab strip) that the chat scrolls beneath. */
     headerAccessoryHeight?: number;
     onHeaderBackdropVisibilityChange?: (visible: boolean) => void;
@@ -861,7 +864,7 @@ export function SessionViewLoaded({
     const acknowledgedCliVersions = useLocalSetting('acknowledgedCliVersions');
     const zenMode = useLocalSetting('zenMode');
     const sessionInputHorizontalPadding = Platform.OS === 'web' || isRunningOnMac() || isTablet ? 12 : 8;
-    const chatListTopContentInset = embedded || (isLandscape && !isTablet)
+    const chatListTopContentInset = embedded || parentHandlesInsets || (isLandscape && !isTablet)
         ? 12
         : !isTablet && Platform.OS !== 'web'
             ? safeArea.top
