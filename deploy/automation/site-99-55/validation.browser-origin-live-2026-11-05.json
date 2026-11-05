@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-05T08:13:06Z",
+  "status": "deployed-and-live-verified-with-authenticated-browser-boundary",
+  "commit": "b972b31f154c39452ba9aa2bcb8e4c03034aa853",
+  "applicationSourceTree": "51f6fa353380f93d545fabeaa03ff08720fe1c02",
+  "sourceKind": "committed fork/main; clean release clone /home/dev/code/happy-release-browser-origin-20261105; HEAD == fork/main verified before deployment",
+  "feature": {
+    "config": "optional additionalBrowserOrigins, default [] with at most 16 unique canonical HTTPS or loopback HTTP origins",
+    "deploymentValue": ["http://localhost:8989"],
+    "cors": "exact Access-Control-Allow-Origin and Vary: Origin for additional origins; no wildcard and no Access-Control-Allow-Credentials",
+    "preflight": "empty 204 under /happy-control/v1/ with GET, POST, DELETE and Authorization, Content-Type; no reflection and no owner mutation or verification",
+    "defaultBehavior": "primary-origin and no-additional-origin behavior remains unchanged; foreign origins fail closed",
+    "apiCompatibility": "OpenAPI remains 1.8.0 with projects and options routes"
+  },
+  "verification": {
+    "integratedTests": "57 passed across gateway, launch options and production tests; 6 site config tests and template checks passed",
+    "isolatedImage": "80 checks passed against the exact deployment image, including native two-hop Nginx/TLS/mTLS localhost preflight, compatibility, owner list and foreign-origin denial",
+    "build": "happy-agent build and image build passed with pnpm 10.11.0 and npmmirror; dependency installation reused local packages with zero downloads",
+    "environmentNote": "One unrelated existing permission test failed under the session umask 077; the same two test files passed 40/40 with the repository-required umask 022 before the final integrated 57/57 run",
+    "live": {
+      "onlineCompatibility": "200 ok=true protocol=1",
+      "localhostPreflight": "204 empty body; ACAO=http://localhost:8989; Vary=Origin; methods=GET, POST, DELETE; headers=Authorization, Content-Type; no ACAC",
+      "localhostCompatibility": "200 ok=true protocol=1 with exact ACAO",
+      "localhostInvalidOwner": "401 OWNER_AUTH_REQUIRED with exact ACAO and readable JSON",
+      "foreignPreflightAndGet": "403 ORIGIN_DENIED without ACAO",
+      "web": "/happy/ 200",
+      "relay": "/home-relay/health 200",
+      "openapi": "1.8.0 with projects and options",
+      "host": "unit active, NRestarts=0, control healthy, gateway running, no matching startup errors",
+      "persistentState": "27 records before and after; no added, removed or changed hashes"
+    },
+    "realBrowser": {
+      "artifacts": ".e2e-artifacts/browser-origin-b972b31f-20261105T0805Z/",
+      "checks": [
+        "anonymous automation page rendered without the old generic red error",
+        "real browser OPTIONS 204 observed for compatibility and connections",
+        "compatibility 200 and owner-list 401 JSON readable from the localhost page context",
+        "no page error, request failure or unexpected console error"
+      ],
+      "expectedConsole": "one resource-level 401 caused by the deliberately invalid synthetic owner token; existing development-route and web warnings retained",
+      "harnessCorrections": "The first harness incorrectly expected CORS headers to be exposed through fetch().headers and compared omitted undefined fields. CDP header evidence was correct; the harness was fixed and the final run passed without application changes.",
+      "screenshot": "https://szsp.suitbim.com.cn:7100/img-bed/images/3c3560b2-cc6f-4494-a962-a2eafd6e1651.png",
+      "authenticatedOwnerList200": "not verified; no existing browser profile or real token was read or copied"
+    }
+  },
+  "control55": {
+    "image": "sha256:8b5d095796a21363f4bd8816ec5ca78424884aa465f731d33bfc6b1f7125a61a",
+    "imageRevisionLabel": "b972b31f154c39452ba9aa2bcb8e4c03034aa853",
+    "imageTreeLabel": "51f6fa353380f93d545fabeaa03ff08720fe1c02",
+    "archive": "/data/code/happy-control/archives/browser-origin-b972b31f-image.tar",
+    "archiveSHA256": "937e810a1409ba60506dbd002586a88361daa27dc0173d275623c7b3bebf5963",
+    "deployEnv": "/etc/happy-control/deploy.env changed only CONTROL_IMAGE",
+    "hostConfig": "/data/code/happy-control/config/host.json changed only additionalBrowserOrigins",
+    "hostConfigSHA256": "0ed6aec8ba2a202bf8d62fcb23f2c195b3b1d3144d66e54b2b75825b304a41db",
+    "controlContainer": "dc7a7e603281a2e8fab2baafca7847419f722bf47b1fa45af7ce66c4af47fe5a healthy",
+    "gatewayContainer": "158bf7aa78d871ddbdcc6fbbd99819891728be0b9120ddd3051ddca9a48c10a3 running",
+    "previousImage": "sha256:40847b97f7e798a2e8747439d190987d1079cc77d501e42b167abaa1ae292fcb",
+    "previousRevision": "964a5c7e76ba75ba3088de57bb951590c53671d1",
+    "rollbackMaterials": "/data/code/happy-control/rollouts/browser-origin-b972b31f/{before-host.json,before-deploy.env,before.json,before-state-manifest.json,after-state-manifest.json,candidate-host.json,candidate-deploy.env,candidate-compose.json,apply.sh,apply.log,result.json}",
+    "rollbackRule": "restore previous image and previous host config together; retain current state/proofs/receipts"
+  },
+  "unchanged": [
+    "4090 worker/daemon and its dynamic-models release",
+    "57 Web and Nginx container/configuration",
+    "Relay image, container, health and data",
+    "registered identities, project scopes and existing grants",
+    "27 persistent state records byte-for-byte"
+  ],
+  "notVerified": [
+    "Real owner-authenticated browser connections list 200; the real browser used an anonymous context and a deliberately invalid synthetic token only",
+    "Approval, revocation, deletion, service-token issuance or task execution in production",
+    "Actual rollback drill; previous image and guarded configuration backup retained",
+    "Native App/OTA release; not part of this REST-only deployment"
+  ]
+}

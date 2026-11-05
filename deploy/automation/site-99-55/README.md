@@ -1,5 +1,13 @@
 # 99.55 REST / 99.57 HTTPS：长期服务，测试范围任务控制已验证
 
+## localhost:8989 浏览器批准 Origin 已上线（2026-11-05）
+
+已从干净发布 clone 提交并推送 `b972b31f154c39452ba9aa2bcb8e4c03034aa853` 到 `fork/main`，55 REST 切换为镜像 `sha256:8b5d095796a21363f4bd8816ec5ca78424884aa465f731d33bfc6b1f7125a61a`。host 仅新增 `additionalBrowserOrigins: ["http://localhost:8989"]`，其他身份、项目范围与配置不变；默认仍只接受固定主 Origin，不使用通配 CORS 或 Cookie。额外 Origin 的预检返回空204，实际 owner 请求继续逐个验证 Happy Bearer。
+
+最终集成57项后端测试、6项站点合同、正式镜像80项双 Nginx/TLS/mTLS 隔离检查通过。线上 localhost 预检204、compatibility 200、无效 owner token 返回可读的401，其他 Origin 仍403；线上原 Origin、OpenAPI 1.8.0、`/happy/` 和 Relay 健康保持。真实匿名浏览器观察到两条预检及实际响应，页面无原通用红字、无页面异常或非预期 Console Error。未读取真实账号或 token，**有效账号的浏览器连接列表200未验证**，未执行生产批准、撤销、签发或任务操作。
+
+本次只更新55 REST控制对及其新增Origin配置；4090 worker、57 Web/Nginx、Relay未重启或修改，27份持久状态记录字节一致。候选镜像归档为 `/data/code/happy-control/archives/browser-origin-b972b31f-image.tar`，旧镜像 `40847b97f7e7…`、旧host/deploy.env及状态哈希清单保存在 `/data/code/happy-control/rollouts/browser-origin-b972b31f/`；回退须配套恢复旧镜像与旧host，保留当前state。真实回滚未演练。完整记录见 `validation.browser-origin-live-2026-11-05.json`。
+
 ## Grant 项目发现接口已上线（2026-11-05）
 
 已从干净发布 clone 提交并推送 `2307176a01e204d3ee44235d09ac1b40db748674` 到 `fork/main`，55 REST 切换为镜像 `sha256:5f753d8515c5cc54b00dc2d05386e1b246135ae66381e82d74a1fe75e34c8be4`，公开 OpenAPI **1.7.0**。新增 `GET /projects`，只返回当前有效 grant 获准的 `projectID/directory`；不需要额外方法授权、不调用 worker、最多 32 项且不分页。`GET /connections/{grantID}` 对旧单项目授权也统一返回 `projects: [{id,directory}]`，原字段保持兼容。
