@@ -23,7 +23,16 @@ export type ServiceConnectionRequest = {
 /** Do not approve a multi-project shape that this page cannot fully display. */
 export function consentProjects(consent: AutomationConsent): { id: string; directory: string }[] {
     if (consent.scopeVersion === undefined) {
-        if (consent.projectIDs !== undefined || consent.projects !== undefined) throw new Error('PROJECT_SCOPE_APPROVAL_UPGRADE_REQUIRED');
+        if (consent.projectIDs !== undefined) throw new Error('PROJECT_SCOPE_APPROVAL_UPGRADE_REQUIRED');
+        // The gateway also exposes legacy single-project grants through this alias.
+        // Accept it only when it exactly repeats the explicit legacy scope.
+        if (consent.projects !== undefined) {
+            const { projectID, projectDirectory, projects } = consent;
+            if (typeof projectID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(projectID)
+                || typeof projectDirectory !== 'string' || !projectDirectory.startsWith('/')
+                || !Array.isArray(projects) || projects.length !== 1
+                || projects[0]?.id !== projectID || projects[0]?.directory !== projectDirectory) throw new Error('PROJECT_SCOPE_APPROVAL_UPGRADE_REQUIRED');
+        }
         return [{ id: consent.projectID ?? '', directory: consent.projectDirectory ?? '' }];
     }
     const ids = consent.projectIDs, projects = consent.projects;

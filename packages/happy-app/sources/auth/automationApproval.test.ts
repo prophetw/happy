@@ -1,5 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
-import { automationApprovalApi, automationConnectionQR, parseAutomationQR, type AutomationConsent, type ServiceConnectionRequest } from './automationApproval';
+import { automationApprovalApi, automationConnectionQR, consentProjects, parseAutomationQR, type AutomationConsent, type ServiceConnectionRequest } from './automationApproval';
+
+describe('legacy single-project compatibility alias', () => {
+    const legacy = { id: 'legacy_connection', projectID: 'project_a', projectDirectory: '/fixture/a',
+        projects: [{ id: 'project_a', directory: '/fixture/a' }], digest: 'd'.repeat(64), challenge: 'fixture' } as AutomationConsent;
+
+    it('accepts the gateway alias without changing the legacy project scope', () => {
+        expect(consentProjects(legacy)).toEqual(legacy.projects);
+        expect(consentProjects({ ...legacy, projects: undefined })).toEqual(legacy.projects);
+    });
+
+    it.each([
+        { projectIDs: ['project_a'] }, { projectIDs: [] },
+        { projects: [] }, { projects: null }, { projects: {} }, { projects: [null] },
+        { projects: [{ id: 'project_b', directory: '/fixture/a' }] },
+        { projects: [{ id: 'project_a', directory: '/fixture/b' }] },
+        { projects: [{ id: 'project_a', directory: '/fixture/a' }, { id: 'project_b', directory: '/fixture/b' }] },
+        { projectID: undefined }, { projectID: '' }, { projectDirectory: undefined },
+        { projectID: '../bad', projects: [{ id: '../bad', directory: '/fixture/a' }] },
+        { projectDirectory: 'relative', projects: [{ id: 'project_a', directory: 'relative' }] },
+    ])('refuses ambiguous legacy scope before any approval request: %j', async patch => {
+        const request = vi.fn();
+        const api = automationApprovalApi('https://fixture.invalid/home-relay', () => 'Bearer fixture', request);
+        const malformed = { ...legacy, ...patch } as unknown as AutomationConsent;
+        expect(() => consentProjects(malformed)).toThrow('PROJECT_SCOPE_APPROVAL_UPGRADE_REQUIRED');
+        await expect(api.approve(malformed)).rejects.toThrow('PROJECT_SCOPE_APPROVAL_UPGRADE_REQUIRED');
+        expect(request).not.toHaveBeenCalled();
+    });
+});
 
 describe('dedicated automation approval UI adapter', () => {
     it('accepts only the dedicated QR and never treats account/terminal keys or arbitrary URLs as authorization', () => {

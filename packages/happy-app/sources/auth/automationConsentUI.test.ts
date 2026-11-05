@@ -40,6 +40,18 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 const button = (renderer: any, label: string) => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === label);
 describe('automation consent screen (mock native UI, no browser or actual camera/auth)', () => {
+    it('renders the real legacy gateway project alias and keeps approval explicit', async () => {
+        const legacy = { ...view, projects: [{ id: view.projectID, directory: view.projectDirectory }] };
+        mocks.consent.mockResolvedValue(legacy); let renderer: any;
+        await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
+        const text = JSON.stringify(renderer.toJSON());
+        expect(text).toContain(view.projectID); expect(text).toContain(view.projectDirectory);
+        expect(text).not.toContain('请刷新并使用支持多项目范围的新版批准页面');
+        expect(mocks.approve).not.toHaveBeenCalled();
+        await act(async () => { await button(renderer, '确认批准以上权限').props.onPress(); });
+        expect(mocks.approve).toHaveBeenCalledWith(legacy);
+        await act(async () => renderer.unmount());
+    });
     it('shows exact identity, fingerprints, project, operations and expiry before explicit approval', async () => {
         let renderer: any;
         await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
