@@ -1,5 +1,13 @@
 # 99.55 REST / 99.57 HTTPS：长期服务，测试范围任务控制已验证
 
+## Grant 项目发现接口已上线（2026-11-05）
+
+已从干净发布 clone 提交并推送 `2307176a01e204d3ee44235d09ac1b40db748674` 到 `fork/main`，55 REST 切换为镜像 `sha256:5f753d8515c5cc54b00dc2d05386e1b246135ae66381e82d74a1fe75e34c8be4`，公开 OpenAPI **1.7.0**。新增 `GET /projects`，只返回当前有效 grant 获准的 `projectID/directory`；不需要额外方法授权、不调用 worker、最多 32 项且不分页。`GET /connections/{grantID}` 对旧单项目授权也统一返回 `projects: [{id,directory}]`，原字段保持兼容。
+
+74 项相关后端测试、共享包及 happy-agent 构建、实际镜像 76 项隔离检查通过。发布后使用现有真实服务令牌验证 `/projects` 仅返回该 grant 的 `automation-test` 和 `automation-test-b`，连接详情项目数组一致；匿名请求为 401、额外分页参数为 400，worker-backed `/machines` 返回 200。未创建新任务或授权，未输出令牌。
+
+本次只更新 55 REST 控制对；4090 worker、57 Web、Relay、host 配置和授权范围未改，Relay 容器 ID 与健康状态保持。旧镜像 `077fd8616a5d…` 和部署前 `deploy.env` 保存在 `/data/code/happy-control/rollouts/project-discovery-2307176a/`；镜像归档为 `/data/code/happy-control/archives/project-discovery-2307176a-image.tar`。保留当前 state，不恢复快照；真实回滚分支未演练。完整记录见 `validation.project-discovery-live-2026-11-05.json`。
+
 ## 委派启动选项与白名单已上线（2026-11-05，真实选项任务待本人验收）
 
 已从干净发布 clone 发布提交 `6448352712dd46c256d90a1109fc7b41c92814b6`（fork/main）。55 REST 为镜像 `sha256:7835f543d6cf…`，公开 OpenAPI **1.5.0**、新增 `GET /options`（`options.list` 方法）；4090 受管 worker 已切到 `releases/launch-options-64483527`（80-release drop-in，PID 2872400），同 machine connected，10 个原会话进程身份全部保持。57 Web 由另一任务基于同一 SHA 发布，已核实 entry JS 含本次批准页改动，未重复切换。

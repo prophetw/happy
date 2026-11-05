@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "verifiedAtUTC": "2026-11-05T04:42:19Z",
+  "status": "deployed-and-live-verified",
+  "commit": "2307176a01e204d3ee44235d09ac1b40db748674",
+  "applicationSourceTree": "5c766409885cac485fab61d5d8db7a1a6fbb31fe",
+  "sourceKind": "committed fork/main, clean release clone /home/dev/code/happy-release-project-discovery-20261105, HEAD == fork/main verified before deployment",
+  "feature": {
+    "openapi": "1.7.0",
+    "projects": "GET /projects returns only the active grant's projects as projectID/directory; no extra method, worker call, or pagination; at most 32 entries",
+    "connection": "GET /connections/{grantID} exposes projects[] with id/directory for legacy single-project and all multi-project/directory scopes"
+  },
+  "verification": {
+    "targetedTests": "5 happy-agent files, 74 passed on both the original feature commit and the integrated clean release clone",
+    "builds": "happy-wire and happy-agent passed locally and inside the pinned Node 22 Docker build",
+    "isolatedImage": "76 checks passed; native two-hop Nginx/TLS/mTLS, scoped tasks, service tokens, multi-project and directory scopes, recovery and failure-closed behavior; fixture credentials only",
+    "imageImport": "dist OpenAPI reports 1.7.0 and operationId projects",
+    "live": {
+      "compatibility": "200 protocol=1 projectScopes=1 directoryScopes=1 serviceTokens.protocol=1",
+      "openapi": "200 version=1.7.0 and /projects present",
+      "projectsWithRealServiceToken": "200; exactly automation-test and automation-test-b with their approved directories",
+      "connectionWithSameGrant": "200; projects[] matches the same two approved projects",
+      "workerBackedMachines": "200; bound machine online_hint",
+      "anonymousProjects": "401 AUTH_REQUIRED",
+      "projectsWithLimitQuery": "400 INVALID_REQUEST",
+      "tasksOrGrantsCreated": false
+    }
+  },
+  "control55": {
+    "image": "sha256:5f753d8515c5cc54b00dc2d05386e1b246135ae66381e82d74a1fe75e34c8be4",
+    "imageRevisionLabel": "2307176a01e204d3ee44235d09ac1b40db748674",
+    "imageTreeLabel": "5c766409885cac485fab61d5d8db7a1a6fbb31fe",
+    "archive": "/data/code/happy-control/archives/project-discovery-2307176a-image.tar",
+    "archiveSHA256": "21dfc07544754ae16da5694918cab62291bef645067cebb3ceaa7571e9c8bdc8",
+    "deployEnv": "/etc/happy-control/deploy.env CONTROL_IMAGE pinned to the new image; other values unchanged",
+    "hostConfigSHA256": "c202753f7eca2d0c6ea3b628de8af65b9bb3dead043b610685f3111929f42c40",
+    "controlContainer": "happy-control-control-1 healthy",
+    "gatewayContainer": "happy-control-gateway-1 running",
+    "relayContainerUnchangedAndHealthy": true,
+    "stateDirectoryPreserved": true,
+    "rollbackMaterials": "/data/code/happy-control/rollouts/project-discovery-2307176a/{before-deploy.env,before.json,before-state-manifest.json,result.json,after-state-manifest.json}",
+    "previousImage": "sha256:077fd8616a5db87d6aa60071d8f0f8ba24301f0d513b2c56f685df93ace060bc"
+  },
+  "unchanged": [
+    "4090 worker/daemon and its release",
+    "57 Web and Nginx",
+    "Relay image, container and data",
+    "host config, registered identities, project scopes and existing grants"
+  ],
+  "buildNotes": "Two initial build invocations used a local image ID as a FROM reference and failed before compilation with a registry-mirror 403. The successful build used the pinned node:22-bookworm-slim repository digest already present locally. No source, dependency or registry configuration was changed.",
+  "notVerified": [
+    "Live signed-client /projects call; covered by gateway fixture tests",
+    "Live scopeVersion=3 /projects call; covered by directory-scope fixture tests and production-image integration",
+    "Actual rollback drill; previous image and guarded configuration backup retained",
+    "Native App/OTA release; not part of this REST-only deployment"
+  ]
+}
