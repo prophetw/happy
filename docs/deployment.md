@@ -872,6 +872,18 @@ JS/CSS 与 favicon、WASM、缺失资源真实 404，以及 Relay 健康检查�
 - **本次状态为部分验证**：未启动浏览器，未验证页面运行时错误、真实手机扫码、登录后
   会话收发、附件或重连；HTTP 与 WSS 握手不代表这些业务流程通过。
 
+#### 2026-11-05 Dot REST连接与显式授权管理
+
+已部署Web源码提交 `1449b17777c65b6d4949de1ab873816e9798d5ec`（`fork/main`）及TestLoop宿主提交 `383e64dc6704f569d1ced9f87b188827f70b2118`（既有 `feat/lightweight-happy-loop` 分支）。来源均已提交推送；Web从干净main clone构建，发布前再次fetch核对。两端类型检查、135项后端、28项前端及7个本地隔离浏览器检查通过；本次不包含手机OTA或原生构建。
+
+Web当前目标为`.happy-releases/20261105T012838Z-dots-rest-1449b17777c6`，前一目标`.happy-releases/20261105T011915Z-21c3dbf6aa9e`保留。静态包SHA-256为`3e70e0a958286f0c6d4e758951ad503aa6476ac467bb8b667b3db792e2b69a14`，切换时合并保留45个旧hashed资源，未重启Nginx、Relay或Happy daemon。来源、包及previous-target记录仍位于既有`happy-web-artifacts`目录。
+
+入口为「设置 → 个人助理 → Dots连接与授权」及工作台「连接与授权」；每个Dot在「可用连接与项目」单独选择范围，新Dot默认无REST能力。服务令牌走工作台加密RPC，不进入聊天。宿主已在源码外的固定release目录运行，完成冷备及验证，保留原任务、历史、额度、记忆和旧环境变量授权；没有生成真实新令牌或派发私人验收任务。
+
+公网HTTP回读核对index、三个引用JS及功能分包的实际字节、Dots/设置深层路由、WASM magic、真实缺失JS的404；Relay health及控制API compatibility均200。真实账号仅执行一次加密管理RPC的只读列表查询，连接及旧绑定可读；未做线上已登录浏览器、真实worker新任务或真机验收。宿主整体health保留此前已有的`assistant_conversation_needs_attention`及`assistant_happy_push_needs_attention`，无新增扫描或连接错误；不将其表述为全系统healthy。
+
+本机证据位于TestLoop的`.e2e-artifacts/dots-connections-20261105/20261105T012838Z-dots-rest/`。第一次离线Docker构建因无法访问npmmirror失败，恢复正常联网且仍限定阿里源后构建通过；首次回读的SSH warning/多分包解析及误用公开readyz路径已修正并保留记录，未重复发布。实际builder image为`sha256:75c12dd5b512bf291a5c277320c8a775d3d577634d632ba34423aabcbaaffe46`。
+
 ### 1. 开发机：准备独立发布目录
 
 先执行 `bash` 进入 Bash；以下开发机代码块在**同一个 Bash 会话**依次执行，保留变量。
