@@ -1,4 +1,5 @@
 import type { MachineMetadata } from '@/api/types';
+import { AGY_EFFORTS } from '@/agyStream/constants';
 
 /**
  * Launch option catalog for delegated (automation REST) sessions.
@@ -10,7 +11,7 @@ import type { MachineMetadata } from '@/api/types';
  */
 export type AutomationOption = { key: string; name: string; description?: string | null };
 export type AutomationAgentCatalog = {
-    agent: 'claude' | 'codex';
+    agent: 'claude' | 'codex' | 'agy';
     models: AutomationOption[];
     permissionModes: AutomationOption[];
     /** Union of every listed model's efforts; per-model support is enforced by the agent itself. */
@@ -53,12 +54,20 @@ export function buildAutomationCatalog(metadata: MachineMetadata | null | undefi
         ...(metadata?.claudeModels?.options ?? []).filter(m => m.code !== 'default')
             .map(m => ({ key: m.code, name: m.value, description: m.description ?? null })),
     ];
-    return [
+    const agents: AutomationAgentCatalog[] = [
         { agent: 'codex', models: codexModels, permissionModes: CODEX_PERMISSION_MODES, efforts: [...codexEfforts],
             defaultModel: 'gpt-6.1-sol', defaultPermissionMode: 'default', defaultEffort: 'high' },
         { agent: 'claude', models: claudeModels, permissionModes: CLAUDE_PERMISSION_MODES, efforts: CLAUDE_EFFORTS,
             defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '' },
     ];
+    if (metadata?.agyModels) agents.push({ agent: 'agy',
+        models: [{ key: 'default', name: metadata.agyModels.currentCode ?? 'Default model' },
+            ...metadata.agyModels.options.filter(m => m.code !== 'default')
+                .map(m => ({ key: m.code, name: m.value, description: m.description ?? null }))],
+        permissionModes: [{ key: 'default', name: 'Default' }, { key: 'bypassPermissions', name: 'Yolo' }],
+        efforts: [...AGY_EFFORTS], defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '',
+    });
+    return agents.filter(entry => metadata?.cliAvailability?.[entry.agent] !== false);
 }
 
 export function automationDefaults(catalog: AutomationAgentCatalog[], agent: string) {

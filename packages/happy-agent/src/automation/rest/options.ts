@@ -10,17 +10,22 @@
  */
 import { z } from 'zod';
 
-export const launchAgents = ['claude', 'codex'] as const;
+export const launchAgents = ['claude', 'codex', 'agy'] as const;
 // Installed Claude provider model IDs may include a context window suffix such as [1M].
 export const launchOptionValue = z.string().regex(/^[A-Za-z0-9_.:\[\]-]{1,128}$/);
+/** Agy uses the exact display name as its model argument, including spaces and parentheses. */
+export const launchModelValue = z.string().regex(/^[A-Za-z0-9_.:\[\]() -]{1,256}$/);
 
 const agentPolicyFields = {
     agent: z.enum(launchAgents),
     /** Explicitly allowed override values; empty list = no override for that field. */
-    models: z.array(launchOptionValue).max(128).default([]),
+    models: z.array(launchModelValue).max(256).default([]),
     permissionModes: z.array(launchOptionValue).max(16).default([]),
 } as const;
-export const launchAgentPolicySchema = z.object(agentPolicyFields).strict();
+export const launchAgentPolicySchema = z.object({ ...agentPolicyFields,
+    /** Explicit owner opt-in: follow the same live machine catalog the Happy picker reads. */
+    modelSource: z.literal('machine').optional(),
+}).strict();
 export const launchOptionsPolicySchema = z.object({
     version: z.literal(1),
     agents: z.array(launchAgentPolicySchema).min(1).max(launchAgents.length)
@@ -31,7 +36,7 @@ export type LaunchOptionsPolicy = z.infer<typeof launchOptionsPolicySchema>;
 /** Optional per-task overrides. Omitted fields always fall back to worker defaults. */
 export const taskOptionsSchema = z.object({
     agent: z.enum(launchAgents).optional(),
-    model: launchOptionValue.optional(),
+    model: launchModelValue.optional(),
     permissionMode: launchOptionValue.optional(),
     effort: launchOptionValue.optional(),
 }).strict();
@@ -65,10 +70,10 @@ export class OptionsDenied extends Error {
 /** Wire shape of the daemon's `options` RPC reply (keys only, no free text). */
 export const optionCatalogEntrySchema = z.object({
     agent: launchOptionValue,
-    models: z.array(launchOptionValue).max(256),
+    models: z.array(launchModelValue).max(256),
     permissionModes: z.array(launchOptionValue).max(32),
     efforts: z.array(launchOptionValue).max(32),
-    defaultModel: launchOptionValue,
+    defaultModel: launchModelValue,
     defaultPermissionMode: launchOptionValue,
     defaultEffort: z.union([launchOptionValue, z.literal('')]),
 }).strict();
@@ -102,7 +107,7 @@ export function filterCatalogForGrant(catalog: OptionCatalog, workerPolicy: Laun
             return result;
         };
         agents.push({ agent: entry.agent,
-            models: narrow(entry.models, workerAgent.models, grantAgent?.models, entry.defaultModel),
+            models: narrow(entry.models, workerAgent.modelSource === 'machine' ? entry.models : workerAgent.models, grantAgent?.models, entry.defaultModel),
             permissionModes: narrow(entry.permissionModes, workerAgent.permissionModes, grantAgent?.permissionModes, entry.defaultPermissionMode),
             efforts: entry.efforts,
             defaultModel: entry.defaultModel, defaultPermissionMode: entry.defaultPermissionMode, defaultEffort: entry.defaultEffort });
@@ -152,7 +157,7 @@ export function resolveTaskOptions(requested: TaskOptions, workerPolicy: LaunchO
         // A live catalog rejects values the agent does not actually offer.
         if (catalogList.length && !catalogList.includes(value)) throw new OptionsDenied();
     };
-    check(resolved.model, requested.model, workerAgent.models, grantAgent?.models, c.models);
+    check(resolved.model, requested.model, workerAgent.modelSource === 'machine' ? c.models : workerAgent.models, grantAgent?.models, c.models);
     check(resolved.permissionMode, requested.permissionMode, workerAgent.permissionModes, grantAgent?.permissionModes, c.permissionModes);
     if (requested.effort !== undefined && c.efforts.length && !c.efforts.includes(resolved.effort)) throw new OptionsDenied();
     return resolved;
@@ -165,7 +170,7 @@ export function validateGrantOptions(requested: ConnectionOptions | undefined, w
     return requested.agents.every(grantAgent => {
         const workerAgent = workerPolicy.agents.find(a => a.agent === grantAgent.agent);
         return !!workerAgent
-            && grantAgent.models.every(m => workerAgent.models.includes(m))
+            && (workerAgent.modelSource === 'machine' || grantAgent.models.every(m => workerAgent.models.includes(m)))
             && grantAgent.permissionModes.every(p => workerAgent.permissionModes.includes(p));
     });
 }

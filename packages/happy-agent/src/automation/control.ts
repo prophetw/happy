@@ -88,9 +88,9 @@ export class AutomationControl {
                 if (!this.policy.sessionIDs.includes(sessionID) && !this.journal.entries().some(e => e.method === 'tasks.create' && e.sessionID === sessionID
                     && e.machineID === obj(session.metadata).machineId && e.directory === obj(session.metadata).path
                     && this.policy.machines.some(m => m.id === e.machineID && m.directories.includes(e.directory!)))) throw new ControlError('FORBIDDEN');
-                // Delegated launches support codex and claude; any other flavor
+                // Delegated launches support codex, claude and agy; any other flavor
                 // stays outside the automation contract.
-                if (!['codex', 'claude'].includes(String(obj(session.metadata).flavor))) throw new ControlError('UNSUPPORTED_AGENT');
+                if (!['codex', 'claude', 'agy'].includes(String(obj(session.metadata).flavor))) throw new ControlError('UNSUPPORTED_AGENT');
                 return session;
             }
             if (page.nextCursor === cursor) throw new ControlError('INVALID_RELAY_RESPONSE');

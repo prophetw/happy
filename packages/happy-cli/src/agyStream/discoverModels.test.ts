@@ -157,6 +157,13 @@ gemini-3.7-flash-high\tGemini 3.7 Flash (High)
     });
   });
 
+  it('does not substitute a static directory when live machine discovery fails', async () => {
+    const failed = ((_bin: string, _args: string[], _opts: any, callback: any) => callback(new Error('offline'), '', '')) as unknown as ExecFileFn;
+    expect(await discoverAgyModels({ execFileFn: failed, fallback: 'none' })).toEqual([]);
+    const empty = ((_bin: string, _args: string[], _opts: any, callback: any) => callback(null, '', '')) as unknown as ExecFileFn;
+    expect(await discoverAgyModels({ execFileFn: empty, fallback: 'none' })).toEqual([]);
+  });
+
   describe('resolveAgyModelName', () => {
     const customModels = [
       { code: 'Gemini 3.8 Flash (High)', value: 'Gemini 3.8 Flash (High)', slug: 'gemini-3.8-flash-high' },

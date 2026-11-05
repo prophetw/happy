@@ -161,6 +161,8 @@ export interface DiscoverAgyModelsOptions {
   timeoutMs?: number;
   log?: (msg: string) => void;
   execFileFn?: ExecFileFn;
+  /** Machine catalogs must never advertise static models after a failed live discovery. */
+  fallback?: 'static' | 'none';
 }
 
 /**
@@ -174,6 +176,7 @@ export async function discoverAgyModels(
   const timeoutMs = opts.timeoutMs ?? 10_000;
   const log = opts.log ?? (() => {});
   const execFileFn = opts.execFileFn ?? execFile;
+  const fallback = () => opts.fallback === 'none' ? [] : getStaticAgyModels();
 
   return new Promise<DiscoveredModel[]>((resolve) => {
     try {
@@ -188,7 +191,7 @@ export async function discoverAgyModels(
         (error, stdout) => {
           if (error) {
             log(`Failed to discover agy models dynamically (${error.message}); falling back to static list`);
-            resolve(getStaticAgyModels());
+            resolve(fallback());
             return;
           }
 
@@ -198,13 +201,13 @@ export async function discoverAgyModels(
             resolve(parsed);
           } else {
             log('No models parsed from `agy models`; falling back to static list');
-            resolve(getStaticAgyModels());
+            resolve(fallback());
           }
         },
       );
     } catch (err) {
       log(`Error running agy models: ${err instanceof Error ? err.message : String(err)}`);
-      resolve(getStaticAgyModels());
+      resolve(fallback());
     }
   });
 }

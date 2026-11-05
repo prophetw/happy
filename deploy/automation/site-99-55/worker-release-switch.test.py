@@ -7,6 +7,16 @@ import unittest
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('worker_switch',pathlib.Path(__file__).with_name('worker-release-switch.py'));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SwitchSafety(unittest.TestCase):
+ def test_dynamic_model_policy_follows_machine_without_adding_permission_modes(self):
+  before={'version':1,'agents':[{'agent':'codex','models':['old-model'],'permissionModes':['read-only']}]}
+  result=m.dynamic_model_policy(before)
+  self.assertEqual([a['agent'] for a in result['agents']],['codex','claude','agy'])
+  self.assertTrue(all(a['modelSource']=='machine' and a['models']==[] for a in result['agents']))
+  self.assertEqual([a['permissionModes'] for a in result['agents']],[['read-only'],[],[]])
+  self.assertEqual(before['agents'][0]['models'],['old-model'])
+ def test_dynamic_model_policy_refuses_unexpected_existing_agents(self):
+  with self.assertRaisesRegex(RuntimeError,'UNAPPROVED_MODEL_AGENT'):
+   m.dynamic_model_policy({'version':1,'agents':[{'agent':'unapproved','models':[],'permissionModes':[]}]})
  def fixture(self,root):
   return m.Switch({'directory':root,'dropin':root+'/release.conf','unitFragment':root+'/unit','unitSHA256':'expected','oldPID':123,'oldStartTicks':'7','oldInvocationID':'a'*32,'oldEntry':'/old/worker','newEntry':'/new/worker','nodeExecutable':'/node','oldConfigSHA256':'old','candidateConfigSHA256':'new','dropinSHA256':'drop','configMode':0o400,'configUID':1000,'configGID':1000})
  def test_changed_process_fails_before_stop_or_config_write(self):

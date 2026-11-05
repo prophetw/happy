@@ -182,6 +182,12 @@ export const MachineMetadataSchema = z.object({
     currentCode: z.string().nullable(),
     detectedAt: z.number(),
   }).optional(),
+  // The installed Agy CLI's live directory, shared by app pickers and automation REST.
+  agyModels: z.object({
+    options: z.array(z.object({ code: z.string(), value: z.string(), description: z.string().nullable().optional() })),
+    currentCode: z.string().nullable().optional(),
+    detectedAt: z.number(),
+  }).optional(),
   // dsh's opaque provider routes, probed once per daemon lifetime over ACP.
   dshModels: z.object({
     options: z.array(z.object({

@@ -10,6 +10,7 @@ const {
     mockDiscoverDshModels,
     mockDiscoverClaudeModels,
     mockDiscoverCodexModels,
+    mockDiscoverAgyModels,
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     mockShouldReconnect: vi.fn(() => true),
@@ -30,6 +31,7 @@ const {
     mockDiscoverDshModels: vi.fn(),
     mockDiscoverClaudeModels: vi.fn().mockResolvedValue(null),
     mockDiscoverCodexModels: vi.fn(),
+    mockDiscoverAgyModels: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -75,6 +77,7 @@ vi.mock('@/dsh/discoverModels', () => ({
 
 vi.mock('@/claude/utils/discoverModels', () => ({ discoverClaudeModels: mockDiscoverClaudeModels }));
 vi.mock('@/codex/discoverModels', () => ({ discoverCodexModels: mockDiscoverCodexModels }));
+vi.mock('@/agyStream/discoverModels', () => ({ discoverAgyModels: mockDiscoverAgyModels }));
 
 vi.mock('@/resume/localHappyAgentAuth', () => ({
     detectResumeSupport: mockDetectResumeSupport
@@ -331,6 +334,22 @@ describe('ApiMachineClient keepalive availability republish', () => {
     afterEach(() => {
         vi.useRealTimers();
         vi.restoreAllMocks();
+    });
+
+    it('publishes the dynamic Agy directory and refreshes model additions and removals', async () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        mockDetectCLIAvailability.mockReturnValue(availabilityWith({ agy: true }));
+        mockDiscoverAgyModels.mockResolvedValue([{ code: 'Gemini Future (High)', value: 'Gemini Future (High)' }]);
+        const machine = makeMachine(), client = new ApiMachineClient('fake-token', machine);
+        vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async handler => { machine.metadata = handler(machine.metadata); });
+        client.connect(); emitSocketEvent('connect'); await vi.advanceTimersByTimeAsync(0);
+        expect(mockDiscoverAgyModels).toHaveBeenCalledWith({ fallback: 'none' });
+        expect(machine.metadata.agyModels?.options.map(m => m.code)).toEqual(['Gemini Future (High)']);
+        mockDiscoverAgyModels.mockResolvedValue([{ code: 'Fresh model', value: 'Fresh model' }]);
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(machine.metadata.agyModels?.options.map(m => m.code)).toEqual(['Fresh model']);
+        client.shutdown();
     });
 
     it('refreshes Codex models every five minutes and retains the catalog on failure', async () => {

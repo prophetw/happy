@@ -623,6 +623,12 @@ export const MachineMetadataSchema = z.object({
         currentCode: z.string().nullish(),
         detectedAt: z.number().optional(),
     }).passthrough().optional().catch(undefined),
+    // Installed Agy catalog, refreshed by the daemon and shared with REST.
+    agyModels: z.object({
+        options: z.array(z.object({ code: z.string(), value: z.string(), description: z.string().nullish() }).passthrough()),
+        currentCode: z.string().nullish().optional(),
+        detectedAt: z.number().optional(),
+    }).passthrough().optional().catch(undefined),
     // dsh model catalog, probed by the daemon over a throwaway ACP session.
     dshModels: z.object({
         options: z.array(z.object({

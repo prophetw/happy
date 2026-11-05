@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "agents": [
+    { "agent": "codex", "modelSource": "machine", "models": [], "permissionModes": [] },
+    { "agent": "claude", "modelSource": "machine", "models": [], "permissionModes": [] },
+    { "agent": "agy", "modelSource": "machine", "models": [], "permissionModes": [] }
+  ]
+}

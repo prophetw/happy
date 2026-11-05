@@ -37,6 +37,14 @@ REST 控制组件和 connector 会看见批准范围内的任务明文。Happy r
 
 ## 任务启动选项与权限白名单（v1.5.0，已部署，真实选项任务待本人验收）
 
+### 跟随 Happy 动态模型目录（v1.8.0）
+
+worker 的 `launchOptions.agents[]` 可显式配置 `modelSource: "machine"`，让该执行端使用当前机器目录里的全部模型，无需枚举型号或随模型新增/移除改配置。`models` 可保持空数组；未设置该字段的历史 worker 仍使用原静态白名单，不隐式升级。配置片段见 `deploy/automation/site-99-55/dynamic-model-catalog.fragment.json.example`。
+
+Claude Code 和 Codex 使用 Happy 选择器读取的 `machine.claudeModels/codexModels`；Agy 复用已安装 CLI 的 `agy models` 动态发现，发布为 `machine.agyModels`，Happy 的新建与现有会话选择器、REST 都读取同一元数据。机器目录发现失败时不拿内置型号冒充实际目录；旧 CLI/旧元数据的 App 兼容回退保留。Agy 的完整模型名可含空格、括号，查询、投影、创建和后续会话控制均保留准确名称。REST 的 agent 值为 `claude`、`codex`、`agy`，不是模型提供方名称。
+
+目录更新后，动态策略的下一次查询和派单校验读取更新的机器目录；旧调用和持久回执不改写。显式 grant 模型子集继续收窄动态目录，权限模式仍独立由原白名单控制。动态模型策略不会增加目录、方法、凭据权限，也不会自动批准新 grant。启用三执行端需要同步 host/worker 的注册配置和实际运行包；只改调用方枚举或展示名称不会让旧 worker 支持 Agy。
+
 > 部署状态（2026-11-05）：55 REST、57 Web、4090 worker 均已上线本节能力，白名单为 Codex 已安装 8 模型 + `auto/safe-yolo/read-only/yolo`，现网未开放 Claude。真实 owner 批准的 options 任务与 `/options` 实测仍待本人验收，证据见 `deploy/automation/site-99-55/validation.launch-options-live-2026-11-05.json`。
 
 委派任务可以在 owner 明确允许的范围内选择 agent（`codex`/`claude`）、模型、权限模式和 effort；`yolo`/`bypassPermissions` 等放权模式因此不再是"永不暴露"，而是"只有 owner 列入白名单才可委派"。默认行为完全不变：不传 `options` 时仍按原固定参数启动 Codex 会话，未配置白名单的 worker 拒绝一切覆盖（`OPTION_DENIED`）。

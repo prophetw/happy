@@ -21,6 +21,7 @@ import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { discoverClaudeModels } from '@/claude/utils/discoverModels';
 import { discoverCodexModels } from '@/codex/discoverModels';
+import { discoverAgyModels } from '@/agyStream/discoverModels';
 import {
     releaseReconnectCapabilityMonitor,
     retainReconnectCapabilityMonitor,
@@ -174,6 +175,8 @@ export class ApiMachineClient {
     private claudeModelsRefreshing = false;
     private codexModelsRefreshing = false;
     private codexModelsNextRefresh = 0;
+    private agyModelsRefreshing = false;
+    private agyModelsNextRefresh = 0;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -758,6 +761,8 @@ export class ApiMachineClient {
         if (newAvailability.claude) void this.refreshClaudeModels();
         if (newAvailability.codex) void this.refreshCodexModels();
         else this.codexModelsNextRefresh = 0;
+        if (newAvailability.agy) void this.refreshAgyModels();
+        else this.agyModelsNextRefresh = 0;
         const prev = this.lastKnownCLIAvailability;
         const newResumeSupport = detectResumeSupport();
         const prevResume = this.lastKnownResumeSupport;
@@ -829,6 +834,28 @@ export class ApiMachineClient {
             logger.debug('[API MACHINE] Failed to refresh Codex model catalog:', error);
         } finally {
             this.codexModelsRefreshing = false;
+        }
+    }
+
+    private async refreshAgyModels(): Promise<void> {
+        if (this.agyModelsRefreshing || Date.now() < this.agyModelsNextRefresh) return;
+        this.agyModelsRefreshing = true;
+        this.agyModelsNextRefresh = Date.now() + 60_000;
+        try {
+            const models = await discoverAgyModels({ fallback: 'none' });
+            if (this.shutdownRequested) return;
+            const options = models.map(m => ({ code: m.code, value: m.value, description: m.description ?? null }));
+            if (JSON.stringify(this.machine.metadata?.agyModels?.options) !== JSON.stringify(options)) {
+                await this.updateMachineMetadata(metadata => ({ ...(metadata ?? this.machine.metadata),
+                    agyModels: { options, currentCode: null, detectedAt: Date.now() },
+                }));
+            }
+            if (options.length) this.agyModelsNextRefresh = Date.now() + 5 * 60_000;
+        } catch (error) {
+            this.agyModelsNextRefresh = Date.now() + 60_000;
+            logger.debug('[API MACHINE] Failed to refresh Agy model catalog:', error);
+        } finally {
+            this.agyModelsRefreshing = false;
         }
     }
 

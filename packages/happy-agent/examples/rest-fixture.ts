@@ -24,7 +24,7 @@ import type { DecryptedSession, DecryptedMachine } from '../src/api';
 /** Isolated real loopback HTTP + real receipts + synthetic encrypted relay. Never reads Happy home. */
 export async function fixtureRig(options: { timeoutMs?: number; clock?: () => number; externalIdentity?: import('../src/automation/rest/schema').ExternalIdentity;
     origin?: string; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig;
-    launchOptions?: LaunchOptionsPolicy } = {}) {
+    launchOptions?: LaunchOptionsPolicy; catalog?: () => OptionCatalogEntry[] } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'happy-rest-fixture-')), project = join(dir, 'project'); mkdirSync(project);
     const projectB = join(dir, 'project-b'), projectC = join(dir, 'project-c'); mkdirSync(projectB); mkdirSync(projectC);
     const now = options.clock ?? Date.now;
@@ -68,7 +68,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     }
     const control = createAutomationControl({ directory: join(dir, 'daemon'),
         spawn: async (directory, launch) => { launches.push({ directory, options: launch }); const number = ++spawnCount; if (spawnBarrier) await spawnBarrier; if (spawnDelay) await new Promise(r => setTimeout(r, spawnDelay)); return { type: 'success', sessionId: addSession(`session_${number}`, directory, launch.agent).id }; },
-        options: () => ({ defaultAgent: 'codex', catalog: fixtureCatalog, policy: options.launchOptions }),
+        options: () => ({ defaultAgent: 'codex', catalog: options.catalog?.() ?? fixtureCatalog, policy: options.launchOptions }),
         stop: () => { processState = 'unknown'; return true; }, observe: () => processState as 'running' | 'stopping' | 'stopped' | 'unknown' });
     const transport: Transport = {
         machines: async () => [machine], sessions: async () => ({ sessions, nextCursor: null }),

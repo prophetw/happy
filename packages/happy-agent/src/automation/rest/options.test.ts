@@ -15,6 +15,36 @@ const policy: LaunchOptionsPolicy = { version: 1, agents: [
 const resolve = (requested: Parameters<typeof resolveTaskOptions>[0], grant?: Parameters<typeof resolveTaskOptions>[2]) =>
     resolveTaskOptions(requested, policy, grant, 'codex', catalog);
 
+describe('machine-sourced dynamic model policy', () => {
+    const dynamic = { version: 1 as const, agents: [{ agent: 'codex' as const, modelSource: 'machine' as const,
+        models: [], permissionModes: ['read-only'] }] };
+    it('tracks added and removed models without changing the worker or grant configuration', () => {
+        const first = { version: 1 as const, defaultAgent: 'codex', agents: [catalog[0]] };
+        expect(filterCatalogForGrant(first, dynamic, undefined).agents[0].models).toEqual(catalog[0].models);
+        const next = { ...first, agents: [{ ...catalog[0], models: ['fresh-host-model'], defaultModel: 'fresh-host-model' }] };
+        expect(filterCatalogForGrant(next, dynamic, undefined).agents[0].models).toEqual(['fresh-host-model']);
+        expect(resolveTaskOptions({ model: 'fresh-host-model' }, dynamic, undefined, 'codex', next.agents).model).toBe('fresh-host-model');
+        expect(() => resolveTaskOptions({ model: 'gpt-6-sol' }, dynamic, undefined, 'codex', next.agents)).toThrow(OptionsDenied);
+        expect(() => resolveTaskOptions({ model: 'invented' }, dynamic, undefined, 'codex', next.agents)).toThrow(OptionsDenied);
+        expect(() => resolveTaskOptions({ permissionMode: 'yolo' }, dynamic, undefined, 'codex', next.agents)).toThrow(OptionsDenied);
+    });
+    it('continues enforcing explicit grant model restrictions over a dynamic worker policy', () => {
+        const grant = { agents: [{ agent: 'codex' as const, models: ['gpt-6-sol'], permissionModes: [] }] };
+        expect(validateGrantOptions(grant, dynamic)).toBe(true);
+        expect(() => resolveTaskOptions({ model: 'gpt-6.1-sol' }, dynamic, grant, 'codex', catalog)).toThrow(OptionsDenied);
+        expect(resolveTaskOptions({ model: 'gpt-6-sol' }, dynamic, grant, 'codex', catalog).model).toBe('gpt-6-sol');
+    });
+    it('supports live Agy names and agents while keeping permission overrides denied', () => {
+        const model = 'Gemini 3.8 Flash (High)';
+        const live = { ...catalog[1], agent: 'agy', models: ['default', model], defaultModel: 'default', defaultEffort: '' };
+        const approved = { version: 1 as const, agents: [{ agent: 'agy' as const, modelSource: 'machine' as const, models: [], permissionModes: [] }] };
+        expect(taskOptionsSchema.safeParse({ agent: 'agy', model }).success).toBe(true);
+        expect(optionCatalogSchema.safeParse({ version: 1, defaultAgent: 'codex', agents: [...catalog, live] }).success).toBe(true);
+        expect(resolveTaskOptions({ agent: 'agy', model }, approved, undefined, 'codex', [live]).model).toBe(model);
+        expect(() => resolveTaskOptions({ agent: 'agy', permissionMode: 'bypassPermissions' }, approved, undefined, 'codex', [live])).toThrow(OptionsDenied);
+    });
+});
+
 it('accepts installed context-window model IDs without invalidating discovery for a Codex-only grant', () => {
     const model = 'ccs-claude-kimi--k3.1-pro[1M]';
     const live = { version: 1 as const, defaultAgent: 'codex', agents: [catalog[0], { ...catalog[1], models: ['default', model] }] };
@@ -25,7 +55,7 @@ it('accepts installed context-window model IDs without invalidating discovery fo
     expect(filtered.agents.map(a => a.agent)).toEqual(['codex']);
     const approved = { version: 1 as const, agents: [{ agent: 'claude' as const, models: [model], permissionModes: ['default'] }] };
     expect(resolveTaskOptions({ agent: 'claude', model }, approved, undefined, 'codex', live.agents).model).toBe(model);
-    for (const invalid of ['model with spaces', 'model;command', 'model$(command)', 'model\nvalue', '../model'])
+    for (const invalid of ['model;command', 'model$(command)', 'model\nvalue', '../model'])
         expect(taskOptionsSchema.safeParse({ model: invalid }).success).toBe(false);
 });
 
@@ -92,6 +122,28 @@ const create = (r: any, grant: string, requestID: string, options?: unknown) =>
     r.client.request('POST', '/tasks', { requestID, machineID: 'machineA', projectID: 'projectA', ...(options ? { options } : {}) }, grant);
 
 describe('REST option discovery and allowlisted task creation', () => {
+    it('serves all three live catalogs and admits Agy while the same policy tracks directory changes', async () => {
+        const model = 'Gemini Future (High)';
+        let live = [...catalog, { ...catalog[1], agent: 'agy', models: ['default', model], defaultModel: 'default', defaultEffort: '' }];
+        const dynamic = { version: 1 as const, agents: ['codex', 'claude', 'agy'].map(agent => ({
+            agent, modelSource: 'machine' as const, models: [], permissionModes: [],
+        })) };
+        const r = await setup({ launchOptions: dynamic, catalog: () => live }), grant = await r.connect(); await r.startWorker();
+        const first = await r.client.request('GET', '/options?machineID=machineA', undefined, grant);
+        expect(first.ok).toBe(true); expect(first.data.agents.map((a: any) => a.agent)).toEqual(['codex', 'claude', 'agy']);
+        expect(first.data.agents[2].models).toContain(model);
+        const task = await create(r, grant, 'agy-live', { agent: 'agy', model });
+        expect(task.ok).toBe(true); expect(r.launches[0].options).toEqual({ agent: 'agy', model, permissionMode: 'default', effort: '' });
+        const sent = await r.client.request('POST', `/sessions/${task.data.sessionID}/messages`, { requestID: 'agy-send', text: 'fixture request' }, grant);
+        expect(sent.ok).toBe(true);
+        expect((await r.client.request('GET', `/sessions/${task.data.sessionID}/status`, undefined, grant)).ok).toBe(true);
+        live = live.map(a => a.agent === 'agy' ? { ...a, models: ['default', 'Fresh Agy model'] } : a);
+        const next = await r.client.request('GET', '/options?machineID=machineA', undefined, grant);
+        expect(next.data.agents[2].models).toEqual(['default', 'Fresh Agy model']);
+        expect((await create(r, grant, 'removed', { agent: 'agy', model })).error.code).toBe('OPTION_DENIED');
+        expect((await create(r, grant, 'fresh', { agent: 'agy', model: 'Fresh Agy model' })).ok).toBe(true);
+        expect((await create(r, grant, 'agy-permission', { agent: 'agy', permissionMode: 'bypassPermissions' })).error.code).toBe('OPTION_DENIED');
+    });
     it('discovers defaults only when the owner configured no allowlist', async () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker();
         const reply = await r.client.request('GET', '/options?machineID=machineA', undefined, grant);

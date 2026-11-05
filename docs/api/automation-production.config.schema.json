@@ -251,7 +251,7 @@
                   },
                   "agents": {
                     "minItems": 1,
-                    "maxItems": 2,
+                    "maxItems": 3,
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -260,16 +260,17 @@
                           "type": "string",
                           "enum": [
                             "claude",
-                            "codex"
+                            "codex",
+                            "agy"
                           ]
                         },
                         "models": {
                           "default": [],
-                          "maxItems": 128,
+                          "maxItems": 256,
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
+                            "pattern": "^[A-Za-z0-9_.:\\[\\]() -]{1,256}$"
                           }
                         },
                         "permissionModes": {
@@ -280,6 +281,10 @@
                             "type": "string",
                             "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
                           }
+                        },
+                        "modelSource": {
+                          "type": "string",
+                          "const": "machine"
                         }
                       },
                       "required": [
@@ -577,7 +582,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 2,
+                            "maxItems": 3,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -586,16 +591,17 @@
                                   "type": "string",
                                   "enum": [
                                     "claude",
-                                    "codex"
+                                    "codex",
+                                    "agy"
                                   ]
                                 },
                                 "models": {
                                   "default": [],
-                                  "maxItems": 128,
+                                  "maxItems": 256,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
+                                    "pattern": "^[A-Za-z0-9_.:\\[\\]() -]{1,256}$"
                                   }
                                 },
                                 "permissionModes": {
@@ -834,7 +840,7 @@
                 },
                 "agents": {
                   "minItems": 1,
-                  "maxItems": 2,
+                  "maxItems": 3,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -843,16 +849,17 @@
                         "type": "string",
                         "enum": [
                           "claude",
-                          "codex"
+                          "codex",
+                          "agy"
                         ]
                       },
                       "models": {
                         "default": [],
-                        "maxItems": 128,
+                        "maxItems": 256,
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
+                          "pattern": "^[A-Za-z0-9_.:\\[\\]() -]{1,256}$"
                         }
                       },
                       "permissionModes": {
@@ -863,6 +870,10 @@
                           "type": "string",
                           "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
                         }
+                      },
+                      "modelSource": {
+                        "type": "string",
+                        "const": "machine"
                       }
                     },
                     "required": [
@@ -1091,7 +1102,7 @@
               "properties": {
                 "agents": {
                   "minItems": 1,
-                  "maxItems": 2,
+                  "maxItems": 3,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -1100,16 +1111,17 @@
                         "type": "string",
                         "enum": [
                           "claude",
-                          "codex"
+                          "codex",
+                          "agy"
                         ]
                       },
                       "models": {
                         "default": [],
-                        "maxItems": 128,
+                        "maxItems": 256,
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
+                          "pattern": "^[A-Za-z0-9_.:\\[\\]() -]{1,256}$"
                         }
                       },
                       "permissionModes": {

@@ -38,6 +38,13 @@ const codexCatalog = {
 };
 
 describe('modelModeOptions', () => {
+    it('uses the published dynamic Agy catalog for new and existing sessions', () => {
+        const machine = { agyModels: { options: [{ code: 'new-agy-model', value: 'Fresh host model' }], detectedAt: 1 } } as any;
+        expect(getMachineModelModes('agy', machine, translate).map(m => m.key)).toEqual(['default', 'new-agy-model']);
+        expect(getAvailableModels('agy', null, translate, undefined, machine).map(m => m.key)).toEqual(['default', 'new-agy-model']);
+        const next = { agyModels: { options: [], detectedAt: 2 } } as any;
+        expect(getMachineModelModes('agy', next, translate).map(m => m.key)).toEqual(['default']);
+    });
     it('uses each selected machine catalog instead of the static Codex list', () => {
         const machine = { codexModels: codexCatalog } as any;
         const models = getMachineModelModes('codex', machine, translate);

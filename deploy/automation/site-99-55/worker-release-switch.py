@@ -20,6 +20,14 @@ LOCK = pathlib.Path('/home/dev/.happy/daemon.state.json.lock')
 CONFIG = pathlib.Path('/etc/happy-control/worker.json')
 
 
+def dynamic_model_policy(previous):
+    """Only model availability changes; retain every existing permission-mode override."""
+    agents = {item['agent']: item for item in (previous or {}).get('agents', [])}
+    if set(agents) - {'codex', 'claude', 'agy'}: raise RuntimeError('UNAPPROVED_MODEL_AGENT')
+    return {'version': 1, 'agents': [dict(agent=agent, modelSource='machine', models=[],
+        permissionModes=agents.get(agent, {}).get('permissionModes', [])) for agent in ['codex', 'claude', 'agy']]}
+
+
 def safe_data_filter(member, destination):
     """Keep data_filter checks; correct older Python's root-relative symlink target check."""
     if not member.issym(): return tarfile.data_filter(member, destination)
@@ -125,6 +133,8 @@ class Switch:
         if self.plan.get('configChange') == 'directory-selection':
             if self.plan.get('authorizedDirectoryRoots') != ['/home/dev/code'] or 'directorySelection' in before['registration'] or self.plan.get('expectedDirectorySelection') is not None: raise RuntimeError('UNAPPROVED_DIRECTORY_POLICY')
             before['registration']['directorySelection'] = {'roots': self.plan['authorizedDirectoryRoots']}
+        elif self.plan.get('configChange') == 'dynamic-model-catalog':
+            before['registration']['launchOptions'] = dynamic_model_policy(before['registration'].get('launchOptions'))
         else:
             before['registration']['projects'] = self.plan['candidateProjects']
         if before != after: raise RuntimeError('UNEXPECTED_WORKER_CONFIG_DELTA')

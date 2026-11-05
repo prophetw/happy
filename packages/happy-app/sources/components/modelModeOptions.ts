@@ -392,7 +392,9 @@ export function getDshModelModes(
 // Gemini effort is deliberately not encoded into separate model rows. Happy's
 // existing effort picker carries `low`/`medium`/`high` independently, and happy-cli
 // resolves the pair to the exact display name `agy --model` accepts.
-export function getAgyModelModes(): ModelMode[] {
+export function getAgyModelModes(catalog?: MachineMetadata['agyModels'] | null): ModelMode[] {
+    if (catalog) return [{ key: 'default', name: catalog.currentCode ?? 'Default model', description: 'Agy default' },
+        ...mapMetadataOptions(catalog.options).filter(model => model.key !== 'default')];
     return [
         { key: 'Gemini 3.8 Flash', name: 'Gemini 3.8 Flash', description: null, providerId: 'google', providerName: 'Google' },
         { key: 'Claude Sonnet 4.6 (Thinking)', name: 'Claude Sonnet 4.6 (Thinking)', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
@@ -479,6 +481,9 @@ export function getAvailableModels(
     if (flavor === 'codex' && machineMetadata?.codexModels?.options.length) {
         return includeConfiguredModel(flavor, getCodexModelModes(machineMetadata.codexModels), selectedKey);
     }
+    if (flavor === 'agy' && machineMetadata?.agyModels) {
+        return includeConfiguredModel(flavor, getAgyModelModes(machineMetadata.agyModels), selectedKey);
+    }
     const metadataModels = mapMetadataOptions(metadata?.models);
     const isClaude = !flavor || flavor === 'claude';
     if (isClaude && (metadataModels.length > 0 || metadata?.currentModelCode)) {
@@ -524,6 +529,7 @@ export function getMachineModelModes(
     if (flavor !== 'rig' && normalizeAgentKey(flavor) === 'claude' && metadata?.claudeModels) {
         return getClaudeModelModes(metadata.claudeModels);
     }
+    if (flavor === 'agy' && metadata?.agyModels) return includeConfiguredModel(flavor, getAgyModelModes(metadata.agyModels), configuredModelKey);
     if (flavor === 'dsh') return getDshModelModes(getMachineDshModelCatalog(metadata));
     return includeConfiguredModel(flavor, getHardcodedModelModes(flavor, translate), configuredModelKey);
 }
