@@ -54,6 +54,7 @@ describe('daemon, SDK and contract adapters', () => {
         expect((openapi.paths['/tasks'].post as any).security).toEqual([{ ClientProof: [] }, { ServiceBearer: [] }]);
         expect((openapi.paths['/connections'].post as any).security).toEqual([{ ClientProof: [] }]);
         expect((openapi.paths['/connections/{id}/approve'].post as any).security).toEqual([{ OwnerBearer: [] }]);
+        expect((openapi.paths['/projects'].get as any).security).toEqual([{ ClientProof: [] }, { ServiceBearer: [] }]);
         expect((openapi.paths['/tasks'].post as any).requestBody.content['application/json'].schema.additionalProperties).toBe(false);
         expect(openapi.paths['/sessions/{id}/result']).toBeDefined();
     });

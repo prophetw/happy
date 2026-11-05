@@ -198,7 +198,8 @@ pnpm --dir packages/happy-app exec node --import tsx scripts/service-access.e2e.
 
 | 方法/路径 | 必需 scope / 行为 |
 | --- | --- |
-| `POST /connections`、`GET /connections/:id` | 独立客户端签名；申请/查询自己的连接 |
+| `POST /connections`、`GET /connections/:id` | 独立客户端签名申请；签名或服务令牌查询自己的连接，详情包含统一 `projects` 数组 |
+| `GET /projects` | 有效已批准授权；只列当前 grant 的项目，返回 `projectID/directory`，无需额外方法或 worker 调用 |
 | `GET /connections`、`GET /connections/:id/consent` | 同站点 owner 身份；审查连接 |
 | `POST /connections/:id/approve`、`DELETE /connections/:id` | owner 批准/撤权；digest/challenge 防替换和重复批准；撤权保留历史 |
 | `DELETE /connections/:id/record` | owner 永久删除记录；先撤权并结束等待 job，再清服务令牌摘要和连接，不删除任务/会话/intent/journal |
@@ -214,7 +215,7 @@ pnpm --dir packages/happy-app exec node --import tsx scripts/service-access.e2e.
 | `GET /openapi.json` | 非秘密协议文档 |
 | `POST /worker/poll,check,result` | 内部 worker 签名通道，不映射为助手工具 |
 
-每个 grant 只绑定一个 user/client/worker/machine/project；只允许固定方法，不支持通配符。默认为本 grant 创建的专用会话，既有会话必须逐 ID 明确选择且属于同一项目。网关与 worker 都检查范围，worker 还检查目录 realpath 和实际 session metadata。
+每个 grant 只绑定一个 user/client/worker/machine 和明确的项目集合；只允许固定方法，不支持通配符。默认为本 grant 创建的专用会话，既有会话必须逐 ID 明确选择且属于获准项目。网关与 worker 都检查范围，worker 还检查目录 realpath 和实际 session metadata。
 
 非秘密请求示例（鉴权由 connector 注入，不放入示例）：
 

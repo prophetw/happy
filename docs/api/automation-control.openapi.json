@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Happy scoped automation control",
-    "version": "1.6.0",
-    "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. tasks.create accepts owner-allowlisted launch options (agent/model/permissionMode/effort) discovered via /options; grants may only narrow the worker allowlist. HTTP MCP OAuth and relay authentication are unchanged; service bearers do not authenticate MCP, owner or worker endpoints."
+    "version": "1.7.0",
+    "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. tasks.create accepts owner-allowlisted launch options (agent/model/permissionMode/effort) discovered via /options; grants may only narrow the worker allowlist. /projects exposes only the current grant project scope. HTTP MCP OAuth and relay authentication are unchanged; service bearers do not authenticate MCP, owner or worker endpoints."
   },
   "servers": [
     {
@@ -378,7 +378,7 @@
     "/connections/{id}": {
       "get": {
         "operationId": "connectionStatus",
-        "description": "Only the registered client that requested the connection.",
+        "description": "Only the registered client that requested the connection. Includes the approved projects as projects[] with id/directory for every scope version.",
         "security": [
           {
             "ClientProof": []
@@ -2717,6 +2717,133 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Mutation outcome uncertain: query the SAME requestID; no automatic redispatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "401",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "409",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "413",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "426": {
+            "description": "426",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "503",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects": {
+      "get": {
+        "operationId": "projects",
+        "description": "List only projects approved for this grant. Every approved grant can read its own project scope without an additional method or worker call. Returns projects[] with projectID/directory; at most 32 entries, no pagination.",
+        "security": [
+          {
+            "ClientProof": []
+          },
+          {
+            "ServiceBearer": []
+          }
+        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "200",

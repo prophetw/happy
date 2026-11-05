@@ -50,6 +50,8 @@ describe('owner-selected directories: fixture-only worker, Happy identity and en
         expect((await approve(r, c, { scopeVersion: 2 })).status).toBe(426);
         expect((await approve(r, c)).status).toBe(200); expect((await approve(r, c)).body.error.code).toBe('APPROVAL_REPLAY');
         const token = (await r.ownerRequest(`/connections/${c.id}/service-token`, 'POST')).body.data.token;
+        const visible = await request(r, token, '/projects');
+        expect(visible.body.data.projects).toEqual(c.projects.map((p: any) => ({ projectID: p.id, directory: p.directory })));
         for (const p of c.projects) {
             const create = { machineID: 'machineA', projectID: p.id, requestID: 'create_' + p.id };
             const [a, b] = await Promise.all([request(r, token, '/tasks', 'POST', create), request(r, token, '/tasks', 'POST', create)]);

@@ -72,6 +72,7 @@ export const taskOptionsQuerySchema = z.object({ machineID: identifier }).strict
 export const workerPollSchema = z.object({ protocol: z.literal(1), busy: z.boolean().optional(), projectScopes: z.literal(1).optional(), directoryScopes: z.literal(1).optional() }).strict();
 export const workerCheckSchema = z.object({ jobID: identifier }).strict();
 export const workerResultSchema = workerCheckSchema.extend({ result: z.unknown() }).strict();
+export const emptyQuerySchema = z.object({}).strict();
 export const querySchema = z.object({
     cursor: z.string().max(256).optional(), after_seq: z.coerce.number().int().nonnegative().optional(),
     limit: z.coerce.number().int().min(1).max(500).default(100), turnID: identifier.optional(),

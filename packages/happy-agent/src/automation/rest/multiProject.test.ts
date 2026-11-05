@@ -62,6 +62,18 @@ describe('explicit multi-project service grants, fixture-only identities/transpo
         const { clientID: _, ...signedScope } = body(r);
         expect((await r.client.request('POST', '/connections', signedScope)).error.code).toBe('INVALID_REQUEST');
     });
+    it('lists only the projects selected in this grant', async () => {
+        const r = await setup(), c = await pending(r, { methods: ['tasks.create'] }), token = await approve(r, c);
+        const response = await request(r, token, '/projects');
+        expect(response.status).toBe(200);
+        expect(response.body.data.projects).toEqual([
+            { projectID: 'projectA', directory: r.project }, { projectID: 'projectB', directory: r.projectB },
+        ]);
+        expect(JSON.stringify(response.body)).not.toContain(r.projectC);
+        const connection = await request(r, token, `/connections/${c.id}`);
+        expect(connection.body.data.projects).toEqual(c.projects);
+        expect(r.spawnCount).toBe(0);
+    });
     it('uses one token across two projects, keeps receipts global to the grant and preserves cursor/turn/cancel semantics', async () => {
         const r = await setup(), c = await pending(r), token = await approve(r, c); await r.startWorker();
         const calls = await Promise.all([create(r, token, 'projectA', 'create_a'), create(r, token, 'projectB', 'create_b'), create(r, token, 'projectB', 'create_b')]);

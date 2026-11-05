@@ -43,6 +43,16 @@ describe('independent approval/authentication', () => {
         for (const change of [{ machineID: 'other' }, { projectID: 'other' }]) expect((await r.client.request('POST', '/tasks', { requestID: 'bad', machineID: 'machineA', projectID: 'projectA', ...change }, grant)).error.code).toBe('SCOPE_DENIED');
         for (const id of ['existing','foreign','ex']) expect((await r.client.request('GET', `/sessions/${id}/status`, undefined, grant)).error.code).toBe('SCOPE_DENIED');
     });
+    it('lists the approved project scope without a worker call or an additional method', async () => {
+        const r = await setup({ multipleProjects: true }), grant = await r.connect({ methods: ['tasks.create'] });
+        const connection = await r.client.request('GET', `/connections/${grant}`, undefined, grant);
+        expect(connection.data.projects).toEqual([{ id: 'projectA', directory: r.project }]);
+        const projects = await r.client.request('GET', '/projects', undefined, grant);
+        expect(projects).toMatchObject({ version: 1, ok: true, data: { projects: [{ projectID: 'projectA', directory: r.project }] } });
+        expect(JSON.stringify(projects)).not.toContain(r.projectB);
+        expect((await r.client.request('GET', '/projects?limit=1', undefined, grant)).error.code).toBe('INVALID_REQUEST');
+        expect(r.spawnCount).toBe(0);
+    });
     it('permits only explicit existing sessions in the bound project', async () => {
         const r = await setup(), grant = await r.connect({ sessionIDs: ['existing'] }); await r.startWorker();
         expect((await r.client.request('GET', '/sessions/existing/status', undefined, grant)).ok).toBe(true);

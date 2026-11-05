@@ -10,7 +10,7 @@ import { MetadataStore } from './store';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
-import { ApiError, approvalSchema, createTaskSchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
+import { ApiError, approvalSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
@@ -88,10 +88,14 @@ export function createGateway(options: GatewayOptions) {
         principals.set(req, `service:${auth.registration.id}`); limit(`service:${auth.registration.id}`, 240);
         return auth;
     }
-    function active(req: FastifyRequest, method: string) {
+    function activeConnection(req: FastifyRequest) {
         const p = clientAuth(req);
         const c = grants.active(p.grantID, p.registration.id);
         if (c.userID !== p.registration.userID) throw new ApiError('SCOPE_DENIED', 403);
+        return c;
+    }
+    function active(req: FastifyRequest, method: string) {
+        const c = activeConnection(req);
         grants.checkMethod(c, method); return c;
     }
     const intentKey = (c: Connection, requestID: string) => `intent:${c.id}:${requestID}`;
@@ -262,6 +266,11 @@ export function createGateway(options: GatewayOptions) {
     app.get(`${base}/openapi.json`, async () => openapi);
     app.get(`${base}/capabilities`, async req => { await invoke(active(req, 'machines.list'), { method: 'machines.list', limit: 1 }); return ok({ protocol: 1, auth: 'ed25519-proof-v1', worker: 1, core: 1, offlineQueue: false }); });
     app.get(`${base}/machines`, async req => invoke(active(req, 'machines.list'), { method: 'machines.list', ...querySchema.parse(req.query) }));
+    app.get(`${base}/projects`, async req => {
+        const c = activeConnection(req); emptyQuerySchema.parse(req.query);
+        const projects = c.projects ?? [{ id: c.projectID!, directory: c.projectDirectory! }];
+        return ok({ projects: projects.map(p => ({ projectID: p.id, directory: p.directory })) });
+    });
     app.get(`${base}/options`, async req => {
         const c = active(req, 'options.list'), query = taskOptionsQuerySchema.parse(req.query);
         if (query.machineID !== c.machineID) throw new ApiError('SCOPE_DENIED', 403);

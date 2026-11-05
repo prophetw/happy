@@ -90,6 +90,7 @@
 | 操作 | HTTP 方法与路径 | 必须批准的方法 |
 | --- | --- | --- |
 | 核对自身授权 | `GET /connections/{grantID}` | 有效服务令牌；仅能读取自身连接 |
+| 列获准项目（v1.7.0） | `GET /projects` | 有效已批准授权；无需额外方法，返回 `projectID/directory` |
 | 列机器 | `GET /machines?limit=100` | `machines.list` |
 | 列可访问会话 | `GET /sessions?limit=100` | `sessions.list` |
 | 创建空任务会话 | `POST /tasks` | `tasks.create` |
@@ -103,7 +104,7 @@
 
 任务控制适配 Codex 与 Claude 专用会话（Claude 需 worker 白名单显式允许），不提供任意 shell 执行接口，也不接受调用方任意指定工作目录或代理。v1.5.0 起 `POST /tasks` 可携带可选 `options {agent,model,permissionMode,effort}`：每个显式值都必须同时在 worker 白名单与本 grant 的 options 子集内，否则返回 `OPTION_DENIED`；不传时保持固定默认启动。可选值与默认值通过 `GET /options` 按 grant 过滤后发现；`yolo`/`bypassPermissions` 等放权模式只有 owner 显式列入白名单才可用。详见 `happy-control-api-usage.md` 5.1 节。
 
-创建和发送是两步：`POST /tasks` 每次仍必须明确传入一个获准的 `projectID`，只创建该目录中的专用空会话，不接收项目数组或任务正文。先等待 `state=confirmed` 和明确的 `sessionID`，再发送指令。对返回的实际 ID 操作，不自行拼出 sessionID，也不能把其他授权的会话拿来使用。
+创建和发送是两步：`POST /tasks` 每次仍必须明确传入一个获准的 `projectID`，只创建该目录中的专用空会话，不接收项目数组或任务正文。先通过 `GET /projects` 获取当前授权的 `projectID/directory` 列表（也可从 `GET /connections/{grantID}` 的 `projects[].id` 读取），再等待创建返回 `state=confirmed` 和明确的 `sessionID`，最后发送指令。对返回的实际 ID 操作，不自行拼出 sessionID，也不能把其他授权的会话拿来使用。
 
 三个修改请求的 JSON body 示例（仅示意，ID 必须来自实际批准范围）：
 

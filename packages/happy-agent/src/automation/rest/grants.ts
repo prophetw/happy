@@ -110,6 +110,7 @@ export class Grants {
     view(c: Connection) {
         this.expire(c);
         const { challenge: _challenge, ...view } = c;
-        return { ...view, state: c.state === 'revoked' ? 'revoked' : this.now() >= c.expiresAt || (c.state === 'pending' && this.now() >= c.pendingUntil) ? 'expired' : c.state };
+        const projects = c.projects ?? (c.projectID !== undefined && c.projectDirectory !== undefined ? [{ id: c.projectID, directory: c.projectDirectory }] : undefined);
+        return { ...view, ...(projects ? { projects } : {}), state: c.state === 'revoked' ? 'revoked' : this.now() >= c.expiresAt || (c.state === 'pending' && this.now() >= c.pendingUntil) ? 'expired' : c.state };
     }
 }

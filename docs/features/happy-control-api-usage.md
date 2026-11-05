@@ -2,12 +2,12 @@
 
 > 基址：`https://szsp.suitbim.com.cn:7100/happy-control/v1`
 > OpenAPI：`https://szsp.suitbim.com.cn:7100/happy-control/v1/openapi.json`
-> 线上版本：`1.3.0`（协议 1）
+> 线上版本：`1.7.0`（协议 1）
 >
-> 本文依据 2026-11-04 线上 `/openapi.json`、`/compatibility` 实测结果及 `clever-ocean` 分支实现整理。
-> 未持有真实服务令牌，**需要鉴权的示例响应仅表示契约形状，未做线上端到端实测**；实际字段以响应为准。
+> 本文依据 2026-11-05 `main` 分支实现及线上实测结果整理。
+> 需要鉴权的示例响应仅表示契约形状；实际字段以响应为准。
 >
-> **版本提示**：启动选项（`/options`、`tasks.create` 的 `options`、授权白名单）为 OpenAPI `1.5.0` 能力，已于 2026-11-05 部署到 55 REST / 57 Web / 4090 worker（现网白名单为 Codex 已安装 8 模型 + `auto/safe-yolo/read-only/yolo`）。带非默认模型或 yolo 的真实生产任务尚未做端到端实测；旧 worker/daemon 组合的行为见「5.1 创建空会话」。其余章节描述的实测基线为线上版本 `1.3.0` 时期。
+> **版本提示**：`GET /projects` 及所有授权详情的统一 `projects` 数组为 OpenAPI `1.7.0` 能力。启动选项（`/options`、`tasks.create` 的 `options`、授权白名单）为 `1.5.0` 能力；现网白名单为 Codex 已安装 8 模型 + `auto/safe-yolo/read-only/yolo`。带非默认模型或 yolo 的真实生产任务尚未做端到端实测；旧 worker/daemon 组合的行为见「5.1 创建空会话」。
 
 `/happy-control/v1/` 根路径本身返回 `404 NOT_FOUND`，这是正常行为，不是服务未启动。请直接调用具体路由，或先用 `/compatibility` 做只读探活。
 
@@ -56,7 +56,7 @@ Happy Control 是 Happy 的**受控自动化 REST 接口**：获授权的外部�
 一次授权固定包含：
 
 - 一个 worker、一台 machine；
-- 一个或多个 project（单项目旧格式用 `projectID`，多项目用 `scopeVersion: 2` + `projectIDs`，2–32 个）；
+- 一个或多个 project：单项目旧格式用 `projectID`；多项目用 `scopeVersion: 2` + `projectIDs`（2–32 个）；目录授权用 `scopeVersion: 3` + `projectIDs/projects`（1–32 个）；
 - 一组 method，常用值：
   - `machines.list`
   - `sessions.list`
@@ -74,7 +74,7 @@ Happy Control 是 Happy 的**受控自动化 REST 接口**：获授权的外部�
 
 多项目授权中的所有项目共用同一套 methods、期限和撤销状态；每个任务仍需明确指定一个 `projectID`。
 
-> 多项目格式（`scopeVersion: 2` + `projectIDs`）目前仅用于**服务令牌授权**；签名客户端仍保持单项目 `projectID` 格式。
+> 多项目和目录授权格式目前仅用于**服务令牌授权**；签名客户端仍保持单项目 `projectID` 格式。目录授权的 `projectID` 是 `dir_<hash>` 形式的不透明 ID，应同时保存接口返回的 `directory` 供用户识别。
 
 ---
 
@@ -178,9 +178,34 @@ curl -sS "$BASE/connections/$HC_GRANT" \
   -H "Authorization: Bearer $HC_TOKEN"
 ```
 
-返回该连接的非秘密描述，包括绑定的 worker、machine、项目、methods、会话、状态和到期时间。服务令牌只能查询自身连接，不能枚举同一服务的其他 grant。
+返回该连接的非秘密描述，包括绑定的 worker、machine、项目、methods、会话、状态和到期时间。服务令牌只能查询自身连接，不能枚举同一服务的其他 grant。所有 scope 版本都包含 `projects: [{ id, directory }]`；旧版单项目授权也会同时保留原 `projectID/projectDirectory` 字段。
 
-### 4.3 查看机器
+### 4.3 查看获准项目（v1.7.0）
+
+创建任务前直接调用：
+
+```bash
+curl -sS "$BASE/projects" \
+  -H "Authorization: Bearer $HC_TOKEN"
+```
+
+响应：
+
+```json
+{
+  "version": 1,
+  "ok": true,
+  "data": {
+    "projects": [
+      { "projectID": "project_demo", "directory": "/home/dev/code/project_demo" }
+    ]
+  }
+}
+```
+
+`POST /tasks` 的 `projectID` 直接取这里的 `projects[].projectID`。接口只返回当前 grant 已批准的项目，不返回机器或账号上的其他项目；不需要额外的方法授权，也不调用 worker。每个 grant 最多 32 个项目，一次全部返回，不分页，也不接受 `limit/cursor` 参数。
+
+### 4.4 查看机器
 
 ```bash
 curl -sS "$BASE/machines?limit=100" \
@@ -643,6 +668,7 @@ curl -sS "$BASE/requests/job_1001_create" \
 | 探活/兼容性 | `GET /compatibility` | 公开 |
 | 协议文档 | `GET /openapi.json` | 公开 |
 | 核对自身授权 | `GET /connections/{grantID}` | 有效服务令牌 |
+| 列获准项目 | `GET /projects` | 有效已批准授权；只读自身项目范围 |
 | 能力探测 | `GET /capabilities` | `machines.list` |
 | 列机器 | `GET /machines?limit=100` | `machines.list` |
 | 列会话 | `GET /sessions?limit=100` | `sessions.list` |

@@ -103,6 +103,7 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   const r=await setup();
   const bad={clientID:'serviceB',workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],expiresAt:Date.now()+60000};expect((await r.ownerRequest('/service-connections','POST',bad)).status).toBe(403);
   const c=await pending(r,{methods:['machines.list']});await approve(r,c);const token=await issue(r,c);await r.startWorker();
+  expect((await request(r,token,'/projects')).body.data.projects).toEqual([{projectID:'projectA',directory:r.project}]);
   expect((await request(r,token,'/tasks','POST',{requestID:'denied',machineID:'machineA',projectID:'projectA'})).body.error.code).toBe('SCOPE_DENIED');
   const full=await pending(r);await approve(r,full);const fullToken=await issue(r,full);
   for(const patch of [{projectID:'other'},{machineID:'other'}])expect((await request(r,fullToken,'/tasks','POST',{requestID:'denied',machineID:'machineA',projectID:'projectA',...patch})).body.error.code).toBe('SCOPE_DENIED');
