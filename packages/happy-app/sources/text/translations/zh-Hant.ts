@@ -149,6 +149,21 @@ export const zhHant: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: '刪除連接記錄',
+            deleteRecordTitle: '刪除連接記錄？',
+            deleteRecordMessage: '此操作無法復原。有效連接會先撤銷，相關權杖和等待中的請求將失效；已執行的任務不會自動停止。僅撤銷而不刪除會保留記錄。',
+            deleteUnknownTitle: '刪除結果待核實',
+            deleteUnknown: '請重新讀取連接記錄後再操作，不會自動重複刪除。',
+            deleteNotCompleted: '連接記錄仍存在，刪除未完成。',
+            editReauthorize: '編輯並重新授權',
+            serviceEditNotice: '正在編輯已有服務授權。原啟動選項和既有工作階段範圍會保留。替代申請建立成功後舊連接將撤銷；仍需審查並批准新範圍，再產生新權杖。',
+            serviceEditLoadFailed: '無法安全編輯這項已有服務授權。服務身分、Worker、專案、方法或憑證模式可能已變更。請返回連接記錄，並聯絡操作方核對目前登記。',
+            serviceEditDurationTooLong: '原授權時長超過目前部署上限，請縮短後再建立替代申請。',
+            serviceEditSessionsInvalid: '保留的既有工作階段不屬於目前所選專案，或無法與自訂目錄範圍組合。請調整專案，或返回後單獨建立授權。',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `本次替代授權保留既有工作階段：${ids}。批准頁會再次顯示該範圍。`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `替代申請 ${id} 已建立，但舊連接的撤銷結果尚未確認。請返回連接記錄核實新舊記錄，不要重複建立；新申請未經批准不會獲得權限。`,
+        },
         title: '設定',
         connectedAccounts: '已連結帳戶',
         connectAccount: '連結帳戶',

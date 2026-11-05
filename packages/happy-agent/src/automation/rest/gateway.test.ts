@@ -205,6 +205,54 @@ describe('permanent expiry and project rebind tombstones', () => {
 });
 
 
+describe('permanent connection record deletion', () => {
+    it('deletes every state only for its owner, retains legacy revocation, and stays deleted across restart', async () => {
+        let time = Date.now(); const r = await setup({ clock: () => time });
+        const pending = await r.client.request('POST', '/connections', { workerID: 'worker', machineID: 'machineA', projectID: 'projectA', methods: ['machines.list'], sessionIDs: [], expiresAt: time+60000 });
+        const approved = await r.connect(), expired = await r.connect({ expiresAt: time+1000 });
+        time += 1001;
+        expect((await r.client.request('GET', '/machines', undefined, expired)).error.code).toBe('GRANT_EXPIRED');
+        const revoked = await r.connect();
+        expect((await r.ownerRequest(`/connections/${revoked}`, 'DELETE')).body.data.state).toBe('revoked');
+        expect(r.gateway.store.get(`connection:${revoked}`)).not.toBeNull();
+        expect((await r.ownerRequest(`/connections/${revoked}/consent`)).status).toBe(200);
+        const survivor = await r.connect();
+        expect((await r.ownerRequest(`/connections/${pending.data.id}/record`, 'DELETE', undefined, 'B')).status).toBe(404);
+        expect((await r.ownerRequest('/connections/missing/record', 'DELETE')).status).toBe(404);
+        const deletedIDs = [pending.data.id, approved, expired, revoked];
+        for (const id of deletedIDs) {
+            const deleted = await r.ownerRequest(`/connections/${id}/record`, 'DELETE');
+            expect(deleted.status).toBe(200); expect(deleted.body.data).toEqual({ deleted: true });
+            expect((await r.ownerRequest(`/connections/${id}/consent`)).status).toBe(404);
+            expect((await r.client.request('GET', `/connections/${id}`)).error.code).toBe('NOT_FOUND');
+            expect(r.gateway.store.get(`connection:${id}`)).toBeNull();
+        }
+        expect((await r.ownerRequest(`/connections/${revoked}/record`, 'DELETE')).status).toBe(404);
+        expect((await r.ownerRequest('/connections')).body.data.map((c: any) => c.id)).toEqual([survivor]);
+        await r.restartGateway();
+        expect((await r.ownerRequest('/connections')).body.data.map((c: any) => c.id)).toEqual([survivor]);
+        for (const id of deletedIDs) expect((await r.ownerRequest(`/connections/${id}/consent`)).status).toBe(404);
+        expect((await r.ownerRequest(`/connections/${survivor}/consent`)).status).toBe(200);
+    });
+    it('settles waiting jobs before deleting the record without deleting receipts or claiming tasks stopped', async () => {
+        const r = await setup(), grant = await r.connect(); await r.startWorker(); const release = r.pauseSpawn();
+        const pending = create(r, grant);
+        try {
+            for (let i=0; i<100 && r.spawnCount===0; i++) await new Promise(resolve => setTimeout(resolve,5));
+            expect(r.spawnCount).toBe(1);
+            const intentKey = `intent:${grant}:create1`, intent = r.gateway.store.get(intentKey);
+            expect(intent).not.toBeNull();
+            const deleted = await r.ownerRequest(`/connections/${grant}/record`, 'DELETE');
+            expect(deleted.status).toBe(200); expect(deleted.body.data).toEqual({ deleted: true });
+            expect(JSON.stringify(deleted.body)).not.toMatch(/process|stopped/);
+            expect((await pending).error.code).toBe('GRANT_REVOKED');
+            expect(r.gateway.store.get(intentKey)).toEqual(intent);
+            expect(r.gateway.store.get(`connection:${grant}`)).toBeNull();
+        } finally { release(); }
+    });
+});
+
+
 describe('bounded concurrent worker observation', () => {
     it('can query a pending receipt while spawn is blocked without duplicate dispatch', async () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker(); const release = r.pauseSpawn();

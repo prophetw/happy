@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { automationApprovalApi, automationConnectionQR, parseAutomationQR, type AutomationConsent } from './automationApproval';
+import { automationApprovalApi, automationConnectionQR, parseAutomationQR, type AutomationConsent, type ServiceConnectionRequest } from './automationApproval';
 
 describe('dedicated automation approval UI adapter', () => {
     it('accepts only the dedicated QR and never treats account/terminal keys or arbitrary URLs as authorization', () => {
@@ -17,6 +17,10 @@ describe('dedicated automation approval UI adapter', () => {
         expect(JSON.parse(options.body as string)).toEqual({ digest: consent.digest, challenge: consent.challenge });
         expect(JSON.stringify(options)).not.toMatch(/accountSecret|auth_credentials|masterKey/);
         await api.revoke('connection_1'); expect((request.mock.calls[1] as unknown as [string, RequestInit])[1].method).toBe('DELETE');
+        await api.deleteRecord('connection_1');
+        const [deleteUrl, deleteOptions] = request.mock.calls[2] as unknown as [string, RequestInit];
+        expect(deleteUrl).toBe('https://host.invalid/happy-control/v1/connections/connection_1/record');
+        expect(deleteOptions.method).toBe('DELETE'); expect(deleteOptions.body).toBeUndefined();
     });
     it('does not propagate untrusted response errors or accept malformed IDs', async () => {
         const request = vi.fn(async () => ({ ok: false, json: async () => ({ ok: false, error: { code: 'Bearer secret-value' } }) }));
@@ -48,6 +52,20 @@ it('accepts one-time delivery only for the requested connection and never propag
     const issued = await api.issueServiceToken('service_1'); expect(issued.token === data.token).toBe(true);
     data.connectionID = 'different_connection';
     await expect(api.issueServiceToken('service_1')).rejects.toThrow('SERVICE_TOKEN_DELIVERY_UNKNOWN');
+});
+
+it('serializes preserved launch options and existing session scope for service reauthorization', async () => {
+    const request = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, data: {} }) }));
+    const api = automationApprovalApi('https://fixture.invalid/home-relay', () => 'Bearer fixture-owner', request as unknown as typeof fetch);
+    const scope: ServiceConnectionRequest = {
+        clientID: 'service', workerID: 'worker', machineID: 'machine', scopeVersion: 2, projectIDs: ['a', 'b'],
+        methods: ['tasks.create'], sessionIDs: ['existing_session'], expiresInMs: 60000,
+        options: { agents: [{ agent: 'claude', models: ['sonnet'], permissionModes: ['default'] }] },
+    };
+    await api.createService(scope);
+    const [url, options] = request.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://fixture.invalid/happy-control/v1/service-connections');
+    expect(JSON.parse(options.body as string)).toEqual(scope);
 });
 
 it('acknowledges the complete v2 project binding and rejects malformed or unknown scope versions before approving', async () => {

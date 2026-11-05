@@ -8,6 +8,7 @@ vi.mock('react-native-unistyles',()=>({StyleSheet:{create:(f:any)=>f({colors:{te
 vi.mock('expo-clipboard',()=>({setStringAsync:runtime.copy}));
 vi.mock('expo-router',()=>({useFocusEffect:(effect:React.EffectCallback)=>React.useEffect(()=>{const cleanup=effect();runtime.blur=typeof cleanup==='function'?cleanup:undefined;return cleanup;},[effect])}));
 vi.mock('@/components/DirectoryPicker',()=>({DirectoryPicker:'DirectoryPicker'}));
+vi.mock('@/text',()=>({t:(key:string,params?:{id?:string})=>params?.id?`${key}:${params.id}`:key}));
 import { ServiceConnectionForm, ServiceTokenDelivery } from '@/components/automation/ServiceAccess';
 import type { AutomationConsent, ServiceConnectionOptions, automationApprovalApi } from '@/auth/automationApproval';
 const fixtureSecret='fixture-secret-with-no-real-access';
@@ -59,7 +60,7 @@ describe('service access UI, fixture credentials only',()=>{
   await act(async()=>{renderer.root.findByType('TextInput').props.onChangeText('31');});expect(button('创建申请并审查权限').props.disabled).toBe(true);
   await act(async()=>{renderer.root.findByType('TextInput').props.onChangeText('30');});
   await act(async()=>{button('创建申请并审查权限').props.onPress();});
-  expect(a.createService).toHaveBeenCalledTimes(1);const scope=(a.createService as any).mock.calls[0][0];expect(scope).toMatchObject({clientID:'service',workerID:'worker',machineID:'machine',projectID:'project',methods:['machines.list'],sessionIDs:[],expiresInMs:30*24*3600000});expect(scope.expiresAt).toBeUndefined();expect(created).toHaveBeenCalledWith('created_connection');
+  expect(a.createService).toHaveBeenCalledTimes(1);const scope=(a.createService as any).mock.calls[0][0];expect(scope).toMatchObject({clientID:'service',workerID:'worker',machineID:'machine',projectID:'project',methods:['machines.list'],sessionIDs:[],expiresInMs:30*24*3600000});expect(scope.expiresAt).toBeUndefined();expect(scope).not.toHaveProperty('options');expect(created).toHaveBeenCalledWith('created_connection');
  });
  it.each([-3600000,1000,3600000])('submits the chosen duration independently of client clock skew (%i ms)',async(skew)=>{
   const clock=vi.spyOn(Date,'now').mockReturnValue(1793793600000+skew);
@@ -151,5 +152,130 @@ describe('owner browses directories then explicitly approves a v3 scope',()=>{
   await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn()}));});await act(async()=>{renderer.root.findByType('DirectoryPicker').props.onSelectDirectory('/fixture/new');});await act(async()=>{button('让 Worker 核实所选目录').props.onPress();});
   expect(a.createService).not.toHaveBeenCalled();expect(button('让 Worker 核实所选目录').props.disabled).toBe(false);expect(JSON.stringify(renderer.toJSON())).not.toContain('fixture-sensitive-internals');
   const b=api();await act(async()=>{renderer.update(React.createElement(ServiceConnectionForm,{api:b,onCreated:vi.fn()}));});expect(renderer.root.findAllByType('DirectoryPicker')).toHaveLength(0);
+ });
+});
+
+const DAY=24*3600000;
+function editableConsent(overrides:Partial<AutomationConsent>={}):AutomationConsent{
+ const createdAt=Date.now();
+ return{id:'old_connection',userID:'owner',clientID:'service',clientName:'Fixture backend',clientFingerprint:'fixture',workerFingerprint:'worker-fingerprint',workerID:'worker',workerName:'Fixture worker',machineID:'machine',projectID:'projectA',projectDirectory:'/fixture/a',methods:['machines.list'],sessionIDs:[],createdAt,expiresAt:createdAt+10*DAY,pendingUntil:createdAt+300000,credentialMode:'service-token-v1',state:'approved',digest:'d'.repeat(64),challenge:'fixture-challenge',disclosure:'fixture disclosure',...overrides};
+}
+function editApi(previous:AutomationConsent){
+ const a=multiApi();a.consent=vi.fn(async()=>previous);a.revoke=vi.fn(async()=>previous);return a;
+}
+function directoryEditApi(previous:AutomationConsent){
+ const a=editApi(previous);
+ a.serviceOptions=vi.fn(async():Promise<ServiceConnectionOptions>=>({protocol:1,maxGrantMs:30*DAY,projectScopes:1,directoryScopes:1,maxProjects:32,clients:[{id:'service',name:'Fixture backend',fingerprint:'fixture'}],workers:[{id:'worker',name:'Fixture worker',machineID:'machine',methods:['machines.list','tasks.create'],projectScopes:1,directoryScopes:1,directorySelection:{roots:['/fixture']},projects:[{id:'project',directory:'/fixture/project',sessionIDs:[]}]}]}));
+ a.resolveDirectories=vi.fn(async(input:{directories:string[]})=>({selectionID:'fresh_selection',expiresAt:Date.now()+120000,projects:input.directories.map(directory=>({id:directory==='/fixture/project'?'project':'dir_dynamic',directory}))}));return a;
+}
+const durationInput=()=>renderer.root.findAllByType('TextInput').find((n:any)=>n.props.accessibilityLabel==='服务授权有效天数');
+
+describe('service authorization edit mode',()=>{
+ it('prefills v1 exactly, including methods, original duration and options, then revokes only after creation',async()=>{
+  const launchOptions={agents:[{agent:'fixture-agent',models:['fixture-model'],permissionModes:['fixture-mode']}]};
+  const createdAt=Date.now(),previous=editableConsent({createdAt,expiresAt:createdAt+12.5*DAY,methods:['tasks.create','machines.list'],options:launchOptions});const a=editApi(previous),created=vi.fn();
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});
+  expect(button('projectA · /fixture/a').props.accessibilityState.checked).toBe(true);expect(durationInput().props.value).toBe('12.5');
+  expect(renderer.root.findAllByType('Pressable').find((n:any)=>n.props.accessibilityLabel?.includes('tasks.create')).props.accessibilityState.checked).toBe(true);
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  const scope=(a.createService as any).mock.calls[0][0];expect(scope).toMatchObject({projectID:'projectA',methods:['tasks.create','machines.list'],sessionIDs:[],options:launchOptions,expiresInMs:12.5*DAY});
+  expect(scope).not.toHaveProperty('digest');expect(scope).not.toHaveProperty('clientFingerprint');expect(a.revoke).toHaveBeenCalledWith(previous.id);expect(created).toHaveBeenCalledWith('created_connection');
+ });
+ it('normalizes the gateway timestamp gap instead of prefilling a noisy fractional duration',async()=>{
+  const createdAt=Date.now(),previous=editableConsent({createdAt,expiresAt:createdAt+30*DAY-1});const a=editApi(previous),created=vi.fn();
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});
+  expect(durationInput().props.value).toBe('30');await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  expect((a.createService as any).mock.calls[0][0].expiresInMs).toBe(30*DAY);
+ });
+ it('restores every v2 project and keeps the v2 request shape',async()=>{
+  const previous=editableConsent({scopeVersion:2,projectID:undefined,projectDirectory:undefined,projectIDs:['projectA','projectB'],projects:[{id:'projectA',directory:'/fixture/a'},{id:'projectB',directory:'/fixture/b'}],methods:['sessions.send']});const a=editApi(previous);
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});
+  expect(button('projectA · /fixture/a').props.accessibilityState.checked).toBe(true);expect(button('projectB · /fixture/b').props.accessibilityState.checked).toBe(true);expect(button('projectC · /fixture/c').props.accessibilityState.checked).toBe(false);
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  expect((a.createService as any).mock.calls[0][0]).toMatchObject({scopeVersion:2,projectIDs:['projectA','projectB'],methods:['sessions.send']});
+ });
+ it('shows an over-limit original duration without clamping and allows the owner to shorten it',async()=>{
+  const createdAt=Date.now(),previous=editableConsent({createdAt,expiresAt:createdAt+45*DAY});const a=editApi(previous);
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});
+  expect(durationInput().props.value).toBe('45');expect(button('创建申请并审查权限').props.disabled).toBe(true);expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.serviceEditDurationTooLong');
+  await act(async()=>{durationInput().props.onChangeText('30');});expect(button('创建申请并审查权限').props.disabled).toBe(false);
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});expect((a.createService as any).mock.calls[0][0].expiresInMs).toBe(30*DAY);
+ });
+ it('retains old sessionIDs/options and blocks project changes that would strand an existing session',async()=>{
+  const launchOptions={agents:[{agent:'fixture-agent',models:[],permissionModes:[]}]};const previous=editableConsent({sessionIDs:['existing_a'],options:launchOptions});const a=editApi(previous);const current=await a.serviceOptions();
+  current.workers[0].projects[0].sessionIDs=['existing_a'];a.serviceOptions=vi.fn(async()=>current);
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});
+  expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.serviceEditSessionsRetained');
+  await act(async()=>{button('projectA · /fixture/a').props.onPress();button('projectB · /fixture/b').props.onPress();});
+  expect(button('创建申请并审查权限').props.disabled).toBe(true);expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.serviceEditSessionsInvalid');expect(a.createService).not.toHaveBeenCalled();
+  await act(async()=>{button('projectB · /fixture/b').props.onPress();button('projectA · /fixture/a').props.onPress();});await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  expect((a.createService as any).mock.calls[0][0]).toMatchObject({projectID:'projectA',sessionIDs:['existing_a'],options:launchOptions});
+ });
+ it('never combines a v3 directory selection with retained existing sessionIDs',async()=>{
+  const previous=editableConsent({projectID:'project',projectDirectory:'/fixture/project',sessionIDs:['existing']});const a=directoryEditApi(previous);const current=await a.serviceOptions();current.workers[0].projects[0].sessionIDs=['existing'];a.serviceOptions=vi.fn(async()=>current);
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});expect(button('创建申请并审查权限').props.disabled).toBe(false);
+  await act(async()=>{renderer.root.findByType('DirectoryPicker').props.onSelectDirectory('/fixture/new');});await act(async()=>{button('让 Worker 核实所选目录').props.onPress();});
+  expect(button('创建申请并审查权限').props.disabled).toBe(true);expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.serviceEditSessionsInvalid');expect(a.createService).not.toHaveBeenCalled();expect(a.revoke).not.toHaveBeenCalled();
+ });
+ it('partitions v3 into registered projects/custom directories and requires a fresh directory selection',async()=>{
+  const previous=editableConsent({scopeVersion:3,projectID:undefined,projectDirectory:undefined,projectIDs:['project','dir_dynamic'],projects:[{id:'project',directory:'/fixture/project'},{id:'dir_dynamic',directory:'/fixture/new'}]});const a=directoryEditApi(previous);
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});
+  expect(button('project · /fixture/project').props.accessibilityState.checked).toBe(true);expect(button('移除已选目录 · /fixture/new')).toBeDefined();expect(button('创建申请并审查权限').props.disabled).toBe(true);expect(a.resolveDirectories).not.toHaveBeenCalled();
+  await act(async()=>{button('让 Worker 核实所选目录').props.onPress();});expect(a.resolveDirectories).toHaveBeenCalledWith({clientID:'service',workerID:'worker',machineID:'machine',directories:['/fixture/project','/fixture/new']});
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  expect((a.createService as any).mock.calls[0][0]).toMatchObject({scopeVersion:3,projectIDs:['project','dir_dynamic'],projects:[{id:'project',directory:'/fixture/project'},{id:'dir_dynamic',directory:'/fixture/new'}],selectionID:'fresh_selection',sessionIDs:[]});
+ });
+ it('does not downgrade an all-registered v3 scope to v1 and resets verification on API change',async()=>{
+  const previous=editableConsent({scopeVersion:3,projectID:undefined,projectDirectory:undefined,projectIDs:['project'],projects:[{id:'project',directory:'/fixture/project'}]});const a=directoryEditApi(previous);
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});
+  expect(button('移除已选目录 · /fixture/project')).toBeUndefined();expect(button('创建申请并审查权限').props.disabled).toBe(true);await act(async()=>{button('让 Worker 核实所选目录').props.onPress();});expect(button('创建申请并审查权限').props.disabled).toBe(false);
+  const b=directoryEditApi(previous);await act(async()=>{renderer.update(React.createElement(ServiceConnectionForm,{api:b,onCreated:vi.fn(),sourceID:previous.id}));});expect(button('创建申请并审查权限').props.disabled).toBe(true);expect(b.resolveDirectories).not.toHaveBeenCalled();
+  await act(async()=>{button('让 Worker 核实所选目录').props.onPress();});await act(async()=>{button('创建申请并审查权限').props.onPress();});expect((b.createService as any).mock.calls[0][0]).toMatchObject({scopeVersion:3,selectionID:'fresh_selection'});
+ });
+ it.each([
+  ['ordinary signed connection',{credentialMode:undefined}],
+  ['client fingerprint mismatch',{clientFingerprint:'changed'}],
+  ['worker/machine mismatch',{machineID:'changed'}],
+  ['registered directory mismatch',{projectDirectory:'/fixture/changed'}],
+  ['method no longer registered',{methods:['sessions.cancel']}],
+ ])('fails closed instead of showing default create values for %s',async(_name,overrides)=>{
+  const previous=editableConsent(overrides);const a=editApi(previous);await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});
+  expect(button('创建申请并审查权限')).toBeUndefined();expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.serviceEditLoadFailed');expect(a.createService).not.toHaveBeenCalled();expect(a.revoke).not.toHaveBeenCalled();
+ });
+ it.each(['options','consent'])('fails closed when %s loading fails',async(which)=>{
+  const previous=editableConsent();const a=editApi(previous);if(which==='options')a.serviceOptions=vi.fn(async()=>{throw Error('fixture-private-options');});else a.consent=vi.fn(async()=>{throw Error('fixture-private-consent');});
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:previous.id}));});expect(button('创建申请并审查权限')).toBeUndefined();expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.serviceEditLoadFailed');expect(JSON.stringify(renderer.toJSON())).not.toContain('fixture-private');
+ });
+ it('does not revoke the old grant when replacement creation fails',async()=>{
+  const previous=editableConsent();const a=editApi(previous),created=vi.fn();a.createService=vi.fn(async()=>{throw Error('SCOPE_DENIED');});
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(a.revoke).not.toHaveBeenCalled();expect(created).not.toHaveBeenCalled();
+ });
+ it('waits for confirmed creation before revoking and confirmed revocation before navigating',async()=>{
+  const previous=editableConsent();const a=editApi(previous),created=vi.fn();let finishCreate!:(value:any)=>void,finishRevoke!:(value:any)=>void;
+  a.createService=vi.fn(()=>new Promise<any>(resolve=>{finishCreate=resolve;}));a.revoke=vi.fn(()=>new Promise<any>(resolve=>{finishRevoke=resolve;}));
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(a.revoke).not.toHaveBeenCalled();
+  await act(async()=>{finishCreate({id:'replacement_connection'});});expect(a.revoke).toHaveBeenCalledWith(previous.id);expect(created).not.toHaveBeenCalled();
+  await act(async()=>{finishRevoke(previous);});expect(created).toHaveBeenCalledWith('replacement_connection');
+ });
+ it('keeps an unknown revocation result submitted, exposes the new ID, and never retries automatically',async()=>{
+  const previous=editableConsent();const a=editApi(previous),created=vi.fn();a.createService=vi.fn(async()=>({id:'replacement_connection'})) as any;a.revoke=vi.fn(async()=>{throw Error('fixture-revoke-private');});
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  const text=JSON.stringify(renderer.toJSON());expect(text).toContain('settings.automation.serviceEditRevokeUnknown:replacement_connection');expect(text).not.toContain('fixture-revoke-private');expect(created).not.toHaveBeenCalled();expect(button('创建申请并审查权限').props.disabled).toBe(true);
+  await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(a.createService).toHaveBeenCalledTimes(1);expect(a.revoke).toHaveBeenCalledTimes(1);
+ });
+ it('uses the server state rather than the local wall clock when revoking the old source',async()=>{
+  const createdAt=Date.now()-2*DAY,previous=editableConsent({createdAt,expiresAt:Date.now()-1000,state:'approved'});const a=editApi(previous),created=vi.fn();
+  await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});
+  expect(a.revoke).toHaveBeenCalledWith(previous.id);expect(created).toHaveBeenCalledWith('created_connection');
+ });
+ it.each(['revoked','expired'])('does not revoke an already %s source again',async(state)=>{
+  const previous=editableConsent({state});const a=editApi(previous),created=vi.fn();await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(a.revoke).not.toHaveBeenCalled();expect(created).toHaveBeenCalledWith('created_connection');
+ });
+ it('resets submission locks and discards late initialization when source/API changes',async()=>{
+  const first=editableConsent();const a=editApi(first);a.createService=vi.fn(async()=>{throw Error('SCOPE_DENIED');});await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn(),sourceID:first.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(button('创建申请并审查权限').props.disabled).toBe(true);
+  let finishOld!:(value:AutomationConsent)=>void;const old=editApi(first);old.consent=vi.fn(()=>new Promise<AutomationConsent>(resolve=>{finishOld=resolve;}));
+  const second=editableConsent({id:'second_connection',projectID:'projectB',projectDirectory:'/fixture/b'});const b=editApi(second);
+  await act(async()=>{renderer.update(React.createElement(ServiceConnectionForm,{api:old,onCreated:vi.fn(),sourceID:first.id}));});await act(async()=>{renderer.update(React.createElement(ServiceConnectionForm,{api:b,onCreated:vi.fn(),sourceID:second.id}));});
+  expect(button('projectB · /fixture/b').props.accessibilityState.checked).toBe(true);expect(button('创建申请并审查权限').props.disabled).toBe(false);await act(async()=>{finishOld(first);});expect(button('projectB · /fixture/b').props.accessibilityState.checked).toBe(true);
  });
 });

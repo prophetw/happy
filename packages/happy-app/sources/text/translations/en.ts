@@ -174,6 +174,21 @@ export const en: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: 'Delete connection record',
+            deleteRecordTitle: 'Delete connection record?',
+            deleteRecordMessage: 'This cannot be undone. An active connection will be revoked first, and its tokens and waiting requests will stop working. Running tasks are not stopped automatically. Revoking without deleting preserves the record.',
+            deleteUnknownTitle: 'Deletion needs verification',
+            deleteUnknown: 'Read the connection records again before retrying; deletion will not be repeated automatically.',
+            deleteNotCompleted: 'The connection record still exists, so deletion was not completed.',
+            editReauthorize: 'Edit and reauthorize',
+            serviceEditNotice: 'Editing an existing service authorization. The original launch options and existing session scope are preserved. Creating the replacement revokes the old connection; review and approve the new scope, then issue a new token.',
+            serviceEditLoadFailed: 'The existing service authorization cannot be edited safely. Its service, worker, project, methods, or credential mode may have changed. Return to connection records and ask the operator to check the current registration.',
+            serviceEditDurationTooLong: 'The original duration exceeds the current deployment limit. Shorten it before creating the replacement.',
+            serviceEditSessionsInvalid: 'The preserved existing sessions are not in the selected projects, or cannot be combined with custom directory scope. Adjust the projects or return and create a separate authorization.',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `This replacement preserves the existing sessions: ${ids}. This scope will be shown again for approval.`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `Replacement request ${id} was created, but revocation of the old connection is unconfirmed. Return to connection records and verify both records; do not create another replacement. The new request has no access until approved.`,
+        },
         title: 'Settings',
         connectedAccounts: 'Connected Accounts',
         connectAccount: 'Connect account',

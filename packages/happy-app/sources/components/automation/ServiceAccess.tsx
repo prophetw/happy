@@ -6,6 +6,7 @@ import { useFocusEffect } from 'expo-router';
 import { automationApprovalApi, type AutomationConsent, type ServiceConnectionOptions } from '@/auth/automationApproval';
 
 import { DirectoryPicker } from '@/components/DirectoryPicker';
+import { t } from '@/text';
 
 type API = ReturnType<typeof automationApprovalApi>;
 const day = 24 * 3600000;
@@ -61,9 +62,10 @@ export function ServiceTokenDelivery({ consent, api, disabled = false }: { conse
 }
 
 /** Uses only operator-registered service identities and worker scopes; existing sessions default denied. */
-export function ServiceConnectionForm({ api, onCreated }: { api: API; onCreated: (id: string) => void }) {
+export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; onCreated: (id: string) => void; sourceID?: string }) {
     const [options, setOptions] = React.useState<ServiceConnectionOptions | null>(null), [clientID, setClient] = React.useState(''), [workerID, setWorker] = React.useState(''), [projectIDs, setProjects] = React.useState<string[]>([]);
     const [methods, setMethods] = React.useState<string[]>([]), [days, setDays] = React.useState('30'), [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false), [submitted, setSubmitted] = React.useState(false);
+    const [original, setOriginal] = React.useState<AutomationConsent | null>(null);
     const generation = React.useRef(0), attempted = React.useRef(false), selectionVersion = React.useRef(0);
     const [customDirectories, setCustomDirectories] = React.useState<string[]>([]), [customPath, setCustomPath] = React.useState('');
     const [verified, setVerified] = React.useState<{ selectionID: string; projects: { id: string; directory: string }[]; expiresAt: number } | null>(null);
@@ -72,38 +74,105 @@ export function ServiceConnectionForm({ api, onCreated }: { api: API; onCreated:
     React.useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer); }, []);
     React.useEffect(() => {
         const version = ++generation.current;
-        setOptions(null); setError(''); setCustomDirectories([]); setCustomPath(''); invalidateSelection();
-        void api.serviceOptions().then(value => {
-            if (version !== generation.current) return;
-            setOptions(value); setClient(value.clients[0]?.id ?? ''); setWorker(value.workers[0]?.id ?? ''); setProjects(value.workers[0]?.projects[0] ? [value.workers[0].projects[0].id] : []);
-            setMethods(readOnly(value.workers[0]?.methods ?? [])); setDays(String(Math.min(30, value.maxGrantMs / day)));
-        }).catch(() => { if (version === generation.current) setError('服务令牌功能未启用、身份未登录或暂不可用。请联系操作方登记服务及允许的 worker 范围。'); });
-        return () => { generation.current++; };
-    }, [api]);
+        attempted.current = false;
+        setOptions(null); setOriginal(null); setClient(''); setWorker(''); setProjects([]); setMethods([]); setDays('30');
+        setError(''); setBusy(false); setSubmitted(false); setCustomDirectories([]); setCustomPath(''); setClock(Date.now()); invalidateSelection();
+        void (async () => {
+            if (sourceID === undefined) {
+                try {
+                    const value = await api.serviceOptions();
+                    if (version !== generation.current) return;
+                    setOptions(value); setClient(value.clients[0]?.id ?? ''); setWorker(value.workers[0]?.id ?? ''); setProjects(value.workers[0]?.projects[0] ? [value.workers[0].projects[0].id] : []);
+                    setMethods(readOnly(value.workers[0]?.methods ?? [])); setDays(String(Math.min(30, value.maxGrantMs / day)));
+                } catch {
+                    if (version === generation.current) setError('服务令牌功能未启用、身份未登录或暂不可用。请联系操作方登记服务及允许的 worker 范围。');
+                }
+                return;
+            }
+            try {
+                const [value, previous] = await Promise.all([api.serviceOptions(), api.consent(sourceID)]);
+                if (version !== generation.current) return;
+                if (previous.credentialMode !== 'service-token-v1') throw new Error('EDIT_MISMATCH');
+                const client = value.clients.find(c => c.id === previous.clientID && c.fingerprint === previous.clientFingerprint);
+                const worker = value.workers.find(w => w.id === previous.workerID && w.machineID === previous.machineID);
+                const originalDuration = previous.expiresAt - previous.createdAt;
+                if (!client || !worker || !Number.isFinite(originalDuration) || originalDuration < 1000
+                    || !Array.isArray(previous.methods) || previous.methods.length === 0 || new Set(previous.methods).size !== previous.methods.length
+                    || previous.methods.some(method => !worker.methods.includes(method)) || !Array.isArray(previous.sessionIDs)) throw new Error('EDIT_MISMATCH');
+                // expiresAt is resolved immediately before createdAt; hide small timestamp gaps in the day input.
+                const originalDays = Math.round(originalDuration / day * 1e6) / 1e6;
+                let restoredProjects: string[] = [], restoredDirectories: string[] = [];
+                if (previous.scopeVersion === undefined) {
+                    if (typeof previous.projectID !== 'string' || typeof previous.projectDirectory !== 'string' || previous.projectIDs !== undefined || previous.projects !== undefined
+                        || !worker.projects.some(p => p.id === previous.projectID && p.directory === previous.projectDirectory)) throw new Error('EDIT_MISMATCH');
+                    restoredProjects = [previous.projectID];
+                } else {
+                    const ids = previous.projectIDs, projects = previous.projects;
+                    if ((previous.scopeVersion !== 2 && previous.scopeVersion !== 3) || previous.projectID !== undefined || previous.projectDirectory !== undefined
+                        || !Array.isArray(ids) || !Array.isArray(projects) || ids.length !== projects.length || ids.length < (previous.scopeVersion === 3 ? 1 : 2)
+                        || new Set(ids).size !== ids.length || new Set(projects.map(p => p.directory)).size !== projects.length
+                        || projects.some((p, index) => p.id !== ids[index])) throw new Error('EDIT_MISMATCH');
+                    if (previous.scopeVersion === 2) {
+                        if (projects.some(p => !worker.projects.some(current => current.id === p.id && current.directory === p.directory))) throw new Error('EDIT_MISMATCH');
+                        restoredProjects = [...ids];
+                    } else {
+                        if (value.directoryScopes !== 1 || worker.directoryScopes !== 1 || !worker.directorySelection?.roots.length) throw new Error('EDIT_MISMATCH');
+                        for (const project of projects) {
+                            if (worker.projects.some(current => current.id === project.id && current.directory === project.directory)) restoredProjects.push(project.id);
+                            else restoredDirectories.push(project.directory);
+                        }
+                    }
+                }
+                setOptions(value); setOriginal(previous); setClient(previous.clientID); setWorker(previous.workerID); setProjects(restoredProjects);
+                setCustomDirectories(restoredDirectories); setMethods([...previous.methods]); setDays(String(originalDays));
+            } catch {
+                if (version === generation.current) { setOptions(null); setOriginal(null); setError(t('settings.automation.serviceEditLoadFailed')); }
+            }
+        })();
+        return () => { generation.current++; selectionVersion.current++; };
+    }, [api, sourceID]);
     const worker = options?.workers.find(w => w.id === workerID);
     const multipleSupported = options?.projectScopes === 1 && worker?.projectScopes === 1;
     const directorySupported = options?.directoryScopes === 1 && worker?.directoryScopes === 1 && !!worker.directorySelection?.roots.length;
     const maxProjects = multipleSupported ? Math.min(options?.maxProjects ?? 32, 32) : 1;
     const duration = Math.floor(Number(days) * day);
+    const requiresDirectorySelection = customDirectories.length > 0 || original?.scopeVersion === 3;
     const pickedPaths = [...(worker?.projects.filter(p => projectIDs.includes(p.id)).map(p => p.directory) ?? []), ...customDirectories];
-    const selectionReady = customDirectories.length === 0 || (!!directorySupported && !!verified && verified.expiresAt > clock);
-    const valid = selectionReady && !!options && !!clientID && !!worker && pickedPaths.length > 0 && pickedPaths.length <= maxProjects
+    const selectionReady = !requiresDirectorySelection || (!!directorySupported && !!verified && verified.expiresAt > clock);
+    const retainedSessionIDs = original?.sessionIDs ?? [];
+    const sessionsValid = retainedSessionIDs.every(id => worker?.projects.some(p => projectIDs.includes(p.id) && p.sessionIDs.includes(id)))
+        && (!requiresDirectorySelection || retainedSessionIDs.length === 0);
+    const valid = selectionReady && sessionsValid && !!options && !!clientID && !!worker && pickedPaths.length > 0 && pickedPaths.length <= maxProjects
         && projectIDs.every(id => worker.projects.some(p => p.id === id)) && methods.length > 0 && Number.isFinite(duration) && duration >= 1000 && duration <= options.maxGrantMs;
     const create = async () => {
         if (!valid || !worker || !options || attempted.current) return;
         attempted.current = true; const version = generation.current; setSubmitted(true); setBusy(true); setError('');
         try {
-            const next = await api.createService({ clientID, workerID, machineID: worker.machineID,
-                ...(customDirectories.length && verified ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID } : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() }), methods, sessionIDs: [], expiresInMs: duration });
+            let next: AutomationConsent;
+            try {
+                next = await api.createService({ clientID, workerID, machineID: worker.machineID,
+                    ...(requiresDirectorySelection && verified ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID } : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() }),
+                    methods, sessionIDs: original ? [...original.sessionIDs] : [], ...(original?.options !== undefined ? { options: original.options } : {}), expiresInMs: duration });
+            } catch (error) {
+                if (version === generation.current) setError(error instanceof Error && error.message === 'SCOPE_DENIED'
+                    ? '创建申请被拒绝，未创建授权。请返回后重新检查项目、操作范围和有效时长。'
+                    : error instanceof Error && error.message === 'DIRECTORY_SELECTION_MISMATCH'
+                        ? '目录核实已失效或与所选范围不一致，未创建授权。请返回后重新核实目录。'
+                        : '创建结果未确认。请返回连接记录核实，不要重复创建；尚未批准的申请不会获得执行权限。');
+                return;
+            }
+            if (version !== generation.current) return;
+            if (original && sourceID !== undefined) {
+                if (original.state !== 'revoked' && original.state !== 'expired') {
+                    try { await api.revoke(sourceID); }
+                    catch {
+                        if (version === generation.current) setError(t('settings.automation.serviceEditRevokeUnknown', { id: next.id }));
+                        return;
+                    }
+                }
+            }
             if (version === generation.current) onCreated(next.id);
-        } catch (error) {
-            if (version === generation.current) setError(error instanceof Error && error.message === 'SCOPE_DENIED'
-                ? '创建申请被拒绝，未创建授权。请返回后重新检查项目、操作范围和有效时长。'
-                : error instanceof Error && error.message === 'DIRECTORY_SELECTION_MISMATCH'
-                    ? '目录核实已失效或与所选范围不一致，未创建授权。请返回后重新核实目录。'
-                    : '创建结果未确认。请返回连接记录核实，不要重复创建；尚未批准的申请不会获得执行权限。');
-        }
-        finally { if (version === generation.current) setBusy(false); }
+        } finally { if (version === generation.current) setBusy(false); }
     };
     const addDirectory = (path: string) => {
         if (submitted || !directorySupported || !worker) return;
@@ -131,6 +200,7 @@ export function ServiceConnectionForm({ api, onCreated }: { api: API; onCreated:
         <Text style={styles.secondary}>项目范围限制任务入口和会话访问，不是操作系统文件沙箱；代理继续使用现有权限确认机制。</Text>
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
         {options && <>
+            {original && <Text style={styles.secondary}>{t('settings.automation.serviceEditNotice')}</Text>}
             <Text style={styles.title}>服务身份</Text>
             {options.clients.map(c => <Choice key={c.id} label={c.name} selected={clientID === c.id} disabled={submitted} onPress={() => { setClient(c.id); invalidateSelection(); }} />)}
             <Text style={styles.title}>机器 / Worker</Text>
@@ -145,7 +215,7 @@ export function ServiceConnectionForm({ api, onCreated }: { api: API; onCreated:
                 <TextInput accessibilityLabel="要添加的项目绝对目录" value={customPath} onChangeText={setCustomPath} editable={!submitted} autoCapitalize="none" autoCorrect={false} style={styles.input} />
                 <Button label="添加目录到本次选择" disabled={submitted || !customPath.trim()} onPress={() => addDirectory(customPath)} />
                 {customDirectories.map(path => <Choice key={path} label={`移除已选目录 · ${path}`} selected disabled={submitted} onPress={() => { invalidateSelection(); setCustomDirectories(paths => paths.filter(p => p !== path)); }} />)}
-                {!!customDirectories.length && <>
+                {requiresDirectorySelection && <>
                     <Button label={checking ? '正在核实目录' : '让 Worker 核实所选目录'} disabled={submitted || checking || pickedPaths.length > maxProjects} onPress={() => void verifyDirectories()} />
                     {verified && verified.expiresAt > clock && <Text accessibilityRole="alert" style={styles.secondary}>目录已核实；批准页将展示以下真实路径：{verified.projects.map(p => p.directory).join('、')}。请在两分钟内创建申请，最终仍须单独批准。</Text>}
                     {verified && verified.expiresAt <= clock && <Text accessibilityRole="alert" style={styles.error}>目录核实已过期，请重新核实。</Text>}
@@ -153,12 +223,15 @@ export function ServiceConnectionForm({ api, onCreated }: { api: API; onCreated:
             </View>}
             {!multipleSupported && (worker?.projects.length ?? 0) > 1 && <Text accessibilityRole="alert" style={styles.secondary}>当前服务或在线 Worker 尚未报告多项目能力，请先只选一个项目；多选需要更新并连通受信 Worker。</Text>}
             {pickedPaths.length > maxProjects && <Text accessibilityRole="alert" style={styles.error}>当前最多可选 {maxProjects} 个项目。</Text>}
+            {original && !sessionsValid && <Text accessibilityRole="alert" style={styles.error}>{t('settings.automation.serviceEditSessionsInvalid')}</Text>}
             <Text style={styles.title}>允许的操作</Text>
             <Text style={styles.secondary}>以下操作对所有勾选的项目生效，默认只读。派发任务需额外选择创建和追加指令；停止任务需选择取消。</Text>
             {worker?.methods.map(m => <Choice key={m} label={`${labels[m] ?? m} · ${m}`} selected={methods.includes(m)} disabled={submitted} onPress={() => setMethods(list => list.includes(m) ? list.filter(v => v !== m) : [...list, m])} />)}
             <Text style={styles.title}>有效时长（天）</Text>
             <TextInput accessibilityLabel="服务授权有效天数" value={days} onChangeText={setDays} keyboardType="decimal-pad" editable={!submitted} style={styles.input} />
-            <Text style={styles.secondary}>本部署上限 {options.maxGrantMs / day} 天；从申请时计算，不会因生成令牌而延期。仅本授权新建的专用会话，不含既有会话。</Text>
+            <Text style={styles.secondary}>本部署上限 {options.maxGrantMs / day} 天；从申请时计算，不会因生成令牌而延期。</Text>
+            <Text style={styles.secondary}>{original?.sessionIDs.length ? t('settings.automation.serviceEditSessionsRetained', { ids: original.sessionIDs.join(', ') }) : '仅本授权新建的专用会话，不含既有会话。'}</Text>
+            {original && Number.isFinite(duration) && duration > options.maxGrantMs && <Text accessibilityRole="alert" style={styles.error}>{t('settings.automation.serviceEditDurationTooLong')}</Text>}
             <Button label="创建申请并审查权限" disabled={!valid || busy || submitted} onPress={() => void create()} />
         </>}
     </View>;

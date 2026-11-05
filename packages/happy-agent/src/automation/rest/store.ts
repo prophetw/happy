@@ -24,6 +24,12 @@ export class MetadataStore {
         catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e; }
     }
     set(key: string, value: unknown) { this.write(key, value, false); }
+    delete(key: string) {
+        privateDirectory(this.directory);
+        try { unlinkSync(this.path(key)); }
+        catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw new ApiError('STORE_UNAVAILABLE', 503); }
+        const dir = openSync(this.directory, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
+    }
     pruneExpired(now: number) {
         for (const record of this.list<{ expiresAt: number }>('proof:')) {
             if (!Number.isFinite(record.expiresAt)) throw new ApiError('STORE_UNAVAILABLE', 503);

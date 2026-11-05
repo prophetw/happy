@@ -131,6 +131,21 @@ export const it: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: 'Elimina record di connessione',
+            deleteRecordTitle: 'Eliminare il record di connessione?',
+            deleteRecordMessage: 'Questa azione è irreversibile. Una connessione attiva verrà prima revocata; i suoi token e le richieste in attesa smetteranno di funzionare. Le attività in esecuzione non vengono interrotte automaticamente. Revocare senza eliminare conserva il record.',
+            deleteUnknownTitle: 'Verifica il risultato dell’eliminazione',
+            deleteUnknown: 'Rileggi i record prima di riprovare; l’eliminazione non verrà ripetuta automaticamente.',
+            deleteNotCompleted: 'Il record di connessione esiste ancora; l’eliminazione non è stata completata.',
+            editReauthorize: 'Modifica e autorizza di nuovo',
+            serviceEditNotice: 'Stai modificando un’autorizzazione di servizio esistente. Le opzioni di avvio e l’ambito delle sessioni esistenti vengono preservati. La creazione della sostituzione revoca la vecchia connessione; esamina e approva il nuovo ambito, quindi emetti un nuovo token.',
+            serviceEditLoadFailed: 'Impossibile modificare in sicurezza l’autorizzazione di servizio esistente. Servizio, worker, progetto, metodi o modalità delle credenziali potrebbero essere cambiati. Torna ai record di connessione e chiedi all’operatore di verificare la registrazione attuale.',
+            serviceEditDurationTooLong: 'La durata originale supera il limite di deployment attuale. Riducila prima di creare la sostituzione.',
+            serviceEditSessionsInvalid: 'Le sessioni esistenti preservate non appartengono ai progetti selezionati o non possono essere combinate con l’ambito di directory personalizzate. Modifica i progetti o torna indietro e crea un’autorizzazione separata.',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `Questa sostituzione preserva le sessioni esistenti: ${ids}. Questo ambito verrà mostrato di nuovo per l’approvazione.`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `La richiesta sostitutiva ${id} è stata creata, ma la revoca della vecchia connessione non è confermata. Torna ai record di connessione e verifica entrambi; non creare un’altra sostituzione. La nuova richiesta non ha accesso finché non viene approvata.`,
+        },
         title: 'Impostazioni',
         connectedAccounts: 'Account collegati',
         connectAccount: 'Collega account',

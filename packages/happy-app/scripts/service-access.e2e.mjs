@@ -12,20 +12,23 @@ const app=fileURLToPath(new URL('../',import.meta.url)), repo=path.resolve(app,'
 const artifacts=path.join(repo,'.e2e-artifacts',`service-access-${new Date().toISOString().replace(/[:.]/g,'-')}`);await mkdir(artifacts,{recursive:true});
 const mocks={
  'react-native-unistyles':`import {lightTheme} from ${JSON.stringify(path.join(app,'sources/theme.ts'))};export const useUnistyles=()=>({theme:lightTheme});export const StyleSheet={hairlineWidth:1,create:f=>f(lightTheme)};`,
- 'expo-router':`import React from 'react';export const Stack={Screen:()=>null};export const useLocalSearchParams=()=>({connection:new URLSearchParams(location.search).get('connection')||undefined});export const useRouter=()=>({push:url=>{location.href=url}});export const useFocusEffect=effect=>React.useEffect(effect,[effect]);`,
+ 'expo-router':`import React from 'react';export const Stack={Screen:()=>null};export const useLocalSearchParams=()=>{const q=new URLSearchParams(location.search);return {connection:q.get('connection')||undefined,from:q.get('from')||undefined}};export const useRouter=()=>({push:url=>{location.href=url},replace:url=>{location.replace(url)}});export const useFocusEffect=effect=>React.useEffect(effect,[effect]);`,
  'expo-camera':`export const CameraView={isModernBarcodeScannerAvailable:false};`,
  'expo-clipboard':`export const setStringAsync=async()=>{};`,
  '@/auth/AuthContext':`export const useAuth=()=>({credentials:{token:'fixture-owner-A',get secret(){throw Error('Account secret must not be read')}}});`,
  '@/sync/serverConfig':`export const getServerUrl=()=>location.origin+'/home-relay';`,
  '@/components/Item':`import React from 'react';import {Pressable,Text} from 'react-native';export const Item=({title,subtitle,onPress,disabled})=><Pressable disabled={disabled} onPress={onPress} style={{padding:20}}><Text>{title}</Text><Text>{subtitle}</Text></Pressable>;`,
+ '@/modal':`import React from 'react';import {Pressable,Text,View} from 'react-native';let open;export const Modal={confirm:(title,message,options)=>new Promise(resolve=>open({title,message,options,resolve}))};export function ModalProvider({children}){const [config,setConfig]=React.useState(null);React.useEffect(()=>{open=setConfig;return()=>{open=undefined}},[]);const answer=value=>{config.resolve(value);setConfig(null)};return <>{children}{config&&<View><Text>{config.title}</Text><Text>{config.message}</Text><Pressable onPress={()=>answer(false)}><Text>{config.options.cancelText||'Cancel'}</Text></Pressable><Pressable onPress={()=>answer(true)}><Text>{config.options.confirmText||'OK'}</Text></Pressable></View>}</>};`,
+ '@/text':`const values=${JSON.stringify({'settings.automation.deleteRecord':'删除连接记录','settings.automation.deleteRecordTitle':'删除连接记录？','settings.automation.deleteRecordMessage':'此操作不可恢复。有效连接会先撤销，相关令牌和等待中的请求将失效；已运行任务不会自动停止。','settings.automation.deleteUnknownTitle':'删除结果待核实','settings.automation.deleteUnknown':'请重新读取连接记录，不要重复删除。','settings.automation.deleteNotCompleted':'连接记录仍存在，删除未完成。','settings.automation.editReauthorize':'编辑并重新授权','settings.automation.serviceEditNotice':'正在编辑已有服务授权。原启动选项和既有会话范围会保留。','common.cancel':'取消'})};export const t=key=>values[key]||key;`,
  '@/components/qr':`import React from 'react';import {Text} from 'react-native';export const QRCode=()=> <Text>隔离fixture二维码占位</Text>;`,
+ '@/components/DirectoryPicker':`export const DirectoryPicker=()=>null;`,
  '@/hooks/useScanQrCode':`export const useScanQrCode=()=>({scanQrCode:async()=>{}});`,
  '@/hooks/useCheckCameraPermissions':`export const useCheckScannerPermissions=()=>async()=>false;`,
  '@expo/vector-icons':`import React from 'react';import {Text} from 'react-native';export const Ionicons=()=> <Text>✓</Text>;`,
 };
 let browser,server,rig,bundle;const checks=[],errors=[],networkFailures=[];
 try{
- bundle=(await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import Screen from './sources/app/(app)/settings/automation';import {ServiceConnectionForm} from './sources/components/automation/ServiceAccess';import {automationApprovalApi} from './sources/auth/automationApproval';const api=automationApprovalApi(location.origin,()=> 'Bearer fixture-owner-A');createRoot(document.getElementById('root')).render(new URLSearchParams(location.search).has('form')?<ServiceConnectionForm api={api} onCreated={id=>location.href='/?connection='+id}/>:<Screen/>);`,resolveDir:app,loader:'tsx'},bundle:true,write:false,platform:'browser',jsx:'automatic',define:{__DEV__:'false','process.env.NODE_ENV':'"production"'},alias:{'react-native':'react-native-web','@':path.join(app,'sources')},plugins:[{name:'isolated-UI',setup(b){b.onResolve({filter:/.*/},a=>a.path in mocks?{path:a.path,namespace:'mock'}:undefined);b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:mocks[a.path],loader:'tsx',resolveDir:app}));}}]})).outputFiles[0].contents;
+ bundle=(await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import Screen from './sources/app/(app)/settings/automation';import {ModalProvider} from '@/modal';import {ServiceConnectionForm} from './sources/components/automation/ServiceAccess';import {automationApprovalApi} from './sources/auth/automationApproval';const api=automationApprovalApi(location.origin,()=> 'Bearer fixture-owner-A');createRoot(document.getElementById('root')).render(<ModalProvider>{new URLSearchParams(location.search).has('form')||location.pathname==='/settings/automation-service'?<ServiceConnectionForm api={api} sourceID={new URLSearchParams(location.search).get('from')||undefined} onCreated={id=>location.href='/?connection='+id}/>:<Screen/>}</ModalProvider>);`,resolveDir:app,loader:'tsx'},bundle:true,write:false,platform:'browser',jsx:'automatic',define:{__DEV__:'false','process.env.NODE_ENV':'"production"'},alias:{'react-native':'react-native-web','@':path.join(app,'sources')},plugins:[{name:'isolated-UI',setup(b){b.onResolve({filter:/.*/},a=>a.path in mocks?{path:a.path,namespace:'mock'}:undefined);b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:mocks[a.path],loader:'tsx',resolveDir:app}));}}]})).outputFiles[0].contents;
  server=createServer((req,res)=>{
   if(req.url.startsWith('/happy-control/v1/')&&rig){const target=httpRequest(rig.address+req.url,{method:req.method,headers:req.headers},out=>{res.writeHead(out.statusCode,out.headers);out.pipe(res);});target.on('error',()=>{res.writeHead(502);res.end();});req.pipe(target);return;}
   if(req.url==='/bundle.js'){res.setHeader('Content-Type','text/javascript');res.end(bundle);return;}
@@ -59,7 +62,7 @@ try{
   assert.equal(await page.evaluate(value=>JSON.stringify(sessionStorage).includes(value),token),false);
   await page.screenshot({path:path.join(artifacts,profile.name+'-delivery.png'),fullPage:true,mask:[input]});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
-  async function backend(route,method='GET',body){const r=await fetch(rig.address+'/happy-control/v1'+route,{method,headers:{authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};}
+  async function backend(route,method='GET',body,credential=token){const r=await fetch(rig.address+'/happy-control/v1'+route,{method,headers:{authorization:'Bearer '+credential,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};}
   rig.setProcess('running');const createdA=await backend('/tasks','POST',{requestID:profile.name+'_create_a',machineID:'machineA',projectID:'projectA'});assert.equal(createdA.body.data.state,'confirmed');
   const created=await backend('/tasks','POST',{requestID:profile.name+'_create_b',machineID:'machineA',projectID:'projectB'});assert.equal(created.body.data.state,'confirmed');const sid=created.body.data.sessionID;
   const actual=(await rig.transport.sessions()).sessions;assert.equal(actual.find(s=>s.id===createdA.body.data.sessionID).metadata.path,rig.project);assert.equal(actual.find(s=>s.id===sid).metadata.path,rig.projectB);
@@ -68,9 +71,29 @@ try{
   rig.complete(sid,profile.name+'_turn');const result=await backend(`/sessions/${sid}/result?turnID=${profile.name}_turn`);assert.equal(result.body.data.outcome,'completed');
   const cancelled=await backend(`/sessions/${sid}/cancel`,'POST',{requestID:profile.name+'_cancel'});assert.equal(cancelled.body.data.process,'unknown');rig.setProcess('stopped');assert.equal((await backend('/requests/'+profile.name+'_cancel')).body.data.process,'stopped');
   const stored=(await Promise.all((await readdir(path.join(rig.dir,'gateway/state'))).map(p=>readFile(path.join(rig.dir,'gateway/state',p),'utf8')))).join('');assert(!stored.includes(token));assert(!JSON.stringify(rig.audit).includes(token));
-  await page.getByRole('button',{name:'撤销连接',exact:true}).click();await input.waitFor({state:'detached'});assert.equal((await backend('/machines')).body.error.code,'GRANT_REVOKED');
-  await page.reload();await page.getByText('已撤销',{exact:true}).first().waitFor();assert.equal(await page.getByLabel('一次性服务访问令牌').count(),0);
-  checks.push(profile.name+':multi-project-checkbox+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+revoke+no-plaintext-persistence');await context.close();
+  await page.getByRole('button',{name:'编辑并重新授权',exact:true}).click();
+  await page.getByText('正在编辑已有服务授权。原启动选项和既有会话范围会保留。',{exact:false}).waitFor();
+  assert.equal(await page.getByLabel('服务授权有效天数',{exact:true}).inputValue(),'30');
+  const editProjectA=page.getByRole('checkbox',{name:`projectA · ${rig.project}`,exact:true}),editProjectB=page.getByRole('checkbox',{name:`projectB · ${rig.projectB}`,exact:true});
+  assert.equal(await editProjectA.getAttribute('aria-checked'),'true');assert.equal(await editProjectB.getAttribute('aria-checked'),'true');
+  await editProjectB.click();await page.getByRole('button',{name:'创建申请并审查权限',exact:true}).click();
+  await page.getByRole('button',{name:'确认批准以上权限',exact:true}).waitFor();const replacement=new URL(page.url()).searchParams.get('connection');assert(replacement);assert.notEqual(replacement,id);
+  assert.equal(rig.gateway.grants.get(id).state,'revoked');assert.equal(rig.gateway.grants.get(replacement).state,'pending');assert.equal(rig.gateway.grants.get(replacement).projectID,'projectA');
+  assert.equal((await backend('/machines')).body.error.code,'GRANT_REVOKED');
+  await page.getByRole('button',{name:'确认批准以上权限',exact:true}).click();const replacementIssue=page.getByRole('button',{name:'生成服务访问令牌（仅交付一次）',exact:true});await replacementIssue.waitFor();await replacementIssue.click();
+  const replacementInput=page.getByLabel('一次性服务访问令牌',{exact:true});await replacementInput.waitFor();const replacementToken=await replacementInput.inputValue();assert.notEqual(replacementToken,token);
+  assert.equal((await backend('/machines','GET',undefined,replacementToken)).body.ok,true);
+  const deleteButton=page.getByRole('button',{name:'删除连接记录',exact:true});await deleteButton.click();await page.getByText('删除连接记录？',{exact:true}).waitFor();await page.getByText('取消',{exact:true}).click();
+  assert.equal(rig.gateway.grants.get(replacement).state,'approved');assert.equal(await replacementInput.count(),1);
+  await deleteButton.click();await page.getByText('删除连接记录？',{exact:true}).waitFor();await page.getByText('删除连接记录',{exact:true}).last().click();
+  await page.waitForURL(url=>!url.searchParams.has('connection'));assert.throws(()=>rig.gateway.grants.get(replacement),/NOT_FOUND/);assert.equal(rig.gateway.store.get('service-token:'+replacement),null);
+  assert.equal((await backend('/machines','GET',undefined,replacementToken)).body.error.code,'INVALID_SERVICE_TOKEN');
+  const listed=await rig.ownerRequest('/connections');assert(!listed.body.data.some(connection=>connection.id===replacement));assert(listed.body.data.some(connection=>connection.id===id&&connection.state==='revoked'));
+  const storedAfterDelete=(await Promise.all((await readdir(path.join(rig.dir,'gateway/state'))).map(p=>readFile(path.join(rig.dir,'gateway/state',p),'utf8')))).join('');assert(!storedAfterDelete.includes(token));assert(!storedAfterDelete.includes(replacementToken));assert(!JSON.stringify(rig.audit).includes(replacementToken));
+  await rig.restartGateway();await rig.startWorker();assert.throws(()=>rig.gateway.grants.get(replacement),/NOT_FOUND/);assert.equal((await backend('/machines','GET',undefined,replacementToken)).body.error.code,'INVALID_SERVICE_TOKEN');assert.equal((await backend('/machines')).body.error.code,'GRANT_REVOKED');
+  await page.reload();await page.getByText('连接记录',{exact:true}).waitFor();const restartedList=await rig.ownerRequest('/connections');assert(!restartedList.body.data.some(connection=>connection.id===replacement));
+  await page.screenshot({path:path.join(artifacts,profile.name+'-deleted.png'),fullPage:true});
+  checks.push(profile.name+':multi-project-checkbox+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+edit-prefill+replacement-reapproval+old-token-revoked+delete-cancel/confirm+restart-persistence+no-plaintext-persistence');await context.close();
  }
  assert.deepEqual(errors,[]);assert.deepEqual(networkFailures,[]);
 }finally{

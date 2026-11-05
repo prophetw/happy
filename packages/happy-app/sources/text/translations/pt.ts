@@ -132,6 +132,21 @@ export const pt: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: 'Excluir registro de conexão',
+            deleteRecordTitle: 'Excluir registro de conexão?',
+            deleteRecordMessage: 'Esta ação não pode ser desfeita. Uma conexão ativa será revogada primeiro; seus tokens e solicitações em espera deixarão de funcionar. Tarefas em execução não são interrompidas automaticamente. Revogar sem excluir preserva o registro.',
+            deleteUnknownTitle: 'Verifique o resultado da exclusão',
+            deleteUnknown: 'Leia os registros novamente antes de tentar de novo; a exclusão não será repetida automaticamente.',
+            deleteNotCompleted: 'O registro de conexão ainda existe; a exclusão não foi concluída.',
+            editReauthorize: 'Editar e autorizar novamente',
+            serviceEditNotice: 'Você está editando uma autorização de serviço existente. As opções de inicialização e o escopo das sessões existentes são preservados. Criar a substituição revoga a conexão antiga; revise e aprove o novo escopo e emita um novo token.',
+            serviceEditLoadFailed: 'Não é possível editar com segurança a autorização de serviço existente. O serviço, worker, projeto, métodos ou modo de credencial podem ter mudado. Volte aos registros de conexão e peça ao operador para verificar o registro atual.',
+            serviceEditDurationTooLong: 'A duração original excede o limite de implantação atual. Reduza-a antes de criar a substituição.',
+            serviceEditSessionsInvalid: 'As sessões existentes preservadas não pertencem aos projetos selecionados ou não podem ser combinadas com o escopo de diretórios personalizados. Ajuste os projetos ou volte e crie uma autorização separada.',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `Esta substituição preserva as sessões existentes: ${ids}. Esse escopo será mostrado novamente para aprovação.`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `A solicitação de substituição ${id} foi criada, mas a revogação da conexão antiga não foi confirmada. Volte aos registros de conexão e verifique ambos; não crie outra substituição. A nova solicitação não tem acesso até ser aprovada.`,
+        },
         title: 'Configurações',
         connectedAccounts: 'Contas conectadas',
         connectAccount: 'Conectar conta',

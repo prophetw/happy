@@ -30,7 +30,7 @@ REST 控制组件和 connector 会看见批准范围内的任务明文。Happy r
 | `packages/happy-cli/src/daemon/automationWorker.ts`、`run.ts` | 显式 opt-in 启动接线，验证实际 Happy owner 与机器；默认不启用 |
 | `automation/rest/mcp.ts`、`client.ts` | 固定 MCP 输入输出到 REST 的映射，不提供 shell/fetch/任意 RPC |
 | `automation/rest/options.ts`、`happy-cli/src/daemon/automationOptions.ts` | 启动选项白名单/解析/按 grant 过滤；daemon 侧目录来自机器元数据中的 Codex/Claude 模型目录 |
-| `happy-app/sources/auth/automationApproval.ts`、`app/(app)/settings/automation.tsx` | 同站点专用批准/扫码/撤销页面；不访问账号 secret |
+| `happy-app/sources/auth/automationApproval.ts`、`app/(app)/settings/automation.tsx` | 同站点专用批准/扫码/撤销/删除记录及服务授权编辑入口；不访问账号 secret |
 | `docs/api/automation-control.openapi.json` | 从 `automation/rest/openapi.ts` 生成的 OpenAPI 3.1 |
 
 现有扫码账号登录的源码：`authQRStart.ts` → `/v1/auth/account/request` → 手机 `useConnectAccount.ts` → `/account/response` → `authQRWait.ts` → `TokenStorage`。该流程授予完整账号客户端，Web 保存于 localStorage，不能复用于本自动化 grant。现有 persistent Happy token 没有 exp，24h 是验证缓存 TTL；本方案不改变这套登录/注销语义。
@@ -80,13 +80,13 @@ Owner 批准接口与 automation API 的认证不同：前者仅通过现有 Hap
 
 配对待批准 TTL 最多 5 分钟；默认 grant 最长 1 小时，宿主可显式设置更短或经批准的上限。没有永久授权、自动续 grant 或真实 grant 预置。到期/撤销/客户端或 worker 公钥轮换/项目目录重绑定均需要重新审查连接，不会悄悄恢复旧访问。
 
-签名覆盖协议/actor/clientID/grantID/timestamp/nonce/HTTP method/完整 path+query/canonical JSON hash。时间窗口 ±30 秒；按实际 JSON wire 内容规范化（省略 undefined 对象字段），nonce 在验收前持久化；重启不能重放。私钥、签名 header 和 owner Bearer 均不放入 URL、聊天、响应示例或审计。过期 nonce 可安全清理；grant/receipt 不自动删除。
+签名覆盖协议/actor/clientID/grantID/timestamp/nonce/HTTP method/完整 path+query/canonical JSON hash。时间窗口 ±30 秒；按实际 JSON wire 内容规范化（省略 undefined 对象字段），nonce 在验收前持久化；重启不能重放。私钥、签名 header 和 owner Bearer 均不放入 URL、聊天、响应示例或审计。过期 nonce 可安全清理；grant/receipt 不自动删除。owner 可通过 `DELETE /connections/:id/record` 明确永久删除连接：先持久撤销并结束等待 job，再删除服务令牌摘要和连接记录；`intent:` 回执、任务、会话与 journal 不级联删除，已运行任务不会因此自动停止。
 
 ### Web 批准页审查体验（2026-11-04）
 
 批准页将真实机器/项目目录、精确方法、既有会话范围和期限直接列出；长ID/公钥指纹与专用二维码按需展开。过期、撤销、等待批准状态使用中文标识，pending确认期限在打开页面期间到期也会禁用批准。未登录时提供返回Happy登录的入口，登录后需重新打开连接链接并单独批准；没有复用账号扫码授予助手权限。
 
-批准或撤销响应丢失时只查询当前状态，不自动重发。无法核实时显示“结果待核实”，保留明确的读取与安全撤销入口；请求代次阻止迟到响应覆盖另一连接。Web更新不表示原生手机专用扫码页面已经发布。隔离fixture浏览器可运行`pnpm --dir packages/happy-app exec node scripts/automation-approval.e2e.mjs`；匿名线上只读冒烟使用同目录`automation-approval-live.e2e.mjs`，不登录、不批准。
+批准、撤销或删除响应丢失时只查询当前状态，不自动重发。无法核实时显示“结果待核实”，保留明确的读取与安全撤销入口；删除成功后详情和一次性令牌组件会卸载，列表与路由参数同步清理。请求代次阻止迟到响应覆盖另一连接。Web更新不表示原生手机专用扫码页面已经发布。隔离fixture浏览器可运行`pnpm --dir packages/happy-app exec node scripts/automation-approval.e2e.mjs`；匿名线上只读冒烟使用同目录`automation-approval-live.e2e.mjs`，不登录、不批准。
 
 ## 服务访问令牌 v1（最长30天，Web/REST已上线，真实服务授权待验收）
 
@@ -150,7 +150,7 @@ canonical path绑定不等于inode固定或OS文件沙箱；同一路径下内�
 3. 原批准页显示服务令牌模式、服务身份指纹、机器、项目 realpath、精确方法、会话范围及到期。`POST /connections/{id}/approve` 除原 digest/challenge 外必须明确带 `credentialMode: "service-token-v1"`；旧批准页缺少模式确认返回 426，不会默默批准新凭据类型。原签名批准 body 不变。
 4. 本人明确点击“生成服务访问令牌”，`POST /connections/{id}/service-token` 仅在该 owner 的已批准服务连接中成功一次。凭据含 256-bit CSPRNG 随机秘密；单个持久原子 claim 只保存 SHA-256 摘要与非秘密绑定、发行时间及原到期时间。完整令牌只在该次 HTTPS/no-store 响应交付，没有可读回明文的 GET。
 5. 页面默认隐藏凭据，明确点击才显示/复制；不写 localStorage、sessionStorage、URL、导航参数或日志。账号/API切换、路由失焦、进入后台和卸载清除页面凭据，迟到响应及旧复制/显示 handler 不能恢复；明确复制后的外部剪贴板内容不由页面托管。
-6. 交付丢包/超时不能证明未发行，重复发行返回 `SERVICE_TOKEN_ALREADY_ISSUED`。本版轮换＝撤销旧连接、重新申请并批准；不静默补发、不自动续期，也不延长旧 grant。用户的接收后端通过其安全渠道/secret provider 托管，不把令牌发到聊天、URL 或提交代码。
+6. 交付丢包/超时不能证明未发行，重复发行返回 `SERVICE_TOKEN_ALREADY_ISSUED`。本版轮换可从旧服务连接进入“编辑并重新授权”：旧配置仅用于预填，创建新的 pending grant 成功后撤销旧连接，用户再次审查精确 digest/challenge 并交付新令牌。目录选择必须重新核实，旧 options/sessionIDs 显式保留且不得超出现行白名单；不静默补发、不自动续期，也不延长旧 grant。用户的接收后端通过其安全渠道/secret provider 托管，不把令牌发到聊天、URL 或提交代码。
 
 ### 后端调用与停止语义
 
@@ -170,7 +170,7 @@ const created = await rest("POST", "/tasks", {
 // 超时先 GET /requests/job_demo_create；不能换新 ID 盲目重派。
 ```
 
-幂等命名空间仍为 client/grant/requestID，与 bearer 文本、请求或进程重连无关。取消依旧先返回 cancel_requested，必须查询 receipt/status 的实际 stopped；没有退出证据时为 unknown。撤销复用 `DELETE /connections/{id}`，会中断等待请求，并由 worker 每次底层动作重新检查；不会自动停止已开始的 OS 任务。到期、身份变更、禁用、断连和元数据损坏均失败关闭。摘要记录损坏会使认证、readiness和启动失败，不作为“未发行”重新生成。审计只记固定路由/身份/状态，投影额外脱敏裸服务令牌。
+幂等命名空间仍为 client/grant/requestID，与 bearer 文本、请求或进程重连无关。取消依旧先返回 cancel_requested，必须查询 receipt/status 的实际 stopped；没有退出证据时为 unknown。撤销复用 `DELETE /connections/{id}`，会中断等待请求并保留 revoked 记录；永久清理由 `DELETE /connections/{id}/record` 完成，先建立持久撤销屏障，再清服务令牌摘要和连接。两者都由 worker 每次底层动作重新检查，不会自动停止已开始的 OS 任务。到期、身份变更、禁用、断连和元数据损坏均失败关闭。摘要记录损坏会使认证、readiness和启动失败，不作为“未发行”重新生成。审计只记固定路由/身份/状态，投影额外脱敏裸服务令牌。
 
 ### 本地验证和兼容性
 
@@ -198,7 +198,8 @@ pnpm --dir packages/happy-app exec node --import tsx scripts/service-access.e2e.
 | --- | --- |
 | `POST /connections`、`GET /connections/:id` | 独立客户端签名；申请/查询自己的连接 |
 | `GET /connections`、`GET /connections/:id/consent` | 同站点 owner 身份；审查连接 |
-| `POST /connections/:id/approve`、`DELETE /connections/:id` | owner 批准/撤权；digest/challenge 防替换和重复批准 |
+| `POST /connections/:id/approve`、`DELETE /connections/:id` | owner 批准/撤权；digest/challenge 防替换和重复批准；撤权保留历史 |
+| `DELETE /connections/:id/record` | owner 永久删除记录；先撤权并结束等待 job，再清服务令牌摘要和连接，不删除任务/会话/intent/journal |
 | `GET /capabilities` | machines.list；实际探测 worker/daemon core 能力 |
 | `GET /machines`、`GET /sessions` | machines.list / sessions.list；cursor/limit 分页 |
 | `POST /tasks` | tasks.create；requestID + machineID + projectID，创建空会话 |

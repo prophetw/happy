@@ -127,7 +127,8 @@ export function createGateway(options: GatewayOptions) {
             else intent = previous;
         }
         const result = await dispatch(c, { version: 1, ...command });
-        grants.active(c.id, c.clientID); // Revocation during an in-flight call must not return content.
+        // Preserve a settled revocation even when permanent record deletion follows it immediately.
+        if (result?.error?.code !== 'GRANT_REVOKED') grants.active(c.id, c.clientID); // Revocation during an in-flight call must not return content.
         if (result?.ok === false) {
             const code = typeof result.error?.code === 'string' && /^[A-Z_]+$/.test(result.error.code) ? result.error.code : 'INVALID_WORKER_RESPONSE';
             if (code !== 'UNAVAILABLE_OR_UNKNOWN' || !mutation) {
@@ -180,10 +181,21 @@ export function createGateway(options: GatewayOptions) {
         }
         return ok(grants.approve(identifier.parse(req.params.id), userID, body.digest, body.challenge, body.credentialMode, body.scopeVersion));
     });
+    function revokeJobs(grantID: string) {
+        for (const [jobID, job] of jobs) if (job.grantID === grantID) { clearTimeout(job.timer); jobs.delete(jobID); job.resolve(failure('GRANT_REVOKED')); }
+    }
     app.delete<{ Params: { id: string } }>(`${base}/connections/:id`, async req => {
         const id = identifier.parse(req.params.id), revoked = grants.revoke(id, await owner(req));
-        for (const [jobID, job] of jobs) if (job.grantID === id) { clearTimeout(job.timer); jobs.delete(jobID); job.resolve(failure('GRANT_REVOKED')); }
+        revokeJobs(id);
         return ok(revoked);
+    });
+    app.delete<{ Params: { id: string } }>(`${base}/connections/:id/record`, async req => {
+        const id = identifier.parse(req.params.id), userID = await owner(req);
+        grants.revoke(id, userID);
+        revokeJobs(id);
+        ServiceTokens.delete(store, id);
+        grants.delete(id, userID);
+        return ok({ deleted: true });
     });
     app.get(`${base}/service-connections/options`, async req => {
         const userID = await owner(req);

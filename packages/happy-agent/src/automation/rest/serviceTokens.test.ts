@@ -138,6 +138,26 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   expect((await request(r,nextToken,'/machines')).body.error.code).toBe('GRANT_REVOKED');
   r.gatewayOptions.serviceTokens.clients[0].generation='identity_v1';await r.restartGateway();expect((await request(r,nextToken,'/machines')).body.error.code).toBe('GRANT_REVOKED');
  });
+ it('permanent record deletion immediately invalidates only that service token and removes its digest',async()=>{
+  const r=await setup(),c=await pending(r);await approve(r,c);const token=await issue(r,c);
+  const other=await pending(r);await approve(r,other);const otherToken=await issue(r,other);await r.startWorker();
+  expect((await request(r,token,'/machines')).status).toBe(200);expect((await request(r,otherToken,'/machines')).status).toBe(200);
+  expect((await r.ownerRequest(`/connections/${c.id}/record`,'DELETE')).status).toBe(200);
+  const invalid=await request(r,token,'/machines');expect(invalid.status).toBe(401);expect(invalid.body.error.code).toBe('INVALID_SERVICE_TOKEN');
+  expect((await request(r,otherToken,'/machines')).status).toBe(200);
+  expect(r.gateway.store.get(`service-token:${c.id}`)).toBeNull();expect(r.gateway.store.get(`service-token:${other.id}`)).not.toBeNull();
+  expect(r.gateway.store.get(`connection:${c.id}`)).toBeNull();expect(r.gateway.store.get(`connection:${other.id}`)).toMatchObject({state:'approved'});
+ });
+ it('cleans a service-token digest while the feature is disabled and cannot restore it when re-enabled',async()=>{
+  const r=await setup(),c=await pending(r);await approve(r,c);const token=await issue(r,c),config=r.gatewayOptions.serviceTokens;
+  r.gatewayOptions.serviceTokens=undefined;await r.restartGateway();
+  expect(r.gateway.store.get(`service-token:${c.id}`)).not.toBeNull();
+  expect((await r.ownerRequest(`/connections/${c.id}/record`,'DELETE')).status).toBe(200);
+  expect(r.gateway.store.get(`service-token:${c.id}`)).toBeNull();expect(r.gateway.store.get(`connection:${c.id}`)).toBeNull();
+  r.gatewayOptions.serviceTokens=config;await r.restartGateway();
+  const invalid=await request(r,token,'/machines');expect(invalid.status).toBe(401);expect(invalid.body.error.code).toBe('INVALID_SERVICE_TOKEN');
+  expect((await r.ownerRequest(`/connections/${c.id}/consent`)).status).toBe(404);
+ });
  it('rejects duplicate signed/service identities before starting a gateway',async()=>{
   const r=await setup();expect(()=>createGateway({...r.gatewayOptions,directory:join(r.dir,'bad'),serviceTokens:{clients:[{...clients[0],id:'assistant'}]}})).toThrow('DUPLICATE_REGISTRATION');
  });

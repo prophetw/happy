@@ -132,6 +132,21 @@ export const ca: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: 'Suprimeix el registre de connexió',
+            deleteRecordTitle: 'Vols suprimir el registre de connexió?',
+            deleteRecordMessage: 'Aquesta acció no es pot desfer. Una connexió activa es revocarà primer; els seus tokens i sol·licituds pendents deixaran de funcionar. Les tasques en execució no s’aturen automàticament. Revocar sense suprimir conserva el registre.',
+            deleteUnknownTitle: 'Cal verificar el resultat de la supressió',
+            deleteUnknown: 'Torna a llegir els registres abans de reintentar-ho; la supressió no es repetirà automàticament.',
+            deleteNotCompleted: 'El registre de connexió encara existeix; la supressió no s’ha completat.',
+            editReauthorize: 'Edita i torna a autoritzar',
+            serviceEditNotice: 'Esteu editant una autorització de servei existent. Es conserven les opcions d’inici i l’abast de les sessions existents. En crear el reemplaçament es revoca la connexió antiga; reviseu i aproveu el nou abast i emeteu un token nou.',
+            serviceEditLoadFailed: 'No es pot editar de manera segura l’autorització de servei existent. El servei, el worker, el projecte, els mètodes o el mode de credencials poden haver canviat. Torneu als registres de connexió i demaneu a l’operador que comprovi el registre actual.',
+            serviceEditDurationTooLong: 'La durada original supera el límit de desplegament actual. Escurceu-la abans de crear el reemplaçament.',
+            serviceEditSessionsInvalid: 'Les sessions existents conservades no pertanyen als projectes seleccionats o no es poden combinar amb l’abast de directoris personalitzats. Ajusteu els projectes o torneu enrere i creeu una autorització independent.',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `Aquest reemplaçament conserva les sessions existents: ${ids}. Aquest abast es tornarà a mostrar per aprovar-lo.`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `S’ha creat la sol·licitud de reemplaçament ${id}, però no s’ha confirmat la revocació de la connexió antiga. Torneu als registres i verifiqueu-los tots dos; no creeu un altre reemplaçament. La nova sol·licitud no té accés fins que s’aprovi.`,
+        },
         title: 'Configuració',
         connectedAccounts: 'Comptes connectats',
         connectAccount: 'Connectar compte',

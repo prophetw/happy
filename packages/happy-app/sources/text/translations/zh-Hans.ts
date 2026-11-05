@@ -161,6 +161,21 @@ export const zhHans: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: '删除连接记录',
+            deleteRecordTitle: '删除连接记录？',
+            deleteRecordMessage: '此操作不可恢复。有效连接会先撤销，相关令牌和等待中的请求将失效；已运行任务不会自动停止。仅撤销而不删除会保留记录。',
+            deleteUnknownTitle: '删除结果待核实',
+            deleteUnknown: '请重新读取连接记录后再操作，不会自动重复删除。',
+            deleteNotCompleted: '连接记录仍存在，删除未完成。',
+            editReauthorize: '编辑并重新授权',
+            serviceEditNotice: '正在编辑已有服务授权。原启动选项和既有会话范围会保留。替代申请创建成功后旧连接将撤销；仍需审查并批准新范围，再生成新令牌。',
+            serviceEditLoadFailed: '无法安全编辑这项已有服务授权。服务身份、Worker、项目、方法或凭据模式可能已变化。请返回连接记录，并联系操作方核对当前登记。',
+            serviceEditDurationTooLong: '原授权时长超过当前部署上限，请缩短后再创建替代申请。',
+            serviceEditSessionsInvalid: '保留的既有会话不属于当前所选项目，或不能与自定义目录范围组合。请调整项目，或返回后单独创建授权。',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `本次替代授权保留既有会话：${ids}。批准页会再次展示该范围。`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `替代申请 ${id} 已创建，但旧连接的撤销结果尚未确认。请返回连接记录核实新旧记录，不要重复创建；新申请未经批准不会获得权限。`,
+        },
         title: '设置',
         connectedAccounts: '已连接账户',
         connectAccount: '连接账户',

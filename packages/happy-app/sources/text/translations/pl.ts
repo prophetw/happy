@@ -143,6 +143,21 @@ export const pl: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: 'Usuń rekord połączenia',
+            deleteRecordTitle: 'Usunąć rekord połączenia?',
+            deleteRecordMessage: 'Tej operacji nie można cofnąć. Aktywne połączenie zostanie najpierw unieważnione, a jego tokeny i oczekujące żądania przestaną działać. Uruchomione zadania nie są zatrzymywane automatycznie. Unieważnienie bez usunięcia zachowuje rekord.',
+            deleteUnknownTitle: 'Wynik usunięcia wymaga sprawdzenia',
+            deleteUnknown: 'Przed ponowieniem odczytaj ponownie rekordy połączeń; usunięcie nie zostanie automatycznie powtórzone.',
+            deleteNotCompleted: 'Rekord połączenia nadal istnieje, więc usunięcie nie zostało zakończone.',
+            editReauthorize: 'Edytuj i autoryzuj ponownie',
+            serviceEditNotice: 'Edytujesz istniejącą autoryzację usługi. Oryginalne opcje uruchamiania i zakres istniejących sesji są zachowywane. Utworzenie zastępczego wniosku unieważni stare połączenie; sprawdź i zatwierdź nowy zakres, a następnie wydaj nowy token.',
+            serviceEditLoadFailed: 'Nie można bezpiecznie edytować istniejącej autoryzacji usługi. Usługa, worker, projekt, metody lub tryb poświadczeń mogły się zmienić. Wróć do rekordów połączeń i poproś operatora o sprawdzenie bieżącej rejestracji.',
+            serviceEditDurationTooLong: 'Oryginalny okres przekracza bieżący limit wdrożenia. Skróć go przed utworzeniem zastępczego wniosku.',
+            serviceEditSessionsInvalid: 'Zachowane istniejące sesje nie należą do wybranych projektów lub nie mogą być połączone z zakresem katalogów niestandardowych. Dostosuj projekty albo wróć i utwórz osobną autoryzację.',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `Zastępcza autoryzacja zachowuje istniejące sesje: ${ids}. Ten zakres zostanie ponownie pokazany przed zatwierdzeniem.`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `Utworzono zastępczy wniosek ${id}, ale unieważnienie starego połączenia nie jest potwierdzone. Wróć do rekordów połączeń i sprawdź oba rekordy; nie twórz kolejnego wniosku. Nowy wniosek nie daje dostępu przed zatwierdzeniem.`,
+        },
         title: 'Ustawienia',
         connectedAccounts: 'Połączone konta',
         connectAccount: 'Połącz konto',

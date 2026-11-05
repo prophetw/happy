@@ -4,7 +4,7 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ compatibility: vi.fn(), consent: vi.fn(), list: vi.fn(), approve: vi.fn(), revoke: vi.fn(), params: { connection: 'connection_1' } }));
+const mocks = vi.hoisted(() => ({ compatibility: vi.fn(), consent: vi.fn(), list: vi.fn(), approve: vi.fn(), revoke: vi.fn(), deleteRecord: vi.fn(), confirm: vi.fn(), push: vi.fn(), replace: vi.fn(), params: { connection: 'connection_1' } }));
 vi.mock('react-native', () => ({ View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ActivityIndicator: 'ActivityIndicator', AppState: { addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'web', select: (v: any) => v.web ?? v.default } }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('react-native-unistyles', () => {
@@ -12,7 +12,7 @@ vi.mock('react-native-unistyles', () => {
     return { StyleSheet: { create: (factory: any) => factory(theme) }, useUnistyles: () => ({ theme }) };
 });
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Icon' }));
-vi.mock('expo-router', () => ({ Stack: { Screen: () => null }, useLocalSearchParams: () => mocks.params, useRouter: () => ({ push: vi.fn() }), useFocusEffect: (effect: React.EffectCallback) => React.useEffect(effect, [effect]) }));
+vi.mock('expo-router', () => ({ Stack: { Screen: () => null }, useLocalSearchParams: () => mocks.params, useRouter: () => ({ push: mocks.push, replace: mocks.replace }), useFocusEffect: (effect: React.EffectCallback) => React.useEffect(effect, [effect]) }));
 vi.mock('expo-camera', () => ({ CameraView: { isModernBarcodeScannerAvailable: false } }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ credentials: { token: 'fixture-owner', get secret() { throw new Error('Account secret must not be accessed'); } } }) }));
 vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://fixture.invalid/home-relay' }));
@@ -23,15 +23,18 @@ vi.mock('@/components/Item', () => ({ Item: 'Item' }));
 vi.mock('@/components/qr', () => ({ QRCode: 'QRCode' }));
 vi.mock('@/hooks/useScanQrCode', () => ({ useScanQrCode: () => ({ scanQrCode: vi.fn() }) }));
 vi.mock('@/hooks/useCheckCameraPermissions', () => ({ useCheckScannerPermissions: () => vi.fn() }));
+vi.mock('@/modal', () => ({ Modal: { confirm: mocks.confirm } }));
+vi.mock('@/text', () => ({ t: (key: string) => key }));
 
 import AutomationConnections from '@/app/(app)/settings/automation';
 const view = { id: 'connection_1', userID: 'userA', clientID: 'assistant', clientName: 'Fixture assistant', clientFingerprint: 'client_fingerprint',
     workerID: 'worker', workerName: 'Fixture worker', workerFingerprint: 'worker_fingerprint', machineID: 'machineA', projectID: 'projectA', projectDirectory: '/approved/project',
-    methods: ['tasks.create','sessions.cancel'], sessionIDs: [], expiresAt: Date.now()+60000, pendingUntil: Date.now()+60000, state: 'pending', digest: 'd'.repeat(64), challenge: 'challenge', disclosure: '明文范围声明' };
+    methods: ['tasks.create','sessions.cancel'], sessionIDs: [], createdAt: Date.now(), expiresAt: Date.now()+60000, pendingUntil: Date.now()+60000, state: 'pending', digest: 'd'.repeat(64), challenge: 'challenge', disclosure: '明文范围声明' };
 beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     mocks.params = { connection: 'connection_1' };
     vi.resetAllMocks(); mocks.compatibility.mockResolvedValue({ protocol: 1, approval: 1, worker: 1 }); mocks.list.mockResolvedValue([]); mocks.consent.mockResolvedValue(view);
+    mocks.deleteRecord.mockResolvedValue(null); mocks.confirm.mockResolvedValue(true);
     mocks.approve.mockImplementation(async () => { mocks.consent.mockResolvedValue({ ...view, state: 'approved' }); });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -135,6 +138,49 @@ describe('automation consent screen (mock native UI, no browser or actual camera
         const text = JSON.stringify(renderer.toJSON()); expect(text).toContain('Second assistant'); expect(text).not.toContain('Fixture assistant');
         await act(async () => { await button(renderer, '确认批准以上权限').props.onPress(); });
         expect(mocks.approve.mock.calls[0][0].id).toBe('connection_2');
+        await act(async () => renderer.unmount());
+    });
+    it('does not delete a record when confirmation is cancelled', async () => {
+        mocks.confirm.mockResolvedValue(false); let renderer: any;
+        await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
+        expect(button(renderer, 'settings.automation.editReauthorize')).toBeUndefined();
+        await act(async () => { await button(renderer, 'settings.automation.deleteRecord').props.onPress(); });
+        expect(mocks.deleteRecord).not.toHaveBeenCalled();
+        expect(mocks.replace).not.toHaveBeenCalled();
+        await act(async () => renderer.unmount());
+    });
+    it('deletes a confirmed record, clears the detail and removes its route parameter', async () => {
+        let renderer: any;
+        await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
+        await act(async () => { await button(renderer, 'settings.automation.deleteRecord').props.onPress(); });
+        expect(mocks.deleteRecord).toHaveBeenCalledTimes(1); expect(mocks.deleteRecord).toHaveBeenCalledWith('connection_1');
+        expect(mocks.replace).toHaveBeenCalledWith('/settings/automation');
+        expect(JSON.stringify(renderer.toJSON())).not.toContain('Fixture assistant');
+        await act(async () => renderer.unmount());
+    });
+    it('keeps deletion uncertainty visible after lost response and readback failure without retrying', async () => {
+        mocks.deleteRecord.mockRejectedValue(new Error('lost-response')); mocks.list.mockRejectedValue(new Error('offline')); let renderer: any;
+        await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
+        await act(async () => { await button(renderer, 'settings.automation.deleteRecord').props.onPress(); });
+        expect(mocks.deleteRecord).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.deleteUnknownTitle');
+        expect(button(renderer, 'settings.automation.deleteRecord')).toBeUndefined();
+        await act(async () => renderer.unmount());
+    });
+    it('reads back an undeleted record after a lost delete response without sending another delete', async () => {
+        mocks.deleteRecord.mockRejectedValue(new Error('lost-response')); mocks.list.mockResolvedValue([view]); let renderer: any;
+        await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
+        await act(async () => { await button(renderer, 'settings.automation.deleteRecord').props.onPress(); });
+        expect(mocks.deleteRecord).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(renderer.toJSON())).toContain('settings.automation.deleteNotCompleted');
+        expect(button(renderer, 'settings.automation.deleteRecord')).toBeDefined();
+        await act(async () => renderer.unmount());
+    });
+    it('opens only service credentials in the prefilled reauthorization flow', async () => {
+        mocks.consent.mockResolvedValue({ ...view, credentialMode: 'service-token-v1' }); let renderer: any;
+        await act(async () => { renderer = create(React.createElement(AutomationConnections)); });
+        await act(async () => { button(renderer, 'settings.automation.editReauthorize').props.onPress(); });
+        expect(mocks.push).toHaveBeenCalledWith('/settings/automation-service?from=connection_1');
         await act(async () => renderer.unmount());
     });
 });

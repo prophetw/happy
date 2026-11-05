@@ -134,6 +134,21 @@ export const ja: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: '接続レコードを削除',
+            deleteRecordTitle: '接続レコードを削除しますか？',
+            deleteRecordMessage: 'この操作は元に戻せません。有効な接続は先に取り消され、トークンと待機中のリクエストは無効になります。実行中のタスクは自動停止しません。削除せず取り消すだけの場合はレコードが残ります。',
+            deleteUnknownTitle: '削除結果の確認が必要です',
+            deleteUnknown: '再試行前に接続レコードを再読み込みしてください。削除が自動で繰り返されることはありません。',
+            deleteNotCompleted: '接続レコードがまだ存在するため、削除は完了していません。',
+            editReauthorize: '編集して再承認',
+            serviceEditNotice: '既存のサービス承認を編集しています。元の起動オプションと既存セッション範囲は保持されます。代替申請の作成後に古い接続は取り消されます。新しい範囲を確認して承認し、新しいトークンを発行してください。',
+            serviceEditLoadFailed: '既存のサービス承認を安全に編集できません。サービス、ワーカー、プロジェクト、メソッド、認証モードが変更された可能性があります。接続レコードに戻り、現在の登録を運用者に確認してください。',
+            serviceEditDurationTooLong: '元の期間が現在のデプロイ上限を超えています。代替申請を作成する前に短くしてください。',
+            serviceEditSessionsInvalid: '保持する既存セッションが選択したプロジェクトに属していないか、カスタムディレクトリ範囲と組み合わせられません。プロジェクトを調整するか、戻って別の承認を作成してください。',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `この代替承認では既存セッション ${ids} を保持します。承認時にこの範囲が再表示されます。`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `代替申請 ${id} を作成しましたが、古い接続の取り消しは未確認です。接続レコードに戻って新旧のレコードを確認し、再作成はしないでください。新しい申請は承認されるまでアクセス権を持ちません。`,
+        },
         title: '設定',
         connectedAccounts: '接続済みアカウント',
         connectAccount: 'アカウントを接続',

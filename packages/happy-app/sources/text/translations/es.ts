@@ -132,6 +132,21 @@ export const es: TranslationStructure = {
     },
 
     settings: {
+        automation: {
+            deleteRecord: 'Eliminar registro de conexión',
+            deleteRecordTitle: '¿Eliminar registro de conexión?',
+            deleteRecordMessage: 'Esta acción no se puede deshacer. Una conexión activa se revocará primero; sus tokens y solicitudes pendientes dejarán de funcionar. Las tareas en ejecución no se detienen automáticamente. Revocar sin eliminar conserva el registro.',
+            deleteUnknownTitle: 'Verifica el resultado de la eliminación',
+            deleteUnknown: 'Vuelve a leer los registros antes de reintentar; la eliminación no se repetirá automáticamente.',
+            deleteNotCompleted: 'El registro de conexión sigue existiendo; la eliminación no se completó.',
+            editReauthorize: 'Editar y volver a autorizar',
+            serviceEditNotice: 'Estás editando una autorización de servicio existente. Se conservan las opciones de inicio y el alcance de sesiones existentes. Al crear el reemplazo se revoca la conexión anterior; revisa y aprueba el nuevo alcance y emite un nuevo token.',
+            serviceEditLoadFailed: 'No se puede editar de forma segura la autorización de servicio existente. El servicio, worker, proyecto, métodos o modo de credencial pueden haber cambiado. Vuelve a los registros de conexión y pide al operador que compruebe el registro actual.',
+            serviceEditDurationTooLong: 'La duración original supera el límite de despliegue actual. Redúcela antes de crear el reemplazo.',
+            serviceEditSessionsInvalid: 'Las sesiones existentes conservadas no pertenecen a los proyectos seleccionados o no pueden combinarse con el alcance de directorios personalizados. Ajusta los proyectos o vuelve y crea una autorización independiente.',
+            serviceEditSessionsRetained: ({ ids }: { ids: string }) => `Este reemplazo conserva las sesiones existentes: ${ids}. Este alcance se mostrará de nuevo para su aprobación.`,
+            serviceEditRevokeUnknown: ({ id }: { id: string }) => `Se creó la solicitud de reemplazo ${id}, pero no se confirmó la revocación de la conexión anterior. Vuelve a los registros y verifica ambos; no crees otro reemplazo. La nueva solicitud no tiene acceso hasta que se apruebe.`,
+        },
         title: 'Configuración',
         connectedAccounts: 'Cuentas conectadas',
         connectAccount: 'Conectar cuenta',

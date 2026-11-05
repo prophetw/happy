@@ -15,6 +15,8 @@ import { Typography } from '@/constants/Typography';
 import { useScanQrCode } from '@/hooks/useScanQrCode';
 import { useCheckScannerPermissions } from '@/hooks/useCheckCameraPermissions';
 import { ServiceTokenDelivery } from '@/components/automation/ServiceAccess';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 
 const methodLabels: Record<string, string> = {
     'machines.list': '查看授权机器', 'sessions.list': '列出授权会话', 'tasks.create': '创建专用任务',
@@ -63,7 +65,7 @@ export default function AutomationConnections() {
     const { theme } = useUnistyles();
     const [id, setID] = React.useState(params.connection ?? ''), [consent, setConsent] = React.useState<AutomationConsent | null>(null);
     const [connections, setConnections] = React.useState<AutomationConsent[]>([]), [busy, setBusy] = React.useState(false), [error, setError] = React.useState('');
-    const [unknownMutation, setUnknownMutation] = React.useState(false);
+    const [unknownMutation, setUnknownMutation] = React.useState(false), [deletionUnknown, setDeletionUnknown] = React.useState(false);
     const [listError, setListError] = React.useState(''), [details, setDetails] = React.useState(false), [showQR, setShowQR] = React.useState(false), [now, setNow] = React.useState(Date.now);
     const operation = React.useRef(0), listOperation = React.useRef(0);
     const permissions = useCheckScannerPermissions();
@@ -73,12 +75,12 @@ export default function AutomationConnections() {
         return `Bearer ${auth.credentials.token}`;
     }), [auth.credentials?.token]);
     React.useLayoutEffect(() => {
-        setConsent(null); setConnections([]); setDetails(false); setShowQR(false); setUnknownMutation(false); setBusy(false);
+        setConsent(null); setConnections([]); setDetails(false); setShowQR(false); setUnknownMutation(false); setDeletionUnknown(false); setBusy(false);
         return () => { operation.current++; listOperation.current++; };
     }, [api]);
     const load = React.useCallback(async (connectionID: string) => {
         const version = ++operation.current, current = () => operation.current === version;
-        setBusy(true); setError(''); setConsent(null); setUnknownMutation(false); setDetails(false); setShowQR(false);
+        setBusy(true); setError(''); setConsent(null); setUnknownMutation(false); setDeletionUnknown(false); setDetails(false); setShowQR(false);
         try {
             await api.compatibility(); if (!current()) return;
             const next = await api.consent(connectionID.trim());
@@ -135,6 +137,46 @@ export default function AutomationConnections() {
         }
         finally { if (current()) setBusy(false); }
     };
+    const finishDelete = async (version: number) => {
+        setConsent(null); setID(''); setError(''); setUnknownMutation(false); setDeletionUnknown(false); setDetails(false); setShowQR(false);
+        await refresh();
+        if (operation.current === version) router.replace('/settings/automation');
+    };
+    const verifyDelete = async (connectionID: string, version: number) => {
+        const current = () => operation.current === version;
+        try {
+            const records = await api.list(); if (!current()) return;
+            setConnections(records);
+            if (!records.some(record => record.id === connectionID)) { await finishDelete(version); return; }
+            const observed = await api.consent(connectionID); if (!current()) return;
+            setConsent(observed); setNow(Date.now()); setDeletionUnknown(false); setError(t('settings.automation.deleteNotCompleted'));
+        } catch { if (current()) setDeletionUnknown(true); }
+    };
+    const recheckDeletion = async () => {
+        if (!consent || busy) return;
+        const version = ++operation.current;
+        setBusy(true); setError('');
+        try { await verifyDelete(consent.id, version); }
+        finally { if (operation.current === version) setBusy(false); }
+    };
+    const remove = async () => {
+        if (!consent || busy || deletionUnknown) return;
+        const target = consent, startVersion = operation.current;
+        const confirmed = await Modal.confirm(t('settings.automation.deleteRecordTitle'), t('settings.automation.deleteRecordMessage'), {
+            cancelText: t('common.cancel'), confirmText: t('settings.automation.deleteRecord'), destructive: true,
+        });
+        if (!confirmed || operation.current !== startVersion) return;
+        const version = ++operation.current, current = () => operation.current === version;
+        setBusy(true); setError(''); setDeletionUnknown(false);
+        try {
+            await api.deleteRecord(target.id); if (!current()) return;
+            await finishDelete(version);
+        } catch {
+            if (!current()) return;
+            // A lost response does not prove deletion failed. Read back without retrying the mutation.
+            setDeletionUnknown(true); await verifyDelete(target.id, version);
+        } finally { if (current()) setBusy(false); }
+    };
     const state = consent ? displayState(consent, now) : '';
     return <>
         <Stack.Screen options={{ title: '助手连接' }} />
@@ -164,6 +206,10 @@ export default function AutomationConnections() {
                         {unknownMutation && <View accessibilityRole="alert" style={styles.notice}>
                             <Text style={styles.noticeTitle}>操作结果尚未确认</Text><Text style={styles.description}>请求可能已经生效。请重新读取连接状态，不要重复批准；如需终止访问，可以明确撤销。</Text>
                             <Action label="重新核实连接状态" disabled={busy} onPress={() => void load(consent.id)} />
+                        </View>}
+                        {deletionUnknown && <View accessibilityRole="alert" style={styles.notice}>
+                            <Text style={styles.noticeTitle}>{t('settings.automation.deleteUnknownTitle')}</Text><Text style={styles.description}>{t('settings.automation.deleteUnknown')}</Text>
+                            <Action label="重新核实连接状态" disabled={busy} onPress={() => void recheckDeletion()} />
                         </View>}
                         {state === 'expired' && <View accessibilityRole="alert" style={styles.notice}>
                             <Text style={styles.noticeTitle}>这项连接已过期</Text><Text style={styles.description}>旧申请不能继续批准。请让助手刷新连接，再打开新的批准链接。</Text>
@@ -197,14 +243,16 @@ export default function AutomationConnections() {
                             <Detail label="连接 ID" value={consent.id} />
                             {consent.externalIdentity && <><Detail label="授权服务器" value={consent.externalIdentity.issuer} /><Detail label="助手身份 / 租户" value={`${consent.externalIdentity.subject} / ${consent.externalIdentity.tenant}`} /><Detail label="OAuth 客户端" value={consent.externalIdentity.oauthClientID} /></>}
                         </View>}
-                        {!unknownMutation && state === 'pending' && <>
+                        {!unknownMutation && !deletionUnknown && state === 'pending' && <>
                             <Action primary label="确认批准以上权限" disabled={busy} onPress={() => void mutate(true)} />
                             <Action destructive label="拒绝连接" disabled={busy} onPress={() => void mutate(false)} />
                             <Pressable accessibilityRole="button" accessibilityLabel={showQR ? '收起连接二维码' : '显示连接二维码'} accessibilityState={{ expanded: showQR }} onPress={() => setShowQR(!showQR)} style={styles.disclosure}><Text style={styles.link}>{showQR ? '收起' : '显示'}连接二维码</Text></Pressable>
                             {showQR && <View style={styles.qr}><QRCode data={automationConnectionQR(consent.id)} size={160} /><Text style={styles.caption}>仅适用于支持助手连接的新版 Happy；当前网页可直接审查并批准。</Text></View>}
                         </>}
-                        {(state === 'approved' || unknownMutation) && <Action destructive label="撤销连接" disabled={busy} onPress={() => void mutate(false)} />}
-                        {state === 'approved' && !unknownMutation && consent.credentialMode === 'service-token-v1' && <ServiceTokenDelivery key={consent.id} consent={consent} api={api} disabled={busy} />}
+                        {(state === 'approved' || unknownMutation) && !deletionUnknown && <Action destructive label="撤销连接" disabled={busy} onPress={() => void mutate(false)} />}
+                        {state === 'approved' && !unknownMutation && !deletionUnknown && consent.credentialMode === 'service-token-v1' && <ServiceTokenDelivery key={consent.id} consent={consent} api={api} disabled={busy} />}
+                        {!deletionUnknown && consent.credentialMode === 'service-token-v1' && <Action label={t('settings.automation.editReauthorize')} disabled={busy} onPress={() => router.push(`/settings/automation-service?from=${encodeURIComponent(consent.id)}`)} />}
+                        {!deletionUnknown && <Action destructive label={t('settings.automation.deleteRecord')} disabled={busy} onPress={() => void remove()} />}
                     </>}
                 </View>
             </ItemGroup>

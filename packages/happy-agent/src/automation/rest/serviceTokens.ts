@@ -13,6 +13,7 @@ export const isServiceAuthorization = (value: unknown) => typeof value === 'stri
 /** One 256-bit bearer per approved grant. Only its digest is durable; lost delivery is never replayed. */
 export class ServiceTokens {
     constructor(private store: MetadataStore, private grants: Grants, private clients: ServiceClientRegistration[], private now = Date.now) {}
+    static delete(store: MetadataStore, id: string) { store.delete(`service-token:${id}`); }
     private record(id: string) {
         const raw = this.store.get<unknown>(`service-token:${id}`);
         if (raw === null) return null;

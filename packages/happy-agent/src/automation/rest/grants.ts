@@ -75,6 +75,11 @@ export class Grants {
     revoke(id: string, userID: string) {
         const c = this.owner(id, userID); c.state = 'revoked'; this.store.set(`connection:${id}`, c); return this.view(c);
     }
+    delete(id: string, userID: string) {
+        const c = this.owner(id, userID);
+        if (c.state !== 'revoked') throw new ApiError('CONNECTION_NOT_REVOKED', 409);
+        this.store.delete(`connection:${id}`);
+    }
     active(id: string, clientID?: string) {
         const c = this.get(id);
         if (clientID !== undefined && c.clientID !== clientID) throw new ApiError('SCOPE_DENIED', 403);
