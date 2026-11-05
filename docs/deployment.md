@@ -1306,3 +1306,16 @@ Use `.env`/`.env.dev` to load local settings when running `pnpm --filter happy-s
 两端类型检查、64项相关后端测试、30项前端测试和8个本地隔离浏览器检查通过；公网静态资源、深层路由、WASM、Relay健康及控制API共11项回读通过。首次回读因归档恢复版本根目录为0700而返回403，已将本版本目录/子目录修正为0755、文件0644并重查；初始失败证据保留，后续激活脚本显式处理根目录权限。证据位于TestLoop本机忽略目录`.e2e-artifacts/dots-connections-20261105/20261105T024407Z-dots-auth/`。
 
 本人指定的「多项目代码助手」已通过实际加密RPC换用新授权全部5项目，凭据为后台密文并可解密使用；换绑回读不创建真实任务或模型调用。历史两项宿主attention告警保留。真实线上登录页面/新派工与原生手机未验收，手机OTA未发布。
+
+
+### 2026-11-05 动态模型目录发布
+
+源码 `964a5c7e76ba75ba3088de57bb951590c53671d1` 已推送个人 fork。99.55 REST 镜像 `sha256:40847b97f7e798a2e8747439d190987d1079cc77d501e42b167abaa1ae292fcb` 已上线，OpenAPI 1.8.0 回读及匿名访问拒绝通过；宿主仅将该机器的模型策略改为 Claude/Codex/Agy 的 `modelSource: "machine"`，不保存固定型号，原权限模式和状态目录保留。控制服务/网关成对更新，Relay 容器未变且健康。
+
+99.57 已存在同源码、同字节产物 `.happy-releases/20261105T064816Z-964a5c7e76ba`；重复发布的基线保护触发后保留该目标。入口、全部入口 JS、WASM、settings SPA 回退、缺失 JS 404 及 Relay health HTTP 核验通过，未改 Nginx/Relay。此结果不代表浏览器登录和真实业务链路验收。
+
+本机 worker 旧版本仍在运行；新固定运行目录 `/home/dev/.local/share/happy-automation/releases/dynamic-models-964a5c7e` 和 root 维护脚本 `/home/dev/.local/share/happy-automation/maintenance/dynamic-models-964a5c7e/activate.py` 已准备。`--check`、69 项产物哈希及仅动态模型策略变化的配置检查通过。此环境受 no-new-privileges 限制，不能代操作方切换 systemd 服务；完整线上三组模型目录待维护后回读，不宣称已完成。脚本沿用独立 systemd 维护单元及已有会话身份保护，保留原配置/服务回滚材料。
+
+验证：REST/网关/适配器 46 项，CLI 动态目录/发布元数据 43 项，App 选择器 49 项，维护控制器 16 项；Agent/CLI 构建、CLI/App 类型检查通过。精确待发镜像的原生 Nginx/TLS/mTLS 容器夹具 76 项通过，测试资源清理为零遗留。第一次直接以 node 启动 TypeScript 夹具出现模块解析失败，按仓库使用 tsx 后上述完整检查通过。未运行浏览器、原生包/OTA 或真实模型任务。实际只读目录预览来自已登记 machine 元数据及本机 `agy models`，不是固定配置清单。
+
+TestLoop 已发布 `4c1ae0bbe94b8df82229fab074e74170c805a264`，原任务/历史/额度/授权与加密 RPC 校验通过；原有两个 attention 健康告警仍在。发布与检查证据位于 TestLoop `.e2e-artifacts/20261105T064221Z-dynamic-catalog/`，REST 回滚材料位于 99.55 `/data/code/happy-control/rollouts/dynamic-models-964a5c7e/`。
