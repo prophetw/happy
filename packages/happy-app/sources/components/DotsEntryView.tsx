@@ -1,23 +1,25 @@
 import * as React from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { useAuth } from '@/auth/AuthContext';
-import { replaceToSession } from '@/hooks/useNavigateToSession';
-import { storage } from '@/sync/storage';
+import { storage, useSession } from '@/sync/storage';
+import { DotsWorkspacePanel } from '@/components/dots/DotsWorkspaceHome';
 import { sync } from '@/sync/sync';
 import { getServerUrl } from '@/sync/serverConfig';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
 import { discoverDotsWorkspaces, matchesDotsWorkspace, type DotsWorkspaceChoice } from '@/sync/testloopDotsEntry';
 
 type NavigationOperation = NonNullable<ReturnType<ReturnType<typeof createTestloopDotsNavigationGuard>['begin']>>;
-type EntryState = { scope: object; phase: 'loading' | 'opening' | 'choices' | 'empty' | 'error';
+type EntryState = { scope: object; phase: 'loading' | 'opening' | 'choices' | 'workspace' | 'empty' | 'error';
     workspaces: DotsWorkspaceChoice[]; unresolved: number };
 
 export function DotsEntryView({ topContentInset = 0 }: { topContentInset?: number }) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const { workspace: requestedWorkspace } = useLocalSearchParams<{ workspace?: string }>();
     const auth = useAuth();
     const token = auth.credentials?.token;
     const secret = auth.credentials?.secret;
@@ -40,9 +42,9 @@ export function DotsEntryView({ topContentInset = 0 }: { topContentInset?: numbe
             if (!current()) return;
             if (!matchesDotsWorkspace(choice, storage.getState().sessions[choice.sessionId]))
                 throw new Error('dots_entry_binding_changed');
-            replaceToSession(router, choice.sessionId);
+            setState({ scope, phase: 'workspace', workspaces: [choice], unresolved: 0 });
         });
-    }, [router, sameAccount]);
+    }, [scope, sameAccount]);
 
     const refresh = React.useCallback(async () => {
         const operation = navigation.begin();
@@ -63,9 +65,10 @@ export function DotsEntryView({ topContentInset = 0 }: { topContentInset?: numbe
                 isCurrent: current, signal: controller.signal,
             });
             if (result.canceled || !current()) return;
-            if (result.workspaces.length === 1 && result.unresolved === 0 && !result.workspaces[0].archived) {
+            const requested = result.workspaces.find(choice => choice.sessionId === requestedWorkspace);
+            if (requested || result.workspaces.length === 1 && result.unresolved === 0 && !result.workspaces[0].archived) {
                 setState({ scope, phase: 'opening', workspaces: result.workspaces, unresolved: 0 });
-                await openWorkspace(result.workspaces[0], operation, controller);
+                await openWorkspace(requested ?? result.workspaces[0], operation, controller);
             } else {
                 setState({ scope, phase: result.workspaces.length ? 'choices' : result.unresolved ? 'error' : 'empty',
                     workspaces: result.workspaces, unresolved: result.unresolved });
@@ -73,7 +76,7 @@ export function DotsEntryView({ topContentInset = 0 }: { topContentInset?: numbe
         } catch {
             if (current()) setState({ scope, phase: 'error', workspaces: [], unresolved: 0 });
         }
-    }, [navigation, sameAccount, scope, openWorkspace]);
+    }, [navigation, sameAccount, scope, openWorkspace, requestedWorkspace]);
 
     useFocusEffect(React.useCallback(() => {
         navigation.update('dots-entry', true);
@@ -95,6 +98,8 @@ export function DotsEntryView({ topContentInset = 0 }: { topContentInset?: numbe
     };
 
     const view = state?.scope === scope ? state : null;
+    if (view?.phase === 'workspace') return <WorkspaceEntry key={`${view.workspaces[0].workspaceId}:${view.workspaces[0].sessionId}`}
+        choice={view.workspaces[0]} topContentInset={topContentInset} onRetry={() => void refresh()} />;
     const busy = !view || view.phase === 'loading' || view.phase === 'opening';
     const error = view?.phase === 'error';
     return <ScrollView testID="dots-entry-view" style={{ flex: 1, backgroundColor: theme.colors.surface }}
@@ -127,4 +132,15 @@ export function DotsEntryView({ topContentInset = 0 }: { topContentInset?: numbe
         <Pressable accessibilityRole="button" accessibilityLabel="检查账号和服务器" onPress={() => router.push('/server')}
             style={{ alignItems: 'center', padding: 12, minHeight: 44 }}><Text style={{ color: theme.colors.textSecondary }}>检查账号和服务器</Text></Pressable>
     </ScrollView>;
+}
+
+function WorkspaceEntry({ choice, topContentInset, onRetry }: { choice: DotsWorkspaceChoice; topContentInset: number; onRetry: () => void }) {
+    const session = useSession(choice.sessionId);
+    const active = useIsFocused();
+    const { theme } = useUnistyles();
+    if (!session || !matchesDotsWorkspace(choice, session)) return <View style={{ padding: 24, gap: 16 }}>
+        <Text accessibilityRole="alert" style={{ color: theme.colors.text }}>工作台绑定已变化，请重新读取。</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="重新读取工作台" onPress={onRetry}><Text style={{ color: theme.colors.text }}>重新读取</Text></Pressable>
+    </View>;
+    return <DotsWorkspacePanel session={session} workspaceId={choice.workspaceId} active={active} topInset={topContentInset} />;
 }

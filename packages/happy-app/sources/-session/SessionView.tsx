@@ -81,6 +81,7 @@ import {
 import { RigActivityBar } from '@/components/RigActivityBar';
 import { AnimatedFade } from '@/components/AnimatedOverlay';
 import { DotsWorkspacePanel, DotWorkspaceHeaderLink } from './DotsWorkspacePanel';
+import { DotSessionContent } from '@/components/dots/DotSessionContent';
 import { readTestloopDotsMetadata } from '@/sync/testloopDots';
 
 export const SessionView = React.memo((props: { id: string }) => {
@@ -507,7 +508,12 @@ export const SessionView = React.memo((props: { id: string }) => {
                             active={isFocused}
                             topInset={contentRunsUnderHeader ? safeArea.top + mobileHeaderHeight + tabStripHeight
                                 + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0) : 0}
-                        /> : <SessionViewLoaded
+                        /> : session && testloopDots?.kind === 'dot' ? <DotSessionContent key={routeId} session={session}
+                            metadata={testloopDots} active={isFocused}
+                            topInset={contentRunsUnderHeader ? safeArea.top + mobileHeaderHeight + tabStripHeight
+                                + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0) : 0}>
+                            {request => <SessionViewLoaded sessionId={sessionId} session={session} active={isFocused} embedded composeRequest={request} />}
+                        </DotSessionContent> : <SessionViewLoaded
                             key={routeId}
                             sessionId={sessionId}
                             session={session}
@@ -662,6 +668,7 @@ const AGENT_INPUT_AUTOCOMPLETE_PREFIXES = ['@', '/'];
 type ChatComposerHandle = {
     getMessage: () => string;
     clearMessage: () => void;
+    appendMessage: (text: string) => void;
 };
 
 type ChatComposerProps = Omit<
@@ -726,12 +733,16 @@ const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) 
 
     React.useImperativeHandle(composerHandleRef, () => ({
         getMessage: () => inputHandleRef.current?.getText() ?? '',
+        appendMessage: text => {
+            const current = inputHandleRef.current?.getText() ?? '';
+            applyDraft(current.trim() ? `${current}\n\n${text}` : text);
+        },
         clearMessage: () => {
             inputHandleRef.current?.setTextAndSelection('', { start: 0, end: 0 });
             setMessage('');
             clearDraft();
         },
-    }), [clearDraft]);
+    }), [clearDraft, applyDraft]);
 
     // A chat that was asked for was asked for in order to be typed into, so the
     // caret starts here — on the press, not a beat after it. Once, on mount:
@@ -772,6 +783,7 @@ export function SessionViewLoaded({
     embedded = false,
     headerAccessoryHeight = 0,
     onHeaderBackdropVisibilityChange,
+    composeRequest,
 }: {
     /** Null until the chat exists. */
     sessionId: string | null;
@@ -787,6 +799,7 @@ export function SessionViewLoaded({
     /** Chrome stacked under the header (the tab strip) that the chat scrolls beneath. */
     headerAccessoryHeight?: number;
     onHeaderBackdropVisibilityChange?: (visible: boolean) => void;
+    composeRequest?: { id: string; text: string } | null;
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -914,6 +927,12 @@ export function SessionViewLoaded({
     // clear it without subscribing to it (which would re-render the whole
     // SessionViewLoaded tree on every keystroke).
     const composerHandleRef = React.useRef<ChatComposerHandle | null>(null);
+    const appliedComposeRequest = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        if (!sessionId || !composeRequest || appliedComposeRequest.current === composeRequest.id || !composerHandleRef.current) return;
+        composerHandleRef.current.appendMessage(composeRequest.text);
+        appliedComposeRequest.current = composeRequest.id;
+    }, [sessionId, composeRequest]);
     const sendingSessionsRef = React.useRef(new Set<string>());
     const currentSessionIdRef = React.useRef<string | null>(sessionId);
     React.useEffect(() => {

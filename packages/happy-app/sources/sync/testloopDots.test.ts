@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, testloopDotsLimitsText,
-    TestloopDotsRequestSchema, TESTLOOP_DOTS_PREFIX } from './testloopDots';
+    TestloopDotsRequestSchema, TESTLOOP_DOTS_PREFIX, testloopWorkStatus } from './testloopDots';
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';
 const otherWorkspace = '22222222-2222-4222-8222-222222222222';
@@ -73,5 +73,56 @@ describe('TestLoop Dots directory protocol', () => {
         expect(testloopDotsLimitsText({ config: { maxDailyLoopCalls: 12, maxDailyConversationCalls: 8 }, modelCallsReserved: 8, conversationCallsReserved: 8 }))
             .toBe('账户今日对话 8/8 · 模型池 8/12');
         expect(testloopDotsLimitsText({})).toBeNull();
+    });
+});
+
+const realSummary = { id: requestId, title: '实际工作', kind: 'delegate', status: 'awaiting_user', needsReview: true,
+    projectID: 'approved-project', goalPhase: null };
+const realDetail = { dotId: dot.id, taskTotal: 1, tasks: [{ ...realSummary, instruction: '实际范围', runId: otherRequest,
+    reason: 'execution_completed_needs_review', nextWakeAt: null, finishedAt: null, executionSessionId: 'real-execution',
+    executionOutcome: 'completed', businessVerification: 'unverified', steps: [], result: '执行端实际回报', resultTruncated: false }],
+    memory: { total: 1, omittedCount: 0, access: ['read'], items: [{ key: 'style', value: '本 Dot 的真实偏好', kind: 'preference',
+        revision: 1, verified: true, expired: false, expiresAt: null }] } };
+const realWorkbench = (revision = 1) => ({ schemaVersion: 1, revision, asOf: '2026-11-05T00:00:00Z',
+    dots: [{ id: dot.id, available: true, taskTotal: 1, tasks: [realSummary] }], detail: realDetail });
+
+describe('real Dots workbench reads', () => {
+    it('emits a scoped inspect command without allowing model, project or authorization overrides', () => {
+        const request = { schemaVersion: 1 as const, requestId, action: 'inspect' as const, dotId: dot.id };
+        expect(JSON.parse(testloopDotsCommand(request).slice(6))).toEqual(request);
+        expect(() => TestloopDotsRequestSchema.parse({ ...request, projectID: 'other' })).toThrow();
+    });
+    it('reads actual work and memory only from matching host snapshots', () => {
+        const result = projectTestloopDotsMessages([agent(snapshot({ workbench: realWorkbench() }))], workspaceId);
+        expect(result.details[dot.id].data).toEqual(realDetail);
+        expect(result.snapshot?.workbench?.dots[0].tasks[0].needsReview).toBe(true);
+        expect(projectTestloopDotsMessages([agent(snapshot({ workbench: realWorkbench() }), { kind: 'user-text' })], workspaceId).details[dot.id]).toBeUndefined();
+    });
+    it('rejects a detail bound to an unknown Dot instead of mixing private memory', () => {
+        const workbench = { ...realWorkbench(), detail: { ...realDetail, dotId: otherRequest } };
+        expect(projectTestloopDotsMessages([agent(snapshot({ workbench }))], workspaceId).snapshot).toBeNull();
+    });
+    it('retains a Dot detail across directory refreshes and ignores a late older read', () => {
+        const current = agent(snapshot({ workbench: realWorkbench(3) }));
+        const older = agent(snapshot({ workbench: { ...realWorkbench(2), detail: { ...realDetail, taskTotal: 0, tasks: [] } } }), { id: 'late-old', createdAt: 99 });
+        const list = agent(snapshot({ workbench: { ...realWorkbench(4), detail: undefined } }), { id: 'latest-list', createdAt: 100 });
+        const result = projectTestloopDotsMessages([current, older, list], workspaceId);
+        expect(result.details[dot.id].data.tasks).toHaveLength(1);
+        expect(result.snapshot?.workbench?.revision).toBe(4);
+    });
+    it('keeps old host snapshots usable without fabricating work or memory data', () => {
+        const result = projectTestloopDotsMessages([agent(snapshot())], workspaceId);
+        expect(result.snapshot?.dots).toEqual([dot]);
+        expect(result.snapshot?.workbench).toBeUndefined();
+        expect(Object.keys(result.details)).toHaveLength(0);
+    });
+    it('keeps execution completion distinct from acceptance and honors a paused goal', () => {
+        expect(testloopWorkStatus({ status: 'awaiting_user', needsReview: true })).toBe('执行已结束，待验收');
+        expect(testloopWorkStatus({ status: 'paused', needsReview: false, goalPhase: 'repairing' })).toBe('已暂停');
+    });
+    it('does not hide a later rejection behind an earlier successful directory revision', () => {
+        const ok = agent(snapshot({ workbench: realWorkbench(3) }));
+        const rejected = agent(snapshot({ ok: false, error: 'assistant_dots_request_conflict' }), { id: 'rejected', createdAt: 100 });
+        expect(projectTestloopDotsMessages([ok, rejected], workspaceId).receipts[requestId].ok).toBe(false);
     });
 });

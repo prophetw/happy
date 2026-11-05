@@ -43,12 +43,12 @@
 验收包括入口、JS/CSS、WASM、深层路由、缺失资源的真实 404 和 Relay 健康检查。
 真实浏览器按用户当次授权执行；未验证登录、消息收发或附件时，明确报告验证边界。
 
-Dots 交互原型预览可在 Web 构建时显式传入 `--build-arg HAPPY_DOTS_PROTOTYPE=1`，
-访问 `/happy/dots?prototype=1`；用户已于 2026-11-05 选定 B（紧凑目录），不再提供 A/C 切换。
-默认值为 `0`，普通 `/happy/dots` 继续使用真实工作台入口。原型只修改内存示例，
-刷新恢复，不会发送业务消息或创建真实任务；它不代表已接入正式 Dots 页面。
-原型代码与评审、清理说明见
-[Dots 原型说明](packages/happy-app/sources/components/dots-prototype/NOTES.md)。
+Dots 正式工作台位于 `/happy/dots`，采用用户于 2026-11-05 选定的 B（紧凑目录）布局。
+目录、创建、工作项和记忆使用已有 Happy 加密消息及真实 TestLoop 账本；专属对话继续使用原会话。
+宿主需同步包含 `assistant-dots-view` 及 `inspect` 管理命令的 TestLoop 版本。
+旧宿主仍能列出和创建 Dot，工作/记忆面板会明确提示缺少读取支持，不填充示例数据。
+记忆修改和工作跟进通过原 Dot 的真实对话输入框提交，沿用既有授权、额度和记忆确认规则。
+无需原型构建开关；旧 `prototype=1` 链接同样进入真实工作台。
 
 ## Relay
 
