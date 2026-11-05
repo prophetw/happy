@@ -340,6 +340,9 @@ export const SettingsView = React.memo(function SettingsView({
                 <Item title="Dots 连接与授权" subtitle="管理 REST 服务与每个助理可用的项目"
                     icon={<Ionicons name="key-outline" size={29} color="#6650b7" />}
                     onPress={() => router.push({ pathname: '/dots', params: { connections: '1' } })} />
+                <Item title="助手连接" subtitle="审查扫码授权、有限范围和有效期，或撤销访问"
+                    icon={<Ionicons name="shield-checkmark-outline" size={29} color="#007AFF" />}
+                    onPress={() => router.push('/settings/automation')} />
             </ItemGroup>
 
             {/* Features */}
