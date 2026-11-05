@@ -41,6 +41,8 @@ REST 控制组件和 connector 会看见批准范围内的任务明文。Happy r
 
 委派任务可以在 owner 明确允许的范围内选择 agent（`codex`/`claude`）、模型、权限模式和 effort；`yolo`/`bypassPermissions` 等放权模式因此不再是"永不暴露"，而是"只有 owner 列入白名单才可委派"。默认行为完全不变：不传 `options` 时仍按原固定参数启动 Codex 会话，未配置白名单的 worker 拒绝一切覆盖（`OPTION_DENIED`）。
 
+模型标识允许已安装目录中的上下文窗口后缀（如 `ccs-claude-kimi--k3.1-pro[1M]`）。只增加方括号字符兼容，仍禁止空白、路径和命令字符；不改变 worker/grant 白名单。修复前，daemon 返回完整目录中一个带后缀的 Claude 型号，就会使 Codex-only 授权的 `/options` 也被错误判为 `UNSUPPORTED_VERSION`。该修正需要升级实际 worker 加载的 `happy-agent`，仅构建工作区或更新调用方不能修复已运行进程；部署状态必须以真实 REST 回读为准。
+
 三层强制，任何一层都不能被调用方绕过：
 
 1. **授权创建/审批**：`POST /connections` 与 `POST /service-connections` 可携带 `options` 子集；grants 校验它必须是 worker 注册表 `launchOptions` 的子集，否则 `SCOPE_DENIED`。digest 绑定该子集，审批页展示即冻结。worker 白名单在注册表（host/worker 配置的 `launchOptions`）中由 owner 维护；白名单收缩会使不再可满足的旧 grant 在校验时撤销。

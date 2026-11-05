@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { filterCatalogForGrant, resolveTaskOptions, validateGrantOptions, OptionsDenied,
-    type LaunchOptionsPolicy, type OptionCatalogEntry } from './options';
+    optionCatalogSchema, taskOptionsSchema, type LaunchOptionsPolicy, type OptionCatalogEntry } from './options';
 
 const catalog: OptionCatalogEntry[] = [
     { agent: 'codex', models: ['gpt-6.1-sol', 'gpt-6-sol'], permissionModes: ['default', 'auto', 'safe-yolo', 'read-only', 'yolo'],
@@ -14,6 +14,20 @@ const policy: LaunchOptionsPolicy = { version: 1, agents: [
 ] };
 const resolve = (requested: Parameters<typeof resolveTaskOptions>[0], grant?: Parameters<typeof resolveTaskOptions>[2]) =>
     resolveTaskOptions(requested, policy, grant, 'codex', catalog);
+
+it('accepts installed context-window model IDs without invalidating discovery for a Codex-only grant', () => {
+    const model = 'ccs-claude-kimi--k3.1-pro[1M]';
+    const live = { version: 1 as const, defaultAgent: 'codex', agents: [catalog[0], { ...catalog[1], models: ['default', model] }] };
+    expect(optionCatalogSchema.safeParse(live).success).toBe(true);
+    expect(taskOptionsSchema.safeParse({ agent: 'claude', model }).success).toBe(true);
+    const codexOnly = { version: 1 as const, agents: [policy.agents[0]] };
+    const filtered = filterCatalogForGrant(live, codexOnly, undefined);
+    expect(filtered.agents.map(a => a.agent)).toEqual(['codex']);
+    const approved = { version: 1 as const, agents: [{ agent: 'claude' as const, models: [model], permissionModes: ['default'] }] };
+    expect(resolveTaskOptions({ agent: 'claude', model }, approved, undefined, 'codex', live.agents).model).toBe(model);
+    for (const invalid of ['model with spaces', 'model;command', 'model$(command)', 'model\nvalue', '../model'])
+        expect(taskOptionsSchema.safeParse({ model: invalid }).success).toBe(false);
+});
 
 describe('launch option resolution', () => {
     it('keeps the exact legacy fixed launch when no allowlist exists', () => {

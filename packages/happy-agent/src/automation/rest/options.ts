@@ -11,7 +11,8 @@
 import { z } from 'zod';
 
 export const launchAgents = ['claude', 'codex'] as const;
-export const launchOptionValue = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+// Installed Claude provider model IDs may include a context window suffix such as [1M].
+export const launchOptionValue = z.string().regex(/^[A-Za-z0-9_.:\[\]-]{1,128}$/);
 
 const agentPolicyFields = {
     agent: z.enum(launchAgents),
