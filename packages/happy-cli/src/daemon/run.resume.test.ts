@@ -106,6 +106,17 @@ describe('daemon resume fallback', () => {
     vi.useRealTimers();
   });
 
+  it('attests a stopped automation session after daemon restart without taking ownership of a saved PID', async () => {
+    mocks.persisted = { 'old-session': { ...fallback, savedAt: Date.now(), metadata: { ...metadata,
+      hostPid: 12344, startedBy: 'daemon', startedFromDaemon: true } } };
+    vi.mocked(process.kill).mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+    await boot(); vi.mocked(process.kill).mockClear();
+    expect(await mocks.handlers.automationControl({ version: 1, operation: 'status', sessionID: 'old-session' }))
+      .toMatchObject({ sessionID: 'old-session', process: 'stopped' });
+    expect(vi.mocked(process.kill).mock.calls).toEqual([[12344, 0], [-12344, 0]]);
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
   it.each(['regular', 'tmux'])('returns a native Codex startup failure to the caller in %s mode', async (mode) => {
     await boot();
     mocks.tmuxAvailable = mode === 'tmux';

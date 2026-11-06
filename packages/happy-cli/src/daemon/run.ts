@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import { cleanupAutomationDaemon } from './automationShutdown';
-import { createAutomationControl, observeOwnedProcess } from './automationControl';
+import { createAutomationControl, observeOwnedProcess, observePersistedProcess } from './automationControl';
 import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock } from './automationBootstrap';
 import { startDaemonAutomation, type DaemonAutomationOptions } from './automationWorker';
 import os from 'os';
@@ -1096,6 +1096,8 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         observe: sessionID => {
           const tracked = getCurrentChildren().find(s => s.happySessionId === sessionID)
             ?? sessionIdToFinishedSession.get(sessionID);
+          if (!tracked || tracked.startedBy === 'persisted')
+            return observePersistedProcess(readPersistedSessions()[sessionID], machineId, bootTimeMs);
           return observeOwnedProcess(tracked ? { pid: tracked.pid,
             owned: tracked.startedBy === 'daemon' && !!tracked.childProcess,
             stopping: stoppingPids.has(tracked.pid) } : undefined);

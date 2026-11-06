@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAutomationControl, observeOwnedProcess } from './automationControl';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createAutomationControl, observeOwnedProcess, observePersistedProcess } from './automationControl';
 import { buildAutomationCatalog, AUTOMATION_DEFAULT_AGENT } from './automationOptions';
 import type { LaunchOptionsPolicy } from 'happy-agent/automation';
 
@@ -18,6 +20,42 @@ function setup() {
 }
 const create = { version: 1, operation: 'create', requestID: 'r1', directory: '/fixture' };
 describe('durable encrypted automation RPC contract', () => {
+    it.skipIf(process.platform === 'win32')('reconciles an actual exited process group through a recreated owner', async () => {
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+        await once(child, 'spawn');
+        const saved = { savedAt: Date.now(), metadata: { machineId: 'm', hostPid: child.pid!, startedBy: 'daemon', startedFromDaemon: true } };
+        const deps = setup(), observe = () => observePersistedProcess(saved, 'm', 1);
+        try {
+            const owner = createAutomationControl({ ...deps, observe });
+            expect(await owner({ version: 1, operation: 'status', sessionID: 's1' })).toMatchObject({ process: 'unknown' });
+            const exit = once(child, 'exit'); process.kill(-child.pid!, 'SIGTERM'); await exit;
+            const restarted = createAutomationControl({ ...deps, observe });
+            expect(await restarted({ version: 1, operation: 'status', sessionID: 's1' })).toMatchObject({ process: 'stopped' });
+            expect(deps.stop).not.toHaveBeenCalled(); expect(deps.spawn).not.toHaveBeenCalled();
+        } finally {
+            if (child.exitCode === null && child.signalCode === null) {
+                const exit = once(child, 'exit'); process.kill(-child.pid!, 'SIGTERM'); await exit;
+            }
+        }
+    });
+    it('proves a persisted session stopped only for this machine and with no surviving group', () => {
+        const saved = { savedAt: 200, metadata: { machineId: 'm', hostPid: 123, startedBy: 'daemon', startedFromDaemon: true } };
+        const absent = vi.fn(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+        expect(observePersistedProcess(saved, 'm', 100, absent, 'linux')).toBe('stopped');
+        expect(absent.mock.calls).toEqual([[123, 0], [-123, 0]]);
+        expect(observePersistedProcess(saved, 'm', 100, () => {}, 'linux')).toBe('unknown');
+        expect(observePersistedProcess(saved, 'm', 100, pid => { if (pid > 0) absent(); }, 'linux')).toBe('unknown');
+        expect(observePersistedProcess(saved, 'm', 100, () => { throw Object.assign(new Error(), { code: 'EPERM' }); }, 'linux')).toBe('unknown');
+        expect(observePersistedProcess(saved, 'm', 100, pid => { throw Object.assign(new Error(), { code: pid > 0 ? 'ESRCH' : 'EACCES' }); }, 'linux')).toBe('unknown');
+        absent.mockClear();
+        for (const bad of [undefined, { ...saved, savedAt: NaN }, { ...saved, metadata: { ...saved.metadata, machineId: 'other' } },
+            { ...saved, metadata: { ...saved.metadata, startedFromDaemon: false } }, { ...saved, metadata: { ...saved.metadata, hostPid: 0 } },
+            { ...saved, metadata: { ...saved.metadata, startedBy: 'terminal' } }])
+            expect(observePersistedProcess(bad, 'm', 100, absent, 'linux')).toBe('unknown');
+        expect(absent).not.toHaveBeenCalled();
+        expect(observePersistedProcess(saved, 'm', 100, absent, 'win32')).toBe('unknown');
+        expect(observePersistedProcess(saved, 'm', 300, () => {}, 'linux')).toBe('stopped');
+    });
     it('requires absence of parent AND descendants; EPERM/restart/Windows stay unknown', () => {
         const info = { pid: 123, owned: true, stopping: true };
         const absent = () => { throw Object.assign(new Error('absent'), { code: 'ESRCH' }); };

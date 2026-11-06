@@ -45,6 +45,27 @@ export function observeOwnedProcess(
     catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' ? 'stopped' : 'unknown'; }
 }
 
+/** Read-only proof for a prior daemon's session. A saved PID never grants kill authority. */
+export function observePersistedProcess(
+    session: { savedAt: number; metadata?: { machineId?: string; hostPid?: number; startedBy?: string; startedFromDaemon?: boolean } } | undefined,
+    machineID: string,
+    bootTimeMs: number,
+    probe: (pid: number, signal: 0) => unknown = process.kill,
+    platform: string = process.platform,
+): 'stopped' | 'unknown' {
+    const metadata = session?.metadata, pid = metadata?.hostPid;
+    if (!session || metadata?.machineId !== machineID || metadata.startedBy !== 'daemon' || metadata.startedFromDaemon !== true
+        || !Number.isSafeInteger(pid) || pid! <= 0 || !Number.isFinite(session.savedAt) || session.savedAt <= 0
+        || !Number.isFinite(bootTimeMs)) return 'unknown';
+    if (session.savedAt < bootTimeMs) return 'stopped';
+    if (platform === 'win32') return 'unknown';
+    // Live/reused PIDs, remaining process groups and permission failures all stay unknown.
+    try { probe(pid!, 0); return 'unknown'; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return 'unknown'; }
+    try { probe(-pid!, 0); return 'unknown'; }
+    catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' ? 'stopped' : 'unknown'; }
+}
+
 function object(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_REQUEST');
     return value as Record<string, unknown>;
