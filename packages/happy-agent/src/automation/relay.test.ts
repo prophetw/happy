@@ -15,7 +15,7 @@ const creds = { token: 'fixture-bearer' } as Credentials;
 beforeEach(() => { vi.resetAllMocks(); mocks.create.mockReturnValue({ get: mocks.get, post: mocks.post }); });
 
 describe('existing encrypted relay transport contract', () => {
-    it('posts ciphertext with stable localId and safe provider defaults; never leaks a key', async () => {
+    it('posts ciphertext with stable localId without overriding the verified launch selection', async () => {
         mocks.post.mockResolvedValue({ data: { messages: [{ id: 'msg1', seq: 12, localId: 'automation:req1' }] } });
         const transport = relayTransport('https://relay.invalid', creds);
         expect(await transport.send(session, 'req1', 'fixture instruction')).toEqual({ id: 'msg1', seq: 12 });
@@ -23,9 +23,12 @@ describe('existing encrypted relay transport contract', () => {
         expect(path).toBe('/v3/sessions/session1/messages');
         expect(body.messages[0].localId).toBe('automation:req1');
         expect(JSON.stringify(body)).not.toContain('fixture instruction');
-        expect(decrypt(key, 'dataKey', decodeBase64(body.messages[0].content))).toMatchObject({
-            role: 'user', content: { text: 'fixture instruction' }, meta: { permissionMode: 'default', model: 'gpt-6.1-sol', effort: 'high' },
-        });
+        const decrypted = decrypt(key, 'dataKey', decodeBase64(body.messages[0].content));
+        expect(decrypted).toMatchObject({ role: 'user', content: { text: 'fixture instruction' } });
+        expect(decrypted.meta).toEqual({ sentFrom: 'happy-automation' });
+        expect(decrypted.meta).not.toHaveProperty('permissionMode');
+        expect(decrypted.meta).not.toHaveProperty('model');
+        expect(decrypted.meta).not.toHaveProperty('effort');
         expect(mocks.create.mock.calls[0][0]).toMatchObject({ timeout: 15000, headers: { Authorization: 'Bearer fixture-bearer' } });
     });
     it('preserves forward pagination and decrypts a page locally', async () => {

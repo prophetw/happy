@@ -67,8 +67,9 @@ export function recordMessageTransport(serverUrl: string, token: string): Pick<T
         },
         async send(session, requestID, text) {
             const content = encodeBase64(encrypt(session.encryption.key, session.encryption.variant, {
-                role: 'user', content: { type: 'text', text }, meta: { sentFrom: 'happy-automation',
-                    permissionMode: 'default', model: 'gpt-6.1-sol', effort: 'high' },
+                // The daemon has already verified and applied the launch selection.
+                // Message metadata must not replace its model, permission mode or effort.
+                role: 'user', content: { type: 'text', text }, meta: { sentFrom: 'happy-automation' },
             }));
             const { data } = await http.post<{ messages: { id: string; seq: number; localId: string }[] }>(`/v3/sessions/${encodeURIComponent(session.id)}/messages`, {
                 messages: [{ content, localId: `automation:${requestID}` }],
