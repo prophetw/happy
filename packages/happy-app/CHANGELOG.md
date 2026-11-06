@@ -1,3 +1,11 @@
+# November 6 - Manage Dots with confidence
+
+Requires the updated TestLoop host.
+
+- **Start a fresh context** — clear a Dot's model context without losing visible chat history, memories, authorizations, or active work.
+- **Delete with an audit trail** — remove a Dot after its work has stopped, remove its local bindings, and keep its archived conversation and task history.
+- **Edit identity and duties** — update a Dot's name and long-term responsibilities from the same management dialog.
+
 # November 5 - MCP tools for Dots
 
 Connect each Dot to the tools it needs. Requires the updated TestLoop host.

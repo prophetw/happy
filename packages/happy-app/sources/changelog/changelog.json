@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 6 - Manage Dots with confidence",
+      "summary": "Requires the updated TestLoop host.",
+      "markdown": "- **Start a fresh context** — clear a Dot's model context without losing visible chat history, memories, authorizations, or active work.\n- **Delete with an audit trail** — remove a Dot after its work has stopped, remove its local bindings, and keep its archived conversation and task history.\n- **Edit identity and duties** — update a Dot's name and long-term responsibilities from the same management dialog."
+    },
+    {
       "title": "November 5 - MCP tools for Dots",
       "summary": "Connect each Dot to the tools it needs. Requires the updated TestLoop host.",
       "markdown": "- **Add MCP services** — configure HTTP or local stdio services, inspect their tools, and choose which Dots can use them.\n- **Paste a token** — save HTTP tokens securely on the host, replace or clear them when needed, without setting local environment variables.\n- **Open existing authorizations** — single-project service connections display their approval details correctly alongside multi-project connections.\n- **One connection interface** — use MCP for project execution and model discovery; migrate existing REST connections while keeping selected projects and task history."
@@ -146,5 +151,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 5 - MCP tools for Dots"
+  "latestTitle": "November 6 - Manage Dots with confidence"
 }
