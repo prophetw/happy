@@ -1,5 +1,5 @@
 /** Headless Happy host: one Relay consumer, native thread, and durable delivery journal. */
-import { mkdirSync, existsSync, openSync, closeSync, lstatSync } from 'node:fs';
+import { mkdirSync, existsSync, openSync, closeSync, lstatSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { createEnvelope, type SessionEnvelope } from '@slopus/happy-wire';
@@ -65,7 +65,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             const url = new URL(String(value));
             if (url.username || url.password || url.search || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('hosted_provider_origin_invalid');
         }
-        const credentials = readPrivate(join(config.happyHome, 'access.key'));
+        const credentials = readPrivate(realpathSync(join(config.happyHome, 'access.key')));
         const cached = readPrivate(join(config.happyHome, 'sessions.json')).sessions?.[config.sessionId];
         if (!cached || cached.encryptionVariant !== 'dataKey') throw new Error('hosted_session_key_missing');
         const key = Buffer.from(cached.encryptionKey, 'base64');

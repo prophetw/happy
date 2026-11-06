@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +25,8 @@ import { runHostedDot } from './hostedDotMain';
 function fixture() {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-loop-')), home = join(dir, 'happy'), data = join(dir, 'runtime');
     mkdirSync(home); mkdirSync(data);
-    writeFileSync(join(home, 'access.key'), JSON.stringify({ token: 'fixture-token', serverUrl: 'http://127.0.0.1:1234' }));
+    writeFileSync(join(home, 'credential-target.key'), JSON.stringify({ token: 'fixture-token', serverUrl: 'http://127.0.0.1:1234' }));
+    symlinkSync(join(home, 'credential-target.key'), join(home, 'access.key'));
     writeFileSync(join(home, 'sessions.json'), JSON.stringify({ sessions: { session: { encryptionVariant: 'dataKey', encryptionKey: Buffer.alloc(32).toString('base64') } } }));
     const config = { version: 1, dotId: randomUUID(), sessionId: 'session', happyHome: home, serverUrl: 'http://127.0.0.1:1234', directory: data,
         executable: 'codex', args: [], model: 'test', provider: 'openai', providerConfig: {}, instruction: 'chat only', codexHome: join(dir, 'codex'), environment: [] };
