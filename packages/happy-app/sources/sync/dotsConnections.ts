@@ -7,6 +7,7 @@ export const DotsConnectionsViewSchema = z.object({ revision: z.number().int().n
     connections: z.array(z.object({ id: z.string(), name: z.string(), endpoint: z.string(), grantID: z.string(), machineID: z.string(),
         projects: z.array(project), methods: z.array(z.string()), expiresAt: z.number().nullable(), enabled: z.boolean(),
         source: z.enum(['existing', 'configured']), checkedAt: z.string().nullable(), error: z.string().nullable(),
+        migratedToMcp: z.string().optional(),
         credentialSource: z.enum(['environment', 'stored']), credentialConfigured: z.boolean(),
         status: z.enum(['disabled', 'expired', 'error', 'verified', 'unverified']) })).max(32),
     dots: z.array(z.object({ id: z.string().uuid(), name: z.string(), source: z.enum(['existing', 'explicit']),

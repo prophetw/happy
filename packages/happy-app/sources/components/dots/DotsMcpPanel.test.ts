@@ -2,8 +2,9 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), uuid: 0, background: null as null | ((state: string) => void) }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), ready: vi.fn(async () => {}), uuid: 0, background: null as null | ((state: string) => void) }));
 vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
+vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: mocks.ready } }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => `33333333-3333-4333-8333-${String(++mocks.uuid).padStart(12, '0')}` }));
 vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
@@ -30,7 +31,7 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 afterEach(() => act(() => renderers.splice(0).forEach(renderer => renderer.unmount())));
-beforeEach(() => { mocks.background = null; mocks.rpc.mockReset(); mocks.rpc.mockResolvedValue({ ok: true, data: view() }); });
+beforeEach(() => { mocks.background = null; mocks.ready.mockReset(); mocks.ready.mockResolvedValue(undefined); mocks.rpc.mockReset(); mocks.rpc.mockResolvedValue({ ok: true, data: view() }); });
 async function render(dot?: string) {
     let renderer!: ReturnType<typeof create>; let authorized = true;
     await act(async () => { renderer = create(React.createElement(DotsMcpPanel, { sessionId: 'workspace', dotId: dot, current: () => authorized })); });
@@ -40,6 +41,36 @@ async function render(dot?: string) {
     const fill = async (label: string, value: string) => { await act(async () => renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === label).props.onChangeText(value)); };
     return { renderer, button, click, fill, revoke: () => { authorized = false; } };
 }
+it('requires explicit project selection for Happy background execution', async () => {
+    const base = view();
+    const data = { ...base, capabilities: { storedToken: 1, happyDelegation: 1 },
+        connections: [{ ...base.connections[0], control: { grantID: 'fixture-grant', machineID: 'machine', expiresAt: Date.now() + 60000,
+            methods: ['tasks.create'], projects: [{ id: 'a', directory: '/fixture/a' }, { id: 'b', directory: '/fixture/b' }] } }],
+        dots: [{ ...base.dots[0], connectionIDs: ['facts'], projectBindings: {} }] };
+    mocks.rpc.mockResolvedValue({ ok: true, data });
+    const f = await render(dotId);
+    expect(f.button('为 Dot A 启用项目 a').props.accessibilityState.checked).toBe(false);
+    expect(f.button('为 Dot A 启用项目 b').props.accessibilityState.checked).toBe(false);
+    await f.click('为 Dot A 启用项目 a');
+    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind-projects', dotId, connectionID: 'facts', projectIDs: ['a'], revision: 2 });
+});
+it('rechecks authorization after preparing the encrypted session and sends no stale mutation', async () => {
+    const f = await render(); await f.click('添加 MCP 服务'); await f.fill('MCP 名称', 'Fixture');
+    let finish!: () => void; mocks.ready.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const count = mocks.rpc.mock.calls.length;
+    await act(async () => { f.button('检查并保存 MCP').props.onPress(); });
+    f.revoke(); await act(async () => finish());
+    expect(mocks.rpc).toHaveBeenCalledTimes(count);
+});
+it('preserves other selected projects when changing a Happy project checkbox', async () => {
+    const base = view();
+    const data = { ...base, connections: [{ ...base.connections[0], control: { grantID: 'fixture-grant', machineID: 'machine',
+        expiresAt: Date.now() + 60000, methods: [], projects: [{ id: 'a', directory: '/fixture/a' }, { id: 'b', directory: '/fixture/b' }] } }],
+        dots: [{ ...base.dots[0], connectionIDs: ['facts'], projectBindings: { facts: ['a', 'b'] } }] };
+    mocks.rpc.mockResolvedValue({ ok: true, data }); const f = await render(dotId);
+    await f.click('为 Dot A 启用项目 a');
+    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind-projects', dotId, projectIDs: ['b'] });
+});
 it('checks and saves HTTP config with environment references through MCP RPC', async () => {
     const f = await render(); await f.click('添加 MCP 服务'); await f.fill('MCP 名称', 'Docs');
     await f.fill('MCP JSON 配置', JSON.stringify({ url: 'https://mcp.example/mcp', bearer_token_env_var: 'MY_TOKEN', enabled_tools: ['lookup'] }));

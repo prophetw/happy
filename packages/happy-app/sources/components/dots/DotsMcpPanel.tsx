@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, AppState, Pressable, Text, TextInput, View } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import { useUnistyles } from 'react-native-unistyles';
+import { sync } from '@/sync/sync';
 import { dotsMcpError, requestDotsMcp, type DotsMcpMutation, type DotsMcpView } from '@/sync/dotsMcpConnections';
 
 const httpExample = JSON.stringify({ url: 'https://example.com/mcp' }, null, 2);
@@ -19,6 +20,8 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
         if (inFlight.current || !current()) return;
         const version = epoch.current; inFlight.current = true; setBusy(true); setError(null); setNotice(null);
         try {
+            await sync.ensureSessionReady(sessionId);
+            if (version !== epoch.current || !current()) return;
             const result = await requestDotsMcp(sessionId, mutation ? { ...mutation, revision: revision!, requestId: randomUUID() } : { action: 'list' });
             if (version !== epoch.current || !current()) return;
             setView(result);
@@ -73,6 +76,9 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
         {view?.connections.map(connection => <View key={connection.id} style={{ borderWidth: 1, borderColor: theme.colors.divider, borderRadius: 12, padding: 16, gap: 10 }}>
             <Text style={{ ...text, fontWeight: '600' }}>{connection.name} · {!connection.enabled ? '已停用' : connection.error ? '连接失败' : '检查通过'}</Text>
             <Text selectable style={muted}>{typeof connection.config.url === 'string' ? connection.config.url : 'stdio · ' + String(connection.config.command)}</Text>
+            {connection.control && <Text style={muted}>Happy 项目执行 · {connection.control.projects.length} 个项目 · {new Date(connection.control.expiresAt).toLocaleString()} 到期。派工、跟进和取消由后台任务统一处理。</Text>}
+            {!connection.control && typeof connection.config.url === 'string' && /\/happy-control\/mcp$/.test(connection.config.url)
+                && <Text style={muted}>后台执行需要 Happy 服务提供完整 MCP 工具及授权信息，请升级服务后重新检查。</Text>}
             {connection.error && <Text style={{ ...text, color: '#b04b36' }}>{dotsMcpError(new Error(connection.error))}</Text>}
             <Text style={muted}>最近检查：{connection.checkedAt ? new Date(connection.checkedAt).toLocaleString() : '尚未检查'}{'\n'}工具（{connection.tools.length}）：{connection.tools.map(tool => tool.name).join('、') || '无'}</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -81,14 +87,28 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
                 {button(`${connection.enabled ? '停用' : '启用'} MCP：${connection.name}`, () => mutate({ action: 'enable', connectionID: connection.id, enabled: !connection.enabled }))}
                 {button(`删除 MCP：${connection.name}`, () => mutate({ action: 'delete', connectionID: connection.id }))}
             </View>
-            {dots.map(dot => { const selected = dot.connectionIDs.includes(connection.id); return <Pressable key={dot.id} accessibilityRole="checkbox"
+            {dots.map(dot => { const selected = dot.connectionIDs.includes(connection.id); return <View key={dot.id}><Pressable accessibilityRole="checkbox"
                 accessibilityLabel={`为 ${dot.name} 启用 MCP ${connection.name}`} accessibilityState={{ checked: selected, disabled: busy }}
                 aria-checked={selected} disabled={busy} onPress={() => mutate({ action: 'bind', dotId: dot.id,
                     connectionIDs: selected ? dot.connectionIDs.filter(id => id !== connection.id) : [...dot.connectionIDs, connection.id] })} style={{ padding: 12, minHeight: 44 }}>
                 <Text style={text}>{selected ? '☑' : '☐'} {dot.name}</Text>
-            </Pressable>; })}
+            </Pressable>
+                {selected && connection.control && <View style={{ gap: 6, paddingLeft: 12 }}>
+                    <Text style={muted}>选择允许后台执行的项目（默认不启用）</Text>
+                    {connection.control.projects.map(project => {
+                        const projects = dot.projectBindings?.[connection.id] ?? [];
+                        const checked = projects.includes(project.id);
+                        return <Pressable key={project.id} accessibilityRole="checkbox" accessibilityLabel={`为 ${dot.name} 启用项目 ${project.id}`}
+                            accessibilityState={{ checked, disabled: busy }} aria-checked={checked} disabled={busy}
+                            onPress={() => mutate({ action: 'bind-projects', dotId: dot.id, connectionID: connection.id,
+                                projectIDs: checked ? projects.filter(id => id !== project.id) : [...projects, project.id] })} style={{ padding: 12, minHeight: 44 }}>
+                            <Text style={text}>{checked ? '☑' : '☐'} {project.directory}</Text>
+                        </Pressable>;
+                    })}
+                </View>}
+            </View>; })}
         </View>)}
         {!!view && !view.connections.length && <Text style={muted}>尚未配置 MCP 服务。</Text>}
-        <Text style={muted}>变更在下一轮对话生效；已运行的调用使用启动时配置。检查只获取工具目录，不调用业务工具。</Text>
+        <Text style={muted}>变更在下一轮对话生效；后台任务会在派发前重新核对权限。检查读取工具目录，Happy 服务另读取当前授权，不创建或批准授权，也不派发任务。</Text>
     </View>;
 }

@@ -39,7 +39,12 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 afterEach(() => act(() => renderers.splice(0).forEach(renderer => renderer.unmount())));
-beforeEach(() => { mocks.rpc.mockReset(); mocks.rpc.mockResolvedValue({ ok: true, data: view() }); mocks.credentials = { token: 'account-token', secret: 'account-secret' }; });
+const mcpView = () => ({ revision: 4, capabilities: { storedToken: 1, happyDelegation: 1, migrateRest: 1 }, connections: [],
+    dots: [{ id: dotId, name: '代码助理', connectionIDs: [] }] });
+beforeEach(() => {
+    mocks.rpc.mockReset(); mocks.credentials = { token: 'account-token', secret: 'account-secret' };
+    mocks.rpc.mockImplementation(async (_session, method) => ({ ok: true, data: method === 'testloop-rest-connections' ? view() : mcpView() }));
+});
 async function render(dot?: string) {
     let renderer!: ReturnType<typeof create>;
     const props = { sessionId: 'workspace', workspaceId, dotId: dot, onClose: vi.fn() };
@@ -50,73 +55,64 @@ async function render(dot?: string) {
     const click = async (name: string) => act(async () => button(name).props.onPress());
     return { renderer, props, field, change, click, button };
 }
-const preview = { endpoint: 'https://control.example/happy-control/v1', grantID: 'new-grant', machineID: 'machine-a',
-    projects: [{ id: 'project-a', directory: '/code/a' }, { id: 'project-b', directory: '/code/b' }],
-    methods: ['tasks.create'], expiresAt: Date.now() + 3600000, digest: 'verified-scope' };
-async function credentialForm(f: Awaited<ReturnType<typeof render>>) {
-    await f.click('添加连接'); await f.change('连接名称', '新连接');
-    await f.change('REST 服务地址', 'https://control.example/happy-control/v1/');
-    await f.change('服务访问令牌', 'hsvc1.fixture.secret');
-}
-it('chooses an existing connection and grants only the selected project', async () => {
+it('opens MCP by default, including a specific Dot, without querying the REST connection interface', async () => {
     const f = await render(dotId);
-    expect(mocks.rpc).toHaveBeenCalledWith('workspace', 'testloop-rest-connections', { action: 'list' });
-    await f.click('选择连接'); await f.click('使用连接：开发 REST');
-    expect(f.button('启用项目 project-b').props.accessibilityState.checked).toBe(false);
-    await f.click('启用项目 project-b'); await f.click('保存项目选择');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind', revision: 2, dotId,
-        bindings: [{ connectionID: 'connection-a', projectIDs: ['project-b'] }] });
-    await f.click('返回'); expect(f.button('我的连接')).toBeTruthy();
+    expect(mocks.rpc).toHaveBeenCalledWith('workspace', 'testloop-mcp-connections', { action: 'list' });
+    expect(mocks.rpc.mock.calls.every(call => call[1] === 'testloop-mcp-connections')).toBe(true);
+    expect(f.button('添加 MCP 服务')).toBeTruthy();
+    expect(f.button('添加连接')).toBeUndefined();
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
 });
-it('previews a masked credential without saving, then saves selected scope atomically', async () => {
-    const f = await render(); await credentialForm(f);
-    expect(f.field('服务访问令牌').props.secureTextEntry).toBe(true);
-    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { preview } }); await f.click('验证授权');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toEqual({ action: 'preview', endpoint: 'https://control.example/happy-control/v1/', token: 'hsvc1.fixture.secret' });
-    expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'add')).toHaveLength(0);
-    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('hsvc1.fixture.secret');
-    await f.click('授权给 代码助理'); await f.click('全选项目'); await f.click('保存连接与授权');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'add', name: '新连接', previewDigest: preview.digest,
-        token: 'hsvc1.fixture.secret', assignment: { dotId, projectIDs: ['project-a', 'project-b'] } });
+it('shows legacy records only after explicit navigation and offers no REST token editor', async () => {
+    const old = view(); old.dots[0].bindings = [{ connectionID: 'connection-a', projectIDs: ['project-a'] }] as never;
+    mocks.rpc.mockImplementation(async (_session, method) => ({ ok: true, data: method === 'testloop-rest-connections' ? old : mcpView() }));
+    const f = await render(); await f.click('旧连接迁移');
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('/code/a');
+    expect(f.button('迁移到 MCP：开发 REST')).toBeTruthy();
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    expect(mocks.rpc.mock.calls.every(call => call[2].action === 'list')).toBe(true);
 });
-it('replaces an existing Dot grant through an explicit preview and project selection', async () => {
-    const bound = view(); bound.dots[0].bindings = [{ connectionID: 'connection-a', projectIDs: ['project-a'] }] as never;
-    mocks.rpc.mockResolvedValueOnce({ ok: true, data: bound });
-    const f = await render(dotId); await f.click('更新服务令牌：开发 REST');
-    await f.change('服务访问令牌', 'hsvc1.fixture.secret');
-    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { preview } }); await f.click('验证授权');
-    expect(f.button('保存并替换授权').props.disabled).toBe(true);
-    await f.click('全选项目'); await f.click('保存并替换授权');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'replace', connectionID: 'connection-a',
-        assignments: [{ dotId, projectIDs: ['project-a', 'project-b'] }], previewDigest: preview.digest });
+it('migrates once using both revisions, then opens the unified MCP interface', async () => {
+    const f = await render(); await f.click('旧连接迁移'); await f.click('迁移到 MCP：开发 REST');
+    const writes = mocks.rpc.mock.calls.filter(call => call[2].action !== 'list');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toEqual(['workspace', 'testloop-mcp-connections', expect.objectContaining({
+        action: 'migrate-rest', connectionID: 'connection-a', revision: 4, restRevision: 2,
+    })]);
+    expect(f.button('添加 MCP 服务')).toBeTruthy();
 });
-it('clears the token and offers a read-only refresh after an unconfirmed response', async () => {
-    const f = await render(); await credentialForm(f);
-    mocks.rpc.mockRejectedValueOnce(new Error('transport interrupted')); await f.click('验证授权');
-    expect(f.field('服务访问令牌').props.value).toBe('');
-    expect(JSON.stringify(f.renderer.toJSON())).toContain('未收到保存结果');
-    await f.click('刷新核对'); expect(mocks.rpc.mock.calls.at(-1)?.[2]).toEqual({ action: 'list' });
+it('resolves a lost migration response by explicit refresh without sending migration twice', async () => {
+    let migrated = false;
+    mocks.rpc.mockImplementation(async (_session, method, request) => {
+        if (request.action === 'migrate-rest') { migrated = true; throw Error('private transport details'); }
+        const old = view();
+        if (migrated) Object.assign(old.connections[0], { migratedToMcp: 'mcp-existing' });
+        return { ok: true, data: method === 'testloop-rest-connections' ? old : mcpView() };
+    });
+    const f = await render(); await f.click('旧连接迁移'); await f.click('迁移到 MCP：开发 REST');
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('未收到操作结果');
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('private transport details');
+    expect(f.button('迁移到 MCP：开发 REST')).toBeUndefined();
+    await f.click('刷新旧连接');
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('已迁移到 MCP');
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'migrate-rest')).toHaveLength(1);
 });
-it('invalidates a verified credential when the app enters the background', async () => {
-    const f = await render(); await credentialForm(f);
-    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { preview } }); await f.click('验证授权');
-    await act(async () => mocks.background?.('background'));
-    expect(f.field('服务访问令牌').props.value).toBe('');
-    expect(f.button('验证授权').props.disabled).toBe(true);
-});
-it('ignores a late old-account response and clears the credential form', async () => {
-    const f = await render(); await credentialForm(f);
-    let resolve!: (value: unknown) => void;
-    mocks.rpc.mockImplementationOnce(() => new Promise(done => { resolve = done; })); await f.click('验证授权');
-    mocks.credentials = { token: 'other-account', secret: 'other-secret' };
+it('discards a late legacy response after switching account and returns to MCP', async () => {
+    let finish!: (value: unknown) => void;
+    mocks.rpc.mockImplementation(async (_session, method) => method === 'testloop-rest-connections'
+        ? await new Promise(resolve => { finish = resolve; }) : { ok: true, data: mcpView() });
+    const f = await render(); await f.click('旧连接迁移');
+    mocks.credentials = { token: 'new-account', secret: 'new-secret' };
     await act(async () => f.renderer.update(React.createElement(DotsConnectionsPanel, f.props)));
-    await act(async () => resolve({ ok: true, data: { preview } }));
-    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('核对授权与项目');
-    await f.click('添加连接'); expect(f.field('服务访问令牌').props.value).toBe('');
+    const old = view(); old.connections[0].name = 'Old private connection';
+    await act(async () => finish({ ok: true, data: old }));
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('Old private connection');
+    expect(f.button('添加 MCP 服务')).toBeTruthy();
 });
-it('allows explicit removal from the Dot entry without collecting credentials', async () => {
-    const bound = view(); bound.dots[0].bindings = [{ connectionID: 'connection-a', projectIDs: ['project-a'] }] as never;
-    mocks.rpc.mockResolvedValueOnce({ ok: true, data: bound }); const f = await render(dotId);
-    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0); await f.click('解除连接：开发 REST');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind', dotId, bindings: [] });
+it('disables migration when the host has not advertised migration support', async () => {
+    mocks.rpc.mockImplementation(async (_session, method) => ({ ok: true, data: method === 'testloop-rest-connections'
+        ? view() : { ...mcpView(), capabilities: { storedToken: 1 } } }));
+    const f = await render(); await f.click('旧连接迁移');
+    expect(f.button('迁移到 MCP：开发 REST').props.disabled).toBe(true);
+    expect(mocks.rpc.mock.calls.every(call => call[2].action === 'list')).toBe(true);
 });

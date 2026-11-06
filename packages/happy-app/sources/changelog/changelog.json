@@ -3,7 +3,7 @@
     {
       "title": "November 5 - MCP tools for Dots",
       "summary": "Connect each Dot to the tools it needs. Requires the updated TestLoop host.",
-      "markdown": "- **Add MCP services** — configure HTTP or local stdio services, inspect their tools, and choose which Dots can use them.\n- **Paste a token** — save HTTP tokens securely on the host, replace or clear them when needed, without setting local environment variables.\n- **Open existing authorizations** — single-project service connections display their approval details correctly alongside multi-project connections."
+      "markdown": "- **Add MCP services** — configure HTTP or local stdio services, inspect their tools, and choose which Dots can use them.\n- **Paste a token** — save HTTP tokens securely on the host, replace or clear them when needed, without setting local environment variables.\n- **Open existing authorizations** — single-project service connections display their approval details correctly alongside multi-project connections.\n- **One connection interface** — use MCP for project execution and model discovery; migrate existing REST connections while keeping selected projects and task history."
     },
     {
       "title": "October 26 - Model speed, explained",
