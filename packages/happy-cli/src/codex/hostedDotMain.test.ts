@@ -134,3 +134,14 @@ it('rejects a task event bound to another Dot before starting a model turn', asy
         expect(f.state().error).toBe('hosted_task_event_binding_changed'); expect(h.send).not.toHaveBeenCalled(); await failed;
     } finally { await expect(f.stop()).rejects.toThrow('hosted_task_event_binding_changed'); }
 });
+
+it('mounts the dedicated memory gateway on an existing thread without replacing history', async () => {
+    const f = fixture(true);
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        f.policy({ ...f.servers, dot_memory: f.servers.happy_fixture });
+        await vi.waitFor(() => expect(h.resume).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'native-thread', mcpServers: expect.objectContaining({ dot_memory: f.servers.happy_fixture }) })));
+        expect(f.state().threadId).toBe('native-thread'); expect(h.start).toHaveBeenCalledTimes(1);
+        expect(h.options.instructions).toContain('dot_memory_');
+    } finally { await f.stop(); }
+});

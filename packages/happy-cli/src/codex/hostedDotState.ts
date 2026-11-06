@@ -43,6 +43,6 @@ export function addOutput(state: HostedState, envelope: SessionEnvelope): void {
     if (!existing) state.outputs.push({ localId, envelope, sent: false });
 }
 
-export const HostedTaskGateway = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string(), servers: z.record(z.string().regex(/^happy_[A-Za-z0-9_-]+$/),
+export const HostedTaskGateway = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string(), servers: z.record(z.string().regex(/^(?:happy_[A-Za-z0-9_-]+|dot_memory)$/),
     z.strictObject({ command: z.string().startsWith('/'), args: z.array(z.string()).max(16), startup_timeout_sec: z.literal(30), tool_timeout_sec: z.literal(30), required: z.literal(true), default_tools_approval_mode: z.literal('approve') })) });
 export const HostedTaskEvent = z.strictObject({ version: z.literal(1), id: z.string().regex(/^task-[a-f0-9]{64}$/), dotId: z.string().uuid(), sessionId: z.string(), epoch: z.number().int().nonnegative(), createdAt: z.string().datetime(), text: z.string().min(1).max(18000) });

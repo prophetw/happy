@@ -113,7 +113,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
         {error && <Text accessibilityRole="alert" style={body}>{error}</Text>}
         {nativeThreadId && <View style={{ gap: 5 }}><Text style={body}>持续会话模式</Text>
             <Text selectable style={muted}>Codex thread：{nativeThreadId}</Text>
-            {mode === 'basis' && <Text style={muted}>本轮使用当前用户消息和原生会话历史；没有通过旧解释器筛选历史或注入长期记忆。输入与回复见左侧对话，运行详情可由宿主查询。</Text>}
+            {mode === 'basis' && <Text style={muted}>对话沿用原生会话历史；长期记忆是否参与，以本轮实际记忆工具调用和返回来源为准。输入与回复见聊天区。</Text>}
         </View>}
         {overview && <View style={{ gap: 5 }}>
             <Text style={muted}>创建于 {date(overview.dot.createdAt)}</Text>
