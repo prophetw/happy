@@ -23,7 +23,7 @@ describe('existing encrypted relay transport contract', () => {
         expect(path).toBe('/v3/sessions/session1/messages');
         expect(body.messages[0].localId).toBe('automation:req1');
         expect(JSON.stringify(body)).not.toContain('fixture instruction');
-        const decrypted = decrypt(key, 'dataKey', decodeBase64(body.messages[0].content));
+        const decrypted = decrypt(key, 'dataKey', decodeBase64(body.messages[0].content)) as { meta: Record<string, unknown> };
         expect(decrypted).toMatchObject({ role: 'user', content: { text: 'fixture instruction' } });
         expect(decrypted.meta).toEqual({ sentFrom: 'happy-automation' });
         expect(decrypted.meta).not.toHaveProperty('permissionMode');
