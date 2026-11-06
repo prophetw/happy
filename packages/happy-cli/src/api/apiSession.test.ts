@@ -3,6 +3,7 @@ import { ApiSessionClient } from './apiSession';
 import { decodeBase64, decrypt, decryptBlob, encodeBase64, encrypt } from './encryption';
 import type { Update } from './types';
 import { logger } from '@/ui/logger';
+import { registerCommonHandlers } from '../modules/common/registerCommonHandlers';
 import { SDKToLogConverter } from '@/claude/utils/sdkToLogConverter';
 
 const {
@@ -163,6 +164,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
         session = makeSession();
         mockSocket = {
             connected: true,
+            timeout: vi.fn(() => mockSocket),
             connect: vi.fn(),
             on: vi.fn((event: string, handler: SocketHandler) => {
                 if (!socketHandlers[event]) {
@@ -185,6 +187,81 @@ describe('ApiSessionClient v3 messages API migration', () => {
     afterEach(() => {
         vi.useRealTimers();
         vi.restoreAllMocks();
+    });
+
+    it('uses the same receive loop for durable consumers and advances only after checkpoint', async () => {
+        const checkpoint = vi.fn();
+        mockAxiosGet.mockResolvedValueOnce({ data: { messages: [(createNewMessageUpdate(5, encryptContent(session, { role: 'user', content: { type: 'text', text: 'offline input' } })) as any).body.message], hasMore: false } });
+        const client = new ApiSessionClient('fake-token', session, undefined, {
+            serverUrl: 'http://127.0.0.1:1234', commonHandlers: false,
+            receive: { afterSeq: 4, onMessage: checkpoint },
+        });
+        try {
+            emitSocketEvent('connect');
+            await waitForCheck(() => expect(checkpoint).toHaveBeenCalledTimes(1));
+            expect(registerCommonHandlers).not.toHaveBeenCalled();
+            expect(checkpoint.mock.calls[0][0]).toMatchObject({ seq: 5, body: { content: { text: 'offline input' } } });
+            expect((client as any).lastReceivedSeq).toBe(5);
+            expect(mockAxiosGet.mock.calls[0][0]).toBe('http://127.0.0.1:1234/v3/sessions/test-session-id/messages');
+        } finally { await client.close(); }
+    });
+
+    it('does not advance a durable cursor until the checkpoint succeeds', async () => {
+        let client: ApiSessionClient;
+        const cursors: number[] = [];
+        const checkpoint = vi.fn(() => {
+            cursors.push((client as any).lastReceivedSeq);
+            if (cursors.length === 1) throw Error('disk temporarily unavailable');
+        });
+        const message = (createNewMessageUpdate(1, encryptContent(session, { role: 'user', content: { type: 'text', text: 'one' } })) as any).body.message;
+        mockAxiosGet.mockResolvedValue({ data: { messages: [message], hasMore: false } });
+        client = new ApiSessionClient('fake-token', session, undefined, { commonHandlers: false, receive: { afterSeq: 0, onMessage: checkpoint } });
+        try {
+            emitSocketEvent('connect');
+            await waitForCheck(() => expect((client as any).lastReceivedSeq).toBe(1));
+            expect(cursors).toEqual([0, 0]);
+        } finally { await client.close(); }
+    });
+
+    it('uses the shared outbox with stable identities, encrypted readback and independent receive cursor', async () => {
+        const envelope = { id: 'native-item', time: 1000, role: 'agent', turn: 'turn', ev: { t: 'text', text: 'reply' } } as const;
+        const client = new ApiSessionClient('fake-token', session);
+        mockAxiosPost.mockRejectedValueOnce(Error('ack lost')).mockResolvedValue({ data: { messages: [{ localId: 'stable-output', seq: 7 }] } });
+        const body = { role: 'session', content: envelope, meta: { sentFrom: 'cli' } };
+        mockAxiosGet.mockResolvedValue({ data: { messages: [{ seq: 7, localId: 'stable-output', content: { t: 'encrypted', c: encryptContent(session, body) } }], hasMore: false } });
+        try {
+            await Promise.all([client.sendSessionProtocolMessageVerified(envelope, 'stable-output'), client.sendSessionProtocolMessageVerified(envelope, 'stable-output')]);
+            expect(mockAxiosPost).toHaveBeenCalledTimes(2);
+            expect(mockAxiosPost.mock.calls.map(call => call[1].messages[0].localId)).toEqual(['stable-output', 'stable-output']);
+            expect((client as any).pendingOutbox).toHaveLength(0);
+            expect((client as any).lastReceivedSeq).toBe(0);
+        } finally { await client.close(); }
+    });
+
+    it('keeps a verified output pending until encrypted readback matches', async () => {
+        const envelope = { id: 'native-item', time: 1000, role: 'agent', turn: 'turn', ev: { t: 'text', text: 'reply' } } as const;
+        const client = new ApiSessionClient('fake-token', session);
+        mockAxiosPost.mockResolvedValue({ data: { messages: [{ localId: 'stable-output', seq: 7 }] } });
+        const stored = (text: string) => ({ data: { messages: [{ seq: 7, localId: 'stable-output', content: { t: 'encrypted', c: encryptContent(session, { role: 'session', content: { ...envelope, ev: { ...envelope.ev, text } }, meta: { sentFrom: 'cli' } }) } }], hasMore: false } });
+        let delivered = false;
+        mockAxiosGet.mockResolvedValueOnce(stored('wrong reply')).mockImplementation(async () => { expect(delivered).toBe(false); return stored('reply'); });
+        try {
+            await client.sendSessionProtocolMessageVerified(envelope, 'stable-output').then(() => { delivered = true; });
+            expect(delivered).toBe(true); expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+            expect(mockAxiosPost).toHaveBeenCalledTimes(2);
+        } finally { await client.close(); }
+    });
+
+    it('reports rejected durable metadata and state updates with bounded retries', async () => {
+        const client = new ApiSessionClient('fake-token', session, undefined, { commonHandlers: false, receive: { afterSeq: 0, onMessage: () => {} } });
+        try {
+            mockSocket.emitWithAck.mockResolvedValue({ result: 'error' });
+            await expect(client.updateMetadata(metadata => metadata)).rejects.toThrow('session_state_update_rejected');
+            expect(mockSocket.emitWithAck).toHaveBeenCalledTimes(2);
+            mockSocket.emitWithAck.mockClear();
+            await expect(client.updateAgentState(state => state)).rejects.toThrow('session_state_update_rejected');
+            expect(mockSocket.emitWithAck).toHaveBeenCalledTimes(2);
+        } finally { await client.close(); }
     });
 
     it('registers core socket handlers and connects', () => {

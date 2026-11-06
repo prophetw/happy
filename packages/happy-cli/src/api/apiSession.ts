@@ -94,6 +94,14 @@ export type LocalImageAttachment = {
     name: string;
 };
 
+export type ReceivedSessionMessage = { id: string; seq: number; localId: string | null; body: unknown };
+export type SessionClientOptions = {
+    serverUrl?: string;
+    commonHandlers?: boolean;
+    /** Persist receipt and input together before the shared receive cursor advances. */
+    receive?: { afterSeq: number; onMessage: (message: ReceivedSessionMessage) => void | Promise<void> };
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -249,13 +257,16 @@ export class ApiSessionClient extends EventEmitter {
      * fetch's after_seq looked straight past seq 1.
      */
     private lastReceivedSeq = 0;
-    private pendingOutbox: Array<{ content: string; localId: string }> = [];
+    private pendingOutbox: Array<{ content: string; localId: string; verify?: boolean }> = [];
+    private deliveryWaiters = new Map<string, Set<() => void>>();
     private readonly sendSync: InvalidateSync;
     private readonly receiveSync: InvalidateSync;
     private reconnectCapabilityHeld = false;
 
-    constructor(token: string, session: Session, relayCredential?: Credentials) {
+    constructor(token: string, session: Session, relayCredential?: Credentials, private readonly options: SessionClientOptions = {}) {
         super()
+        this.serverUrl = options.serverUrl ?? configuration.serverUrl;
+        this.lastReceivedSeq = options.receive?.afterSeq ?? 0;
         this.token = token;
         this.sessionId = session.id;
         this.metadata = session.metadata;
@@ -274,7 +285,7 @@ export class ApiSessionClient extends EventEmitter {
             encryptionVariant: this.encryptionVariant,
             logger: (msg, data) => logger.debug(msg, data)
         });
-        registerCommonHandlers(this.rpcHandlerManager, this.metadata.path);
+        if (options.commonHandlers !== false) registerCommonHandlers(this.rpcHandlerManager, this.metadata.path);
 
         this.socket = this.createSocket({ serverUrl: this.serverUrl, token });
         if (relayCredential) {
@@ -360,6 +371,9 @@ export class ApiSessionClient extends EventEmitter {
                 }
 
                 if (data.body.t === 'new-message') {
+                    // Durable consumers use the same serialized catch-up path on both
+                    // live delivery and reconnect; never acknowledge before checkpoint.
+                    if (this.options.receive) { this.receiveSync.invalidate(); return; }
                     const messageSeq = data.body.message?.seq;
                     if (typeof messageSeq !== 'number' || messageSeq !== this.lastReceivedSeq + 1 || data.body.message.content.t !== 'encrypted') {
                         this.receiveSync.invalidate();
@@ -497,6 +511,8 @@ export class ApiSessionClient extends EventEmitter {
             },
         };
     }
+
+    async waitForConnection(): Promise<void> { await waitRelaySocket(this.socket); }
 
     onUserMessage(callback: (data: UserMessage) => void) {
         this.pendingMessageCallback = callback;
@@ -705,6 +721,13 @@ export class ApiSessionClient extends EventEmitter {
         this.emit('message', message);
     }
 
+    private async readMessagePage(afterSeq: number) {
+        return axios.get<V3GetSessionMessagesResponse>(
+            `${this.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
+            { params: { after_seq: afterSeq, limit: 100 }, headers: this.authHeaders(), timeout: this.options.receive ? 10000 : 60000 },
+        );
+    }
+
     private async fetchMessages() {
         const generation = this.relayGeneration;
         // On reconnect, skip processing existing messages — just advance the cursor
@@ -716,17 +739,7 @@ export class ApiSessionClient extends EventEmitter {
 
         let afterSeq = this.lastReceivedSeq;
         while (true) {
-            const response = await axios.get<V3GetSessionMessagesResponse>(
-                `${this.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
-                {
-                    params: {
-                        after_seq: afterSeq,
-                        limit: 100
-                    },
-                    headers: this.authHeaders(),
-                    timeout: 60000
-                }
-            );
+            const response = await this.readMessagePage(afterSeq);
 
             if (generation !== this.relayGeneration) return;
             const messages = Array.isArray(response.data.messages) ? response.data.messages : [];
@@ -740,6 +753,7 @@ export class ApiSessionClient extends EventEmitter {
                 if (skipRouting || message.seq <= this.lastReceivedSeq) continue;
 
                 if (message.content?.t !== 'encrypted') {
+                    if (this.options.receive) throw new Error('session_message_invalid');
                     continue;
                 }
 
@@ -747,6 +761,7 @@ export class ApiSessionClient extends EventEmitter {
                 try {
                     body = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(message.content.c));
                 } catch (error) {
+                    if (this.options.receive) throw new Error('session_message_decryption_failed');
                     logger.debug('[API] Failed to decrypt fetched message', {
                         sessionId: this.sessionId,
                         seq: message.seq,
@@ -754,13 +769,15 @@ export class ApiSessionClient extends EventEmitter {
                     });
                     continue;
                 }
-                this.routeIncomingMessage(body);
+                if (this.options.receive) await this.options.receive.onMessage({ id: message.id, seq: message.seq, localId: message.localId, body });
+                else this.routeIncomingMessage(body);
                 this.lastReceivedSeq = Math.max(this.lastReceivedSeq, message.seq);
             }
 
             this.lastReceivedSeq = Math.max(this.lastReceivedSeq, maxSeq);
             const hasMore = !!response.data.hasMore;
             if (hasMore && maxSeq === afterSeq) {
+                if (this.options.receive) throw new Error('session_cursor_stalled');
                 logger.debug('[API] fetchMessages pagination stalled, stopping to avoid infinite loop', {
                     sessionId: this.sessionId,
                     afterSeq
@@ -803,15 +820,35 @@ export class ApiSessionClient extends EventEmitter {
             // back over the socket like everyone else's and move the cursor
             // then, once they have actually been seen.
             if (generation !== this.relayGeneration) continue;
+            for (const entry of batch.filter(entry => entry.verify)) {
+                const receipt = response.data.messages?.find(message => message.localId === entry.localId);
+                if (!receipt || !Number.isSafeInteger(receipt.seq)) throw new Error('session_output_unconfirmed');
+                const page = await this.readMessagePage(receipt.seq - 1);
+                const stored = page.data.messages?.find(message => message.seq === receipt.seq && message.localId === entry.localId);
+                if (!stored || stored.content?.t !== 'encrypted'
+                    || JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(stored.content.c)))
+                    !== JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(entry.content)))) {
+                    throw new Error('session_output_readback_failed');
+                }
+            }
             this.pendingOutbox.splice(batchStart, batch.length);
+            for (const entry of batch) for (const delivered of this.deliveryWaiters.get(entry.localId) ?? []) delivered();
         }
     }
 
-    private enqueueMessage(content: unknown, invalidate: boolean = true, localId: string = randomUUID()) {
+    private enqueueMessage(content: unknown, invalidate: boolean = true, localId: string = randomUUID(), verify = false) {
+        const existing = this.pendingOutbox.find(entry => entry.localId === localId);
+        if (existing) {
+            if (verify && JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(existing.content))) !== JSON.stringify(content)) {
+                throw new Error('session_output_identity_conflict');
+            }
+            this.sendSync.invalidate(); return;
+        }
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
         this.pendingOutbox.push({
             content: encrypted,
-            localId
+            localId,
+            ...(verify ? { verify: true } : {}),
         });
         if (invalidate) {
             this.sendSync.invalidate();
@@ -913,7 +950,7 @@ export class ApiSessionClient extends EventEmitter {
         this.enqueueMessage(content);
     }
 
-    private enqueueSessionProtocolEnvelope(envelope: SessionEnvelope, invalidate: boolean = true) {
+    private enqueueSessionProtocolEnvelope(envelope: SessionEnvelope, invalidate: boolean = true, localId?: string, verify = false) {
         const content = {
             role: 'session',
             content: envelope,
@@ -922,7 +959,7 @@ export class ApiSessionClient extends EventEmitter {
             }
         };
 
-        this.enqueueMessage(content, invalidate);
+        this.enqueueMessage(content, invalidate, localId, verify);
     }
 
     sendSessionProtocolMessage(envelope: SessionEnvelope) {
@@ -937,6 +974,24 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         this.enqueueSessionProtocolEnvelope(envelope);
+    }
+
+    /** The ordinary outbox, with a caller-owned identity and confirmed encrypted readback. */
+    async sendSessionProtocolMessageVerified(envelope: SessionEnvelope, localId: string): Promise<void> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let done!: () => void;
+        const delivered = new Promise<void>(resolve => { done = resolve; });
+        const waiters = this.deliveryWaiters.get(localId) ?? new Set<() => void>();
+        waiters.add(done); this.deliveryWaiters.set(localId, waiters);
+        try {
+            this.enqueueSessionProtocolEnvelope(envelope, true, localId, true);
+            await Promise.race([delivered, new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error('session_output_unconfirmed')), 12000);
+            })]);
+        } finally {
+            clearTimeout(timer); waiters.delete(done);
+            if (!waiters.size) this.deliveryWaiters.delete(localId);
+        }
     }
 
     /**
@@ -1059,12 +1114,25 @@ export class ApiSessionClient extends EventEmitter {
         this.skipInitialMessages = true;
     }
 
+    private async synchronizeState(update: () => Promise<void>): Promise<void> {
+        if (!this.options.receive) return backoff(update);
+        // A supervised durable consumer must report a rejected/unknown startup
+        // instead of waiting forever while its host thinks it has become ready.
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try { return await update(); } catch (error) { if (attempt === 1) throw error; }
+        }
+    }
+
+    private stateAck(event: 'update-metadata' | 'update-state', payload: any) {
+        return this.options.receive ? this.socket.timeout(10000).emitWithAck(event, payload) : this.socket.emitWithAck(event, payload);
+    }
+
     updateMetadata(handler: (metadata: Metadata) => Metadata) {
-        this.metadataLock.inLock(async () => {
-            await backoff(async () => {
+        return this.metadataLock.inLock(async () => {
+            await this.synchronizeState(async () => {
                 let updated = handler(this.metadata!); // Weird state if metadata is null - should never happen but here we are
                 const generation = this.relayGeneration;
-                const answer = await this.socket.emitWithAck('update-metadata', { sid: this.sessionId, expectedVersion: this.metadataVersion, metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) });
+                const answer = await this.stateAck('update-metadata', { sid: this.sessionId, expectedVersion: this.metadataVersion, metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) });
                 if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
                 if (answer.result === 'success') {
                     this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
@@ -1076,7 +1144,8 @@ export class ApiSessionClient extends EventEmitter {
                     }
                     throw new Error('Metadata version mismatch');
                 } else if (answer.result === 'error') {
-                    // Hard error - ignore
+                    if (this.options.receive) throw new Error('session_state_update_rejected');
+                    // Ordinary interactive clients preserve their existing behavior.
                 }
             });
         });
@@ -1089,10 +1158,10 @@ export class ApiSessionClient extends EventEmitter {
     updateAgentState(handler: (metadata: AgentState) => AgentState) {
         logger.debugLargeJson('Updating agent state', this.agentState);
         return this.agentStateLock.inLock(async () => {
-            await backoff(async () => {
+            await this.synchronizeState(async () => {
                 let updated = handler(this.agentState || {});
                 const generation = this.relayGeneration;
-                const answer = await this.socket.emitWithAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion, agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null });
+                const answer = await this.stateAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion, agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null });
                 if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
                 if (answer.result === 'success') {
                     this.agentState = answer.agentState ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.agentState)) : null;
@@ -1106,7 +1175,8 @@ export class ApiSessionClient extends EventEmitter {
                     throw new Error('Agent state version mismatch');
                 } else if (answer.result === 'error') {
                     // console.error('Agent state update error', answer);
-                    // Hard error - ignore
+                    if (this.options.receive) throw new Error('session_state_update_rejected');
+                    // Ordinary interactive clients preserve their existing behavior.
                 }
             });
         });

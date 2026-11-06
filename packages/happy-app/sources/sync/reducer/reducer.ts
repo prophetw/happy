@@ -930,7 +930,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             // Process text and thinking content (tool calls handled in Phase 2)
             for (let c of msg.content) {
                 if (c.type === 'text' || c.type === 'thinking') {
-                    // Hosted Codex deltas are one message per native item. Reconstruct by
+                    // Session text deltas are one message per native item. Reconstruct by
                     // offset so pagination/reconnect can deliver chunks out of order.
                     if (c.type === 'text' && msg.codexItemId && msg.turn && msg.textStreamOffset !== undefined) {
                         let existing = [...state.messages.values()].find(m => m.role === 'agent'

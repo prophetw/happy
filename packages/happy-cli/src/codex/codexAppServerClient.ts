@@ -380,6 +380,7 @@ export class CodexAppServerClient {
         if (aborted) {
             this.eventHandler?.({
                 type: 'turn_aborted',
+                thread_id: this._threadId,
                 ...(turnId ? { turn_id: turnId } : {}),
                 ...(status ? { status } : {}),
                 ...(error !== undefined && error !== null ? { error } : {}),
@@ -389,6 +390,7 @@ export class CodexAppServerClient {
 
         this.eventHandler?.({
             type: 'task_complete',
+            thread_id: this._threadId,
             ...(turnId ? { turn_id: turnId } : {}),
             ...(status ? { status } : {}),
             ...(error !== undefined && error !== null ? { error } : {}),
@@ -408,6 +410,7 @@ export class CodexAppServerClient {
             this.markPendingTurnStarted(turnId);
             this.eventHandler?.({
                 type: 'task_started',
+                thread_id: params.threadId,
                 ...(turnId ? { turn_id: turnId } : {}),
             });
             return true;
@@ -470,6 +473,11 @@ export class CodexAppServerClient {
                 && typeof params?.delta === 'string' && params.delta.length > 0) {
                 // Timing only: do not duplicate chat text or log every content chunk.
                 this.eventHandler?.({ type: 'token_speed_output_delta', kind: method === 'item/agentMessage/delta' ? 'text' : 'reasoning' });
+            }
+            if (method === 'item/agentMessage/delta' && this.isSessionThreadNotification(params)
+                && this.isCurrentTurn(this.extractTurnId(params)) && typeof params?.delta === 'string' && params.delta.length > 0) {
+                this.eventHandler?.({ type: 'agent_message_delta', delta: params.delta, item_id: params.itemId,
+                    thread_id: params.threadId, turn_id: this.extractTurnId(params) });
             }
             return true;
         }

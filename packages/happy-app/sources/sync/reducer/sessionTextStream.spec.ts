@@ -7,7 +7,7 @@ function chunk(offset: number, text: string, thread = 'thread-a') {
         ev: { t: 'text', text, textOffset: offset },
     } } as any)!;
 }
-describe('hosted Codex text streaming', () => {
+describe('Happy session item text streaming', () => {
     it('restores a long item from its final snapshot without older delta pages', () => {
         const state = createReducer(), final = chunk(0, 'z'.repeat(5000)); final.id = 'final-snapshot'; final.textStreamSnapshot = true;
         reducer(state, [final]); reducer(state, [chunk(9, 'stale chunk')]);

@@ -12,16 +12,42 @@ import { connectionState, isNetworkError } from '@/utils/serverConnectionErrors'
 
 export class ApiClient {
 
-  static async create(credential: Credentials) {
-    return new ApiClient(credential);
+  static async create(credential: Credentials, options: { serverUrl?: string } = {}) {
+    return new ApiClient(credential, options.serverUrl);
   }
 
   private readonly credential: Credentials;
   private readonly pushClient: PushNotificationClient;
 
-  private constructor(credential: Credentials) {
+  private constructor(credential: Credentials, private readonly serverUrl = configuration.serverUrl) {
     this.credential = credential
-    this.pushClient = new PushNotificationClient(credential.token, configuration.serverUrl)
+    this.pushClient = new PushNotificationClient(credential.token, this.serverUrl)
+  }
+
+  /** Attach an existing encrypted session without ever creating a replacement identity. */
+  async attachSession(opts: {
+    sessionId: string; tag: string | ((metadata: Metadata) => string); encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey';
+    validateMetadata: (metadata: Metadata) => void;
+  }): Promise<Session> {
+    const config = { headers: { Authorization: `Bearer ${this.credential.token}` }, timeout: 10000 };
+    const listed = await axios.get(`${this.serverUrl}/v1/sessions`, config);
+    const current = listed.data.sessions?.find((session: any) => session.id === opts.sessionId);
+    if (!current) throw new Error('session_attach_missing');
+    const metadata = decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(current.metadata));
+    opts.validateMetadata(metadata);
+    const resumed = await axios.post(`${this.serverUrl}/v1/sessions`, {
+      tag: typeof opts.tag === 'function' ? opts.tag(metadata) : opts.tag, metadata: current.metadata, agentState: current.agentState, dataEncryptionKey: current.dataEncryptionKey,
+    }, config);
+    const raw = resumed.data.session;
+    if (raw?.id !== opts.sessionId || raw.dataEncryptionKey !== current.dataEncryptionKey) throw new Error('session_attach_identity_changed');
+    const resumedMetadata = decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(raw.metadata));
+    opts.validateMetadata(resumedMetadata);
+    return {
+      id: raw.id, seq: raw.seq, encryptionKey: opts.encryptionKey, encryptionVariant: opts.encryptionVariant,
+      metadata: resumedMetadata, metadataVersion: raw.metadataVersion,
+      agentState: raw.agentState ? decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(raw.agentState)) : null,
+      agentStateVersion: raw.agentStateVersion,
+    };
   }
 
   /**
@@ -58,7 +84,7 @@ export class ApiClient {
     // Create session
     try {
       const response = await axios.post<CreateSessionResponse>(
-        `${configuration.serverUrl}/v1/sessions`,
+        `${this.serverUrl}/v1/sessions`,
         {
           tag: opts.tag,
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
@@ -99,7 +125,7 @@ export class ApiClient {
             operation: 'Session creation',
             caller: 'api.getOrCreateSession',
             errorCode,
-            url: `${configuration.serverUrl}/v1/sessions`
+            url: `${this.serverUrl}/v1/sessions`
           });
           return null;
         }
@@ -114,7 +140,7 @@ export class ApiClient {
         connectionState.fail({
           operation: 'Session creation',
           errorCode: '404',
-          url: `${configuration.serverUrl}/v1/sessions`
+          url: `${this.serverUrl}/v1/sessions`
         });
         return null;
       }
@@ -126,7 +152,7 @@ export class ApiClient {
           connectionState.fail({
             operation: 'Session creation',
             errorCode: String(status),
-            url: `${configuration.serverUrl}/v1/sessions`,
+            url: `${this.serverUrl}/v1/sessions`,
             details: ['Server encountered an error, will retry automatically']
           });
           return null;
@@ -145,7 +171,7 @@ export class ApiClient {
   async getExistingAutomationMachine(machineId: string): Promise<Machine> {
     try {
       if (this.credential.encryption.type !== 'dataKey') throw new Error();
-      const response = await axios.get(`${configuration.serverUrl}/v1/machines`, {
+      const response = await axios.get(`${this.serverUrl}/v1/machines`, {
         headers: { Authorization: `Bearer ${this.credential.token}` }, timeout: 10000, maxRedirects: 0,
       });
       const raw = response.data.find((m: { id: string }) => m.id === machineId);
@@ -197,7 +223,7 @@ export class ApiClient {
     // Create machine
     try {
       const response = await axios.post(
-        `${configuration.serverUrl}/v1/machines`,
+        `${this.serverUrl}/v1/machines`,
         {
           id: opts.machineId,
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
@@ -236,7 +262,7 @@ export class ApiClient {
           operation: 'Machine registration',
           caller: 'api.getOrCreateMachine',
           errorCode: error.code,
-          url: `${configuration.serverUrl}/v1/machines`
+          url: `${this.serverUrl}/v1/machines`
         });
         return createMinimalMachine();
       }
@@ -271,7 +297,7 @@ export class ApiClient {
           connectionState.fail({
             operation: 'Machine registration',
             errorCode: String(status),
-            url: `${configuration.serverUrl}/v1/machines`,
+            url: `${this.serverUrl}/v1/machines`,
             details: ['Server encountered an error, will retry automatically']
           });
           return createMinimalMachine();
@@ -282,7 +308,7 @@ export class ApiClient {
           connectionState.fail({
             operation: 'Machine registration',
             errorCode: '404',
-            url: `${configuration.serverUrl}/v1/machines`
+            url: `${this.serverUrl}/v1/machines`
           });
           return createMinimalMachine();
         }
@@ -302,7 +328,7 @@ export class ApiClient {
   }
 
   push(): PushNotificationClient {
-    return new PushNotificationClient(this.credential.token, configuration.serverUrl);
+    return new PushNotificationClient(this.credential.token, this.serverUrl);
   }
 
   /**
@@ -312,7 +338,7 @@ export class ApiClient {
   async registerVendorToken(vendor: 'openai' | 'anthropic' | 'gemini', apiKey: any): Promise<void> {
     try {
       const response = await axios.post(
-        `${configuration.serverUrl}/v1/connect/${vendor}/register`,
+        `${this.serverUrl}/v1/connect/${vendor}/register`,
         {
           token: JSON.stringify(apiKey)
         },
@@ -344,7 +370,7 @@ export class ApiClient {
   async getVendorToken(vendor: 'openai' | 'anthropic' | 'gemini'): Promise<any | null> {
     try {
       const response = await axios.get(
-        `${configuration.serverUrl}/v1/connect/${vendor}/token`,
+        `${this.serverUrl}/v1/connect/${vendor}/token`,
         {
           headers: {
             'Authorization': `Bearer ${this.credential.token}`,
@@ -437,7 +463,7 @@ export class ApiClient {
   async deactivateSession(sessionId: string): Promise<boolean> {
     try {
       const response = await axios.post(
-        `${configuration.serverUrl}/v1/sessions/${sessionId}/archive`,
+        `${this.serverUrl}/v1/sessions/${sessionId}/archive`,
         {},
         {
           headers: {

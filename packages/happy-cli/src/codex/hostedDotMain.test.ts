@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { readPrivate } from './hostedDotState';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
-    send: vi.fn(), steer: vi.fn(), resume: vi.fn(), reconnect: vi.fn() }));
+    send: vi.fn(), steer: vi.fn(), resume: vi.fn(), reconnect: vi.fn(), receive: null as any }));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     constructor(_: unknown, options: any) { h.options = options; }
     connect = async () => {}; disconnect = async () => {};
@@ -16,10 +16,17 @@ vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     sendTurnAndWait = h.send; steerTurn = h.steer;
     abortTurnWithFallback = async () => { h.event({ type: 'turn_aborted' }); return { forcedRestart: true, resumedThread: true }; };
 } }));
-vi.mock('./hostedDotRelay', () => ({ HostedDotRelay: class {
-    connect = async () => {}; metadata = async () => {}; close() {} alive() {}
-    messages = async () => ({ messages: h.rows.splice(0), hasMore: false });
-    send = async (localId: string, envelope: unknown) => { h.sent.push({ localId, envelope }); };
+vi.mock('../api/api', () => ({ ApiClient: { create: async () => ({ attachSession: async () => ({}) }) } }));
+vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
+    timer: ReturnType<typeof setInterval>;
+    constructor(_token: string, _session: unknown, _credential: unknown, options: any) {
+        h.receive = options.receive;
+        this.timer = setInterval(() => { for (const row of h.rows.splice(0)) options.receive.onMessage(row); }, 10);
+    }
+    rpcHandlerManager = { registerHandler() {} };
+    waitForConnection = async () => {}; updateMetadata = async () => {}; updateAgentState = async () => {};
+    sendSessionDeath() {} keepAlive() {} close = async () => { clearInterval(this.timer); };
+    sendSessionProtocolMessageVerified = async (envelope: unknown, localId: string) => { h.sent.push({ localId, envelope }); };
 } }));
 import { runHostedDot } from './hostedDotMain';
 function fixture() {
@@ -34,7 +41,11 @@ function fixture() {
     return { config, state, running, stop: async () => { controller.abort(); await running; rmSync(dir, { recursive: true }); } };
 }
 const row = (seq: number, text: string, deliveryMode = 'queue') => ({ id: String(seq), seq, body: { role: 'user', content: { type: 'text', text }, meta: { deliveryMode } } });
-const emit = (method: string, params: any) => h.options.onNotification(method, { threadId: 'native-thread', ...params });
+const emit = (method: string, params: any) => {
+    h.options.onNotification(method, { threadId: 'native-thread', ...params });
+    if (method === 'turn/started') h.event({ type: 'task_started', thread_id: 'native-thread', turn_id: params.turn.id });
+    if (method === 'turn/completed') h.event({ type: 'task_complete', thread_id: 'native-thread', turn_id: params.turn.id, status: params.turn.status });
+};
 beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); });
 it('settles steering when completion arrives before its RPC acknowledgement', async () => {
     let finish!: (v: unknown) => void;

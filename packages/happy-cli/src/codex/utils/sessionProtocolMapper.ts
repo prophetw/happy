@@ -1,3 +1,4 @@
+import type { CodexSessionTextStream } from './sessionTextStream';
 import { createHash, randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import type { ReasoningOutput } from './reasoningProcessor';
@@ -15,6 +16,7 @@ import { getCodexTurnOutcome } from '../codexTurnOutcome';
 import { speedSampleUsage, type CodexTokenSpeedTracker } from '@/utils/tokenSpeed';
 
 export type CodexTurnState = {
+    textStream?: CodexSessionTextStream;
     currentTurnId: string | null;
     tokenSpeedTracker?: CodexTokenSpeedTracker;
     startedSubagents?: Set<string>;
@@ -917,6 +919,16 @@ function patchDescription(changes: unknown): string {
 export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unknown>, state: CodexTurnState): CodexMapperResult {
     const speed = state.tokenSpeedTracker?.observe(message);
     const result = mapCodexMcpMessageToSessionEnvelopesInner(message, state);
+    const text = state.textStream?.map(message);
+    if (text !== null && text !== undefined) {
+        result.envelopes = text;
+        if (text.length && !state.currentTurnId && typeof message.turn_id === 'string') {
+            result.currentTurnId = message.turn_id;
+            result.envelopes.unshift(createEnvelope('agent', { t: 'turn-start' }, {
+                turn: message.turn_id, id: `${message.thread_id}:${message.turn_id}:start`,
+            }));
+        }
+    }
     if (speed) {
         const sample = state.tokenSpeedTracker?.sample;
         const generation = state.tokenSpeedTracker?.generationUsage;
@@ -975,8 +987,9 @@ function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unkno
     const collabToolByCall = getCollabToolByCall(state);
 
     if (type === 'task_started') {
-        const turnId = createId();
-        const turnStart = createEnvelope('agent', { t: 'turn-start' }, { turn: turnId });
+        const turnId = typeof message.turn_id === 'string' ? message.turn_id : createId();
+        const nativeId = typeof message.thread_id === 'string' ? `${message.thread_id}:${turnId}:start` : undefined;
+        const turnStart = createEnvelope('agent', { t: 'turn-start' }, { turn: turnId, ...(nativeId ? { id: nativeId } : {}) });
         startedSubagents.clear();
         activeSubagents.clear();
         collabReceiverThreadIdsByCall.clear();
@@ -1007,6 +1020,8 @@ function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unkno
             };
         }
 
+        state.textStream?.clear();
+        const nativeId = typeof message.thread_id === 'string' ? `${message.thread_id}:${state.currentTurnId}:end` : undefined;
         const lifecycleOpts = { turn: state.currentTurnId } satisfies CreateEnvelopeOptions;
         collabReceiverThreadIdsByCall.clear();
         collabToolByCall.clear();
@@ -1023,7 +1038,7 @@ function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unkno
                 createEnvelope('agent', {
                     t: 'turn-end',
                     ...getCodexTurnOutcome(message),
-                }, lifecycleOpts),
+                }, { ...lifecycleOpts, ...(nativeId ? { id: nativeId } : {}) }),
             ],
         };
     }

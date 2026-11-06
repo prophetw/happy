@@ -1,3 +1,4 @@
+import { CodexSessionTextStream } from './utils/sessionTextStream';
 import { render } from "ink";
 import React from "react";
 import { ApiClient } from '@/api/api';
@@ -366,6 +367,7 @@ export async function runCodex(opts: {
     let turnOutcome: CodexTurnOutcome | null = null;
     let currentTurnId: string | null = null;
     let tokenSpeedTracker = new CodexTokenSpeedTracker();
+    const codexTextStream = new CodexSessionTextStream();
     let codexStartedSubagents = new Set<string>();
     let codexActiveSubagents = new Set<string>();
     let codexProviderSubagentToSessionSubagent = new Map<string, string>();
@@ -860,6 +862,7 @@ export async function runCodex(opts: {
         if (msg.type !== 'turn_diff' && (!isReasoningEvent || isForwardableSubagentReasoning)) {
             const mapped = mapCodexMcpMessageToSessionEnvelopes(msg, {
                 currentTurnId,
+                textStream: isSubagentScopedEvent ? undefined : codexTextStream,
                 tokenSpeedTracker: isSubagentScopedEvent ? undefined : tokenSpeedTracker,
                 startedSubagents: codexStartedSubagents,
                 activeSubagents: codexActiveSubagents,
@@ -989,6 +992,7 @@ export async function runCodex(opts: {
                 logger.debug('[Codex] Handling /clear command - resetting Codex thread state');
                 client.clearThreadState();
                 currentTurnId = null;
+                codexTextStream.clear();
                 tokenSpeedTracker = new CodexTokenSpeedTracker();
                 codexStartedSubagents = new Set<string>();
                 codexActiveSubagents = new Set<string>();
@@ -1112,6 +1116,7 @@ export async function runCodex(opts: {
                 if (currentTurnId) {
                     session.sendSessionProtocolMessage(createEnvelope('agent', { t: 'turn-end', ...turnOutcome }, { turn: currentTurnId }));
                     currentTurnId = null;
+                    codexTextStream.clear();
                 }
             } finally {
                 // Reset permission handler, reasoning processor, and diff processor
