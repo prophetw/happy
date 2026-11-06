@@ -1,16 +1,19 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import type { SkillCatalog } from '@modelcontextprotocol/server/ext/skills';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { hash } from '../journal';
-import { ProofClient } from './client';
+import type { ControlClient } from './client';
 import { ApiError, identifier, scopeSchema } from './schema';
 import { taskOptionsSchema } from './options';
+import { loadControlSkills } from './skills';
 
 const page = { cursor: z.string().max(256).optional(), limit: z.number().int().min(1).max(200).optional() };
-const events = { sessionID: identifier, after_seq: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).optional() };
+const events = { sessionID: identifier, after_seq: z.number().int().nonnegative().optional(), cursor: z.string().min(1).max(256).optional(), limit: z.number().int().min(1).max(500).optional() };
 export const toolContracts = {
+    happy_connection: { method: 'GET', schema: z.object({}).strict(), route: (_: any, grantID: string) => `/connections/${identifier.parse(grantID)}` },
     happy_machines: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/machines', query: true },
+    happy_projects: { method: 'GET', schema: z.object({}).strict(), route: (_: any) => '/projects' },
     happy_sessions: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/sessions', query: true },
     happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional() }).strict(), route: (_: any) => '/tasks' },
     happy_options: { method: 'GET', schema: z.object({ machineID: identifier }).strict(), route: (_: any) => '/options', query: true },
@@ -21,12 +24,12 @@ export const toolContracts = {
     happy_cancel: { method: 'POST', schema: z.object({ sessionID: identifier, requestID: identifier }).strict(), route: (a: any) => `/sessions/${a.sessionID}/cancel`, omit: 'sessionID' },
     happy_request_status: { method: 'GET', schema: z.object({ requestID: identifier }).strict(), route: (a: any) => `/requests/${a.requestID}`, omit: 'requestID' },
 } as const;
-export async function callControlTool(client: ProofClient, grantID: string, name: keyof typeof toolContracts, input: unknown) {
+export async function callControlTool(client: ControlClient, grantID: string, name: keyof typeof toolContracts, input: unknown) {
     const contract = toolContracts[name];
     if (!contract) throw new Error('UNKNOWN_TOOL');
     const args = contract.schema.parse(input) as Record<string, unknown>, values = { ...args };
     if ('omit' in contract) delete values[contract.omit];
-    let route = contract.route(args);
+    let route = contract.route(args, grantID);
     if ('query' in contract && contract.query) {
         const query = new URLSearchParams(Object.entries(values).filter(([,v]) => v !== undefined).map(([k,v]) => [k, String(v)] as [string, string]));
         if (query.size) route += `?${query}`;
@@ -34,7 +37,7 @@ export async function callControlTool(client: ProofClient, grantID: string, name
     return client.request(contract.method, route, contract.method === 'POST' ? values : undefined, grantID);
 }
 /** Create/send stay two durable operations, with deterministic child IDs visible on uncertainty. */
-export async function startTask(client: ProofClient, grantID: string, input: { requestID: string; machineID: string; projectID: string; text: string;
+export async function startTask(client: ControlClient, grantID: string, input: { requestID: string; machineID: string; projectID: string; text: string;
     options?: { agent?: string; model?: string; permissionMode?: string; effort?: string } }) {
     identifier.parse(input.requestID);
     const requests = { create: hash(`${input.requestID}:create`), send: hash(`${input.requestID}:send`) };
@@ -47,7 +50,8 @@ export async function startTask(client: ProofClient, grantID: string, input: { r
     catch { return { requests, phase: 'send', sessionID: created.data.sessionID, result: { ok: false, error: { code: 'CONTROL_UNAVAILABLE_OR_UNKNOWN', retryable: false } } }; }
     return { requests, phase: 'send', taskID: requests.create, sessionID: created.data.sessionID, result: sent };
 }
-export function createControlMcp(client: ProofClient, grant: () => string, options: { authorize?: (name: string, input: unknown) => Promise<void>; allowConnectionRequest?: boolean } = {}) {
+export type ControlMcpOptions = { authorize?: (name: string, input: unknown) => Promise<void>; allowConnectionRequest?: boolean; skills?: SkillCatalog };
+export function createControlMcp(client: ControlClient, grant: () => string, options: ControlMcpOptions = {}) {
     const failure = (error: unknown): CallToolResult => {
         const data = { version: 1, ok: false, error: { code: error instanceof ApiError ? error.code : 'CONTROL_UNAVAILABLE_OR_UNKNOWN', retryable: false } };
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError: true };
@@ -67,8 +71,10 @@ export function createControlMcp(client: ProofClient, grant: () => string, optio
         try { await options.authorize?.('happy_request_connection', args); const result = await client.request('POST', '/connections', scopeSchema.parse(args)); return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result }; }
         catch (error) { return failure(error); }
     });
+    options.skills?.attach(server);
     return server;
 }
-export async function connectControlStdio(client: ProofClient, grant: () => string, options: { authorize?: (name: string, input: unknown) => Promise<void>; allowConnectionRequest?: boolean } = {}) {
-    const server = createControlMcp(client, grant, options); await server.connect(new StdioServerTransport()); return server;
+export async function connectControlStdio(client: ControlClient, grant: () => string, options: ControlMcpOptions = {}) {
+    const skills = options.skills ?? await loadControlSkills();
+    const server = createControlMcp(client, grant, { ...options, skills }); await server.connect(new StdioServerTransport()); return server;
 }

@@ -1,15 +1,11 @@
 {
-  "status": "requires-platform-support-and-explicit-registration",
+  "status": "requires-dot-host-support-and-explicit-registration",
   "name": "happy-control",
   "transport": "streamable-http",
   "url": "https://control.example.invalid/happy-control/mcp",
   "authorization": {
-    "type": "oauth2-resource-server",
-    "scope": "happy:control",
-    "protected_resource_metadata": "https://control.example.invalid/.well-known/oauth-protected-resource/happy-control/mcp",
-    "issuer": "https://issuer.example.invalid",
-    "authorization_code": "external-AS-with-PKCE-S256",
-    "audience": "https://control.example.invalid/happy-control/mcp"
+    "type": "service-token-v1",
+    "delivery": "storedToken"
   },
-  "tools": ["happy_machines", "happy_sessions", "happy_create_task", "happy_send", "happy_status", "happy_events", "happy_result", "happy_cancel", "happy_request_status", "happy_request_connection"]
+  "tools": ["happy_machines", "happy_projects", "happy_sessions", "happy_create_task", "happy_options", "happy_send", "happy_status", "happy_events", "happy_result", "happy_cancel", "happy_request_status"]
 }

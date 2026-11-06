@@ -1,15 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createControlMcp, connectControlStdio } from './mcp';
+import { z } from 'zod';
+import { createControlMcp, connectControlStdio, toolContracts } from './mcp';
+import { loadControlSkills } from './skills';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { createDaemonTransport } from './daemonTransport';
 import { encodeBase64, encrypt } from '../../encryption';
 import type { DecryptedSession, DecryptedMachine } from '../../api';
-import type { ProofClient } from './client';
+import type { ControlClient, ProofClient } from './client';
+import { ServiceTokenClient } from './client';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const skillResultSchema = z.object({
+    uri: z.string(),
+    frontmatter: z.object({ name: z.string(), description: z.string() }).passthrough(),
+    resources: z.union([z.array(z.object({ uri: z.string(), digest: z.string(), size: z.number() }).passthrough()), z.literal('dynamic')]),
+}).passthrough();
+const listSkillsResultSchema = z.object({ skills: z.array(skillResultSchema) }).passthrough();
+const getSkillResultSchema = z.object({ skill: skillResultSchema }).passthrough();
 vi.mock('axios', () => ({ default: { create: () => http } }));
 beforeEach(() => { vi.resetAllMocks(); });
 describe('daemon, SDK and contract adapters', () => {
@@ -38,11 +51,63 @@ describe('daemon, SDK and contract adapters', () => {
         const [a,b] = InMemoryTransport.createLinkedPair();
         try {
             await Promise.all([server.connect(a), client.connect(b)]);
-            const tools = await client.listTools(); expect(tools.tools.map(t => t.name)).toContain('happy_cancel');
+            const tools = await client.listTools();
+            expect(tools.tools.map(t => t.name).sort()).toEqual([...Object.keys(toolContracts), 'happy_request_connection'].sort());
             expect(tools.tools.map(t => t.name)).not.toContain('shell');
             const result = await client.callTool({ name: 'happy_machines', arguments: { limit: 2 } });
             expect(result.isError).toBe(false); expect(request).toHaveBeenCalledWith('GET','/machines?limit=2',undefined,'approved-grant');
+            await client.callTool({ name: 'happy_projects', arguments: {} });
+            expect(request).toHaveBeenCalledWith('GET','/projects',undefined,'approved-grant');
+            await client.callTool({ name: 'happy_connection', arguments: {} });
+            expect(request).toHaveBeenCalledWith('GET','/connections/approved-grant',undefined,'approved-grant');
+            await client.callTool({ name: 'happy_result', arguments: { sessionID: 'fixture-session', turnID: 'fixture-turn', cursor: '12', limit: 2 } });
+            expect(request).toHaveBeenCalledWith('GET','/sessions/fixture-session/result?cursor=12&limit=2&turnID=fixture-turn',undefined,'approved-grant');
+            const calls = request.mock.calls.length;
+            const invalid = await client.callTool({ name: 'happy_projects', arguments: { cursor: 'unexpected' } });
+            expect(invalid.isError).toBe(true); expect(request).toHaveBeenCalledTimes(calls);
         } finally { await client.close(); await server.close(); }
+    });
+    it('serves verified packaged skills through a real 2.4 server and 1.29 client without REST calls', async () => {
+        const request = vi.fn();
+        const skills = await loadControlSkills();
+        const server = createControlMcp({ request } as unknown as ProofClient, () => 'approved-grant', { skills });
+        const client = new Client({ name: 'skills-fixture-client', version: '1' });
+        const [a,b] = InMemoryTransport.createLinkedPair();
+        try {
+            await Promise.all([server.connect(a), client.connect(b)]);
+            expect(client.getServerCapabilities()).toMatchObject({ extensions: { 'io.modelcontextprotocol/skills': { directoryRead: true } } });
+            const listed = await client.request({ method: 'skills/list', params: {} } as any, listSkillsResultSchema);
+            const skill = listed.skills.find(s => s.frontmatter.name === 'happy-control')!;
+            expect(skill).toBeDefined();
+            expect(skill.frontmatter.description).toContain('Use when');
+            expect(new Set(listed.skills.map(s => s.uri)).size).toBe(listed.skills.length);
+            const resources = Array.isArray(skill.resources) ? skill.resources : [];
+            expect(resources.length).toBeGreaterThan(0);
+            expect(new Set(resources.map(r => r.uri)).size).toBe(resources.length);
+            const raw = readFileSync(fileURLToPath(new URL('../../../skills/happy-control/SKILL.md', import.meta.url)));
+            const entry = resources.find(r => r.uri === skill.uri)!;
+            expect(entry.digest).toBe(`sha256:${createHash('sha256').update(raw).digest('hex')}`);
+            expect(entry.size).toBe(raw.byteLength);
+            const got = await client.request({ method: 'skills/get', params: { uri: skill.uri } } as any, getSkillResultSchema);
+            expect(got.skill).toEqual(skill);
+            const read = await client.readResource({ uri: skill.uri });
+            expect(read.contents[0]).toMatchObject({ uri: skill.uri, text: raw.toString('utf8') });
+            expect(request).not.toHaveBeenCalled();
+        } finally { await client.close(); await server.close(); }
+    });
+    it('keeps service bearer clients on the fixed REST origin and out of URLs and errors', async () => {
+        const token = `hsvc1.fixture.${'a'.repeat(43)}`;
+        const fetchMock = vi.fn(async () => ({ json: async () => ({ version: 1, ok: true, data: { projects: [] } }) }));
+        const client: ControlClient = new ServiceTokenClient('https://control.fixture.invalid/happy-control/v1', token, { fetch: fetchMock as unknown as typeof fetch });
+        expect(await client.request('GET', '/projects')).toMatchObject({ ok: true });
+        expect(fetchMock).toHaveBeenCalledWith('https://control.fixture.invalid/happy-control/v1/projects', expect.objectContaining({
+            method: 'GET', headers: { authorization: `Bearer ${token}` }, redirect: 'error',
+        }));
+        await expect(client.request('GET', '/../account')).rejects.toThrow('INVALID_ROUTE');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        fetchMock.mockRejectedValueOnce(new Error(`private ${token}`));
+        await expect(client.request('GET', '/projects')).rejects.toThrow('CONTROL_UNAVAILABLE_OR_UNKNOWN');
+        expect(() => new ServiceTokenClient('https://control.fixture.invalid/happy-control/v1', 'not-a-service-token')).toThrow('INVALID_SERVICE_TOKEN');
     });
     it('drops arbitrary worker keys/metadata and redacts output text', () => {
         const result = projectResponse({ version: 1, ok: true, data: { sessionID: 's1', secret: 'NEVER', metadata: { token: 'NEVER' }, messages: [{ kind: 'text', text: 'Bearer PRIVATE token=SECRET' }] } });

@@ -58,6 +58,15 @@ test('public config schemas bind the same user/worker/machine and a finite dedic
         c => { c.host.workers[0].projects[0].directory = '/home/dev/code/agent-runtime-bridge'; c.worker.registration = copy(c.host.workers[0]); },
     ]) { const bad = fixtureConfig(); mutate(bad); await assert.rejects(validatePublicConfig(bad)); }
 });
+test('explicit service-token MCP candidate needs existing service tokens but no OAuth provider', async () => {
+    const value = fixtureConfig();
+    value.host.serviceTokens = { clients: [{ id: 'fixture-service', userID: 'fixture-user', name: 'Fixture Dot', generation: 'fixture_v1' }] };
+    value.host.mcp = { mode: 'service-token-v1' };
+    const result = await validatePublicConfig(value, Date.now(), true);
+    assert.equal(result.publicConfigConsistent, true); assert.equal(result.realIdentityVerified, false);
+    const missing = copy(value); delete missing.host.serviceTokens;
+    await assert.rejects(validatePublicConfig(missing, Date.now(), true));
+});
 test('both proxy contracts require mTLS/verified upstream, preserve signature input, and disable content spooling', () => {
     const a = readFileSync(join(siteDirectory, 'nginx-55.conf.example'), 'utf8'), b = readFileSync(join(siteDirectory, 'nginx-57.location.conf.example'), 'utf8');
     assert.equal(validateProxyContracts(a, b), true);
@@ -66,6 +75,9 @@ test('both proxy contracts require mTLS/verified upstream, preserve signature in
         [a, b.replace('proxy_ssl_verify on;', 'proxy_ssl_verify off;')],
         [a.replace('127.0.0.1:9010;', '127.0.0.1:9010/;'), b],
         [a, b.replace('192.168.99.55:9011;', '192.168.99.55:9011/;')],
+        [a, b.replace('location = /happy-control/mcp', 'location ^~ /happy-control/mcp')],
+        [a.replace('location = /happy-control/mcp', 'location ^~ /happy-control/mcp'), b],
+        [a, b.replace(/(location = \/happy-control\/mcp \{[\s\S]*?)proxy_set_header Authorization \$http_authorization;\n/, '$1')],
         [a, b + '\nrewrite ^ /v1/machines;\n'],
         [a.replace('proxy_request_buffering off;', 'proxy_request_buffering on;'), b],
     ]) assert.throws(() => validateProxyContracts(x, y));

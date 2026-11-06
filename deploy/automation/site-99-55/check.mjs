@@ -13,7 +13,7 @@ const load = name => JSON.parse(readFileSync(join(siteDirectory, name), 'utf8'))
 export function templates() { return { host: load('host.json.example'), worker: load('worker.json.example'), grant: load('grant-request.json.example') }; }
 
 /** Inert local validation only: imports schemas, never starts a service or opens Happy auth files. */
-export async function validatePublicConfig({ host, worker, grant }, now = Date.now()) {
+export async function validatePublicConfig({ host, worker, grant }, now = Date.now(), expectMcp = false) {
     const { hostConfigSchema, workerConfigSchema } = await import(pathToFileURL(join(root, 'packages/happy-agent/dist/automation/production/index.mjs')).href);
     const h = hostConfigSchema.parse(host), w = workerConfigSchema.parse(worker);
     assert.equal(h.origin, 'https://szsp.suitbim.com.cn:7100');
@@ -23,7 +23,9 @@ export async function validatePublicConfig({ host, worker, grant }, now = Date.n
     assert.equal(w.endpoint, h.origin + '/happy-control/v1');
     assert.equal(h.listen.host, '127.0.0.1'); assert.equal(h.listen.port, 9010);
     assert.equal(h.stateDirectory, '/var/lib/happy-control');
-    assert.equal(h.mcp, undefined); assert.equal(h.secrets, undefined); // direct signed REST only
+    if (expectMcp) { assert.deepEqual(h.mcp, { mode: 'service-token-v1' }); assert.ok(h.serviceTokens); }
+    else assert.equal(h.mcp, undefined);
+    assert.equal(h.secrets, undefined); // MCP service bearer needs no OAuth signing provider
     assert.equal(h.clients.length, 1); assert.equal(h.workers.length, 1);
     assert.equal(JSON.stringify(h.workers[0]), JSON.stringify(w.registration));
     const r = w.registration;
@@ -88,19 +90,21 @@ export function validateCompose(compose) {
 export function validateProxyContracts(text55, text57) {
     for (const text of [text55, text57]) {
         assert.match(text, /location \^~ \/happy-control\/v1\/\s*\{/);
+        assert.match(text, /location = \/happy-control\/mcp\s*\{/);
+        assert.doesNotMatch(text, /location \^~ \/happy-control\/mcp/);
         assert.doesNotMatch(text, /^\s*(rewrite|return\s+30\d|proxy_cache|proxy_store|include)\b/m);
-        assert.match(text, /proxy_set_header Authorization \$http_authorization;/);
-        assert.match(text, /proxy_request_buffering off;/); assert.match(text, /proxy_buffering off;/);
+        assert.equal(text.match(/proxy_set_header Authorization \$http_authorization;/g)?.length, 2);
+        assert.equal(text.match(/proxy_request_buffering off;/g)?.length, 2); assert.equal(text.match(/proxy_buffering off;/g)?.length, 2);
         assert.match(text, /access_log off;/); assert.match(text, /error_log stderr crit;/);
-        assert.doesNotMatch(text, /location[^\n]*(?:\/happy\/|\/home-relay\/|\/happy-control\/mcp)/);
+        assert.doesNotMatch(text, /location[^\n]*(?:\/happy\/|\/home-relay\/)/);
     }
-    assert.match(text55, /proxy_pass http:\/\/127\.0\.0\.1:9010;/);
+    assert.equal(text55.match(/proxy_pass http:\/\/127\.0\.0\.1:9010;/g)?.length, 2);
     assert.match(text55, /ssl_verify_client on;/); assert.match(text55, /ssl_client_certificate \/etc\/happy-control\/pki\/client-ca\.crt;/);
     assert.match(text55, /allow 192\.168\.99\.57;\s*deny all;/);
     for (const name of ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi']) assert.match(text55, new RegExp(name + '_temp_path /tmp/'));
     assert.match(text55, /listen 9443 ssl;/); assert.doesNotMatch(text55, /listen[^;]*9010/);
-    assert.match(text57, /proxy_pass https:\/\/192\.168\.99\.55:9011;/);
-    assert.match(text57, /proxy_ssl_verify on;/); assert.match(text57, /proxy_ssl_name happy-control-55\.internal;/);
+    assert.equal(text57.match(/proxy_pass https:\/\/192\.168\.99\.55:9011;/g)?.length, 2);
+    assert.equal(text57.match(/proxy_ssl_verify on;/g)?.length, 2); assert.match(text57, /proxy_ssl_name happy-control-55\.internal;/);
     assert.match(text57, /proxy_ssl_certificate_key \/etc\/nginx\/happy-control-pki\/client\.key;/);
     return true;
 }

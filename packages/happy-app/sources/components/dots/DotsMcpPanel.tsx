@@ -51,7 +51,7 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
         {form && <View style={{ gap: 10 }}>
             <TextInput accessibilityLabel="MCP 名称" placeholder="服务名称" value={name} onChangeText={setName} editable={!busy} maxLength={80} style={input} />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{button('HTTP 配置示例', () => setRaw(httpExample))}{button('Happy Control 配置示例', () => { setRaw(happyControlExample); setName('Happy Control'); })}{button('stdio 配置示例', () => setRaw(stdioExample))}</View>
-            <Text style={muted}>填入单个服务的 JSON 配置，HTTP Token 可在下方填写，不需要配置环境变量。也可在 JSON 中填写 bearer_token，请只选择一种方式。可用 enabled_tools 数组限制工具，省略则允许服务全部工具。本地命令在 TestLoop 宿主运行。</Text>
+            <Text style={muted}>填入单个服务的 JSON 配置，HTTP Token 可在下方填写，不需要配置环境变量。也可在 JSON 中填写 bearer_token_env_var 引用宿主环境变量，请只选择一种方式。可用 enabled_tools 数组限制工具，省略则允许服务全部工具。本地命令在 TestLoop 宿主运行。</Text>
             <TextInput accessibilityLabel="MCP JSON 配置" multiline value={raw} onChangeText={setRaw} editable={!busy} maxLength={20000}
                 autoCapitalize="none" autoCorrect={false} style={{ ...input, minHeight: 170, textAlignVertical: 'top' }} />
             {view?.capabilities?.storedToken === 1 ? <>

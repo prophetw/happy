@@ -1,6 +1,7 @@
 import { createGateway } from '../rest/gateway';
 import { happyOwnerVerifier } from '../rest/auth';
 import { ProofClient } from '../rest/client';
+import { loadControlSkills } from '../rest/skills';
 import { ApiError } from '../rest/schema';
 import { hostConfigSchema, type HostConfig } from './config';
 import { EncryptedCredentialProvider, type SecretProvider } from './secrets';
@@ -13,16 +14,20 @@ export async function prepareHost(input: HostConfig, audit: Parameters<typeof cr
     const provider = injectedProvider ?? (config.secrets ? new EncryptedCredentialProvider(config.secrets.keys, config.secrets.credentialsDirectory) : undefined);
     let gateway: ReturnType<typeof createGateway> | undefined;
     try {
-        const bindings = await Promise.all((config.mcp?.bindings ?? []).map(async b => {
+        const mcp = config.mcp;
+        const skills = mcp ? await loadControlSkills() : undefined;
+        const bindings = mcp && 'oauth' in mcp ? await Promise.all(mcp.bindings.map(async b => {
             const registration = config.clients.find(c => c.id === b.clientID);
             if (!registration || !provider) throw new ApiError('MCP_REGISTRATION_REQUIRED');
             const identity = await provider.identity(b.identityRef, b.clientID, registration.publicKey);
-            return { ...b, registration, client: new ProofClient(config.mcp!.controlURL, identity, 'client') };
-        }));
+            return { ...b, registration, client: new ProofClient(mcp.controlURL, identity, 'client') };
+        })) : [];
         gateway = createGateway({ directory: config.stateDirectory, origin: config.origin, additionalBrowserOrigins: config.additionalBrowserOrigins, clients: config.clients, workers: config.workers,
-            httpMcp: !!config.mcp, maxGrantMs: config.maxGrantMs, serviceTokens: config.serviceTokens, ipRateLimit: config.ipRateLimit, verifyOwner: happyOwnerVerifier(config.relayURL), audit });
-        if (config.mcp) mountHttpMcp(gateway.app, { resource: config.mcp.oauth.resource, issuer: config.mcp.oauth.issuer,
-            oauthScope: config.mcp.oauth.scope, verify: oauthVerifier(config.mcp.oauth), bindings });
+            httpMcp: !!mcp, maxGrantMs: config.maxGrantMs, serviceTokens: config.serviceTokens, ipRateLimit: config.ipRateLimit, verifyOwner: happyOwnerVerifier(config.relayURL), audit });
+        if (mcp && 'oauth' in mcp) mountHttpMcp(gateway.app, { resource: mcp.oauth.resource, issuer: mcp.oauth.issuer,
+            oauthScope: mcp.oauth.scope, verify: oauthVerifier(mcp.oauth), bindings, skills: skills! });
+        else if (mcp) mountHttpMcp(gateway.app, { mode: 'service-token-v1', resource: `${config.origin}/happy-control/mcp`,
+            controlURL: `${config.origin}/happy-control/v1`, authenticateService: gateway.authenticateService, skills: skills! });
         // Readiness validates store/proofs/audit; it intentionally does not require a grant (bootstrap).
         gateway.app.addHook('onClose', async () => { await provider?.close(); });
         await gateway.app.ready();

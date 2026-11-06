@@ -3,7 +3,7 @@
   "info": {
     "title": "Happy scoped automation control",
     "version": "1.8.0",
-    "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. tasks.create accepts owner-allowlisted launch options (agent/model/permissionMode/effort) discovered via /options. Worker modelSource=machine follows the live Happy Claude/Codex/Agy directory; explicit grant subsets still narrow it and permission modes remain separately allowlisted. /projects exposes only the current grant project scope. HTTP MCP OAuth and relay authentication are unchanged; service bearers do not authenticate MCP, owner or worker endpoints."
+    "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. tasks.create accepts owner-allowlisted launch options (agent/model/permissionMode/effort) discovered via /options. Worker modelSource=machine follows the live Happy Claude/Codex/Agy directory; explicit grant subsets still narrow it and permission modes remain separately allowlisted. /projects exposes only the current grant project scope. HTTP MCP supports separate OAuth or explicit service-token-v1 modes; service bearers never authenticate owner, worker or OAuth MCP endpoints."
   },
   "servers": [
     {
@@ -5380,7 +5380,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "service-token-v1",
-        "description": "Optional hsvc1 credential supplied from a backend secret store. Bound to one approved service/client/user/grant and original expiry, at most 30 days; no account secret. Never accepted on owner, enrollment, worker or MCP OAuth endpoints."
+        "description": "Optional hsvc1 credential supplied from a backend secret store. Bound to one approved service/client/user/grant and original expiry, at most 30 days; no account secret. Accepted on REST and explicitly enabled service-token-v1 MCP only; never accepted on owner, enrollment, worker or OAuth MCP endpoints."
       },
       "OwnerBearer": {
         "type": "http",

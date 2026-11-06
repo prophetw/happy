@@ -8,12 +8,16 @@ import { createServer, request as proxyRequest } from 'node:http';
 import { SignJWT, exportJWK } from 'jose';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { GetSkillResult, ListSkillsResult } from '@modelcontextprotocol/server/ext/skills';
+import { z } from 'zod';
 import { EncryptedCredentialProvider } from './secrets';
 import { hostConfigSchema, workerConfigSchema } from './config';
 import { prepareHost } from './host';
 import { mountHttpMcp } from './httpMcp';
 import { oauthVerifier, type OAuthConfig } from './oauth';
 import { ProofClient } from '../rest/client';
+import { loadControlSkills } from '../rest/skills';
+import { toolContracts } from '../rest/mcp';
 import { MetadataStore } from '../rest/store';
 import { methods } from '../control';
 
@@ -22,6 +26,8 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), 'happy-production-fixture-')); cleanup.push(() => rmSync(dir, { recursive: true, force: true })); return dir; };
 const principal = { issuer: 'https://issuer.fixture.invalid', subject: 'fixture-subject', tenant: 'fixture-tenant', oauthClientID: 'fixture-client' };
 const oauth: OAuthConfig = { issuer: principal.issuer, resource: 'https://control.fixture.invalid/happy-control/mcp', jwksURL: principal.issuer + '/jwks', scope: 'happy:control', tenantClaim: 'tenant_id', algorithms: ['EdDSA'] };
+const listSkillsResultSchema = z.custom<ListSkillsResult>(() => true);
+const getSkillResultSchema = z.custom<GetSkillResult>(() => true);
 async function tokens() {
     const keys = generateKeyPairSync('ed25519');
     const jwk = await exportJWK(keys.publicKey); jwk.kid = 'fixture'; jwk.alg = 'EdDSA';
@@ -31,10 +37,10 @@ async function tokens() {
 }
 async function rig() { const module = await import(resolve('examples/rest-fixture.ts')); const r = await module.fixtureRig({ externalIdentity: principal }); cleanup.push(() => r.close()); return r; }
 async function mcp(r: any, grantID?: string, maxMethods = [...methods]) {
-    const auth = await tokens(), app = Fastify({ logger: false }), scope = { workerID: 'worker', machineID: 'machineA', projectID: 'projectA', methods: maxMethods, sessionIDs: [], expiresAt: Date.now()+120000 };
+    const auth = await tokens(), app = Fastify({ logger: false }), skills = await loadControlSkills(), scope = { workerID: 'worker', machineID: 'machineA', projectID: 'projectA', methods: maxMethods, sessionIDs: [], expiresAt: Date.now()+120000 };
     // Fixture issuer uses HTTPS audience; listener itself is explicitly temporary loopback.
     mountHttpMcp(app, { resource: 'http://127.0.0.1/happy-control/mcp', issuer: oauth.issuer, oauthScope: oauth.scope, allowLoopback: true,
-        verify: auth.verify, bindings: [{ principal, registration: r.clientRegistration, client: r.client, grantID, scope }] });
+        verify: auth.verify, bindings: [{ principal, registration: r.clientRegistration, client: r.client, grantID, scope }], skills });
     const address = await app.listen({ port: 0, host: '127.0.0.1' }); cleanup.push(() => app.close());
     async function sdk(token: string) {
         const client = new Client({ name: 'isolated-http-fixture', version: '1' });
@@ -44,6 +50,34 @@ async function mcp(r: any, grantID?: string, maxMethods = [...methods]) {
     return { ...auth, app, address, sdk };
 }
 function result(value: any) { return value.structuredContent ?? JSON.parse(value.content[0].text); }
+function listSkills(client: Client) { return client.request({ method: 'skills/list', params: {} } as any, listSkillsResultSchema); }
+const serviceClient = { id: 'serviceA', userID: 'userA', name: 'Fixture service', generation: 'identity_v1' };
+async function serviceRig(clock?: () => number) {
+    const module = await import(resolve('examples/rest-fixture.ts'));
+    const r = await module.fixtureRig({ ...(clock ? { clock } : {}), serviceTokens: { clients: [serviceClient] } });
+    cleanup.push(() => r.close()); return r;
+}
+async function serviceGrant(r: any) {
+    const created = await r.ownerRequest('/service-connections', 'POST', { clientID: serviceClient.id, workerID: 'worker', machineID: 'machineA', projectID: 'projectA',
+        methods: ['machines.list'], sessionIDs: [], expiresAt: r.gatewayOptions.now() + 120000 });
+    const id = created.body.data.id;
+    const consent = await r.ownerRequest(`/connections/${id}/consent`);
+    await r.ownerRequest(`/connections/${id}/approve`, 'POST', { digest: consent.body.data.digest, challenge: consent.body.data.challenge, credentialMode: 'service-token-v1' });
+    const issued = await r.ownerRequest(`/connections/${id}/service-token`, 'POST');
+    return { id, token: issued.body.data.token as string, expiresAt: created.body.data.expiresAt as number };
+}
+async function serviceMcp(r: any) {
+    const app = Fastify({ logger: false }), skills = await loadControlSkills();
+    mountHttpMcp(app, { mode: 'service-token-v1', resource: 'http://127.0.0.1/happy-control/mcp', controlURL: r.address + '/happy-control/v1',
+        authenticateService: r.gateway.authenticateService, allowLoopback: true, skills });
+    const address = await app.listen({ port: 0, host: '127.0.0.1' }); cleanup.push(() => app.close());
+    async function sdk(token: string) {
+        const client = new Client({ name: 'service-token-http-fixture', version: '1' });
+        await client.connect(new StreamableHTTPClientTransport(new URL(address + '/happy-control/mcp'), { requestInit: { headers: { authorization: 'Bearer ' + token } } }));
+        cleanup.push(() => client.close()); return client;
+    }
+    return { app, sdk };
+}
 
 describe('production configuration and safe secret provider', () => {
     it('rejects public listeners, unknown secret fields and unencrypted/default providers', () => {
@@ -63,6 +97,20 @@ describe('production configuration and safe secret provider', () => {
         const allowed = await host.app.inject({ method: 'GET', url: '/happy-control/v1/compatibility', headers: { origin } });
         expect(allowed.statusCode).toBe(200); expect(allowed.headers['access-control-allow-origin']).toBe(origin);
         expect((await host.app.inject({ method: 'GET', url: '/happy-control/v1/compatibility', headers: { origin: 'https://evil.invalid' } })).statusCode).toBe(403);
+    });
+    it('enables service-token MCP without OAuth or signing secrets, but requires service tokens', async () => {
+        const dir = temp();
+        const base = { version: 1 as const, role: 'host' as const, listen: { host: '127.0.0.1' as const, port: 9010 },
+            origin: 'https://fixture.invalid', relayURL: 'https://fixture.invalid/home-relay', stateDirectory: join(dir, 'state'), clients: [], workers: [] };
+        const serviceTokens = { clients: [serviceClient] };
+        expect(hostConfigSchema.safeParse({ ...base, mcp: { mode: 'service-token-v1' } }).success).toBe(false);
+        const config = hostConfigSchema.parse({ ...base, serviceTokens, mcp: { mode: 'service-token-v1' } });
+        expect(config.mcp).toEqual({ mode: 'service-token-v1' });
+        const host = await prepareHost(config, () => {}); cleanup.push(() => host.app.close());
+        expect((await host.app.inject('/.well-known/oauth-protected-resource/happy-control/mcp')).statusCode).toBe(404);
+        const denied = await host.app.inject({ method: 'POST', url: '/happy-control/mcp', payload: {} });
+        expect(denied.statusCode).toBe(401); expect(denied.headers['www-authenticate']).toBe('Bearer');
+        expect(denied.headers['www-authenticate']).not.toContain('resource_metadata');
     });
     it('loads only encrypted private PKCS8 via a private service credential and returns a signer; rotation/pin failures close access', async () => {
         const dir = temp(), creds = join(dir, 'credentials'); mkdirSync(creds, { mode: 0o700 });
@@ -94,6 +142,7 @@ describe('production configuration and safe secret provider', () => {
     });
     it('denies unsafe/symlinked metadata and startup failures never listen or create grants', async () => {
         const dir=temp(), unsafe=join(dir,'unsafe');mkdirSync(unsafe,{mode:0o755});
+        chmodSync(unsafe,0o777); // Force the insecure fixture even when the caller uses umask 0077.
         expect(()=>new MetadataStore(unsafe)).toThrow('UNSAFE_PRIVATE_DIRECTORY');
         symlinkSync(unsafe,join(dir,'alias'));expect(()=>new MetadataStore(join(dir,'alias'))).toThrow();
         const closed=vi.fn(async()=>{});
@@ -130,7 +179,9 @@ describe('OAuth resource adaptation without Happy account delegation', () => {
     });
     it('executes real SDK HTTP MCP → signed REST → outbound worker → durable daemon receipts with concurrent idempotency/log/cancel evidence', async () => {
         const r=await rig(),g=await r.connect(),m=await mcp(r,g); await r.startWorker();
-        const client=await m.sdk(await m.mint());expect((await client.listTools()).tools.map(t=>t.name)).toContain('happy_cancel');
+        const client=await m.sdk(await m.mint());
+        expect((await client.listTools()).tools.map(t=>t.name).sort()).toEqual([...Object.keys(toolContracts),'happy_request_connection'].sort());
+        expect((await listSkills(client)).skills.some(s=>s.frontmatter.name==='happy-control')).toBe(true);
         const args={requestID:'concurrent-create',machineID:'machineA',projectID:'projectA'};
         const calls=await Promise.all([client.callTool({name:'happy_create_task',arguments:args}),client.callTool({name:'happy_create_task',arguments:args})]);
         expect(r.spawnCount).toBe(1);const created=result(calls[0]);expect(created.ok).toBe(true);const sessionID=created.data.sessionID;
@@ -141,19 +192,61 @@ describe('OAuth resource adaptation without Happy account delegation', () => {
         const cancel=result(await client.callTool({name:'happy_cancel',arguments:{sessionID,requestID:'cancel-one'}}));expect(cancel.data.state).toBe('cancel_requested');expect(cancel.data.process).toBe('unknown');
         const status=result(await client.callTool({name:'happy_request_status',arguments:{requestID:'concurrent-create'}}));expect(status.data.sessionID).toBe(sessionID);
         for(const foreign of [{machineID:'other-machine'},{projectID:'other-project'}])expect(result(await client.callTool({name:'happy_create_task',arguments:{...args,requestID:'denied',...foreign}})).error.code).toBe('SCOPE_DENIED');
-    });
+    // Multiple signed HTTP operations and durable receipts share this one test budget.
+    }, 15000);
     it('denies scope widening and revocation during in-flight execution; reconnect never restores revoked access', async () => {
         const r=await rig(),g=await r.connect(),m=await mcp(r,g); await r.startWorker(); const client=await m.sdk(await m.mint());
+        const published=(await listSkills(client)).skills.find(s=>s.frontmatter.name==='happy-control')!;
         const release=r.pauseSpawn();const call=client.callTool({name:'happy_create_task',arguments:{requestID:'revoke-pending',machineID:'machineA',projectID:'projectA'}});
         await vi.waitFor(()=>expect(r.spawnCount).toBe(1));await r.ownerRequest(`/connections/${g}`,'DELETE');release();expect(result(await call).ok).toBe(false);
         await r.stopWorker();await r.startWorker(); const another=await m.sdk(await m.mint());
         expect(result(await another.callTool({name:'happy_machines',arguments:{}})).error.code).toBe('GRANT_UNAVAILABLE');
+        await expect(listSkills(another)).rejects.toThrow();
+        await expect(another.request({method:'skills/get',params:{uri:published.uri}} as any,getSkillResultSchema)).rejects.toThrow();
+        await expect(another.readResource({uri:published.uri})).rejects.toThrow();
         const wide=result(await another.callTool({name:'happy_request_connection',arguments:{workerID:'worker',machineID:'machineA',projectID:'other-project',methods:['machines.list'],sessionIDs:[],expiresAt:Date.now()+60000}}));expect(wide.isError??wide.ok).not.toBe(true);
     });
     it('binds new connection approval to external identity and invalidates previously approved grants on mapping changes', async () => {
         const r=await rig(),g=await r.connect();const consent=await r.ownerRequest(`/connections/${g}/consent`);expect(consent.body.data.externalIdentity).toEqual(principal);
         r.gatewayOptions.clients[0].externalIdentity={...principal,tenant:'other-tenant'};
         expect((await r.client.request('GET','/machines',undefined,g)).error.code).toBe('CLIENT_IDENTITY_CHANGED');
+    });
+});
+
+describe('service-token HTTP MCP with the existing REST grant boundary', () => {
+    it('discovers projects and fixed tools without OAuth, rejects widening and revokes subsequent requests', async () => {
+        const r = await serviceRig(), grant = await serviceGrant(r), m = await serviceMcp(r);
+        await r.startWorker();
+        const client = await m.sdk(grant.token), tools = await client.listTools(), names = tools.tools.map(t => t.name);
+        expect(names.sort()).toEqual(Object.keys(toolContracts).sort());
+        expect(names).not.toContain('happy_request_connection'); expect(names).not.toContain('happy_fetch');
+        expect((await listSkills(client)).skills.some(s=>s.frontmatter.name==='happy-control')).toBe(true);
+        const projects = result(await client.callTool({ name: 'happy_projects', arguments: {} }));
+        const connection = result(await client.callTool({ name: 'happy_connection', arguments: {} }));
+        expect(connection.data).toMatchObject({ id: grant.id, state: 'approved', credentialMode: 'service-token-v1', machineID: 'machineA' });
+        expect(connection.data.projects).toEqual([{ id: 'projectA', directory: r.project }]);
+        expect(connection.data.challenge).toBeUndefined();
+        const extra = await client.callTool({ name: 'happy_connection', arguments: { grantID: 'another-grant' } });
+        expect(extra.isError).toBe(true);
+        expect(projects.data.projects).toEqual([{ projectID: 'projectA', directory: r.project }]);
+        expect(result(await client.callTool({ name: 'happy_machines', arguments: {} })).ok).toBe(true);
+        const denied = result(await client.callTool({ name: 'happy_create_task', arguments: { requestID: 'denied', machineID: 'machineA', projectID: 'projectA' } }));
+        expect(denied.error.code).toBe('SCOPE_DENIED'); expect(r.spawnCount).toBe(0);
+        expect((await m.app.inject('/.well-known/oauth-protected-resource/happy-control/mcp')).statusCode).toBe(404);
+        const oauth = await m.app.inject({ method: 'POST', url: '/happy-control/mcp', headers: { authorization: 'Bearer oauth.jwt.fixture' }, payload: {} });
+        expect(oauth.statusCode).toBe(401); expect(oauth.headers['www-authenticate']).toBe('Bearer');
+        await r.ownerRequest(`/connections/${grant.id}`, 'DELETE');
+        await expect(listSkills(client)).rejects.toThrow();
+        await expect(client.callTool({ name: 'happy_projects', arguments: {} })).rejects.toThrow();
+        await expect(m.sdk(grant.token)).rejects.toThrow();
+    });
+    it('rejects an expired service token on the next stateless MCP request', async () => {
+        let time = Date.now();
+        const r = await serviceRig(() => time), grant = await serviceGrant(r), m = await serviceMcp(r);
+        const client = await m.sdk(grant.token);
+        expect(result(await client.callTool({ name: 'happy_projects', arguments: {} })).ok).toBe(true);
+        time = grant.expiresAt;
+        await expect(client.callTool({ name: 'happy_projects', arguments: {} })).rejects.toThrow();
     });
 });
 

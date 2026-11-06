@@ -92,11 +92,16 @@ export function createGateway(options: GatewayOptions) {
         const userID = await options.verifyOwner(req.headers.authorization);
         principals.set(req, `owner:${userID}`); return userID;
     }
+    function authenticateService(header: unknown) {
+        if (!serviceTokens) throw new ApiError('SERVICE_TOKENS_DISABLED', 401);
+        const auth = serviceTokens.authenticate(header);
+        limit(`service:${auth.registration.id}`, 240);
+        return auth;
+    }
     function clientAuth(req: FastifyRequest) {
         if (!isServiceAuthorization(req.headers.authorization)) return proof(req, 'client');
-        if (!serviceTokens) throw new ApiError('SERVICE_TOKENS_DISABLED', 401);
-        const auth = serviceTokens.authenticate(req.headers.authorization);
-        principals.set(req, `service:${auth.registration.id}`); limit(`service:${auth.registration.id}`, 240);
+        const auth = authenticateService(req.headers.authorization);
+        principals.set(req, `service:${auth.registration.id}`);
         return auth;
     }
     function activeConnection(req: FastifyRequest) {
@@ -367,5 +372,5 @@ export function createGateway(options: GatewayOptions) {
         clearTimeout(job.timer); jobs.delete(job.id); job.resolve(result); return ok({ accepted: true });
     });
     app.addHook('onClose', async () => { for (const job of jobs.values()) { clearTimeout(job.timer); job.resolve(failure('UNAVAILABLE_OR_UNKNOWN')); } jobs.clear(); directories.close(); directoryScopeWorkers.clear(); lastSeen.clear(); projectScopeWorkers.clear(); unlock(); });
-    return { app, grants, store };
+    return { app, grants, store, authenticateService };
 }

@@ -19,7 +19,7 @@ const plugin = [join(homedir(), '.docker/cli-plugins/docker-compose'), '/usr/lib
 if (plugin) { mkdirSync(join(dockerDirectory, 'cli-plugins')); symlinkSync(plugin, join(dockerDirectory, 'cli-plugins/docker-compose')); }
 const dockerEnv = { PATH: process.env.PATH, DOCKER_HOST: 'unix:///var/run/docker.sock', DOCKER_CONFIG: dockerDirectory };
 const created = [], checks = [];
-let network, workerAbort, workerRun, rig, releaseSpawn, artifactImage, pair;
+let network, workerAbort, workerRun, rig, releaseSpawn, artifactImage, pair, mcpClient, mcpTransport;
 const processes = new FixtureProcesses();
 const emit = (event, values = {}) => process.stdout.write(JSON.stringify({ event, ...values }) + '\n');
 const check = (name, value) => { assert.ok(value, name); checks.push(name); emit('pass', { check: name }); };
@@ -74,7 +74,8 @@ async function main() {
         const source = join(root, 'packages', pkg), target = join(context, 'packages', pkg); mkdirSync(target, { recursive: true });
         for (const file of ['package.json', 'tsconfig.json']) cpSync(join(source, file), join(target, file));
         cpSync(join(source, 'src'), join(target, 'src'), { recursive: true });
-        if (pkg === 'happy-agent') { mkdirSync(join(target, 'bin')); for (const file of ['happy-agent.mjs', 'happy-control.mjs', 'happy-control-call.mjs']) cpSync(join(source, 'bin', file), join(target, 'bin', file)); }
+        if (pkg === 'happy-agent') { mkdirSync(join(target, 'bin')); for (const file of ['happy-agent.mjs', 'happy-control.mjs', 'happy-control-call.mjs']) cpSync(join(source, 'bin', file), join(target, 'bin', file));
+            cpSync(join(source, 'skills'), join(target, 'skills'), { recursive: true }); }
     }
     const buildPath = join(context, 'deploy/automation/site-99-55'); mkdirSync(buildPath, { recursive: true });
     for (const file of ['Dockerfile.control', 'Dockerfile.control.dockerignore', 'healthcheck.mjs']) cpSync(join(siteDirectory, file), join(buildPath, file));
@@ -96,6 +97,7 @@ async function main() {
     artifactImage = image;
     emit('image_built', { image, tag: reuse ? 'reused-local-fixture' : tag });
     check('image-production-export-loads', (await docker(['run', '--rm', '--network', 'none', ...runtime, '--entrypoint', 'node', image, '--input-type=module', '-e', 'const p=await import("/app/packages/happy-agent/dist/automation/production/index.mjs");if(typeof p.startHost!=="function")process.exit(1)'])).code === 0);
+    check('image-skill-catalog-loads', (await docker(['run', '--rm', '--network', 'none', ...runtime, '--entrypoint', 'node', image, '--input-type=module', '-e', 'const m=await import("/app/packages/happy-agent/dist/automation/rest/index.mjs");await m.loadControlSkills();'])).code === 0);
 
     const nodeVersion = (await docker(['run', '--rm', '--network', 'none', ...runtime, '--entrypoint', 'node', image, '--version'])).output.trim();
     const nginxVersion = (await docker(['run', '--rm', '--network', 'none', ...runtime, '--entrypoint', 'nginx', nginx, '-v'])).error.trim();
@@ -131,10 +133,10 @@ async function main() {
     const template55 = readFileSync(join(siteDirectory, 'nginx-55.conf.example'), 'utf8');
     privateFile(join(configDir, 'nginx-55.conf'), template55.replace('allow 192.168.99.57;', `allow ${outerIP};`));
     const { fixtureRig } = await import('../../../packages/happy-agent/examples/rest-fixture.ts');
-    const { ProofClient, HTTPWorkerRunner } = await import('../../../packages/happy-agent/src/automation/rest/index.ts');
+    const { ProofClient, HTTPWorkerRunner, toolContracts } = await import('../../../packages/happy-agent/src/automation/rest/index.ts');
     rig = await fixtureRig({ multipleProjects: true, directorySelection: true });
     privateFile(join(configDir, 'host.json'), JSON.stringify({ version: 1, role: 'host', listen: { host: '127.0.0.1', port: 9010 }, origin: 'https://localhost', additionalBrowserOrigins: ['http://localhost:8989'], relayURL: 'https://fixture-owner:8443', stateDirectory: '/var/lib/happy-control', clients: [rig.clientRegistration], workers: [rig.registration],
-        serviceTokens: { maxGrantMs: 2592000000, clients: [{ id: 'fixture-service', userID: 'userA', name: 'Isolated backend fixture', generation: 'fixture_v1' }] } }));
+        serviceTokens: { maxGrantMs: 2592000000, clients: [{ id: 'fixture-service', userID: 'userA', name: 'Isolated backend fixture', generation: 'fixture_v1' }] }, mcp: { mode: 'service-token-v1' } }));
     const badConfig = join(directory, 'invalid-host.json');
     const validHost = JSON.parse(readFileSync(join(configDir, 'host.json'), 'utf8'));
     privateFile(badConfig, JSON.stringify({ ...validHost, listen: { host: '0.0.0.0', port: 9010 } }));
@@ -189,10 +191,19 @@ async function main() {
     check('native-inner-nginx-syntax', (await docker(['exec', gatewayID, 'nginx', '-t', '-c', '/etc/nginx/nginx.conf'])).code === 0);
     // The site connects to a stable host IP. Only this temporary Docker fixture needs DNS refresh
     // after pair recreation; no test-driven reload should hide an entry recovery failure.
-    const template57 = readFileSync(join(siteDirectory, 'nginx-57.location.conf.example'), 'utf8').replace('proxy_pass https://192.168.99.55:9011;', 'resolver 127.0.0.11 valid=1s ipv6=off;\n    set $fixture_upstream https://control:9443;\n    proxy_pass $fixture_upstream;');
+    const template57 = readFileSync(join(siteDirectory, 'nginx-57.location.conf.example'), 'utf8').replaceAll('proxy_pass https://192.168.99.55:9011;', 'resolver 127.0.0.11 valid=1s ipv6=off;\n    set $fixture_upstream https://control:9443;\n    proxy_pass $fixture_upstream;');
     async function outerConfig(text) { privateFile(outerPath, wrapper(text)); await docker(['exec', outerName, 'nginx', '-t', '-c', '/fixture/nginx.conf']); await docker(['exec', outerName, 'nginx', '-s', 'reload', '-c', '/fixture/nginx.conf']); await wait(500); }
     await outerConfig(template57); check('native-outer-nginx-syntax', true);
-    const fetchTLS = async (url, options = {}) => { const r = await httpsCall(url, { method: options.method, headers: options.headers, body: options.body, ca }); return new Response(r.body, { status: r.status, headers: r.headers }); };
+    const fetchTLS = async (input, options = {}) => {
+        let url = input, method = options.method, headers = options.headers, body = options.body;
+        if (input instanceof Request) {
+            url = input.url; method ??= input.method;
+            headers ??= Object.fromEntries(input.headers.entries());
+            if (body === undefined && !['GET', 'HEAD'].includes(input.method)) body = await input.text();
+        }
+        if (headers instanceof Headers) headers = Object.fromEntries(headers.entries());
+        const r = await httpsCall(url, { method, headers, body, ca }); return new Response(r.body, { status: r.status, headers: r.headers });
+    };
     const controlClient = new ProofClient(outside + '/happy-control/v1', rig.clientIdentity, 'client', { fetch: fetchTLS });
     const workerClient = new ProofClient(outside + '/happy-control/v1', rig.workerIdentity, 'worker', { fetch: fetchTLS });
     const compatibility = async () => { const r = await httpsCall(outside + '/happy-control/v1/compatibility', { ca }); return r.status === 200; };
@@ -298,6 +309,18 @@ async function main() {
     const issued = await ownerRequest(`/connections/${serviceID}/service-token`, 'POST');
     check('image-service-one-time-delivery', issued.ok && typeof issued.data.token === 'string' && (await ownerRequest(`/connections/${serviceID}/service-token`, 'POST')).error.code === 'SERVICE_TOKEN_ALREADY_ISSUED');
     const serviceToken = issued.data.token;
+    const anonymousMcp = await httpsCall(outside + '/happy-control/mcp', { ca, method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    check('image-mcp-anonymous-401-not-404', anonymousMcp.status === 401);
+    check('image-service-mcp-no-oauth-metadata', (await httpsCall(outside + '/.well-known/oauth-protected-resource/happy-control/mcp', { ca })).status === 404);
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    mcpTransport = new StreamableHTTPClientTransport(new URL(outside + '/happy-control/mcp'), { fetch: fetchTLS, requestInit: { headers: { authorization: 'Bearer ' + serviceToken } } });
+    mcpClient = new Client({ name: 'native-mcp-fixture', version: '1' });
+    await mcpClient.connect(mcpTransport);
+    const mcpTools = await mcpClient.listTools();
+    check('image-service-mcp-real-sdk-discovery', mcpTools.tools.length === Object.keys(toolContracts).length && mcpTools.tools.some(tool => tool.name === 'happy_projects') && !mcpTools.tools.some(tool => tool.name === 'happy_request_connection'));
+    const skillResource = await mcpClient.readResource({ uri: 'skill://happy-control/SKILL.md' });
+    check('image-mcp-skill-resource-read', skillResource.contents.some(item => item.uri === 'skill://happy-control/SKILL.md' && item.text?.includes('happy_request_status')));
     const serviceRequest = async (route, method = 'GET', body) => {
         const r = await httpsCall(outside + '/happy-control/v1' + route, { ca, method, headers: { authorization: 'Bearer ' + serviceToken, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
         return { status: r.status, headers: r.headers, ...JSON.parse(r.body) };
@@ -321,6 +344,9 @@ async function main() {
     check('image-service-digest-and-receipt-survive-pair-recovery', (await serviceRequest('/requests/native-service-task')).data?.sessionID === serviceSession && (await ownerRequest(`/connections/${serviceID}/service-token`, 'POST')).error.code === 'SERVICE_TOKEN_ALREADY_ISSUED');
     await ownerRequest(`/connections/${serviceID}`, 'DELETE');
     check('image-service-revocation-persists', (await serviceRequest('/machines')).error.code === 'GRANT_REVOKED');
+    await assert.rejects(mcpClient.callTool({ name: 'happy_projects', arguments: {} }));
+    check('image-service-mcp-revocation-rejects-next-request', true);
+    await mcpClient.close(); await mcpTransport.close(); mcpClient = undefined; mcpTransport = undefined;
     const serviceRecords = (await import('node:fs')).readdirSync(join(state, 'state')).filter(n => n.endsWith('.json')).map(n => readFileSync(join(state, 'state', n), 'utf8')).join('\n');
     check('image-service-durable-state-holds-no-plaintext-token', !serviceRecords.includes(serviceToken));
     // Multi-project grant exercised against this exact image, through native HTTPS/mTLS proxies.
@@ -409,6 +435,7 @@ async function cleanup() {
         const bounded = async (name, fn) => { let timer; try { await Promise.race([fn(), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('timeout')), 15000); })]); } catch { errors.push(name); } finally { clearTimeout(timer); } };
         await bounded('worker-close', async () => { await workerRun; });
         await bounded('fixture-close', async () => { await rig?.close(); });
+        await bounded('mcp-close', async () => { await mcpClient?.close(); await mcpTransport?.close(); });
         await bounded('pair-stop', async () => { await pair?.stop(); });
         const teardown = (args) => docker(args, { cleanup: true, allowFailure: true });
         let containerCount = 'unknown', networkCount = 'unknown';
@@ -441,7 +468,7 @@ async function cleanup() {
 // One finally owns teardown. The main path cannot launch more work after a stop.
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { processes.stop(); workerAbort?.abort(); });
 try { await main(); } catch (error) {
-    emit(processes.stopping ? 'interrupted' : 'failed', { code: error.code ?? error.message, ...(error.code === 'ERR_ASSERTION' ? { assertion: error.message.slice(0, 300) } : {}), passed: checks.length, realHappyAuth: false });
+    emit(processes.stopping ? 'interrupted' : 'failed', { code: error.code ?? error.message, detail: error instanceof Error ? error.message.replace(/hsvc1\.[A-Za-z0-9_.-]+|Bearer\s+[^\s"']+/gi, '[redacted]') : undefined, ...(error.code === 'ERR_ASSERTION' ? { assertion: error.message.slice(0, 300) } : {}), passed: checks.length, realHappyAuth: false });
     const sanitize = text => text.replace(/-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----/g, '[omitted]').replace(/Bearer\s+[^\s"']+/gi, 'Bearer [omitted]').replace(/HappyProof\s+[^\s"']+/g, 'HappyProof [omitted]');
     if (!processes.stopping && existsSync(join(directory, 'last-command.log'))) emit('diagnostic', { tail: sanitize(readFileSync(join(directory, 'last-command.log'), 'utf8')).slice(-1800) });
     for (const name of processes.stopping ? [] : created) {

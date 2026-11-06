@@ -1,0 +1,15 @@
+{
+  "serviceTokens": {
+    "clients": [
+      {
+        "id": "dot_service",
+        "userID": "happy_user_id",
+        "name": "Dot MCP service",
+        "generation": "identity_v1"
+      }
+    ]
+  },
+  "mcp": {
+    "mode": "service-token-v1"
+  }
+}

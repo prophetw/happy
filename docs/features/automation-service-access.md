@@ -81,7 +81,9 @@
 - 保存业务任务与 `grantID / requestID / taskID / sessionID / cursor / turnID` 的映射，所有修改操作先持久化 requestID。
 - 4090Wsl2 受信 worker、机器和 relay 可用。worker 仅主动出站，业务方不需要访问 4090 的入站端口。
 
-公开接口契约：[线上 OpenAPI](https://szsp.suitbim.com.cn:7100/happy-control/v1/openapi.json)、[仓库 OpenAPI](../api/automation-control.openapi.json)。公开 `GET /compatibility` 应宣告 `serviceTokens.protocol=1`。当前部署没有启用 HTTP MCP/OAuth；服务令牌可直接调用 REST，不能把它当 OAuth token 填进 MCP 就认定接通。WorkBuddy 等平台若不能自定义 HTTP 鉴权，需要由其受支持的后端插件或连接器适配；不是给一个 URL 就自动注册完成。
+公开接口契约：[线上 OpenAPI](https://szsp.suitbim.com.cn:7100/happy-control/v1/openapi.json)、[仓库 OpenAPI](../api/automation-control.openapi.json)。公开 `GET /compatibility` 应宣告 `serviceTokens.protocol=1`。当前部署已于2026-11-05启用 `service-token-v1` MCP，真实双跳反代、storedToken、只读及完整任务/取消/撤权联调通过；证据见仓库 `.e2e-artifacts/mcp-live-20261105T111014Z/`。
+
+代码同时支持显式 `service-token-v1` HTTP MCP 模式：在 host 已有 `serviceTokens` 配置后加入 `mcp: { "mode": "service-token-v1" }`，客户端连接同一 origin 的 `/happy-control/mcp`。Dot 的「MCP 工具」面板可使用「Happy Control 配置示例」，预设 JSON 只保存 URL。宿主声明 `capabilities.storedToken=1` 时，首选在掩码字段填写 Token 本身（不含 `Bearer` 前缀），通过加密 `testloop-mcp-connections` RPC 传递 save `token` 字符串或明确清除时的 `null`，由宿主使用 workspace 密钥加密保存；`bearer_token_env_var: "HAPPY_CONTROL_SERVICE_TOKEN"` 仍可作为环境变量/secret provider 注入的可选兼容方式。MCP 与 REST 共用同一 grant、项目/机器/方法/会话范围和撤销/到期语义，但服务令牌不是 OAuth JWT，不能用于原 OAuth MCP。真实宿主支持、真实加密和线上反代已于2026-11-05完成专用范围联调；撤权后访问拒绝，测试凭据已清理。
 
 ### 调用顺序与接口速查
 

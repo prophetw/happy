@@ -4,11 +4,11 @@
 
 目标是让获授权的云端助手调用 REST，CLI 仅保留为内部适配。开发分支 `clever-ocean`，worktree `/home/dev/code/happy/.dev/worktree/clever-ocean`。2026-11-04已获准把固定快照试部署到99.55，并热加载99.57新路径；仅使用24小时tmpfs内部TLS，client/worker登记为空。没有真实Happy登录/grant、worker/daemon更新或MCP注册。当前服务器结果及截止清理见本文末节和 `deploy/automation/site-99-55/validation.trial-2026-11-04.json`；早期本地fixture只证明模拟边界。
 
-## 信任结构与源码（完整接入设计，HTTP MCP可选且当前未启用）
+## 信任结构与源码（HTTP MCP 可选，支持 OAuth 或 service-token-v1）
 
 ```text
-云端助手 → HTTP MCP（外部 OAuth 身份验证、固定工具/身份映射）
-  → ProofClient（控制主机加密 secret provider）
+云端助手 → HTTP MCP（外部 OAuth，或显式 service-token-v1 服务令牌）
+  → ProofClient 或每请求 ServiceTokenClient
   → 同域 /happy-control/v1 REST 控制进程
       独立连接、批准绑定、scope/expiry/revoke、幂等 intent
   ← 用户机器的 worker 出站 pull / live check / result
@@ -77,7 +77,7 @@ Claude Code 和 Codex 使用 Happy 选择器读取的 `machine.claudeModels/code
 
 ## 独立助手连接协议
 
-内部 REST 使用 Node Ed25519 的持有证明，不签发 Bearer/refresh token。外部 HTTP MCP 提供独立 OAuth resource-server 适配，授权服务器 AS 必须由已有受控服务提供；不是 Happy 账号 OAuth，也不自行实现发证平台。客户端、worker 的公钥由受控注册表预置，私钥由平台/用户主机的 secret provider 托管。库不会隐式发现或创建密钥；生产 launcher 仅在显式配置后从安全 provider 获取 signer。本次只读取 fixture 临时资料，没有读取真实认证材料。
+签名 REST 通道使用 Node Ed25519 的持有证明，不签发 OAuth Bearer/refresh token。外部 HTTP MCP 可保留独立 OAuth resource-server 适配（AS 必须由已有受控服务提供），也可显式启用 `service-token-v1` 模式，直接复用同一服务令牌与 grant/scope；两种模式都不使用 Happy 全账号 Bearer 执行任务。签名客户端、worker 的公钥由受控注册表预置，私钥由平台/用户主机的 secret provider 托管。库不会隐式发现或创建密钥；OAuth MCP 仅在显式配置后从安全 provider 获取 signer，service-token MCP 不需要签名私钥或 OAuth AS。
 
 1. 已注册的 connector 使用 `POST /connections` 申请固定 worker/machine/project、方法、既有会话 ID 和到期时间。此时没有执行权限。
 2. 用户在 Happy 的“账号 → 助手连接”打开 connection ID，页面展示专用 `happy:///automation?connection=<ID>` 二维码；ID 是非秘密标识，不是兑换凭据。
@@ -104,7 +104,7 @@ Owner 批准接口与 automation API 的认证不同：前者仅通过现有 Hap
 
 2026-11-04经本人授权，新REST和Web已部署99.55/99.57，沿用现有4090 worker。入口 `https://szsp.suitbim.com.cn:7100/happy/settings/automation-service`，可选“后端联调测试”和 `automation-test`；当前登记不产生grant。52项新镜像/Nginx隔离检查及40项线上匿名浏览器检查通过；本人登录、明确批准、一次性交付、真实接收后端任务及撤销验收尚未执行。未重启relay、57 Nginx或worker/daemon；未发布原生手机页或配置MCP。最新依据为 `deploy/automation/site-99-55/validation.service-token-live-2026-11-04.json`。
 
-此模式供第三方后端直接调用 REST，不要求该后端持有 Happy 账号凭据、SSH 或签名私钥。它是新增的可撤销 bearer 鉴权：持有令牌即能使用其已批准范围。现有 HappyProof、账号登录、worker proof、relay 密文和 daemon 控制内核不变；HTTP MCP 仍使用原 OAuth 适配，不能直接把此令牌填入 MCP 就宣称已接通。
+此模式供第三方后端直接调用 REST，也可在控制端显式启用 `mcp: { "mode": "service-token-v1" }` 后连接 `/happy-control/mcp`。它不要求后端持有 Happy 账号凭据、SSH 或签名私钥。持有令牌即能使用其已批准范围；现有 HappyProof、账号登录、worker proof、relay 密文和 daemon 控制内核不变。OAuth MCP 与 service-token MCP 是两种独立配置，服务令牌不是 OAuth JWT，也不会被交给 OAuth verifier。
 
 ### 显式配置与有限范围
 
@@ -164,7 +164,7 @@ canonical path绑定不等于inode固定或OS文件沙箱；同一路径下内�
 
 ### 后端调用与停止语义
 
-后端将专用令牌仅注入 `Authorization` 请求头，调用原 `/happy-control/v1` 的 machines/sessions/tasks/messages/status/events/result/cancel/requests 路由；不必另加 grantID，服务端从令牌定位唯一批准连接。`GET /connections/{id}` 仅可查询自身连接，不能枚举同服务的其他 grant。服务令牌不能用于 owner、原连接申请、worker 或 OAuth/MCP 认证，也不会被转发给账号 relay 验证器。
+后端将专用令牌仅注入 `Authorization` 请求头，调用原 `/happy-control/v1` 的 machines/projects/sessions/tasks/messages/status/events/result/cancel/requests 路由；不必另加 grantID，服务端从令牌定位唯一批准连接。`GET /connections/{id}` 仅可查询自身连接，不能枚举同服务的其他 grant。服务令牌不能用于 owner、原连接申请、worker 或 OAuth MCP 认证，也不会被转发给账号 relay 验证器；只有显式配置的 `service-token-v1` MCP 入口接受它。
 
 最小客户端函数在 `packages/happy-agent/examples/service-token-backend.mjs`，由应用注入 `getToken()`；不自读账号认证文件、不含真实凭据、不启动服务。凭据读取前检查固定 HTTPS origin 和规范化后的 REST 路径，禁止编码目录穿越/重定向；provider 错误固定返回 `SERVICE_CREDENTIAL_UNAVAILABLE, dispatch:not_sent`。网络派发后失败返回 `unknown + 原 requestID`，不自动重发。使用示意（域名、ID均为非真实示例；`secretProvider`由接入方实现）：
 
@@ -283,15 +283,15 @@ pnpm exec vitest run sources/auth/automationApproval.test.ts sources/auth/automa
 `happy-agent/automation` 是无 CLI parse 副作用的库入口，导出：
 
 - `createGateway(options)`：返回 Fastify app，不自动 listen；传入固定主 origin、可选 `additionalBrowserOrigins` 精确白名单、非秘密注册表、受限存储目录、owner verifier 和脱敏 audit sink。单进程文件存储不可用于多副本网关。
-- `ProofClient(baseURL, identity, actor)`：identity 由宿主 secret provider 提供 signer（兼容既有 KeyObject）；不从工具参数/URL 取密钥。正式只接受 HTTPS，loopback 例外须显式仅用于 fixture。
+- `ProofClient(baseURL, identity, actor)`：identity 由宿主 secret provider 提供 signer（兼容既有 KeyObject）；不从工具参数/URL 取密钥。`ServiceTokenClient(baseURL, token)` 是每请求 bearer 适配，只在固定 REST origin 转发已认证服务令牌。两者实现同一 `ControlClient`，正式只接受 HTTPS，loopback 例外须显式仅用于 fixture。
 - `createDaemonTransport(bindings)`、`HTTPWorkerRunner`：daemon 自己提供既有 token、machine、已知记录密钥和原 control callback。不会导出凭据到网关。
 - `createControlMcp(client, grantProvider)` / `connectControlStdio()`：注册 SDK MCP 工具，grantProvider 由宿主保存已批准的非秘密连接 ID。
 
 `startDaemon({automation})` 是显式受信 bootstrap 接点；默认调用不启用 worker。bootstrap 先验证实际 Happy owner/machine 和 dataKey 模式，再启动出站 runner；正常退出会 abort runner。操作方需将它接入自己的 secret provider/服务启动配置，不能把私钥放命令行、普通配置文件或日志。专用生产入口使用 existingOnly 模式；bundle 替换清理后以75退出，交由 Restart=on-failure 的 supervisor 按原配置重启，不自动交接成普通 daemon。状态/lock 残留必须核验原进程与锁后处理，不能称崩溃后自动恢复。
 
-MCP 固定工具：happy_machines、happy_sessions、happy_create_task、happy_send、happy_status、happy_events、happy_result、happy_cancel、happy_request_status、happy_request_connection。前九项通过 grantProvider 选择当前批准连接；最后一项只申请、不能批准。SDK 工具发现/调用已有 InMemoryTransport contract test。没有任意 fetch、shell、URL、RPC 或自动批准工具。
+MCP 固定工具：happy_machines、happy_projects、happy_sessions、happy_create_task、happy_options、happy_send、happy_status、happy_events、happy_result、happy_cancel、happy_request_status，以及签名客户端可用的 happy_request_connection。前十一项通过 grantProvider 选择当前批准连接；`happy_projects` 只列当前 grant 项目，`happy_options` 发现已批准启动项；连接申请只申请、不能批准。service-token MCP 不注册连接申请工具。SDK 工具发现/调用已有 InMemoryTransport 与真实 HTTP contract test。没有任意 fetch、shell、URL、RPC 或自动批准工具。
 
-现有 stdio factory 与新增 HTTP MCP transport 均可供平台适配。实际 dot 平台没有在本会话暴露任意自定义 MCP/connector 注册工具，平台注册能力仍 blocked；不能用通用 Codex 支持 HTTP MCP 的文档证明 dot 已支持。替代方案是支持受管 stdio/HTTP MCP 的外部客户端，或由平台方提供已支持 connector 注册通道。写完代码不等于本助手已有工具。
+现有 stdio factory 与 HTTP MCP transport 均可供平台适配。App 的 Dot「MCP 工具」面板提供通用 Streamable HTTP/stdio 配置及 Happy Control 预设，通过加密 `testloop-mcp-connections` RPC 交给 TestLoop 宿主；宿主声明 `capabilities.storedToken=1` 时首选掩码 Token 输入与 save RPC 的 `token` 字段，由宿主以 workspace 密钥加密保存，`bearer_token_env_var` 仅作可选兼容。真实宿主的服务注册、加密保存/secret 注入和工具调用仍需单独验收；代码与隔离 fixture 不等于真实 Dot 已接通，也不证明真实加密。
 
 建议控制进程运行在用户控制的 HTTPS 入口后，通过新 /happy-control 路由与 /happy 静态页面、/home-relay 并存；worker 只需出站 HTTPS。反向代理、证书、7100 端口可达性和平台网络规则仍待实地核验。现有 daemon 的本地 control HTTP 不应公开。
 
@@ -326,9 +326,29 @@ node packages/happy-cli/bin/happy-control-worker.mjs --config /etc/happy-control
 
 非秘密配置与服务/反代样例在 `deploy/automation/`；99.55 site派生host单元已安装试运行，通用worker/MCP样例未应用。配置文件要求0600，JSON只含公钥/ID/路径/refs，禁止放private key/token/master key。实际99.55系统与OS操作用户、短期TLS权限已核验；4090 worker、持久加密credential provider和LoadCredentialEncrypted仍待安全通道配置及验收。
 
-## HTTP MCP 与 OAuth 注册契约
+## HTTP MCP 与认证注册契约
 
 `POST /happy-control/mcp` 使用 SDK 1.29.0 Streamable HTTP，逐请求创建独立 server/transport；无共享可变 grant getter、无跨租户 MCP session、无工具通知订阅持久授权。GET/DELETE 由 SDK stateless 语义处理。固定工具输入输出仍调用原有 REST adapter。
+
+### service-token-v1 模式
+
+在已有 `serviceTokens` 的 host 配置中加入 `mcp: { "mode": "service-token-v1" }` 即可显式启用，完整非秘密片段见 `deploy/automation/service-token-mcp.host.fragment.json.example`。MCP 与 REST URL 从同源 `origin` 派生；此模式不需要 OAuth、binding、grantID 或签名 secrets。未启用 `serviceTokens` 时配置拒绝启动。
+
+每个 MCP HTTP 请求都通过 gateway 内同一个 `ServiceTokens.authenticate` 验证 `Bearer hsvc1...`，然后创建独立 `ServiceTokenClient` 调回原 REST。工具调用仍执行 grant、方法、项目、会话和 worker 检查；撤销、到期、登记变化或令牌损坏会阻断后续请求。该分支不注册 `happy_request_connection`，不发布 OAuth protected-resource metadata，也不返回虚构的 OAuth challenge。
+
+Dot 的 App 面板可选择「Happy Control 配置示例」，保存的 JSON 只有 MCP URL。宿主声明 `capabilities.storedToken=1` 时，首选在掩码 `MCP Token` 字段填写 Token 本身（不含 `Bearer` 前缀），通过加密 `testloop-mcp-connections` RPC 的 save `token` 字符串交给 TestLoop 宿主，由宿主使用 workspace 密钥加密保存；编辑时留空保留旧 Token，明确清除则传 `token: null`。`bearer_token_env_var: "HAPPY_CONTROL_SERVICE_TOKEN"` 是可选兼容方式，由宿主环境/secret provider 注入。不同项目范围继续使用不同服务 grant；MCP 不扩大原授权。隔离 fixture 只验证 RPC 形状与脱敏，不证明真实加密或线上接通。
+
+2026-11-05已完成真实专用联调：55控制镜像`sha256:7a8f1983655a7ca4fe93f3f60a19911aa1283f05a448f88e04441dbbe2d0fb42`成对部署，57持久`/etc/happy-control-proxy/route.conf`增加精确MCP路由并由TLS ensure保持；Relay和4090 worker未改。原生容器fixture84项通过，公网匿名MCP 401、metadata 404、异Origin 403。真实TestLoop storedToken、只读、create/send/status/events/result、取消stopped和撤权拒绝均通过；测试连接、Dot绑定和加密Token已清理。Dot多步回复超时已在TestLoop单独修复并部署回归，详见其`.e2e-artifacts/mcp-timeout-20261105T135744Z/`。Happy证据位于本仓库`.e2e-artifacts/mcp-live-20261105T111014Z/`。
+
+### MCP Skills 操作指南
+
+Happy 使用官方 `@modelcontextprotocol/server@2.4.0` 的 SEP-2640 SkillsExtension 发布 `packages/happy-agent/skills/happy-control/SKILL.md`，URI 为 `skill://happy-control/SKILL.md`。catalog 在 host 启动时严格加载一次，OAuth/service-token 的每个 stateless server 在 connect 前复用 attach；npm 包和 control 镜像显式包含该文件，不能依赖运行时下载或写入。
+
+指南覆盖真实连接/项目/机器发现、create/send 分离、稳定 requestID、原 ID 回查、turnID/cursor、取消实停、权限与秘密边界、长任务异步跟踪及业务未验收。TestLoop 只对当前 Dot 显式绑定且启用的服务发现 Skills，使用官方 SkillsClient 校验 URI、大小、SHA-256 与 frontmatter；dynamic/未验证或含凭据的正文在模型启动前拒绝。验证后的正文与摘要封存到本轮 context.mcpSkills 和 inputDigest，prompt/invocationDigest 同步绑定；恢复及 optionsDiscovery 不重新读取或升级 Skill，空快照也不重复请求。Skill 不增加工具、grant、项目或模型权限。
+
+2026-11-06真实验收：Happy 控制镜像`sha256:2657e5fb4359262d7c3e5526063204337f51f0b6b2848d025435f1bd3b1a2132`已部署，86项原生镜像检查及23项协议/权限测试通过；TestLoop 使用`dots-mcp-skills-20261106T000033Z`，快照32项检查通过。真实Dot轮次`21d31c06-bfb8-4a9b-9f90-12d46e3d4228`为applied，Skill digest与打包文件一致、prompt digest正确、happy_projects实际完成，未创建业务任务。专用grant撤权后访问拒绝，测试连接、Dot绑定及加密Token已清理。证据见TestLoop `.e2e-artifacts/mcp-skills-20261106T000033Z/`。
+
+### OAuth 模式
 
 `GET /.well-known/oauth-protected-resource/happy-control/mcp` 与 401 WWW-Authenticate 发布受保护资源元数据。`oauthVerifier` 只验证可信 AS 的 JWT access token：固定 HTTPS issuer/JWKS（同 origin、拒绝重定向）、固定 audience=完整 MCP resource、算法白名单、exp/iat、最多15分钟 lifetime、`happy:control`、subject/tenant/client_id 或 azp。**它不提供 AS、OAuth 登录、PKCE、动态 client registration、refresh 或 token 颁发/撤销端点。** 上线需既有标准 AS 提供这些能力并核验平台接受的注册/redirect URI/resource 协商，不能称 OAuth 集成已验。
 
@@ -338,7 +358,7 @@ node packages/happy-cli/bin/happy-control-worker.mjs --config /etc/happy-control
 
 公钥 pin 改变需重新批准；口令/provider轮换且公钥不变可保留原 grant；OAuth subject/tenant/client 变更需重新批准。Happy grant 撤销立即阻断后续工具/内容返回；AS JWT 离线验证不能立即发现 AS 单独撤销，最长受15分钟寿命约束。需要更短即时撤销时由 AS 提供 introspection，并以同一 TokenVerifier 接口适配，不宣称本版已有 introspection。平台应安全托管 OAuth 凭据；不要求用户在聊天粘贴任何 credential。
 
-`deploy/automation/mcp-registration.json.example` 是注册契约，不是 dot 已接受的配置格式。官方 OpenAI 文档说明通用 Codex 有 Streamable HTTP MCP/OAuth 配置，但不证明当前 dot 的账户/工作区权限：[官方 MCP 文档](https://learn.chatgpt.com/docs/extend/mcp#streamable-http-servers)。当前会话无自定义工具注册 API，真实工具注册 blocked；本次没有配置本助手连接。
+`deploy/automation/mcp-registration.json.example` 是 service-token-v1 的 Dot 注册契约示例，包含完整 MCP URL、`delivery: "storedToken"` 和固定工具清单，不包含真实令牌或环境变量引用。OAuth 模式仍按上面的外部 AS、binding 和 protected-resource 契约配置。真实 TestLoop 宿主的支持、加密 RPC、workspace 密钥保存和工具调用必须单独验收，不能把示例或本仓库 fixture 当作线上已注册或真实加密已验证。
 
 手机与Web的批准页面在本仓库 `packages/happy-app/sources/`；Expo `app.config.js` 当前 runtime=21，个人preview目标为 owner `prophetwayen`、项目 `1d018bd8-34db-4b57-a0a9-61f24671153e`、channel/environment `preview`、iOS bundle `com.prophetwayen.happy.preview`。app.config.js 缺少个人覆盖时仍会回到上游默认；preview-store/submit 不能直接照搬，发布前须按 AGENTS.md 核验。本轮改动为JS页面与适配，没有新增原生模块；这不替代实际手机runtime/连通性验收。本次未执行Expo/native/OTA构建或发布。
 
@@ -402,7 +422,7 @@ Docker27.3.0、Compose2.27.3、systemd239与NGINX1.30.1的真实链路已验：m
 
 用户明确批准root-only持久TLS私钥及服务解锁材料（可包含明文）的例外，助手签名私钥仍加密PKCS8。55/57分别建立本机专用CA，互换公有根；内部leaf30天、每日续期/每分钟恢复，原24小时trial timers已撤。真实新链、剔旧根、两端各一次leaf轮换已验证；未来timer触发和整机重启尚未验证。root/主机被攻破可取得本机解锁能力，不能描述成所有secret静态加密。
 
-固定`happy-control-call`复用同一REST/MCP工具契约；受控Root wrapper仅通过既有SSH接收JSON，短时隔离容器装载签名器，完整路径/query送至原站新增REST路径。当前本助手已能以这条明确调用链发出真实签名REST请求；没有真实grant时被拒绝，未调用任务/会话操作。动态MCP平台注册仍不可用，不影响这条已有执行工具的等价REST接入；不能把它称为MCP已注册。
+固定`happy-control-call`复用同一REST/MCP工具契约；受控Root wrapper仅通过既有SSH接收JSON，短时隔离容器装载签名器，完整路径/query送至原站新增REST路径。当前本助手已能以这条明确调用链发出真实签名REST请求；没有真实grant时被拒绝，未调用任务/会话操作。当时动态MCP平台注册未配置，不影响这条已有执行工具的等价REST接入；2026-11-05的真实Dot MCP联调另见上节记录。
 
 新的caller角色配置见`docs/api/automation-production.config.schema.json`：显式endpoint、公钥pin、identityRef、grantID或受控connectionScope，以及加密provider引用。命令输入不含URL、私钥或任意shell。`happy_request_connection`只提交预置scope；task create/send仍各自持久幂等，unknown后查同一requestID。
 

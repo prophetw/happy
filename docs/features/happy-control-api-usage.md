@@ -166,7 +166,9 @@ curl -sS "$BASE/compatibility"
 
 - `maxGrantMs = 2592000000` 即 30 天；
 - `projectScopes = 1` 表示支持多项目授权；
-- `httpMcp = null` 表示当前部署未启用 HTTP MCP/OAuth，服务令牌只能直接调用 REST。
+- `httpMcp = "streamable-http"` 表示当前部署已启用 HTTP MCP；2026-11-05真实 service-token MCP 联调已通过，服务令牌仍可调用同一 grant 下的 REST。
+
+仓库内 Dot「MCP 工具」面板的 Happy Control 预设只包含 `url`。宿主声明 `capabilities.storedToken=1` 时，首选在掩码 `MCP Token` 字段填写 Token 本身（不含 `Bearer` 前缀），通过加密 `testloop-mcp-connections` RPC 传递 save `token` 字符串，明确清除已保存 Token 时传 `null`；宿主使用 workspace 密钥加密保存。JSON 中的 `bearer_token_env_var` 是可选兼容方式，用于引用宿主环境变量/secret provider，不是首选交付方式。隔离 fixture 不验证真实加密；真实 TestLoop storedToken、双跳 MCP、专用任务生命周期及撤权已于2026-11-05验收，详见 `.e2e-artifacts/mcp-live-20261105T111014Z/`。
 
 ### 4.2 核对自身授权
 
@@ -634,7 +636,7 @@ curl -sS "$BASE/requests/job_1001_create" \
 1. 令牌只注入 `Authorization`，运行时从 secret provider 读取；不要写入源码、配置文件、URL、聊天或日志。
 2. 关闭对 `Authorization`、请求/响应正文、错误原文的普通日志与 APM 捕获。
 3. 固定 HTTPS origin，保留证书校验，禁止重定向到其他站点。
-4. 不把服务令牌填进 OAuth/MCP 字段；当前部署 `httpMcp=null`，不能把 REST 令牌当 OAuth token 使用。
+4. 服务令牌不是 OAuth JWT，不要填进 OAuth MCP 字段。它只能用于 REST 或显式启用的 `service-token-v1` MCP；当前部署已启用该模式并完成专用联调，但仍不代表任意第三方平台已注册。
 5. 撤销和永久删除连接都只阻断后续访问，**不会自动停止已经运行的任务**。需要停止时，先在仍有效的授权下请求取消并确认 `stopped`，再撤销；若怀疑凭据泄漏，优先撤销，再在 Happy 中处理运行中的任务。
 6. 项目范围不是 OS 文件沙箱；已获准的 agent 仍使用其原有系统权限和权限确认流程。
 7. 业务后端应保存 `grantID / requestID / taskID / sessionID / cursor / turnID` 的映射，避免跨授权猜测或复用 ID。

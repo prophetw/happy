@@ -9,6 +9,8 @@
 !packages/happy-agent/tsconfig.json
 !packages/happy-agent/src/
 !packages/happy-agent/src/**
+!packages/happy-agent/skills/
+!packages/happy-agent/skills/**
 !packages/happy-agent/bin/
 !packages/happy-agent/bin/happy-control.mjs
 !packages/happy-agent/bin/happy-control-call.mjs

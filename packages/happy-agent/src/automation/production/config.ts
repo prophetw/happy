@@ -15,6 +15,9 @@ const provider = z.object({ type: z.literal('encrypted-pkcs8-credentials'), cred
     keys: z.record(identifier, z.object({ encryptedPKCS8: absolute, passphraseCredential: identifier }).strict()) }).strict();
 const oauth = z.object({ issuer: https, jwksURL: https, resource: https.refine(s => new URL(s).pathname === '/happy-control/mcp'), scope: z.literal('happy:control'),
     tenantClaim: identifier.default('tenant_id'), algorithms: z.array(z.enum(['RS256', 'ES256', 'EdDSA'])).min(1).max(3) }).strict();
+const oauthMcp = z.object({ oauth, controlURL: https.refine(s => new URL(s).pathname === '/happy-control/v1'),
+    bindings: z.array(z.object({ principal: externalIdentitySchema, clientID: identifier, identityRef: identifier, grantID: identifier.optional(), scope: scopeSchema }).strict()).min(1) }).strict();
+const serviceTokenMcp = z.object({ mode: z.literal('service-token-v1') }).strict();
 export const hostConfigSchema = z.object({ version: z.literal(1), role: z.literal('host'),
     listen: z.object({ host: z.literal('127.0.0.1'), port: z.number().int().min(1024).max(65535) }).strict(),
     origin: https.refine(s => new URL(s).origin === s), additionalBrowserOrigins: additionalBrowserOriginsSchema, relayURL: https, stateDirectory: absolute,
@@ -24,10 +27,12 @@ export const hostConfigSchema = z.object({ version: z.literal(1), role: z.litera
     serviceTokens: serviceTokensConfigSchema.optional(),
     ipRateLimit: z.number().int().min(1000).max(100000).default(12000),
     secrets: provider.optional(),
-    mcp: z.object({ oauth, controlURL: https.refine(s => new URL(s).pathname === '/happy-control/v1'),
-        bindings: z.array(z.object({ principal: externalIdentitySchema, clientID: identifier, identityRef: identifier, grantID: identifier.optional(), scope: scopeSchema }).strict()).min(1) }).strict().optional(),
+    mcp: z.union([oauthMcp, serviceTokenMcp]).optional(),
 }).strict().superRefine((c, ctx) => {
-    if (c.mcp && (!c.secrets || new URL(c.mcp.oauth.resource).origin !== c.origin || new URL(c.mcp.controlURL).origin !== c.origin)) ctx.addIssue({ code: 'custom', message: 'MCP requires explicit provider and same-origin control/resource' });
+    if (c.mcp && 'oauth' in c.mcp && (!c.secrets || new URL(c.mcp.oauth.resource).origin !== c.origin || new URL(c.mcp.controlURL).origin !== c.origin))
+        ctx.addIssue({ code: 'custom', message: 'OAuth MCP requires explicit provider and same-origin control/resource' });
+    if (c.mcp && 'mode' in c.mcp && !c.serviceTokens)
+        ctx.addIssue({ code: 'custom', message: 'Service-token MCP requires serviceTokens' });
 });
 export const workerConfigSchema = z.object({ version: z.literal(1), role: z.literal('worker'), endpoint: https.refine(s => new URL(s).pathname === '/happy-control/v1'),
     relayURL: https, happyHomeDirectory: absolute, identityRef: identifier, registration: workerRegistrationSchema, secrets: provider }).strict();

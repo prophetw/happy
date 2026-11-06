@@ -4,7 +4,7 @@ export { EncryptedCredentialProvider } from './secrets';
 export type { SecretProvider } from './secrets';
 export { prepareHost, startHost } from './host';
 export { mountHttpMcp } from './httpMcp';
-export type { McpBinding, HttpMcpOptions } from './httpMcp';
+export type { McpBinding, HttpMcpOptions, OAuthHttpMcpOptions, ServiceTokenHttpMcpOptions } from './httpMcp';
 export { oauthVerifier } from './oauth';
 export type { TokenVerifier, OAuthConfig } from './oauth';
 export { productionMain } from './main';

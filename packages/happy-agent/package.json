@@ -47,6 +47,7 @@
   "files": [
     "dist",
     "bin",
+    "skills",
     "package.json"
   ],
   "scripts": {
@@ -69,6 +70,7 @@
     "fastify": "^5.6.2",
     "zod": "^4.0.0",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "jose": "6.2.2"
   },
   "devDependencies": {

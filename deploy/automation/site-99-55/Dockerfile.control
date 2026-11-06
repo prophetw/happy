@@ -18,6 +18,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --filter happy-agent... --co
 COPY packages/happy-wire/src packages/happy-wire/src
 COPY packages/happy-wire/tsconfig.json packages/happy-wire/
 COPY packages/happy-agent/src packages/happy-agent/src
+COPY packages/happy-agent/skills packages/happy-agent/skills
 COPY packages/happy-agent/tsconfig.json packages/happy-agent/
 COPY packages/happy-agent/bin/happy-control.mjs packages/happy-agent/bin/happy-control-call.mjs packages/happy-agent/bin/happy-agent.mjs packages/happy-agent/bin/
 RUN pnpm --filter @slopus/happy-wire build && pnpm --filter happy-agent build
@@ -25,7 +26,7 @@ RUN pnpm --filter @slopus/happy-wire build && pnpm --filter happy-agent build
 # Do not use legacy deploy: it re-resolves metadata even after a frozen install.
 RUN mkdir -p /out/packages/happy-agent /out/packages/happy-wire \
     && cp package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc /out/ \
-    && cp -a packages/happy-agent/dist packages/happy-agent/bin packages/happy-agent/package.json /out/packages/happy-agent/ \
+    && cp -a packages/happy-agent/dist packages/happy-agent/bin packages/happy-agent/skills packages/happy-agent/package.json /out/packages/happy-agent/ \
     && cp -a packages/happy-wire/dist packages/happy-wire/package.json /out/packages/happy-wire/ \
     && cd /out \
     && pnpm install --prod --offline --frozen-lockfile --ignore-scripts --filter happy-agent... --config.node-linker=isolated --config.shamefully-hoist=false
