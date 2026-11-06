@@ -131,6 +131,7 @@ export function testloopWorkStatus(task: { status: string; needsReview: boolean;
     if (task.goalPhase === 'reviewing') return '独立验收中';
     if (task.goalPhase === 'repairing') return '返工中';
     const labels: Record<string, string> = { queued: '等待执行', preparing: '准备中', running: '执行中', paused: '已暂停',
+        creating: '创建执行会话', created: '会话已创建，尚未交办', canceling: '正在取消',
         awaiting_user: '等待你的答复', awaiting_approval: '等待审批', blocked: '遇到阻塞', failed: '执行失败',
         completed: '已完成', succeeded: '已完成', canceled: '已取消', scheduled: '待执行', deferred: '已延后',
         waiting_event: '等待事件', unscheduled: '没有后续安排' };

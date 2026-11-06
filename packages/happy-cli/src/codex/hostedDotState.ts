@@ -9,9 +9,9 @@ export const HostedDotConfig = z.strictObject({ version: z.literal(1), dotId: z.
     providerConfig: z.record(z.string(), z.union([z.string(), z.boolean()])).default({}), instruction: z.string().min(1),
     codexHome: z.string().startsWith('/'), environment: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).refine(s => !['CODEX_HOME', 'HOME', 'HAPPY_HOME_DIR', 'NODE_OPTIONS'].includes(s), 'reserved_environment')).default([]) });
 export type HostedDotConfig = z.infer<typeof HostedDotConfig>;
-const Input = z.object({ epoch: z.number().int().nonnegative().default(0), delivery: z.enum(['queue', 'steer']).default('queue'), seq: z.number().int().positive(), id: z.string(), text: z.string(),
+const Input = z.object({ epoch: z.number().int().nonnegative().default(0), delivery: z.enum(['queue', 'steer']).default('queue'), origin: z.enum(['user','task-result']).optional(), seq: z.number().int().positive().optional(), id: z.string(), text: z.string(),
     status: z.enum(['queued', 'dispatching', 'accepted', 'completed', 'interrupted', 'failed', 'unknown', 'rejected']),
-    turnId: z.string().optional(), beforeTurns: z.array(z.string()).optional(), error: z.string().optional() });
+    turnId: z.string().optional(), beforeTurns: z.array(z.string()).optional(), error: z.string().optional() }).refine(row => row.origin === 'task-result' || row.seq !== undefined, 'hosted_user_receipt_required');
 const State = z.object({ version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),
     threadId: z.string().nullable(), creating: z.boolean(), afterSeq: z.number().int().nonnegative(),
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
@@ -42,3 +42,7 @@ export function addOutput(state: HostedState, envelope: SessionEnvelope): void {
     const existing = state.outputs.find(o => o.localId === localId);
     if (!existing) state.outputs.push({ localId, envelope, sent: false });
 }
+
+export const HostedTaskGateway = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string(), servers: z.record(z.string().regex(/^happy_[A-Za-z0-9_-]+$/),
+    z.strictObject({ command: z.string().startsWith('/'), args: z.array(z.string()).max(16), startup_timeout_sec: z.literal(30), tool_timeout_sec: z.literal(30), required: z.literal(true), default_tools_approval_mode: z.literal('approve') })) });
+export const HostedTaskEvent = z.strictObject({ version: z.literal(1), id: z.string().regex(/^task-[a-f0-9]{64}$/), dotId: z.string().uuid(), sessionId: z.string(), epoch: z.number().int().nonnegative(), createdAt: z.string().datetime(), text: z.string().min(1).max(18000) });

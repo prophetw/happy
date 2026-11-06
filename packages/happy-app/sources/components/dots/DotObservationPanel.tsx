@@ -18,7 +18,7 @@ const states: Record<string, string> = { queued: '等待处理', planning: '理�
     blocked: '遇到阻塞', rejected: '已拒绝', proposed: '已提出，待确认', accepted: '已接受', superseded: '已被新提案替代',
     preparing: '准备执行', running: '执行中', paused: '已暂停', awaiting_user: '等待你的答复', awaiting_approval: '等待审批',
     succeeded: '已完成', failed: '执行失败', canceled: '已取消', executing: '执行中', reviewing: '独立验收中', repairing: '返工中',
-    canceling: '取消中', completed: '执行结束', observing: '等待执行回报', creating: '创建执行会话', sending: '发送交办', prepared: '准备派工' };
+    canceling: '取消中', completed: '执行结束', observing: '等待执行回报', creating: '创建执行会话', created: '会话已创建，尚未交办', sending: '发送交办', prepared: '准备派工' };
 function eventTitle(event: ObservationEvent) {
     if (event.kind === 'delivery') return `回报 · ${{ pending: '等待发送', accepted: '服务端已接收，待核对入库', stored_verified: '已核对入库', error: '发送错误' }[event.status] ?? event.status}`;
     if (event.kind === 'dot') return event.previousStatus ? '名称或职责已修改' : 'Dot 已创建';
@@ -111,7 +111,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
         {button('刷新观察台', () => { void load(initial); })}
         {busy && <ActivityIndicator />}
         {error && <Text accessibilityRole="alert" style={body}>{error}</Text>}
-        {nativeThreadId && <View style={{ gap: 5 }}><Text style={body}>持续对话试验 · 当前仅支持聊天</Text>
+        {nativeThreadId && <View style={{ gap: 5 }}><Text style={body}>持续会话模式</Text>
             <Text selectable style={muted}>Codex thread：{nativeThreadId}</Text>
             {mode === 'basis' && <Text style={muted}>本轮使用当前用户消息和原生会话历史；没有通过旧解释器筛选历史或注入长期记忆。输入与回复见左侧对话，运行详情可由宿主查询。</Text>}
         </View>}
