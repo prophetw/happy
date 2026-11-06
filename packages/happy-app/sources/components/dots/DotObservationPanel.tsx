@@ -104,18 +104,23 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
         {clipped(item.trigger)}<Text style={muted}>{date(item.createdAt)} · {states[item.status] ?? item.status}{item.memoryRevision ? ` · 带入第 ${item.memoryRevision} 版` : ''}</Text>
         {button(`检查第 ${item.seq} 轮`, () => turn(item.id))}
     </View>);
+    const nativeThreadId = storage.getState().sessions[dotSessionId]?.metadata?.codexThreadId;
     const detail = result && (result.action === 'turn' || result.action === 'memory' || result.action === 'work');
     return <View style={{ gap: 14 }}>
         <Text accessibilityRole="header" style={{ ...body, fontSize: 17, fontWeight: '600' }}>Dot 观察台 · {{ activity: '活动', memory: '记忆', basis: '本轮依据' }[mode]}</Text>
         {button('刷新观察台', () => { void load(initial); })}
         {busy && <ActivityIndicator />}
         {error && <Text accessibilityRole="alert" style={body}>{error}</Text>}
+        {nativeThreadId && <View style={{ gap: 5 }}><Text style={body}>持续对话试验 · 当前仅支持聊天</Text>
+            <Text selectable style={muted}>Codex thread：{nativeThreadId}</Text>
+            {mode === 'basis' && <Text style={muted}>本轮使用当前用户消息和原生会话历史；没有通过旧解释器筛选历史或注入长期记忆。输入与回复见左侧对话，运行详情可由宿主查询。</Text>}
+        </View>}
         {overview && <View style={{ gap: 5 }}>
             <Text style={muted}>创建于 {date(overview.dot.createdAt)}</Text>
             <Text style={body}>宿主：{{ healthy: '在线且心跳有效', unhealthy: '需要检查', stopped: '扫描器未运行' }[overview.host.status]} · Dot 连接：{presence === 'online' ? '在线' : '待确认'}</Text>
             <Text style={muted}>宿主心跳：{date(overview.host.heartbeatAt)} · 渠道最近读取成功：{date(overview.channel.lastSuccessAt)}</Text>
             {(overview.host.error || overview.channel.error) && <Text accessibilityRole="alert" style={body}>{overview.host.error || overview.channel.error}</Text>}
-            <Text style={body}>{overview.processing ? '正在处理对话' : '当前没有待处理对话'} · 共 {overview.taskTotal} 项工作</Text>
+            <Text style={body}>{nativeThreadId ? '对话进度以聊天区状态为准' : overview.processing ? '正在处理对话' : '当前没有待处理对话'} · 共 {overview.taskTotal} 项工作</Text>
             {overview.tasks.map(task => <Text key={task.id} style={muted}>{task.title} · {testloopWorkStatus(task)}</Text>)}
             {overview.memory && <Text style={muted}>记忆 {overview.memory.total} 项 · 有效 {overview.memory.counts.effective} · 待确认 {overview.memory.counts.unconfirmed} · 过期 {overview.memory.counts.expired} · 已忘记 {overview.memory.counts.deleted}</Text>}
             <Text style={muted}>快照读取于 {date(overview.asOf)}；连接中断时不代表远端执行已经停止。</Text>
@@ -151,7 +156,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 </>}
             </View>) : <><Text style={muted}>仅列出账本中保存的有效背景带入记录；带入不代表模型采纳。</Text>{listTurns(result.page.items)}</>}
         </>}
-        {result?.action === 'turns' && listTurns(result.page.items)}
+        {!nativeThreadId && result?.action === 'turns' && listTurns(result.page.items)}
         {result?.action === 'turn' && <>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{(['overview', 'history', 'memory', 'selection'] as const).map(section =>
                 <React.Fragment key={section}>{button({ overview: '轮次概览', history: '带入的历史消息', memory: '带入的记忆', selection: '记忆选择原因' }[section], () => {

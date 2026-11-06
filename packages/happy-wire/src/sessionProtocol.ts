@@ -22,6 +22,9 @@ export type SessionRole = z.infer<typeof sessionRoleSchema>;
 export const sessionTextEventSchema = z.object({
   t: z.literal('text'),
   text: z.string(),
+  /** Offset within the scoped codexItemId; absent for ordinary complete messages. */
+  textOffset: z.number().int().nonnegative().optional(),
+    textSnapshot: z.boolean().optional(),
   thinking: z.boolean().optional(),
 });
 

@@ -280,7 +280,7 @@ export class CodexAppServerClient {
         for (const id of ids) this.userInputResolvedHandler?.(String(id));
     }
 
-    constructor(sandboxConfig?: SandboxConfig) {
+    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; onNotification?: (method: string, params: any) => void; onExit?: () => void }) {
         this.sandboxConfig = sandboxConfig;
     }
 
@@ -672,8 +672,8 @@ export class CodexAppServerClient {
             );
         }
 
-        let command = 'codex';
-        let args = ['app-server', '--listen', 'stdio://'];
+        let command = this.host?.executable ?? 'codex';
+        let args = [...(this.host?.args ?? []), 'app-server', '--listen', 'stdio://'];
         this.sandboxEnabled = false;
 
         if (this.sandboxConfig?.enabled && process.platform !== 'win32') {
@@ -713,7 +713,8 @@ export class CodexAppServerClient {
         // Native child_process.spawn fails with ENOENT for .cmd shims (issues #980, #1016).
         const proc = crossSpawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
-            env,
+            env: { ...env, ...this.host?.env },
+            ...(this.host?.cwd ? { cwd: this.host.cwd } : {}),
             windowsHide: true,
         });
         this.process = proc;
@@ -730,6 +731,7 @@ export class CodexAppServerClient {
                 return;
             }
             this.connected = false;
+            this.host?.onExit?.();
             this.clearUserInputs();
             // Reject all pending requests
             for (const [id, req] of this.pending) {
@@ -849,7 +851,7 @@ export class CodexAppServerClient {
     }
 
     private buildThreadConfig(mcpServers?: Record<string, unknown>): Record<string, unknown> | null {
-        return mcpServers ? { mcp_servers: mcpServers } : null;
+        return this.host?.config || mcpServers ? { ...this.host?.config, ...(mcpServers ? { mcp_servers: mcpServers } : {}) } : null;
     }
 
     private rememberThreadDefaults(opts: {
@@ -886,7 +888,7 @@ export class CodexAppServerClient {
             sandbox: opts.sandbox ?? null,
             config: this.buildThreadConfig(opts.mcpServers),
             baseInstructions: null,
-            developerInstructions: null,
+            developerInstructions: this.host?.instructions ?? null,
             compactPrompt: null,
             includeApplyPatchTool: null,
             experimentalRawEvents: false,
@@ -925,7 +927,7 @@ export class CodexAppServerClient {
             sandbox: opts?.sandbox ?? defaults.sandbox ?? null,
             config: this.buildThreadConfig(opts?.mcpServers ?? defaults.mcpServers),
             baseInstructions: null,
-            developerInstructions: null,
+            developerInstructions: this.host?.instructions ?? null,
             persistExtendedHistory: true,
         };
 
@@ -962,7 +964,7 @@ export class CodexAppServerClient {
             sandbox: opts.sandbox ?? defaults.sandbox ?? null,
             config: this.buildThreadConfig(opts.mcpServers ?? defaults.mcpServers),
             baseInstructions: null,
-            developerInstructions: null,
+            developerInstructions: this.host?.instructions ?? null,
             ephemeral: false,
             threadSource: null,
         };
@@ -1636,6 +1638,7 @@ export class CodexAppServerClient {
     }
 
     private handleNotification(method: string, params: any): void {
+        this.host?.onNotification?.(method, params);
         if (method === 'serverRequest/resolved') {
             if (this.pendingUserInputIds.delete(params.requestId)) {
                 this.userInputResolvedHandler?.(String(params.requestId));

@@ -58,6 +58,8 @@ export type AgentEvent = z.infer<typeof agentEventSchema>;
 const sessionTextEventSchema = z.object({
     t: z.literal('text'),
     text: z.string(),
+    textOffset: z.number().int().nonnegative().optional(),
+    textSnapshot: z.boolean().optional(),
     thinking: z.boolean().optional(),
 });
 
@@ -598,6 +600,8 @@ export type NormalizedMessage = ({
      */
     claudeUuid?: string,
     codexItemId?: string,
+    textStreamOffset?: number,
+    textStreamSnapshot?: boolean,
     /**
      * Session-protocol turn id (Happy sessions only). Agent rows that share a
      * turn id belong to the same answer; a change of id is a turn boundary even
@@ -755,6 +759,8 @@ function normalizeSessionEnvelope(
             meta,
             claudeUuid: envelope.claudeUuid,
             codexItemId: envelope.codexItemId,
+            textStreamOffset: envelope.ev.textOffset,
+            textStreamSnapshot: envelope.ev.textSnapshot,
             usage: envelope.usage,
             turn: envelope.turn,
         } satisfies NormalizedMessage;

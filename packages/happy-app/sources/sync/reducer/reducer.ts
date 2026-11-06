@@ -134,6 +134,8 @@ type ReducerMessage = {
     meta?: MessageMeta;
     claudeUuid?: string;
     codexItemId?: string;
+    streamChunks?: Record<number, string>;
+    streamSnapshotLength?: number;
     pending?: boolean;
     sendError?: string;
     sortAt?: number;
@@ -928,6 +930,26 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             // Process text and thinking content (tool calls handled in Phase 2)
             for (let c of msg.content) {
                 if (c.type === 'text' || c.type === 'thinking') {
+                    // Hosted Codex deltas are one message per native item. Reconstruct by
+                    // offset so pagination/reconnect can deliver chunks out of order.
+                    if (c.type === 'text' && msg.codexItemId && msg.turn && msg.textStreamOffset !== undefined) {
+                        let existing = [...state.messages.values()].find(m => m.role === 'agent'
+                            && m.codexItemId === msg.codexItemId && m.turn === msg.turn && m.streamChunks);
+                        if (!existing) {
+                            const mid = allocateId();
+                            existing = { id: mid, realID: msg.id, role: 'agent', createdAt: msg.createdAt,
+                                text: '', tool: null, event: null, turn: msg.turn, codexItemId: msg.codexItemId, streamChunks: {} };
+                            state.messages.set(mid, existing);
+                        }
+                        if (msg.textStreamSnapshot) { existing.streamChunks = { 0: c.text }; existing.streamSnapshotLength = c.text.length; }
+                        else if (msg.textStreamOffset >= (existing.streamSnapshotLength ?? 0)) existing.streamChunks![msg.textStreamOffset] ??= c.text;
+                        let offset = 0, text = '';
+                        while (existing.streamChunks![offset] !== undefined && existing.streamChunks![offset].length > 0) {
+                            const chunk = existing.streamChunks![offset]; text += chunk; offset += chunk.length;
+                        }
+                        existing.text = text; existing.createdAt = Math.min(existing.createdAt, msg.createdAt);
+                        changed.add(existing.id); continue;
+                    }
                     let mid = allocateId();
                     const isThinking = c.type === 'thinking';
                     state.messages.set(mid, {

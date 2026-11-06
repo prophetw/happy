@@ -82,3 +82,11 @@ The app-server sends ~60 event types we ignore. Notable ones for future:
 
 - [Codex app-server README](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [experimental_resume broken — issue #4393](https://github.com/openai/codex/issues/4393)
+
+## Hosted Dot first-stage entry
+
+`packages/happy-cli/bin/happy-hosted-dot.mjs <config-path>` is an explicit, headless conversation-only host. It shares the App Server client, Happy encryption, RPC manager and session wire envelopes with the normal CLI. It does not register coding-session file RPCs or attach a terminal UI. TestLoop owns its lifecycle; the normal Happy daemon must not also supervise this process.
+
+The host owns one durable input/output journal and one pre-provisioned Happy session. Inputs are journaled before dispatch; uncertain dispatches are reconciled against native history, never blindly replayed. Stable output IDs and encrypted readback allow pending replies to be delivered after restart. Text deltas carry a scoped native item ID and offset; completed-item snapshots allow recent-page hydration without fetching every delta.
+
+The schema is exported in `hostedDotState.ts`. Configuration contains references and provider routing only; Happy token/session keys are read from the selected profile. Use a dedicated persistent Codex home without config.toml. Native tools are disabled; task and memory MCP integration is deferred. Existing CLI sessions keep their original default behavior.

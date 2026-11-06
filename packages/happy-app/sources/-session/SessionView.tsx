@@ -895,7 +895,7 @@ export function SessionViewLoaded({
     const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
     const flavor = composerSession?.metadata?.flavor;
     const isRig = isRigMetadata(session?.metadata);
-    const canAbort = !readTestloopDotsMetadata(session?.metadata) && rigCanAbort(session?.metadata);
+    const canAbort = (!readTestloopDotsMetadata(session?.metadata) || Boolean(session?.metadata?.codexThreadId)) && rigCanAbort(session?.metadata);
     const {
         availableModes,
         permissionMode,

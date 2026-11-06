@@ -857,6 +857,7 @@ const ChatListInternal = React.memo((props: {
                             styles.scrollButton,
                             pressed ? styles.scrollButtonPressed : styles.scrollButtonDefault
                         ]}
+                        accessibilityRole="button" accessibilityLabel="滚动到最新消息"
                         onPress={scrollToBottom}
                     >
                         <Octicons name="arrow-down" size={14} color={theme.colors.text} />
