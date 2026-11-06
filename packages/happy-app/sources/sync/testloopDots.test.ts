@@ -30,6 +30,32 @@ describe('TestLoop Dots directory protocol', () => {
         expect(() => TestloopDotsRequestSchema.parse({ ...request, requestId: 'not-an-id' })).toThrow();
     });
 
+    it('emits an edit command that only targets one Dot in the workspace', () => {
+        const update = { schemaVersion: 1 as const, requestId: otherRequest, action: 'update' as const,
+            dotId: dot.id, name: '新名称', instruction: '新职责' };
+        expect(JSON.parse(testloopDotsCommand(update).slice(6))).toEqual(update);
+        expect(() => TestloopDotsRequestSchema.parse({ ...update, dotId: undefined })).toThrow();
+        expect(() => TestloopDotsRequestSchema.parse({ ...update, name: 'x'.repeat(81) })).toThrow();
+        expect(() => TestloopDotsRequestSchema.parse({ ...update, serverUrl: 'http://other' })).toThrow();
+    });
+
+    it('emits strict clear and delete commands for one Dot without lifecycle overrides', () => {
+        for (const action of ['clear', 'delete'] as const) {
+            const scoped = { schemaVersion: 1 as const, requestId: otherRequest, action, dotId: dot.id };
+            expect(JSON.parse(testloopDotsCommand(scoped).slice(6))).toEqual(scoped);
+            expect(() => TestloopDotsRequestSchema.parse({ ...scoped, dotId: undefined })).toThrow();
+            expect(() => TestloopDotsRequestSchema.parse({ ...scoped, deleteSession: true })).toThrow();
+        }
+    });
+
+    it('applies an update receipt as the newer directory revision', () => {
+        const updated = { ...dot, name: '新名称', instruction: '新职责' };
+        const result = projectTestloopDotsMessages([user(), agent(snapshot()),
+            agent(snapshot({ revision: 2, requestId: otherRequest, dots: [updated] }), { id: 'agent-2', createdAt: 12 })], workspaceId);
+        expect(result.snapshot?.dots).toEqual([updated]);
+        expect(result.receipts[otherRequest].dots).toEqual([updated]);
+    });
+
     it('accepts a matching stored host receipt and resolves its request independently of a newer list', () => {
         const result = projectTestloopDotsMessages([user(), agent(snapshot()), agent(snapshot({ requestId: otherRequest }), { id: 'agent-2', createdAt: 12 })], workspaceId);
         expect(result.snapshot?.dots).toEqual([dot]);
@@ -67,6 +93,51 @@ describe('TestLoop Dots directory protocol', () => {
         const result = projectTestloopDotsMessages([user(), agent(snapshot({ ok: false, error: 'dot_name_required', dots: [] }))], workspaceId);
         expect(result.receipts[requestId]).toMatchObject({ ok: false, error: 'dot_name_required' });
         expect(result.pendingRequest).toBeNull();
+    });
+
+    it('projects a successful delete only with its matching deletedDot tombstone', () => {
+        const deletion = { schemaVersion: 1 as const, requestId, action: 'delete' as const, dotId: dot.id };
+        const command = { kind: 'user-text', id: 'delete-command', createdAt: 5, text: testloopDotsCommand(deletion) };
+        const receipt = snapshot({ revision: 2, dots: [], deletedDot: { id: dot.id, sessionId: dot.sessionId } });
+        const result = projectTestloopDotsMessages([command, agent(receipt)], workspaceId);
+        expect(result.deletions[requestId]).toEqual({ requestId, revision: 2, id: dot.id, sessionId: dot.sessionId });
+        expect(result.snapshot?.dots).toEqual([]);
+        expect(result.pendingRequest).toBeNull();
+    });
+
+    it('rejects deletedDot on failures or while the target binding remains active', () => {
+        const deletedDot = { id: dot.id, sessionId: dot.sessionId };
+        expect(projectTestloopDotsMessages([agent(snapshot({ ok: false, deletedDot }))], workspaceId).snapshot).toBeNull();
+        expect(projectTestloopDotsMessages([agent(snapshot({ deletedDot }))], workspaceId).snapshot).toBeNull();
+        expect(projectTestloopDotsMessages([agent(snapshot({ dots: [], deletedDot: { ...deletedDot, sessionId: 'other/session' } }))], workspaceId).snapshot).toBeNull();
+    });
+
+    it('does not turn an unrelated or mismatched receipt into a deletion mirror request', () => {
+        const deletion = { schemaVersion: 1 as const, requestId, action: 'delete' as const, dotId: dot.id };
+        const command = { kind: 'user-text', id: 'delete-command', createdAt: 5, text: testloopDotsCommand(deletion) };
+        const deletedDot = { id: dot.id, sessionId: dot.sessionId };
+        const missingCommand = projectTestloopDotsMessages([agent(snapshot({ dots: [], deletedDot }))], workspaceId);
+        const wrongRequest = projectTestloopDotsMessages([command,
+            agent(snapshot({ requestId: otherRequest, dots: [], deletedDot }))], workspaceId);
+        expect(missingCommand.deletions).toEqual({});
+        expect(wrongRequest.deletions).toEqual({});
+    });
+
+    it('recovers pending clear and delete with the same id and never resurrects an older revision', () => {
+        for (const action of ['clear', 'delete'] as const) {
+            const scoped = { schemaVersion: 1 as const, requestId: otherRequest, action, dotId: dot.id };
+            const command = { kind: 'user-text', id: `command-${action}`, createdAt: 5, text: testloopDotsCommand(scoped) };
+            const result = projectTestloopDotsMessages([command, agent(snapshot())], workspaceId);
+            expect(result.pendingRequest).toEqual(scoped);
+        }
+        const deletion = { schemaVersion: 1 as const, requestId, action: 'delete' as const, dotId: dot.id };
+        const command = { kind: 'user-text', id: 'delete-command', createdAt: 5, text: testloopDotsCommand(deletion) };
+        const result = projectTestloopDotsMessages([command,
+            agent(snapshot({ revision: 2, dots: [], deletedDot: { id: dot.id, sessionId: dot.sessionId } })),
+            agent(snapshot({ revision: 1, requestId: otherRequest, dots: [dot] }), { id: 'late-old', createdAt: 99 })], workspaceId);
+        expect(result.snapshot?.revision).toBe(2);
+        expect(result.snapshot?.dots).toEqual([]);
+        expect(result.deletions[requestId].id).toBe(dot.id);
     });
 
     it('renders the original shared allowance, including a full conversation budget', () => {

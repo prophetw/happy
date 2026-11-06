@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.hoisted(() => {
     (globalThis as any).expo = { EventEmitter: class {} };
+    (globalThis as any).__DEV__ = false;
 });
+const actionMocks = vi.hoisted(() => ({
+    handlers: [] as Array<() => Promise<void>>,
+    markArchiving: vi.fn(), unmarkArchiving: vi.fn(), sessionArchive: vi.fn(), sessionKill: vi.fn(),
+}));
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios', select: (obj: any) => obj.ios ?? obj.default },
@@ -56,13 +61,14 @@ vi.mock('@/sync/storage', () => ({
     useMachine: () => null,
     useSetting: () => true,
     useLocalSetting: () => false,
-    storage: { getState: () => ({ settings: {} }) },
+    storage: { getState: () => ({ settings: {}, sessions: {}, markArchiving: actionMocks.markArchiving,
+        unmarkArchiving: actionMocks.unmarkArchiving }) },
 }));
 
 vi.mock('@/sync/ops', () => ({
     machineResumeSession: vi.fn(),
-    sessionArchive: vi.fn(),
-    sessionKill: vi.fn(),
+    sessionArchive: actionMocks.sessionArchive,
+    sessionKill: actionMocks.sessionKill,
     sessionSetAgentModes: vi.fn(),
     forkAndSpawn: vi.fn(),
 }));
@@ -77,7 +83,10 @@ vi.mock('@/sync/agentDefaults', () => ({
 }));
 
 vi.mock('@/hooks/useHappyAction', () => ({
-    useHappyAction: (fn: any) => [false, fn],
+    useHappyAction: (fn: () => Promise<void>) => {
+        actionMocks.handlers.push(fn);
+        return [false, fn];
+    },
 }));
 
 vi.mock('@/hooks/useNavigateToSession', () => ({
@@ -106,7 +115,7 @@ vi.mock('@/utils/sessionFork', () => ({
     getSessionForkSource: () => null,
 }));
 
-import { getResumeAvailability } from './useSessionQuickActions';
+import { getResumeAvailability, useSessionQuickActions } from './useSessionQuickActions';
 import type { Machine, Session } from '@/sync/storageTypes';
 
 function createMockSession(metadata: Partial<NonNullable<Session['metadata']>> = {}): Session {
@@ -134,6 +143,14 @@ function createMockMachine(active = true): Machine {
         },
     } as unknown as Machine;
 }
+
+beforeEach(() => {
+    actionMocks.handlers.length = 0;
+    actionMocks.markArchiving.mockClear();
+    actionMocks.unmarkArchiving.mockClear();
+    actionMocks.sessionArchive.mockReset();
+    actionMocks.sessionKill.mockReset();
+});
 
 describe('getResumeAvailability', () => {
     it('returns canResume: true for agy sessions with agyConversationId and online machine', () => {
@@ -239,5 +256,26 @@ describe('getResumeAvailability', () => {
         const result = getResumeAvailability(session, machine, false);
         expect(result.canResume).toBe(false);
         expect(result.canShowResume).toBe(false);
+    });
+});
+
+describe('Testloop Dots lifecycle guards', () => {
+    it.each(['dot', 'workspace'] as const)('hides and rejects generic archive for a valid %s before any visible effect', async kind => {
+        const session = createMockSession({ testloopDots: {
+            schemaVersion: 1, kind, workspaceId: '11111111-1111-4111-8111-111111111111',
+            ...(kind === 'dot' ? { workspaceSessionId: 'workspace-session', dotId: '55555555-5555-4555-8555-555555555555' } : {}),
+        } } as any);
+        const onBeforeArchive = vi.fn();
+        const actions = useSessionQuickActions(session, { onBeforeArchive });
+
+        expect(actions.canArchive).toBe(false);
+        expect(actions.actionItems.some(item => item.id === 'archive')).toBe(false);
+        expect(actions.actionItems.some(item => item.id === 'details')).toBe(true);
+        expect(actionMocks.handlers).toHaveLength(3);
+        await expect(actionMocks.handlers[1]()).rejects.toThrow('Dots 工作台');
+        expect(onBeforeArchive).not.toHaveBeenCalled();
+        expect(actionMocks.markArchiving).not.toHaveBeenCalled();
+        expect(actionMocks.sessionKill).not.toHaveBeenCalled();
+        expect(actionMocks.sessionArchive).not.toHaveBeenCalled();
     });
 });

@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Modal as GlobalModal } from '@/modal';
+import { randomUUID } from 'expo-crypto';
 import { useFocusEffect } from '@react-navigation/native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
@@ -26,6 +28,8 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const realtime = useRealtimeStatus();
     useSessionVisibility(session.id, active, false, realtime);
     const data = useDotsWorkspace(metadata.workspaceSessionId, metadata.workspaceId, active, metadata.dotId);
+    const currentDots = React.useRef(data);
+    currentDots.current = data;
     const navigate = useNavigateToSession();
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [tab, setTab] = React.useState<Tab>('chat');
@@ -34,6 +38,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [taskId, setTaskId] = React.useState<string | null>(null), [error, setError] = React.useState<string | null>(null);
     const [memoryEdit, setMemoryEdit] = React.useState<{ key: string; text: string; kind: string; json: boolean; expiresAt: string | null; existing: boolean } | null>(null);
     const [notice, setNotice] = React.useState<string | null>(null);
+    const [clearConfirming, setClearConfirming] = React.useState(false);
     const [composeRequest, setComposeRequest] = React.useState<{ id: string; text: string } | null>(null);
     const wide = width >= 920;
     const own = data.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
@@ -54,6 +59,25 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         setComposeRequest({ id: `${session.id}:${Date.now()}`, text });
         setTab('chat'); setTaskId(null); setMemoryEdit(null);
         setNotice('已放入对话输入框。核对后发送，结果会回到这个 Dot。');
+    };
+    const clearConversation = async () => {
+        if (clearConfirming || currentDots.current.pending) return;
+        const current = currentDots.current.projection?.snapshot;
+        const dot = current?.dots.find(item => item.id === metadata.dotId && item.sessionId === session.id);
+        if (!dot) return;
+        setClearConfirming(true);
+        try {
+            const confirmed = await GlobalModal.confirm('清空当前对话？',
+                '仅为之后的模型上下文隔离此前的历史、运行记录和任务上下文。Dot 与会话保持不变；旧聊天、长期记忆、授权和任务记录仍保留，进行中的目标不会取消。',
+                { confirmText: '清空对话' });
+            if (!confirmed || currentDots.current.pending) return;
+            const latestDot = currentDots.current.projection?.snapshot?.dots
+                .find(item => item.id === metadata.dotId && item.sessionId === session.id);
+            if (!latestDot) return;
+            void currentDots.current.submit({ schemaVersion: 1, requestId: randomUUID(), action: 'clear', dotId: metadata.dotId });
+        } finally {
+            setClearConfirming(false);
+        }
     };
     const openExecution = async (sessionId: string) => {
         const operation = navigation.begin(); if (!operation) return;
@@ -90,6 +114,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         <View style={{ padding: 14, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {wide && (['activity', 'work', 'memory', 'basis'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
             {(wide ? sideTab : tab) === 'work' && action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending))}
+            {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming)}
             {action('可用连接与项目', () => setManagingConnections(true))}
         </View>
         <ScrollView contentContainerStyle={{ padding: 18, gap: 18 }}>
@@ -113,7 +138,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'activity', 'work', 'memory', 'basis'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { paddingHorizontal: 8, flexGrow: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
                 <Text style={body}>{tabLabels[item]}</Text>
             </Pressable>)}</View>}
-        {notice && <Text accessibilityLiveRegion="polite" style={[muted, { paddingHorizontal: 16 }]}>{notice}</Text>}
+        {(data.notice || notice) && <Text accessibilityLiveRegion="polite" style={[muted, { paddingHorizontal: 16 }]}>{data.notice || notice}</Text>}
         <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
             <View style={{ flex: 1, display: wide || tab === 'chat' ? 'flex' : 'none', minWidth: 0 }}>{children(composeRequest)}</View>
             <View style={{ width: wide ? 320 : '100%', display: wide ? expanded ? 'flex' : 'none' : tab === 'chat' ? 'none' : 'flex', borderLeftWidth: wide ? 1 : 0, borderLeftColor: colors.divider }}>{panel}</View>

@@ -27,6 +27,7 @@ import { HappyError } from '@/utils/errors';
 import { getRigIdentity, isRigMetadata } from '@/sync/rig';
 import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
 import { navigateToSession } from '@/hooks/useNavigateToSession';
+import { readTestloopDotsMetadata } from '@/sync/testloopDots';
 
 function formatSandboxMetadata(sandbox: unknown, homeDir?: string): string {
     if (sandbox === null || sandbox === undefined) {
@@ -93,6 +94,7 @@ function SessionInfoContent({ session }: { session: Session }) {
     const router = useRouter();
     const devModeEnabled = __DEV__;
     const sessionStatus = useSessionStatus(session);
+    const isTestloopDotsSession = !!readTestloopDotsMetadata(session.metadata);
     const {
         canShowResume,
         canFork,
@@ -137,6 +139,9 @@ function SessionInfoContent({ session }: { session: Session }) {
 
     // Use HappyAction for archiving - it handles errors automatically
     const [archivingSession, performArchive] = useHappyAction(async () => {
+        if (readTestloopDotsMetadata(session.metadata)) {
+            throw new HappyError('请在 Dots 工作台中管理此 Dot 或工作台，不使用通用会话归档。', false);
+        }
         // Prompt for worktree cleanup before killing (needs an active machine connection)
         if (!session.metadata?.bot) {
             await maybeCleanupWorktree(session.id, session.metadata?.path, session.metadata?.machineId);
@@ -168,6 +173,9 @@ function SessionInfoContent({ session }: { session: Session }) {
 
     // Use HappyAction for deletion - kills session first if needed, then deletes
     const [deletingSession, performDelete] = useHappyAction(async () => {
+        if (readTestloopDotsMetadata(session.metadata)) {
+            throw new HappyError('请在 Dots 工作台中管理此 Dot 或工作台；Happy 会话与历史必须保留。', false);
+        }
         if (session.metadata?.bot) throw new HappyError('Archive the bot instead of deleting its conversation.', false);
         // Prompt for worktree cleanup before killing (needs an active machine connection)
         await maybeCleanupWorktree(session.id, session.metadata?.path, session.metadata?.machineId);
@@ -282,18 +290,25 @@ function SessionInfoContent({ session }: { session: Session }) {
                             onPress={() => navigateToSession(router, session.metadata!.parentSessionId!)}
                         />
                     )}
-                    <Item
-                        title={t('sessionInfo.archiveSession')}
-                        subtitle={t('sessionInfo.archiveSessionSubtitle')}
-                        icon={<Ionicons name="archive-outline" size={29} color="#FF3B30" />}
-                        onPress={handleArchiveSession}
-                    />
-                    {!session.metadata?.bot && <Item
-                        title={t('sessionInfo.deleteSession')}
-                        subtitle={t('sessionInfo.deleteSessionSubtitle')}
-                        icon={<Ionicons name="trash-outline" size={29} color="#FF3B30" />}
-                        onPress={handleDeleteSession}
-                    />}
+                    {isTestloopDotsSession ? <Item
+                        title="Dots 管理"
+                        subtitle="请在 Dots 工作台中管理此 Dot 或工作台；此处保留只读详情与复制，不提供通用归档或永久删除。"
+                        icon={<Ionicons name="settings-outline" size={29} color="#5856D6" />}
+                        showChevron={false}
+                    /> : <>
+                        <Item
+                            title={t('sessionInfo.archiveSession')}
+                            subtitle={t('sessionInfo.archiveSessionSubtitle')}
+                            icon={<Ionicons name="archive-outline" size={29} color="#FF3B30" />}
+                            onPress={handleArchiveSession}
+                        />
+                        {!session.metadata?.bot && <Item
+                            title={t('sessionInfo.deleteSession')}
+                            subtitle={t('sessionInfo.deleteSessionSubtitle')}
+                            icon={<Ionicons name="trash-outline" size={29} color="#FF3B30" />}
+                            onPress={handleDeleteSession}
+                        />}
+                    </>}
                 </ItemGroup>
 
                 {/* CLI Version Warning */}

@@ -21,6 +21,10 @@ export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('list') }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('create'),
         name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000) }).strict(),
+    z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('update'), dotId: uuid,
+        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000) }).strict(),
+    z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('clear'), dotId: uuid }).strict(),
+    z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('delete'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('inspect'), dotId: uuid }).strict(),
 ]);
 export type TestloopDotsRequest = z.infer<typeof TestloopDotsRequestSchema>;
@@ -50,10 +54,13 @@ export const TestloopDotsSnapshotSchema = z.object({
     ok: z.boolean(), error: z.string().max(1000).optional(),
     dots: z.array(z.object({ id: uuid, name: z.string().min(1).max(80), instruction: z.string().max(2000),
         sessionId, status: z.literal('active') }).strict()).max(1000),
+    deletedDot: z.object({ id: uuid, sessionId }).strict().optional(),
     limits: z.unknown().optional(),
     workbench: workbench.optional(),
 }).passthrough().refine(value => new Set(value.dots.map(dot => dot.id)).size === value.dots.length
     && new Set(value.dots.map(dot => dot.sessionId)).size === value.dots.length, 'duplicate_dot_binding')
+    .refine(value => !value.deletedDot || (value.ok
+        && !value.dots.some(dot => dot.id === value.deletedDot!.id || dot.sessionId === value.deletedDot!.sessionId)), 'invalid_deleted_dot_binding')
     .refine(value => !value.workbench || (new Set(value.workbench.dots.map(dot => dot.id)).size === value.workbench.dots.length
         && value.workbench.dots.every(dot => value.dots.some(item => item.id === dot.id))
         && (!value.workbench.detail || value.dots.some(dot => dot.id === value.workbench!.detail!.dotId))), 'workbench_dot_binding_changed');
@@ -106,8 +113,15 @@ export function projectTestloopDotsMessages(messages: readonly WorkspaceMessage[
     }
     for (const row of [...received].sort(compareMessages)) receipts[row.snapshot.requestId] = row.snapshot;
     commands.sort(compareMessages);
+    const requests = new Map(commands.map(row => [row.request.requestId, row.request]));
+    const deletions: Record<string, { requestId: string; revision: number; id: string; sessionId: string }> = Object.create(null);
+    for (const [receiptId, receipt] of Object.entries(receipts)) {
+        const request = requests.get(receiptId);
+        if (!receipt.ok || !receipt.deletedDot || request?.action !== 'delete' || request.dotId !== receipt.deletedDot.id) continue;
+        deletions[receiptId] = { requestId: receiptId, revision: receipt.revision, ...receipt.deletedDot };
+    }
     const pending = commands.filter(row => !receipts[row.request.requestId]).at(-1)?.request ?? null;
-    return { snapshot: received.at(-1)?.snapshot ?? null, receipts, details, pendingRequest: pending };
+    return { snapshot: received.at(-1)?.snapshot ?? null, receipts, deletions, details, pendingRequest: pending };
 }
 
 export function testloopWorkStatus(task: { status: string; needsReview: boolean; goalPhase?: string | null }) {

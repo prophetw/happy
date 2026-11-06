@@ -19,6 +19,7 @@ import { useSession } from '@/sync/storage';
 import { DuplicateSheet } from '@/components/DuplicateSheet';
 import type { SessionActionShortcutId } from '@/keyboard/shortcuts';
 import { isRigMetadata } from '@/sync/rig';
+import { readTestloopDotsMetadata } from '@/sync/testloopDots';
 
 export interface SessionActionItem {
     id: SessionActionShortcutId;
@@ -152,6 +153,7 @@ export function useSessionQuickActions(
     const router = useRouter();
     const navigateToSession = useNavigateToSession();
     const sessionStatus = useSessionStatus(session);
+    const isTestloopDotsSession = !!readTestloopDotsMetadata(session.metadata);
     const machineId = session.metadata?.machineId ?? '';
     const machine = useMachine(machineId);
     const devModeEnabled = useLocalSetting('devModeEnabled');
@@ -254,6 +256,10 @@ export function useSessionQuickActions(
     });
 
     const [archivingSession, performArchive] = useHappyAction(async () => {
+        const liveMetadata = storage.getState().sessions[session.id]?.metadata ?? session.metadata;
+        if (readTestloopDotsMetadata(liveMetadata)) {
+            throw new HappyError('请在 Dots 工作台中管理此 Dot 或工作台；通用归档不会代替 Dot 生命周期操作。', false);
+        }
         // Before the first await: the screen has to be off this chat while it is
         // still whole, not once the store has started dismantling it.
         onBeforeArchive?.();
@@ -355,7 +361,9 @@ export function useSessionQuickActions(
             items.push({ id: 'copy-metadata-and-logs', icon: 'document-text-outline', label: t('sessionInfo.copyMetadata') + ' & Client Logs', onPress: copySessionMetadataAndLogs });
         }
 
-        items.push({ id: 'archive', icon: 'archive-outline', label: t('session.archiveAction'), onPress: archiveSession, destructive: true });
+        if (!isTestloopDotsSession) {
+            items.push({ id: 'archive', icon: 'archive-outline', label: t('session.archiveAction'), onPress: archiveSession, destructive: true });
+        }
 
         return items;
     }, [
@@ -366,6 +374,7 @@ export function useSessionQuickActions(
         copySessionMetadataAndLogs,
         forkSource,
         forkSession,
+        isTestloopDotsSession,
         openDetails,
         openDuplicateSheet,
         resumeAvailability.canShowResume,
@@ -387,7 +396,7 @@ export function useSessionQuickActions(
         showActionAlert,
         archiveSession,
         archivingSession,
-        canArchive: true,
+        canArchive: !isTestloopDotsSession,
         canCopySessionMetadata,
         canResume: resumeAvailability.canResume,
         canShowResume: resumeAvailability.canShowResume,

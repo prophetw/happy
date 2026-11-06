@@ -1,8 +1,8 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ navigate: vi.fn(), visibility: vi.fn() }));
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ navigate: vi.fn(), visibility: vi.fn(), confirm: vi.fn(), submit: vi.fn(), data: null as any }));
 vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
     return Object.fromEntries(['View', 'Text', 'Pressable', 'ActivityIndicator', 'ScrollView', 'Modal', 'TextInput'].map(name => [name, host(name)]));
@@ -15,13 +15,16 @@ vi.mock('@/hooks/useNavigateToSession', () => ({ useNavigateToSession: () => moc
 vi.mock('@/hooks/useSessionVisibility', () => ({ useSessionVisibility: mocks.visibility }));
 vi.mock('@/sync/storage', () => ({ storage: { getState: () => ({ sessions: {} }) }, useRealtimeStatus: () => 'connected' }));
 vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: vi.fn() } }));
+vi.mock('@/modal', () => ({ Modal: { confirm: mocks.confirm } }));
+vi.mock('expo-crypto', () => ({ randomUUID: () => '33333333-3333-4333-8333-333333333333' }));
 vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
 vi.mock('./DotObservationPanel', async () => {
     const module = await import('react'); return { DotObservationPanel: (props: any) => module.createElement('ObservationPanel', props) };
 });
-vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({ ready: true, pending: null, error: null, retry: vi.fn(),
+vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({ ready: true, pending: null, error: null, notice: null, retry: vi.fn(), submit: mocks.submit,
     projection: { snapshot: { dots: [{ id: 'dot-id', sessionId: 'dot-session' }] }, details: { 'dot-id': { asOf: '2026-11-05T00:00:00Z',
         data: { dotId: 'dot-id', taskTotal: 0, tasks: [], memory: { access: ['read', 'write', 'forget'], total: 0, items: [], omittedCount: 0 } } } } },
+    ...(mocks.data ?? {}),
 }) }));
 import { DotSessionContent } from './DotSessionContent';
 beforeAll(() => {
@@ -33,6 +36,64 @@ beforeAll(() => {
     });
 });
 afterAll(() => vi.restoreAllMocks());
+beforeEach(() => {
+    mocks.data = null;
+    mocks.confirm.mockReset();
+    mocks.submit.mockReset();
+    mocks.navigate.mockReset();
+});
+it('confirms clearing without unmounting or clearing the existing composer, navigation, or Dot binding', async () => {
+    let mounts = 0;
+    function Composer() {
+        React.useEffect(() => { mounts++; }, []);
+        const [draft] = React.useState('不能丢失的草稿');
+        return React.createElement('Composer', { draft });
+    }
+    const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        children: () => React.createElement(Composer) };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    const clear = () => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '清空当前对话')!;
+
+    mocks.confirm.mockResolvedValueOnce(false);
+    await act(async () => clear().props.onPress());
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
+
+    mocks.confirm.mockResolvedValueOnce(true);
+    await act(async () => clear().props.onPress());
+    expect(mocks.confirm).toHaveBeenLastCalledWith('清空当前对话？', expect.stringContaining('进行中的目标不会取消'), { confirmText: '清空对话' });
+    expect(mocks.submit).toHaveBeenCalledExactlyOnceWith({ schemaVersion: 1,
+        requestId: '33333333-3333-4333-8333-333333333333', action: 'clear', dotId: 'dot-id' });
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
+    expect(mounts).toBe(1);
+
+    mocks.data = { notice: '已为之后的模型上下文隔离此前历史；旧聊天、长期记忆、授权、任务记录和进行中目标均保留。' };
+    await act(async () => renderer.update(React.createElement(DotSessionContent, props)));
+    expect(JSON.stringify(renderer.root.findAllByType('Text').map((node: any) => node.props.children))).toContain('旧聊天、长期记忆');
+    expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
+    await act(async () => renderer.unmount());
+});
+
+it('disables clearing while a host request is pending', async () => {
+    mocks.data = { pending: { request: { action: 'inspect' }, timedOut: false } };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+        renderer = create(React.createElement(DotSessionContent, {
+            session: { id: 'dot-session', presence: 'online' } as any, active: true,
+            metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+            children: () => React.createElement('Composer'),
+        }));
+    });
+    const clear = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '清空当前对话')!;
+    expect(clear.props.disabled).toBe(true);
+    await act(async () => clear.props.onPress());
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
 it('keeps the real composer mounted through observer tabs and routes memory editing into that conversation', async () => {
     let mounts = 0; const requests: unknown[] = [];
     function Composer({ request }: { request: unknown }) {

@@ -23,6 +23,7 @@ import {
 import { rigComposerSetMode } from './rigComposer';
 import type { HappyAgentSpawnTarget } from './happyAgentSpawn';
 import { encodeBase64 } from '@/encryption/base64';
+import { readTestloopDotsMetadata } from './testloopDots';
 
 export type { SessionAgentModesPatch };
 
@@ -938,6 +939,104 @@ async function sessionUpdateAgentModesMetadata(
     throw new Error(`Failed to update session metadata after ${maxRetries} retries due to version conflicts`);
 }
 
+/** Versioned encrypted read-modify-write shared by the Dot metadata mirrors. */
+async function sessionUpdateMetadata(
+    sessionId: string,
+    apply: (metadata: Record<string, unknown>) => Record<string, unknown>,
+    maxRetries: number = 3,
+): Promise<void> {
+    const encryption = sync.encryption.getSessionEncryption(sessionId);
+    const session = storage.getState().sessions[sessionId];
+    if (!encryption || !session?.metadata) {
+        throw new Error(`Session ${sessionId} is not ready for metadata updates`);
+    }
+
+    let currentVersion = session.metadataVersion;
+    let currentMetadata = apply({ ...session.metadata });
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const encrypted = await encryption.encryptRaw(currentMetadata);
+        const result = await apiSocket.emitWithAck<{
+            result: 'success' | 'version-mismatch' | 'error';
+            version?: number;
+            metadata?: string;
+        }>('update-metadata', {
+            sid: sessionId,
+            metadata: encrypted,
+            expectedVersion: currentVersion
+        });
+        if (result.result === 'success') {
+            return;
+        }
+        if (result.result !== 'version-mismatch') {
+            throw new Error('Failed to update session metadata');
+        }
+        currentVersion = result.version!;
+        const latest = await encryption.decryptRaw(result.metadata!);
+        if (!latest) {
+            throw new Error('Failed to decrypt latest session metadata');
+        }
+        currentMetadata = apply(latest);
+    }
+
+    throw new Error(`Failed to update session metadata after ${maxRetries} retries due to version conflicts`);
+}
+
+/**
+ * Keep a Dot's session title and header duty in step with a rename the host
+ * already accepted. The host ledger remains the source of truth; this mirror
+ * only prevents the sidebar and Dot header from keeping stale text.
+ */
+export async function sessionUpdateDotIdentity(
+    sessionId: string,
+    name: string,
+    instruction: string,
+    maxRetries: number = 3
+): Promise<void> {
+    await sessionUpdateMetadata(sessionId, metadata => {
+        const summary = metadata.summary && typeof metadata.summary === 'object' && !Array.isArray(metadata.summary)
+            ? metadata.summary as Record<string, unknown> : {};
+        const binding = metadata.testloopDots && typeof metadata.testloopDots === 'object' && !Array.isArray(metadata.testloopDots)
+            ? metadata.testloopDots as Record<string, unknown> : {};
+        return {
+            ...metadata,
+            summary: { ...summary, text: name, updatedAt: Date.now() },
+            testloopDots: { ...binding, instruction },
+        };
+    }, maxRetries);
+}
+
+/**
+ * Mirror a host-accepted Dot deletion without killing or physically deleting
+ * its Happy conversation. Both the server active flag and the lifecycle
+ * predicate are required; either missing half is safe to retry.
+ */
+export async function sessionArchiveTestloopDot(
+    sessionId: string,
+    dotId: string,
+    maxRetries: number = 3,
+): Promise<void> {
+    const session = storage.getState().sessions[sessionId];
+    const binding = readTestloopDotsMetadata(session?.metadata);
+    if (binding?.kind !== 'dot' || binding.dotId !== dotId) {
+        throw new Error('Dot session binding changed before archive');
+    }
+    if (session?.active === false && session.metadata?.lifecycleState === 'archived') return;
+
+    if (session?.active !== false) {
+        const result = await sessionArchive(sessionId);
+        if (!result.success) throw new Error(result.message || 'Failed to archive Dot session');
+    }
+    await sessionUpdateMetadata(sessionId, metadata => {
+        const latestBinding = readTestloopDotsMetadata(metadata);
+        if (latestBinding?.kind !== 'dot' || latestBinding.dotId !== dotId) {
+            throw new Error('Dot session binding changed during archive');
+        }
+        const lifecycleStateSince = metadata.lifecycleState === 'archived' && typeof metadata.lifecycleStateSince === 'number'
+            ? metadata.lifecycleStateSince : Date.now();
+        return { ...metadata, lifecycleState: 'archived', lifecycleStateSince };
+    }, maxRetries);
+}
+
 /**
  * Apply a per-session model / effort pick: updates local state immediately for
  * a snappy UI and pushes the pick into synced session metadata so other
@@ -1304,7 +1403,11 @@ export async function sessionArchive(sessionId: string): Promise<{ success: bool
  * The session should be inactive/archived before deletion
  */
 export async function sessionDelete(sessionId: string): Promise<{ success: boolean; message?: string }> {
-    if (storage.getState().sessions[sessionId]?.metadata?.bot) {
+    const metadata = storage.getState().sessions[sessionId]?.metadata;
+    if (readTestloopDotsMetadata(metadata)) {
+        return { success: false, message: 'Manage this Dot or workspace from Dots. Its Happy session and history must be preserved.' };
+    }
+    if (metadata?.bot) {
         return { success: false, message: 'A bot keeps one continuous conversation. Archive the bot instead.' };
     }
     try {
