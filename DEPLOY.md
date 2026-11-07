@@ -3,6 +3,48 @@
 本文件提供当前部署入口；个人项目身份、Git 发布线、授权范围与最低充分验证规则以
 [AGENTS.md](AGENTS.md) 为准。历史发布结果只证明当时状态，每次发布仍需核对线上版本。
 
+## 本机 / Tailscale 私网部署（2026-11-07）
+
+**基础设施与在线客户端已切流；已补充浏览器首屏及用户手机登录页验证，登录后业务未验收。** 当前入口为
+<https://desktop-8ut4p0p.taild92624.ts.net/happy/>，Relay 为同源 `/home-relay`，
+Control REST / MCP 为 `/happy-control/v1`、`/happy-control/mcp`。仅 tailnet 可达，
+没有启用 Funnel。Windows Serve 持久代理 `http://127.0.0.1:18194`，后端都绑定回环。
+
+本机 Relay 配置在 `/home/dev/code/happy-relay`，新卷为
+`happy-relay_relay-data-tailscale-20261107`；Web / Control / 网关配置在
+`/home/dev/code/happy-local`。旧本机 Relay 卷与两端冷备均保留。
+Web 复用已发布的 `bdb246abeaf6` 产物，仅注入私网 Relay 地址，未重建 CLI 或发布 OTA。
+
+最终同步核对 23 张表、707 个会话、225907 条消息与 132 个附件；两台电脑和 29 个
+在线会话通过已有协议切服，Worker 以独立 systemd 维护单元重启。
+3 个 MCP 连接地址更新后授权 scope 保持；两个 Dot ready、原 thread 保持，scanner error
+为空。退役后回读 32 个活跃会话、2 台机器的 90 秒内心跳通过。
+
+99.57 的 Happy Web、Relay、Control 和旧静态版本路径现在返回 410，其他项目配置未改；
+99.55 的旧服务与临时桥均停止，Control 开机启用已取消、旧 Relay restart policy 为 no。
+21 项 HTTPS / 公网退役 / WSS 检查、3 组 MCP 到 Worker 的只读目录检查，以及已有附件
+的认证下载与文件哈希检查通过。原三项历史 attention 告警仍在，整体 health 仍 degraded。
+
+手机需先连接同一 Tailscale 网络，在 Happy 服务器配置中填写
+`https://desktop-8ut4p0p.taild92624.ts.net/home-relay`；新 Web 域名需登录原账号。
+备份、迁移边界、运行命令和回退约束见 [部署手册](docs/deployment.md#本机与-tailscale-迁移2026-11-07)。
+手机 / 桌面客户端配置、直连判断和日志命令见
+[Tailscale、Shadowrocket 与 Clash Verge 使用说明](docs/features/tailscale-access.md)。
+
+## 私网 Web 首屏缓慢修复（2026-11-07）
+
+本机 Nginx 迁移配置漏掉了旧网关已有的 gzip，主 JS、common JS 与 WASM 合计约
+20.82 MB 均以原始大小传输，叠加手机经美国 DERP 中继、未直连，使首次加载很慢。
+已为现有静态文件生成 gzip sidecar，开启协商压缩，并为哈希 JS / 字体设置长期缓存；
+HTML 保持 no-cache，固定名 WASM 仍以 ETag 校验。三个主要资源降至约 6.46 MB，
+解压后与原文件逐字节一致。只热重载本机 Nginx，未改 App / CLI、发布 OTA 或重启 Relay。
+
+经用户授权的隔离 Chromium 验证，桌面及手机布局均能显示登录页，未发现页面 JS 错误
+或失败请求；模拟 1 Mbps、400 ms 延迟时首次手机布局约 40.6 秒。用户随后确认 Safari
+已出现登录页。后续宿主 `status` 与 `ping` 确认手机已建立 direct，延迟约 49 ms，用户反馈
+速度很快；这是当次链路结果，登录后收发仍未验证。证据及剩余边界见
+[首屏修复记录](docs/deployment.md#web-首屏加载缓慢修复2026-11-07)。
+
 ## Dot 删除提示误报与空 thread MCP 刷新修复（2026-11-07）
 
 源码提交 `bdb246abeaf6e44f65f406048b5ed67bfda64149`（`fork/main`）。工作台不再在每次挂载时播报历史删除回执，仅当前视图发起的删除提示一次；本地会话归档仍按回执静默核对。托管运行时在 MCP 集合变化时区分 thread 状态：已派发过输入的 thread 继续 `thread/resume`，从未派发输入的空 thread 因 Codex 没有 rollout 而改为重建；单次刷新失败保留原 MCP 并每 30 秒重试，不再把会话置为 blocked。
@@ -51,47 +93,36 @@ Happy hosted/state13项、App面板16项及类型/changelog检查通过。公网
 
 ## Happy Web
 
-详细构建、上传、验收和回滚步骤见
-[Web 部署手册](docs/deployment.md#web复用现有-https-域名并挂载到-happy)。
+当前私网入口为 <https://desktop-8ut4p0p.taild92624.ts.net/happy/>，同源 Relay 基址为
+`https://desktop-8ut4p0p.taild92624.ts.net/home-relay`。
 
-| 项目 | 当前部署约定 |
+| 项目 | 当前部署 |
 | --- | --- |
-| 公网入口 | <https://szsp.suitbim.com.cn:7100/happy/> |
-| Relay API 基址 | `https://szsp.suitbim.com.cn:7100/home-relay` |
-| 网关 | `root@192.168.99.57`，Nginx 容器 `bim-nginx-1.30` |
-| Nginx 配置 | `/root/bim-engine/script/http.nginx.1.30.1.prod.conf` |
-| 宿主机静态目录 | `/root/bim-engine/web/html` |
-| 版本目录 / 当前入口 | `.happy-releases/<run-id>` / 相对符号链接 `happy` |
-| 发布记录与静态包 | `/root/bim-engine/script/happy-web-artifacts/` |
-| 构建入口 | `Dockerfile.webapp` 的 `builder` 阶段 |
+| Windows 网关 | Tailscale Serve → `http://127.0.0.1:18194` |
+| 本机 Nginx / Control Compose | `/home/dev/code/happy-local/compose.yaml` |
+| Nginx 配置 | `/home/dev/code/happy-local/config/nginx.conf` |
+| Web 静态目录 | `/home/dev/code/happy-local/web` |
+| 本次发布产物来源 | 99.57 原 `happy` 的 `bdb246abeaf6` 版本，已复制并注入私网地址 |
+| 迁移证据 | `/home/dev/.local/state/happy-local-migration-20261107` |
 
-构建时设置 `HAPPY_WEB_BASE_PATH=/happy`、`HAPPY_SERVER_URL` 为上述 Relay 基址，
-并注入来源提交 SHA 与提交时间。构建导出静态文件后，上传到新版本目录，再原子切换
-`happy` 符号链接。切换前核对当前线上来源提交，确认新版本包含已发布功能。
+[旧 Web 构建与发布手册](docs/deployment.md#web复用现有-https-域名并挂载到-happy)
+中的 99.57 上传、符号链接切换和公网 URL 是历史流程，**不再作为当前发布目标**。
+后续发布需要先适配本机目录、私网 Relay 与配置注入，不能直接重开旧公网路由。
+Web 与 iOS 仍需保持个人发布主线及原有验证要求。
 
-现有 `/happy/` Nginx 路由已配置，常规更新无需重复插入路由或重启网关。
-保留上一版本、静态包校验值、来源 SHA 和 `previous-target`，按详细手册回滚。
-验收包括入口、JS/CSS、WASM、深层路由、缺失资源的真实 404 和 Relay 健康检查。
-真实浏览器按用户当次授权执行；未验证登录、消息收发或附件时，明确报告验证边界。
-
-Dots 正式工作台位于 `/happy/dots`，采用用户于 2026-11-05 选定的 B（紧凑目录）布局。
-目录、创建、工作项和记忆使用已有 Happy 加密消息及真实 TestLoop 账本；专属对话继续使用原会话。
-宿主需同步包含 `assistant-dots-view` 及 `inspect` 管理命令的 TestLoop 版本。
-旧宿主仍能列出和创建 Dot，工作/记忆面板会明确提示缺少读取支持，不填充示例数据。
-记忆修改和工作跟进通过原 Dot 的真实对话输入框提交，沿用既有授权、额度和记忆确认规则。
-无需原型构建开关；旧 `prototype=1` 链接同样进入真实工作台。
+Dots 正式工作台仍为 `/happy/dots`，使用原会话、原 TestLoop 账本和 MCP 授权。
+本次未新建 Dot、清空历史、重派任务或修改模型、权限模式和额度。
 
 ## Relay
 
-详细说明见 [Relay 部署手册](docs/deployment.md#自建-relaydocker-compose-测试部署)。
+当前实例为本机 `/home/dev/code/happy-relay`，监听 `127.0.0.1:8193`，由本机 Nginx
+剥离 `/home-relay` 前缀并转发 WebSocket。`RELAY_PUBLIC_URL` 已设置为上述私网 Relay
+基址；原镜像、主密钥和账号策略保持，数据库与附件迁到新的外部命名卷
+`happy-relay_relay-data-tailscale-20261107`。
 
-- 现有实例：`192.168.99.55:/data/code/happy-relay`，内网 API 为
-  `http://192.168.99.55:8193`；公网由 `99.57` 的 `/home-relay` 转发。
-- `docker-compose.relay-only.yml` 只运行 API；`docker-compose.yml` 包含路径网关。
-- SSH 部署脚本为 `scripts/deploy-relay.mjs`，默认目标是 `192.168.99.56`。
-  部署现有 `99.55` 时必须显式指定目标；先用 `--dry-run` 预览、`--check` 只读检查。
-- 保留已有密钥、账号和数据卷。客户端与 daemon 使用相同的最终 API 基址，
-  `RELAY_PUBLIC_URL` 也必须对应公网基址。不要将历史健康检查当作当前业务验收。
+99.55 原 Relay 已停用，原卷与最终冷备保留。SSH 部署脚本仍默认 99.56，旧文档中的
+99.55 定向发布也不代表当前本机目标；不要直接照搬旧命令覆盖已有本机卷。
+具体启动、备份及回退约束见 [本机迁移记录](docs/deployment.md#本机与-tailscale-迁移2026-11-07)。
 
 ## 手机 App：OTA 与 TestFlight
 

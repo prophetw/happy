@@ -2,6 +2,195 @@
 
 This document describes how to deploy the Happy backend (`packages/happy-server`) and the infrastructure it expects.
 
+## 本机与 Tailscale 迁移（2026-11-07）
+
+**基础设施、数据与在线客户端切流已验证；已补充未登录浏览器与用户手机首屏验证。** 99.55 / 99.57
+的旧 Happy 服务与路由已退役，以下旧部署章节保留作历史，不代表当前发布目标。
+日常客户端配置、直连判断与日志命令见
+[Tailscale、Shadowrocket 与 Clash Verge 使用说明](features/tailscale-access.md)。
+
+| 服务 | 当前实例 | 配置 / 数据 |
+| --- | --- | --- |
+| 私网 HTTPS | Windows Tailscale Serve，节点 `desktop-8ut4p0p.taild92624.ts.net`，IP `100.116.89.36` | 后台持久代理 `http://127.0.0.1:18194`；无 AllowFunnel 配置 |
+| 本机 Nginx | `happy-local-gateway-1`，`127.0.0.1:18194` | `/home/dev/code/happy-local/compose.yaml`、`config/nginx.conf` |
+| Happy Web | 本机 Nginx 的 `/happy/` | `/home/dev/code/happy-local/web`；复用 `bdb246abeaf6` 静态包，index 的 `__HAPPY_CONFIG__` 指向私网 Relay |
+| Relay | `happy-relay-relay-1`，`127.0.0.1:8193`，healthy | `/home/dev/code/happy-relay`；卷 `happy-relay_relay-data-tailscale-20261107`；PGlite 与本地附件 |
+| Control REST / MCP | `happy-local-control-1`，`127.0.0.1:9010`，healthy | `/home/dev/code/happy-local/config/host.json`、`state/`；原授权、身份、服务 Token 保持 |
+| CLI / Worker | 本机 `happy-automation-worker.service`，PID `3511169` | `/etc/happy-control/worker.json`；drop-in `zz-tailscale-local.conf`；endpoint / relayURL 均为私网 |
+| Windows CLI | 原 daemon / 会话原地切服 | `C:\Users\Prophet\.happy` 的账号密钥、机器 ID 保持，认证与 settings 绑定私网 |
+| Dot / TestLoop | 原 release，scanner PID `3559876`；两个 Dot ready | 原 assistant 根、原会话和原 native thread；未新建任务、清空历史或调用真实模型做验收 |
+| Hindsight | `happy-dots-hindsight`，`127.0.0.1:8888` | 原卷 `happy-dots-hindsight-data`；记忆与索引未搬迁或清空 |
+
+入口：
+
+- Web：<https://desktop-8ut4p0p.taild92624.ts.net/happy/>
+- Relay：`https://desktop-8ut4p0p.taild92624.ts.net/home-relay`
+- Control：`https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1`
+- MCP：`https://desktop-8ut4p0p.taild92624.ts.net/happy-control/mcp`
+
+Windows Serve 配置已生效，WSL 未另装 tailscaled：
+
+```powershell
+& 'C:\Program Files\Tailscale\tailscale.exe' serve --bg --yes http://127.0.0.1:18194
+& 'C:\Program Files\Tailscale\tailscale.exe' serve status
+```
+
+本机服务使用已有镜像，无依赖安装、源码重建或版本升级：
+
+```sh
+docker compose -f /home/dev/code/happy-relay/docker-compose.relay-only.yml \
+  --env-file /home/dev/code/happy-relay/.env.relay up -d --no-build --wait relay
+docker compose -f /home/dev/code/happy-local/compose.yaml up -d --no-build --wait
+```
+
+Control 镜像 `sha256:2657e5fb4359262d7c3e5526063204337f51f0b6b2848d025435f1bd3b1a2132`，
+Nginx 镜像 `sha256:3dd08163706a20b20622f310ec10258cc96e9007ab357f7201955bc880ac17f4`。
+所有后端只监听回环，Windows Serve 负责 tailnet HTTPS；不要直接对局域网发布这些后端端口。
+
+### 数据同步与会话身份
+
+1. 暂停 Dot scanner / native runtime，使用原 release 的备份 API 创建并校验
+   `~/.local/state/testloop-backups/tailscale-local-20261107`，保留原线程持久目录。
+2. 停止 99.55 Relay 后冷备数据库和附件，下载后核对 SHA256，恢复到**新卷**。
+   原本机卷 `happy-relay_relay-data` 另存冷备并保留。比对覆盖 23 张表：
+   707 个 Session、225907 个 SessionMessage、10 个 Account、15 个 Machine、39 个迁移。
+   表记录 ID 无本机独有项、会话 seq / metadataVersion / agentStateVersion 无本机领先项；
+   本机 132 个附件哈希均与来源一致。这里不把运行状态字段变化描述为全库逐字一致。
+3. 保留同一镜像、主密钥和账号策略，启动本机同步卷。99.55 使用临时 Nginx / SSH
+   桥把旧连接送到本机同一数据库，旧 Relay 不再写入，避免两个权威库并行写入。
+4. 用已有加密 `relay-switch` 协议迁移两台机器、29 个会话；Windows / WSL 与 Dot profile
+   的认证地址和 Web 登录地址更新为私网。Worker 通过独立 systemd 维护单元停启，
+   PID 从 `2844475` 变为 `3511169`，未重建 dist 或结束已有编码进程。
+5. 通过原 MCP 配置 API 更新三个连接的 URL 与本地凭据绑定；新旧授权 scope 完全相同。
+   当前 active REST 职责通过正常 revision 更新地址。历史 runs、hostedTasks、conversation
+   和 hindsight 摘要保持，不全局替换旧 target 或修改历史回执。冻结的历史 REST run 仍保留当时 endpoint，
+   将来如需恢复，应显式迁移其绑定，不直接恢复旧公网调用。旧配置及当前凭据另存私有备份。
+6. 账号公钥与源 Relay 账号核对后，仅迁移 workspace 的账号/地址绑定和两个 runtime
+   的 serverUrl / config binding。每个 runtime 的旧 binding 先通过原 schema 校验，
+   新配置仅改变 URL，重新校验后原 thread、afterSeq、输入/输出账本保持。
+   两个 Dot 最终 ready：`01a1b410-2bee-7a11-88c5-a20dd7880ccd`、
+   `01a1b546-4965-70e1-8e94-6f7ba34d7e98`。
+
+### 迁移中的失败与恢复
+
+- 初次辅助脚本使用了 Python 3.10 没有的 `hashlib.file_digest`；改为流式 SHA256。
+  首次 Docker 解包缺少 `-i`，容器未接收到归档；补齐标准输入后重新恢复并通过比较。
+- 临时桥使用宿主端口，被 99.55 firewalld 拦截，旧入口出现 502 / RPC method not available。
+  查明后仅为来源 99.57 临时放行 8193 / 9011，带超时；迁移完成已显式撤销。
+- 在线切服重试碰到旧 socket 清理导致 `RPC target disconnected`。两轮分别成功覆盖
+  全部 31 个唯一参与者；并非把失败响应算作成功。退役旧桥后另回读 32 个活跃会话
+  （含两个 Dot 和工作台）与 2 台机器，均有 90 秒内心跳，确认没有依赖旧桥维持在线。
+- Dot 首次恢复因 URL config binding 拒绝启动，完成上述显式绑定迁移后，继续发现
+  `session_attach_missing`：托管 CLI 的 `attachSession` 只查最近 150 个会话。
+  V2 分页确认原两个 Dot 仍存在后，通过现有 `/v1/relay/sessions/:id` 重新登记原加密
+  snapshot，使它们进入最近列表；ID、密钥、消息 seq 保持，metadata / agentState 版本
+  正常递增。自动恢复随后成功。未为迁移修改 CLI 查找逻辑，此分页边界仍是后续维护项。
+
+### 旧端退役与备份
+
+99.57 只修改 Happy 的两个标记区域，Nginx 候选及生效配置均通过 `nginx -t` 后热重载。
+`/happy`、`/home-relay`、`/happy-control` 和 `/.happy-releases/` 的 Happy 路径返回 410。
+其他项目配置保留。备份与候选：
+`/root/bim-engine/script/happy-local-migration-20261107/`。原 `happy` 符号链接与整个
+`.happy-releases` 目录已移到该目录的 `static/`，不再留在公开静态根目录，
+防止经共享网关其他静态路径访问；旧产物保留用于审计。
+
+99.55 旧 Relay、Control / gateway、临时 bridge 容器均 exited；Control pair 的 systemd
+开机启用已取消，旧 Relay restart policy 设为 no。临时防火墙规则与 SSH 隧道已撤销，
+8193 / 9011 / 28193 / 29010 不再监听。原卷、配置及 TLS 材料没有删除。
+
+| 备份 | 位置 / SHA256 |
+| --- | --- |
+| 源 Relay 最终冷备 | 99.55 `/data/code/happy-relay/migration-backups/local-final-20261107/relay-data.tar.gz`；`5426647bd7710c183d1c4594564ac7370558e07903e8765181f8c70a0c4bc478` |
+| 源 Control 最终冷备 | 同目录 `control-final.tar.gz`；`184c42cd6a9a06d57d17cf37b8427a1d7c160c06067f4ccd21fde4fda47cab62` |
+| 本机证据 / 配置备份 / 冷备副本 | `~/.local/state/happy-local-migration-20261107/`，目录私有，备份文件 0600 |
+| 原本机 Relay 卷冷备 | 上述目录 `source/relay-local-before.tar`；原卷也保留 |
+| TestLoop 冷备 | `~/.local/state/testloop-backups/tailscale-local-20261107`，已校验 |
+
+旧冷备只代表切流时刻。若需把权威实例迁回旧机器，必须协调当前本机停写、重新备份并
+同步迁移后的数据；不能直接启动旧数据库，把后来写入当作可以丢弃。Control 回退同样
+要保留当前 grants / receipts，不能恢复较早授权副本后重派旧任务。
+
+### 验证结果与使用边界
+
+- `final-verification.json`：21 项通过。覆盖私网首页、Dots / Settings SPA、三个入口 JS
+  字节、WASM、缺失 JS 404、Relay / Control、原账号认证、私网 WSS 握手与心跳，
+  以及旧公网 Web / Relay / Control / MCP / 静态版本六项 410。
+- `private-mcp-verification.json`：3 个私网 MCP 到新 Worker 的只读模型目录调用通过，
+  均返回 Codex / Claude / Agy；退役旧桥后再做一次只读调用仍通过，记录在
+  `mcp-after-retirement.json`。不创建私人任务或调用付费模型。
+- `attachment-verification.json`：已有加密附件经认证下载 200，字节哈希与卷内文件一致，
+  返回下载 URL 为私网基址。直接走被禁止的 `/files/sessions/...` 返回 403 符合现有访问规则。
+- `dot-runtime-final.json`：两个 Dot ready、原 thread 保持，scanner error 为 null。
+  `live-participants-final.json`：32 个会话、2 台机器心跳新鲜。
+- `assistant-health-final.json`：仍为 degraded，仅有原先的
+  `assistant_runs_need_attention`、`assistant_conversation_needs_attention`、
+  `assistant_happy_push_needs_attention`，没有清除历史错误来制造健康结果。
+- 初次切流未运行真实浏览器；后续首屏修复已补充浏览器与用户手机登录页验证，见下节。
+  手机登录后会话收发、附件上传和整机断电恢复仍未验收。没有发布 OTA、
+  原生包、npm 或更新 CLI 代码。手机加入同一 tailnet 后，在 Happy 设置中填写上述 Relay
+  基址；新 Web 域名需要登录原账号，不要创建替代账号。全局与 Node 环境中的外部模型
+  供应商仍按原设置使用，迁移范围是 Happy 服务与访问入口。
+
+### Web 首屏加载缓慢修复（2026-11-07）
+
+用户报告 Shadowrocket 内置 Tailscale 已连接，Relay 有文字响应，但 Safari 打开 Happy
+一直空白或转圈。实际检查发现：
+
+- 本机入口与全部 HTML / JS / 字体资源返回 200，本机 HTTPS 主 JS 下载约 0.25 秒；
+  这只能验证宿主本机链路，不能代替手机链路测速。
+- 原 99.57 网关启用了 gzip / gzip_static，新本机配置遗漏；即使客户端声明支持 gzip，
+  主 JS 仍传输 10228109 字节，common JS 2591152 字节、WASM 8001100 字节。
+- 宿主测手机经美国 DERP 中继，三次 ping 约 329 / 407 / 1214 ms，未建立 direct；
+  宿主 netcheck UDP=true，Windows 有启用的 Tailscale UDP 入站规则。用户确认独立
+  Tailscale App 已断开，Shadowrocket 的“始终使用 DERP”关闭。没有据此擅自改防火墙、
+  选择出口节点、强制其他 DERP 或恢复公网入口。
+
+修复只涉及 `/home/dev/code/happy-local/config/nginx.conf` 与现有 Web 的压缩 sidecar：
+
+- 复用 Nginx gzip / gzip_static，为 JS、CSS、WASM、JSON、SVG 和 TTF 中适合压缩的
+  63 个现有静态文件生成 `.gz`；保留原文件及 MIME，sidecar mtime 与源文件一致，响应包含 Vary。
+- `/happy/_expo/`、`/happy/assets/` 的内容哈希资源使用
+  `Cache-Control: public, max-age=31536000, immutable`；固定名 canvaskit.wasm 使用
+  `max-age=0, must-revalidate`，HTML 继续 no-cache。
+- Relay / Control 代理显式关闭压缩继承。Nginx `-t` 通过后热重载，不重启后端、
+  不改认证/数据，不编译新 App / CLI 或发布 OTA。
+
+| 资源 | 原始字节 | gzip 传输字节 |
+| --- | ---: | ---: |
+| 主 JS | 10228109 | 2644976 |
+| common JS | 2591152 | 621927 |
+| canvaskit.wasm | 8001100 | 3193782 |
+| 合计（不等于未登录首屏实际请求集合） | 20820361 | 6460685 |
+
+HTTP 验证同时覆盖 identity / gzip 两种协商、解压后与源文件逐字节比较、Vary、缓存头、
+ETag 304、SPA、真实缺失 JS 404、Relay health 和 Control compatibility，均通过。
+
+得到当次浏览器授权后，按 agent-browser 技能启动独立、无登录态的 Chromium，先检查
+登录页，再固化 Playwright CDP 脚本验证全新手机布局上下文。未登录或发送消息：
+
+- 桌面和 390×844 手机布局登录页均可见；手机布局本机链路约 644 ms。
+- 独立冷缓存上下文模拟 1 Mbps 下行、400 ms 延迟，约 40551 ms 出现登录按钮。
+  两个手机场景均无 pageerror、console error、失败请求或非预期 HTTP 错误。
+- 控制台保留一条产物内 `dev/masked-progress` 路由 warning，未将其计为错误或顺带改代码。
+- 用户刷新私网地址后明确确认“已经出现登录页”。这是用户对真实 Safari 首屏的反馈，
+  不是本机 Chromium 等同真实 Safari、或已完成登录后链路验收的证明。
+- 为对照手机请求临时启用的静态路径日志仅记录 URI / 状态 / 大小 / 耗时 / UA，不记录
+  query、认证头或消息。确认恢复后已撤销 `DEBUG-happy-web-slow-20261107` 配置并再次
+  校验、重载 Nginx；隔离浏览器已关闭。
+
+证据：`.e2e-artifacts/happy-web-slow-20261107/`（忽略目录，含桌面 / 手机截图、
+`browser-report.json`、`compression-verification.json`、用户确认记录）；回滚配置与 gzip
+清单保存在 `~/.local/state/happy-web-slow-20261107/`。
+
+后续用户反馈访问速度很快，宿主再次检查：手机 `100.93.129.83` 的 `tailscale status`
+显示 `active; direct`，`tailscale ping --c 3 --timeout 3s 100.93.129.83` 返回对端 UDP
+地址，延迟约 49 ms，确认当次已建立直连。JSON 中 `CurAddr` 非空时仍可能保留
+`Relay: sfo`，该字段不能单独用来判断业务流量仍走中继。“始终使用 DERP”关闭允许直连，
+不禁止直连暂时失败时自动回退；最初未直连的具体原因未确定，也未量化手机完整加载耗时。
+真实账号登录后收发、附件上传仍未验证。以后替换 Web 静态包时，
+需重新生成对应 gzip sidecar，不能沿用同名文件的旧压缩内容。
+
 ## Runtime overview
 - **App server:** Node.js running `tsx ./sources/main.ts` (Fastify + Socket.IO).
 - **Database:** Postgres via Prisma.
