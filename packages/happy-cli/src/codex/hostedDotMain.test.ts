@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { readPrivate } from './hostedDotState';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
-    start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), reconnect: vi.fn(), receive: null as any }));
+    start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), receive: null as any }));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     constructor(_: unknown, options: any) { h.options = options; }
     connect = async () => {}; disconnect = async () => {};
     setApprovalHandler() {} setEventHandler(fn: any) { h.event = fn; }
-    startThread = h.start;
+    startThread = h.start; injectItems = h.inject;
     resumeThread = h.resume; readThread = async () => ({ thread: { id: 'native-thread', turns: h.history } });
     reconnectAndResumeThread = h.reconnect;
     sendTurnAndWait = h.send; steerTurn = h.steer;
@@ -57,7 +57,7 @@ const emit = (method: string, params: any) => {
     if (method === 'turn/started') h.event({ type: 'task_started', thread_id: 'native-thread', turn_id: params.turn.id });
     if (method === 'turn/completed') h.event({ type: 'task_complete', thread_id: 'native-thread', turn_id: params.turn.id, status: params.turn.status });
 };
-beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); });
+beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockResolvedValue({}); });
 it('settles steering when completion arrives before its RPC acknowledgement', async () => {
     let finish!: (v: unknown) => void;
     h.send.mockImplementation(() => { emit('turn/started', { turn: { id: 'turn-1' } }); return new Promise(resolve => { finish = resolve; }); });
@@ -143,5 +143,21 @@ it('mounts the dedicated memory gateway on an existing thread without replacing 
         await vi.waitFor(() => expect(h.resume).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'native-thread', mcpServers: expect.objectContaining({ dot_memory: f.servers.happy_fixture }) })));
         expect(f.state().threadId).toBe('native-thread'); expect(h.start).toHaveBeenCalledTimes(1);
         expect(h.options.instructions).toContain('dot_memory_');
+    } finally { await f.stop(); }
+});
+
+it('refreshes memory policy as a trusted developer item after cold resume without inventing user input', async () => {
+    h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'seed' } }); emit('turn/completed', { turn: { id: 'seed', status: 'completed' } }); return { aborted: false }; });
+    const f = fixture(true); f.policy({ dot_memory: f.servers.happy_fixture });
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'seed history')); await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('completed'));
+        const prior = f.state().inputs;
+        await f.restart(); await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.inject).toHaveBeenCalledTimes(1);
+        expect(h.inject.mock.calls[0][0]).toMatchObject({ threadId: 'native-thread', items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: expect.stringContaining('dot_memory_write') }] }] });
+        expect(f.state().inputs).toEqual(prior); expect(h.send).toHaveBeenCalledTimes(1);
+        await f.restart(); await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.inject).toHaveBeenCalledTimes(2); expect(f.state().inputs).toEqual(prior);
     } finally { await f.stop(); }
 });
