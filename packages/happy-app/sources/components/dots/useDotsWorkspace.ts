@@ -120,7 +120,7 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
             if (announcedDeletions.current.has(deletion.requestId)) continue;
             announcedDeletions.current.add(deletion.requestId);
             setError(previous => previous?.startsWith('后台已接受删除') ? null : previous);
-            setNotice('已删除 Dot；Happy 会话与历史记录保留，本地归档会按持久回执自动核对。');
+            setNotice('已删除 Dot，历史对话与记录已保留。');
         }
     }, [ready, confirmedDeletions]);
 

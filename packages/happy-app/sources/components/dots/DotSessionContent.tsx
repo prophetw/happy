@@ -54,8 +54,8 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const muted = { color: colors.textSecondary, fontSize: 12, lineHeight: 21 };
     const heading = { color: colors.text, fontSize: 17, fontWeight: '600' as const };
     const button = { minHeight: 44, padding: 12, borderRadius: 10, backgroundColor: colors.surfaceHigh, justifyContent: 'center' as const };
-    const action = (label: string, onPress: () => void, disabled = false) => <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled}
-        onPress={onPress} style={[button, { opacity: disabled ? 0.5 : 1 }]}><Text style={body}>{label}</Text></Pressable>;
+    const action = (label: string, onPress: () => void, disabled = false, compact = false) => <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled}
+        onPress={onPress} style={[button, compact && { minHeight: 34, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 }, { opacity: disabled ? 0.5 : 1 }]}><Text style={body}>{label}</Text></Pressable>;
     const toConversation = (text: string) => {
         setComposeRequest({ id: `${session.id}:${Date.now()}`, text });
         setTab('chat'); setTaskId(null); setMemoryEdit(null);
@@ -112,13 +112,13 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             }} />
     </>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
-        <View style={{ padding: 14, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {wide && (['activity', 'work', 'memory', 'basis'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
-            {(wide ? sideTab : tab) === 'work' && action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending))}
-            {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming)}
-            {action('可用连接与项目', () => setManagingConnections(true))}
+            {(wide ? sideTab : tab) === 'work' && action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending), !wide)}
+            {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming, !wide)}
+            {action('可用连接与项目', () => setManagingConnections(true), false, !wide)}
         </View>
-        <ScrollView contentContainerStyle={{ padding: 18, gap: 18 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
             {data.pending && !data.pending.timedOut && <ActivityIndicator />}
             {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
             {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}
@@ -139,7 +139,9 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'activity', 'work', 'memory', 'basis'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { paddingHorizontal: 8, flexGrow: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
                 <Text style={body}>{tabLabels[item]}</Text>
             </Pressable>)}</View>}
-        {(data.notice || notice) && <Text accessibilityLiveRegion="polite" style={[muted, { paddingHorizontal: 16 }]}>{data.notice || notice}</Text>}
+        {(data.notice || notice) && <View style={{ marginHorizontal: 14, marginVertical: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.surfaceHigh }}>
+            <Text accessibilityLiveRegion="polite" style={[muted, { color: colors.textSecondary }]}>{data.notice || notice}</Text>
+        </View>}
         <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
             <View style={{ flex: 1, display: wide || tab === 'chat' ? 'flex' : 'none', minWidth: 0 }}>{children(composeRequest)}</View>
             <View style={{ width: wide ? 320 : '100%', display: wide ? expanded ? 'flex' : 'none' : tab === 'chat' ? 'none' : 'flex', borderLeftWidth: wide ? 1 : 0, borderLeftColor: colors.divider }}>{panel}</View>
