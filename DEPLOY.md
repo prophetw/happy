@@ -3,6 +3,21 @@
 本文件提供当前部署入口；个人项目身份、Git 发布线、授权范围与最低充分验证规则以
 [AGENTS.md](AGENTS.md) 为准。历史发布结果只证明当时状态，每次发布仍需核对线上版本。
 
+## Dot 原生会话与 Happy MCP 收敛（2026-11-07）
+
+源码 `f7b8d29d1e583b667b7029f4f6a18381ed0f8511`，从干净隔离个人main、与fork/main一致发布。App删除Dot的REST管理/迁移入口，仅保留MCP连接和显式项目选择；托管CLI支持一次性导入旧user/assistant历史、处理水位接续、原thread冷恢复和未知注入阻塞。宿主负责权限、回执与后台任务恢复，临时调查直接通过Happy MCP派工，不需要delegate模板。旧历史审计、冻结目标及Happy内部HTTP保留。
+
+- Web：[入口](https://szsp.suitbim.com.cn:7100/happy/)，版本 `20261107T024306Z-mcp-converge-f7b8d29d1e58`，包SHA256 `c314d1fe2e2c9e6f99143dabd280ee7661c0834c4027a69527f27585ace4039b`。旧资源187项保留，nginx/Relay未重启。
+- iOS：[OTA更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/d5a1c688-d2bd-4281-b6e2-5864adb1fad4)，updateID `01a1b410-aba7-76f4-ad83-a75e749b7a5d`；个人@prophetwayen/happy、preview环境/分支、runtime21、bundle com.prophetwayen.happy.preview。preview与production保持原有的同一preview映射；两渠道manifest身份、源码和环境回读一致。真机加载未验证。
+- 托管CLI仅从 `/home/dev/.local/share/happy-releases/dots-mcp-converge-20261107T024306Z/packages/happy-cli/bin/happy-hosted-dot.mjs`运行，不替换全局CLI/daemon。TestLoop `982a1d2625d5eb239e731a025e685f1fe79c3aed`将现有Agent开发Dot原地迁移，保留原Happy session、16条历史与规范记忆；其他活跃native thread保持。
+
+Happy hosted/state13项、App面板16项及类型/changelog检查通过。公网Web/Relay隔离浏览器7组通过，覆盖MCP选择、旧历史交接/新请求不丢、派工/前台续聊、重启不重派、结果回原thread和实际执行链接；脚本模型7次、付费模型0次，页面/Console/非预期HTTP及清理错误为空。真实账号原Dot的bim-server调查完成并汇总回传，工作项 `d48b2d00-8e36-480d-959d-acf7ec1fd98e`、执行会话 `cmw5ul7nk1t7xms1d7fdqao1s`；前台续聊、同thread重启和不重派通过。实际执行使用Claude/Ali DeepSeek v4.1 Flash/max/default，35项只读权限单次放行；未扩权，不将其描述为无人值守。业务验收状态仍unverified，结果保留，自有执行进程停止已确认。
+
+详细架构见[TestLoop功能文档](https://github.com/prophetw/testLoop/blob/main/docs/features/dots-mcp-migration.md)，验证边界及失败记录见[TestLoop E2Etest.md](https://github.com/prophetw/testLoop/blob/main/E2Etest.md)。证据位于TestLoop工作区 `.e2e-artifacts/dots-mcp-converge-20261107T024306Z/`；宿主备份和恢复记录见其DEPLOY.md。硬件断电恢复未验证。
+
+
+最终线上回读7组通过：MCP管理、所有活跃Dot、已删除Dot拒绝、完成工作/执行链接、跨Dot工作拒绝、原thread在线、规范记忆与无新旧解释轮次均核对。原三项attention未增加，旧记忆revision1已indexed。已退役REST RPC回读得到`RPC method not available`；初次12秒观察超时因Relay对缺失方法先等待15秒重连宽限，改为25秒取得结构化拒绝，未调整生产超时策略。
+
 ## 发布来源与准备
 
 - 常规发布使用已提交的个人 `main`。当次执行 `git fetch fork main`，确认
