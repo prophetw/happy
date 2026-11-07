@@ -16,6 +16,19 @@ type Deletion = { requestId: string; revision: number; id: string; sessionId: st
 // Share the actual attempt so they cannot archive one session twice.
 const archiveAttempts = new Map<string, Promise<void>>();
 
+/** Deletion receipts the latest projection confirms: the target is gone from the current list. */
+function confirmedDeletionsOf(raw: ReturnType<typeof projectTestloopDotsMessages>): Deletion[] {
+    const current = raw.snapshot;
+    if (!current?.ok) return [];
+    const byDot = new Map<string, Deletion>();
+    for (const deletion of Object.values(raw.deletions)) {
+        if (current.revision < deletion.revision
+            || current.dots.some(dot => dot.id === deletion.id || dot.sessionId === deletion.sessionId)) continue;
+        byDot.set(deletion.id, deletion);
+    }
+    return [...byDot.values()];
+}
+
 /** The UI reads encrypted host receipts; sending a message is never a business success receipt. */
 export function useDotsWorkspace(sessionId: string, workspaceId: string, active: boolean, detailDotId?: string) {
     const auth = useAuth();
@@ -34,6 +47,8 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     const pendingId = React.useRef<string | null>(null);
     const latestProjection = React.useRef(raw);
     const announcedDeletions = React.useRef(new Set<string>());
+    // Only a deletion this view asked for is feedback the user is waiting on.
+    const requestedDeletions = React.useRef(new Set<string>());
     latestProjection.current = raw;
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
     const sameAccount = React.useCallback(() => !!token && auth.isAuthenticated
@@ -65,6 +80,7 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         if (!validBinding() || !active) return;
         const epoch = generation.current;
         const current = () => mounted.current && generation.current === epoch && validBinding();
+        if (request.action === 'delete') requestedDeletions.current.add(request.requestId);
         pendingId.current = request.requestId;
         setPending(previous => ({ request, attempt: (previous?.attempt ?? 0) + 1, timedOut: false }));
         setError(null); setNotice(null);
@@ -96,27 +112,19 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         if (!ready || !active || !isLoaded || initialized.current) return;
         initialized.current = true;
         if (raw.pendingRequest) {
+            if (raw.pendingRequest.action === 'delete') requestedDeletions.current.add(raw.pendingRequest.requestId);
             pendingId.current = raw.pendingRequest.requestId;
             setPending({ request: raw.pendingRequest, attempt: 0, timedOut: true });
             setError('上次请求尚无处理回执，可以重试同一请求核对结果。');
         } else void refresh();
-    }, [ready, active, isLoaded, raw.pendingRequest, refresh]);
+    }, [ready, active, isLoaded, raw.pendingRequest, raw, refresh]);
 
-    const confirmedDeletions = React.useMemo<Deletion[]>(() => {
-        const current = raw.snapshot;
-        if (!current?.ok) return [];
-        const byDot = new Map<string, Deletion>();
-        for (const deletion of Object.values(raw.deletions)) {
-            if (current.revision < deletion.revision
-                || current.dots.some(dot => dot.id === deletion.id || dot.sessionId === deletion.sessionId)) continue;
-            byDot.set(deletion.id, deletion);
-        }
-        return [...byDot.values()];
-    }, [raw.snapshot, raw.deletions]);
+    const confirmedDeletions = React.useMemo(() => confirmedDeletionsOf(raw), [raw]);
 
     React.useEffect(() => {
         if (!ready) return;
         for (const deletion of confirmedDeletions) {
+            if (!requestedDeletions.current.has(deletion.requestId)) continue;
             if (announcedDeletions.current.has(deletion.requestId)) continue;
             announcedDeletions.current.add(deletion.requestId);
             setError(previous => previous?.startsWith('后台已接受删除') ? null : previous);

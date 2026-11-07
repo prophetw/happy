@@ -103,6 +103,15 @@ it('announces clear only while the current host projection retains the same Dot/
     await act(async () => renderer.unmount());
 });
 
+it('keeps historical deletion receipts silent while still reconciling the local archive', async () => {
+    mocks.messages = [command(deleteRequest), receipt(deleteId, 2, [], { deletedDot: { id: dotId, sessionId: dot.sessionId } })];
+    const renderer = await render();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(mocks.archive).toHaveBeenCalledExactlyOnceWith('dot-session', dotId);
+    expect(mocks.values[0].notice).toBeNull();
+    await act(async () => renderer.unmount());
+});
+
 it('waits for the latest projection before confirming deletion, then separately retries a failed archive mirror', async () => {
     const renderer = await render();
     await act(async () => { await mocks.values[0].submit(deleteRequest); });

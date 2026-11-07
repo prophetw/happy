@@ -40,6 +40,9 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     let state: ReturnType<typeof loadHostedState>;
     try { state = loadHostedState(file, config); } catch (error) { closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop); throw error; }
     const persist = () => savePrivate(file, state);
+    // A thread that never dispatched input has no rollout, so Codex cannot resume it.
+    const threadHasDispatchedInput = () => state.inputs.some(row => row.epoch === state.epoch && row.beforeTurns !== undefined)
+        || (state.bootstrap?.stage === 'applied' && state.bootstrap.threadId === state.threadId);
     const taskGateway = () => {
         const path = join(dir, 'task-gateway.json');
         if (!existsSync(path)) return {};
@@ -187,8 +190,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             }
         });
         await client.connect();
-        const currentThreadHasInput = state.inputs.some(r => r.epoch === state.epoch && r.beforeTurns !== undefined)
-            || state.bootstrap?.stage === 'applied' && state.bootstrap.threadId === state.threadId;
+        const currentThreadHasInput = threadHasDispatchedInput();
         if (state.threadId && currentThreadHasInput) {
             await client.resumeThread({ threadId: state.threadId, cwd: join(dir, 'workspace'), model: config.model, approvalPolicy: 'never', sandbox: 'read-only', mcpServers: taskServers });
             reconcile((await client.readThread({ threadId: state.threadId })).thread.turns ?? []);
@@ -227,13 +229,38 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                 await session!.sendSessionProtocolMessageVerified(o.envelope as SessionEnvelope, o.localId); o.sent = true; persist();
             }
         };
+        let refreshRetryAt = 0;
+        const applyTaskServers = async (next: Record<string, unknown>) => {
+            if (threadHasDispatchedInput()) {
+                await client!.resumeThread({ threadId: state.threadId!, cwd: join(dir, 'workspace'), model: config.model,
+                    approvalPolicy: 'never', sandbox: 'read-only', mcpServers: next });
+            } else {
+                // Codex has no rollout for a thread that never dispatched input and rejects
+                // thread/resume for it. Recreate the empty thread with the new MCP set, the
+                // same rule cold start uses, instead of taking the Dot down.
+                if (state.creating) throw new Error('hosted_thread_creation_unconfirmed');
+                state.creating = true; persist();
+                state.threadId = (await client!.startThread({ cwd: join(dir, 'workspace'), model: config.model,
+                    approvalPolicy: 'never', sandbox: 'read-only', mcpServers: next })).threadId;
+                state.creating = false; policyThreads.add(state.threadId!); persist();
+                await metadata();
+            }
+            taskServers = next; taskServersDigest = hash(next);
+            if (state.error === 'hosted_mcp_refresh_failed') state.error = null;
+            await ensureMemoryPolicy();
+        };
         while (!stop && !signal?.aborted) {
             if (!active && state.status !== 'blocked') {
                 const next = taskGateway();
-                if (hash(next) !== taskServersDigest) {
-                    await client.resumeThread({ threadId: state.threadId!, cwd: join(dir, 'workspace'), model: config.model, approvalPolicy: 'never', sandbox: 'read-only', mcpServers: next });
-                    taskServers = next; taskServersDigest = hash(next);
-                    await ensureMemoryPolicy();
+                if (hash(next) !== taskServersDigest && Date.now() >= refreshRetryAt) {
+                    try { await applyTaskServers(next); }
+                    catch (error) {
+                        // A binding refresh must not take down a working conversation; keep the
+                        // current servers and retry with a bounded cadence.
+                        state.error = 'hosted_mcp_refresh_failed'; persist();
+                        refreshRetryAt = Date.now() + 30_000;
+                        console.error('[HostedDot] Failed to apply the Happy MCP binding', error);
+                    }
                 }
                 queueTaskEvents();
             }
@@ -300,7 +327,9 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
         await flush(); state.status = 'stopped'; persist();
     } catch (error) {
         state.status = 'blocked'; state.error = error instanceof Error && /^hosted_[a-z0-9_]+$/.test(error.message) ? error.message : 'hosted_start_or_recovery_failed'; persist();
-        throw new Error(state.error);
+        // Keep the durable code stable but surface the cause for the next diagnosis.
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(detail === state.error ? detail : `${state.error}: ${detail}`);
     } finally {
         clearInterval(heartbeat);
         try { session?.sendSessionDeath(); await session?.close(); await client?.disconnect(); } finally {

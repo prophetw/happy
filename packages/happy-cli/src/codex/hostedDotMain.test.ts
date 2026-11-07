@@ -165,13 +165,42 @@ it('rejects a task event bound to another Dot before starting a model turn', asy
 });
 
 it('mounts the dedicated memory gateway on an existing thread without replacing history', async () => {
+    h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'seed' } }); emit('turn/completed', { turn: { id: 'seed', status: 'completed' } }); });
     const f = fixture(true);
     try {
         await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'seed history')); await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('completed'));
         f.policy({ ...f.servers, dot_memory: f.servers.happy_fixture });
         await vi.waitFor(() => expect(h.resume).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'native-thread', mcpServers: expect.objectContaining({ dot_memory: f.servers.happy_fixture }) })));
         expect(f.state().threadId).toBe('native-thread'); expect(h.start).toHaveBeenCalledTimes(1);
         expect(h.options.instructions).toContain('dot_memory_');
+    } finally { await f.stop(); }
+});
+
+it('recreates a never-used thread when the MCP set changes instead of resuming without a rollout', async () => {
+    const f = fixture(true);
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.start.mockResolvedValueOnce({ threadId: 'recreated-thread', model: 'test' });
+        f.policy({});
+        await vi.waitFor(() => expect(f.state().threadId).toBe('recreated-thread'));
+        expect(h.resume).not.toHaveBeenCalled();
+        expect(h.start).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: {} }));
+        expect(f.state().status).toBe('ready'); expect(f.state().error).toBeNull();
+    } finally { await f.stop(); }
+});
+
+it('keeps a working conversation alive when a binding refresh fails', async () => {
+    h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'keep-' + h.send.mock.calls.length } }); emit('turn/completed', { turn: { id: 'keep-' + h.send.mock.calls.length, status: 'completed' } }); });
+    const f = fixture(true);
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'first')); await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('completed'));
+        h.resume.mockRejectedValueOnce(new Error('temporary app-server failure'));
+        f.policy({});
+        await vi.waitFor(() => expect(f.state().error).toBe('hosted_mcp_refresh_failed'));
+        expect(f.state().status).toBe('ready'); expect(f.state().threadId).toBe('native-thread');
+        h.rows.push(row(2, 'second')); await vi.waitFor(() => expect(f.state().inputs[1]?.status).toBe('completed'));
     } finally { await f.stop(); }
 });
 
