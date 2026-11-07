@@ -41,6 +41,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [clearConfirming, setClearConfirming] = React.useState(false);
     const [composeRequest, setComposeRequest] = React.useState<{ id: string; text: string } | null>(null);
     const wide = width >= 920;
+    const directMemory = Boolean(session.metadata?.codexThreadId);
     const own = data.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
     const view = own ? data.projection?.details[metadata.dotId] : undefined;
     const detail = view?.data;
@@ -105,7 +106,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                 setMemoryEdit({ key, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
                     kind: version.kind, json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
             }} onForgetMemory={key => {
-                if (data.ready && own) toConversation(`请忘记当前 Dot 的个人记忆 ${JSON.stringify(key)}，先展示变更供我确认。`);
+                if (data.ready && own) toConversation(`请忘记当前 Dot 的个人记忆 ${JSON.stringify(key)}，${directMemory ? '直接执行并告知结果' : '先展示变更供我确认'}。`);
             }} onAddMemory={() => {
                 if (data.ready && own) setMemoryEdit({ key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
             }} />
@@ -160,7 +161,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             <Text style={muted}>{memoryEdit.json ? 'JSON 内容' : '内容'}</Text><TextInput accessibilityLabel="记忆内容" value={memoryEdit.text} maxLength={4096} onChangeText={text => setMemoryEdit(previous => previous && ({ ...previous, text }))} multiline style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, minHeight: 120, padding: 12, borderRadius: 10, textAlignVertical: 'top' }} />
             <Text style={muted}>有效期（ISO 时间，留空表示不设到期）</Text><TextInput accessibilityLabel="记忆有效期" value={memoryEdit.expiresAt ?? ''} onChangeText={expiresAt => setMemoryEdit(previous => previous && ({ ...previous, expiresAt: expiresAt || null }))} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
             {error && <Text accessibilityRole="alert" style={body}>{error}</Text>}
-            {action('带入对话并确认', () => {
+            {action(directMemory ? '带入对话' : '带入对话并确认', () => {
                 if (!memoryEdit.key.trim() || !memoryEdit.text.trim()) { setError('请填写记忆名称和内容。'); return; }
                 let value: unknown = memoryEdit.text;
                 try { if (memoryEdit.json) value = JSON.parse(memoryEdit.text); } catch { setError('内容不是有效的 JSON，请修正后重试。'); return; }
@@ -168,7 +169,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                 if (expiry && (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(expiry) || !Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now())) {
                     setError('请输入包含时区的未来 ISO 时间，或清空有效期。'); return;
                 }
-                setError(null); toConversation(`请将当前 Dot 的个人记忆 ${JSON.stringify(memoryEdit.key.trim())} 保存为 ${memoryEdit.kind}，内容为 ${JSON.stringify(value)}，有效期为 ${expiry ? new Date(expiry).toISOString() : '不设置到期'}。先展示变更供我确认。`);
+                setError(null); toConversation(`请将当前 Dot 的个人记忆 ${JSON.stringify(memoryEdit.key.trim())} 保存为 ${memoryEdit.kind}，内容为 ${JSON.stringify(value)}，有效期为 ${expiry ? new Date(expiry).toISOString() : '不设置到期'}。${directMemory ? '直接保存并告知结果' : '先展示变更供我确认'}。`);
             })}
         </>)}
     </View>;
