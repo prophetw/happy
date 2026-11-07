@@ -1,3 +1,11 @@
+# November 7 - Keep Dot work in one conversation
+
+Requires the updated TestLoop host and a native Dot conversation.
+
+- **Assign investigations directly** — send project work to Happy and keep chatting while it runs; results return to the same conversation.
+- **Choose projects in MCP** — manage the connection and allowed projects from one page.
+- **Keep existing conversations** — the host can migrate an idle Dot while preserving chats, memories and settled work, and keeping already processed requests from running again.
+
 # November 6 - Manage Dots with confidence
 
 Requires the updated TestLoop host.

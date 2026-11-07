@@ -41,7 +41,7 @@ function fixture(gateway = false, imported = false) {
         const file = join(data, 'bootstrap.json'), body = JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, afterSeq: 5,
             items: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'old request, never dispatch again' }] },
                 { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'old reply' }] }] });
-        writeFileSync(file, body); Object.assign(config, { bootstrap: { file, digest: createHash('sha256').update(body).digest('hex'), afterSeq: 5 } });
+        writeFileSync(file, body, { mode: 0o600 }); Object.assign(config, { bootstrap: { file, digest: createHash('sha256').update(body).digest('hex'), afterSeq: 5 } });
     }
     const servers = { happy_fixture: { command: '/usr/bin/node', args: ['/fixture/gateway.mjs'], startup_timeout_sec: 30, tool_timeout_sec: 30, required: true, default_tools_approval_mode: 'approve' } };
     const policy = (value: unknown) => writeFileSync(join(data, 'task-gateway.json'), JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, servers: value }));

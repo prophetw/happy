@@ -51,7 +51,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     const importHistory = async () => {
         if (!config.bootstrap || state.bootstrap?.stage === 'applied') return;
         const stat = lstatSync(config.bootstrap.file);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new Error('hosted_bootstrap_invalid');
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || (stat.mode & 0o077) || stat.size > 8 * 1024 * 1024) throw new Error('hosted_bootstrap_invalid');
         const bytes = readFileSync(config.bootstrap.file);
         if (createHash('sha256').update(bytes).digest('hex') !== config.bootstrap.digest)
             throw new Error('hosted_bootstrap_invalid');
