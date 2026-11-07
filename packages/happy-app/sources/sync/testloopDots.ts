@@ -17,7 +17,7 @@ export function readTestloopDotsMetadata(metadata: unknown): TestloopDotsMetadat
     return parsed.success ? parsed.data : null;
 }
 
-const modelSettings = z.object({ agent: z.literal('codex'), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) }).strict();
+const modelSettings = z.object({ agent: z.literal('codex'), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) }).strict();
 export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('list') }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('create'),

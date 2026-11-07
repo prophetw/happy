@@ -5,7 +5,7 @@ import type { SessionEnvelope } from '@slopus/happy-wire';
 
 export const HostedDotConfig = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string().min(1),
     happyHome: z.string().startsWith('/'), serverUrl: z.string().url(), directory: z.string().startsWith('/'),
-    executable: z.string().min(1), args: z.array(z.string()), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('xhigh'), provider: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    executable: z.string().min(1), args: z.array(z.string()), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']).default('xhigh'), provider: z.string().regex(/^[A-Za-z0-9_-]+$/),
     providerConfig: z.record(z.string(), z.union([z.string(), z.boolean()])).default({}), instruction: z.string().min(1),
     bootstrap: z.strictObject({ file: z.string().startsWith('/'), digest: z.string().regex(/^[a-f0-9]{64}$/), afterSeq: z.number().int().nonnegative() }).optional(),
     codexHome: z.string().startsWith('/'), environment: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).refine(s => !['CODEX_HOME', 'HOME', 'HAPPY_HOME_DIR', 'NODE_OPTIONS'].includes(s), 'reserved_environment')).default([]) });
