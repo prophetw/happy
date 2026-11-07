@@ -112,7 +112,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             if (body.content.text.length > 12000) {
                 state.inputs.push({ epoch: state.epoch, seq: message.seq, id: message.id, text: body.content.text.slice(0, 12000), delivery: 'queue', status: 'rejected', error: 'hosted_input_limit' });
                 addOutput(state, createEnvelope('agent', { t: 'service', text: '这条消息超过12000字符，请拆分后发送。' }, { id: `input-rejected:${message.seq}` }));
-            } else if (!state.inputs.some(r => r.seq === message.seq)) state.inputs.push({ epoch: state.epoch, seq: message.seq, id: message.id, text: body.content.text, delivery: body.meta?.deliveryMode === 'steer' ? 'steer' : 'queue', status: 'queued' });
+            } else if (!state.inputs.some(r => r.seq === message.seq)) state.inputs.push({ epoch: state.epoch, seq: message.seq, id: message.id, text: body.content.text, ...(body.meta?.permissionMode === undefined ? {} : { permissionMode: body.meta.permissionMode }), delivery: body.meta?.deliveryMode === 'steer' ? 'steer' : 'queue', status: 'queued' });
         }
         state.afterSeq = message.seq; persist();
     };

@@ -10,7 +10,7 @@ export const HostedDotConfig = z.strictObject({ version: z.literal(1), dotId: z.
     bootstrap: z.strictObject({ file: z.string().startsWith('/'), digest: z.string().regex(/^[a-f0-9]{64}$/), afterSeq: z.number().int().nonnegative() }).optional(),
     codexHome: z.string().startsWith('/'), environment: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).refine(s => !['CODEX_HOME', 'HOME', 'HAPPY_HOME_DIR', 'NODE_OPTIONS'].includes(s), 'reserved_environment')).default([]) });
 export type HostedDotConfig = z.infer<typeof HostedDotConfig>;
-const Input = z.object({ epoch: z.number().int().nonnegative().default(0), delivery: z.enum(['queue', 'steer']).default('queue'), origin: z.enum(['user','task-result']).optional(), seq: z.number().int().positive().optional(), id: z.string(), text: z.string(),
+const Input = z.object({ epoch: z.number().int().nonnegative().default(0), delivery: z.enum(['queue', 'steer']).default('queue'), origin: z.enum(['user','task-result']).optional(), seq: z.number().int().positive().optional(), id: z.string(), text: z.string(), permissionMode: z.string().optional(),
     status: z.enum(['queued', 'dispatching', 'accepted', 'completed', 'interrupted', 'failed', 'unknown', 'rejected']),
     turnId: z.string().optional(), beforeTurns: z.array(z.string()).optional(), error: z.string().optional() }).refine(row => row.origin === 'task-result' || row.seq !== undefined, 'hosted_user_receipt_required');
 const State = z.object({ version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),

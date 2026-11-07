@@ -190,3 +190,22 @@ it('refreshes memory policy as a trusted developer item after cold resume withou
         expect(h.inject).toHaveBeenCalledTimes(2); expect(f.state().inputs).toEqual(prior);
     } finally { await f.stop(); }
 });
+
+it('preserves authenticated permission metadata across queue, restart and later mode changes', async () => {
+    h.send.mockImplementation(async () => { const id = 'mode-' + h.send.mock.calls.length; emit('turn/started', { turn: { id } }); emit('turn/completed', { turn: { id, status: 'completed' } }); return { aborted: false }; });
+    const f = fixture(true);
+    try {
+        const first = row(1, 'Yolo task'); Object.assign(first.body.meta, { permissionMode: 'yolo' }); h.rows.push(first);
+        await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('completed'));
+        expect(f.state().inputs[0].permissionMode).toBe('yolo');
+        await f.restart(); await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(f.state().inputs[0].permissionMode).toBe('yolo');
+        const second = row(2, 'ordinary task'); Object.assign(second.body.meta, { permissionMode: 'default' }); h.rows.push(second);
+        await vi.waitFor(() => expect(f.state().inputs[1]?.status).toBe('completed'));
+        expect(f.state().inputs[1].permissionMode).toBe('default');
+        h.rows.push(row(3, 'API task without mode'));
+        await vi.waitFor(() => expect(f.state().inputs[2]?.status).toBe('completed'));
+        expect(f.state().inputs[2].permissionMode).toBeUndefined();
+        expect(h.send.mock.calls.map(c => c[0])).toEqual(['Yolo task', 'ordinary task', 'API task without mode']);
+    } finally { await f.stop(); }
+});
