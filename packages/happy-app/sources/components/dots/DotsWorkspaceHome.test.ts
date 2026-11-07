@@ -163,3 +163,31 @@ it('shows archive mirror failure separately with an explicit idempotent retry co
     expect(retryArchive).toHaveBeenCalledExactlyOnceWith();
     await act(async () => renderer.unmount());
 });
+
+it('opens the cached edit form during a delayed list refresh without permitting writes', async () => {
+    mocks.data = { pending: { request: { action: 'list', requestId: 'refresh' }, timedOut: true } };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, {
+        session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true,
+    })); });
+    expect(button(renderer, '管理 写作助理').props.disabled).toBe(false);
+    await press(button(renderer, '管理 写作助理'));
+    expect(management(renderer).props.visible).toBe(true);
+    expect(renderer.root.findAllByType('TextInput').find((n: any) => n.props.accessibilityLabel === 'Dot 名称')?.props.value).toBe(dot.name);
+    expect(button(renderer, '保存 Dot').props.disabled).toBe(true);
+    expect(button(renderer, '删除 Dot').props.disabled).toBe(true);
+    expect(button(renderer, '重试编辑表单刷新')).toBeTruthy();
+    expect(mocks.submit).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it.each(['create', 'update', 'delete', 'clear'])('keeps editing disabled while %s is unconfirmed', async action => {
+    mocks.data = { pending: { request: { action, requestId: 'write' }, timedOut: true } };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, {
+        session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true,
+    })); });
+    expect(button(renderer, '管理 写作助理').props.disabled).toBe(true);
+    expect(mocks.submit).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});

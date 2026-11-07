@@ -173,7 +173,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 <View style={{ flex: 1, width: '100%', minWidth: 0, gap: 8 }}><Text style={s.heading}>助理目录{snapshot ? ` · ${snapshot.dots.length}` : ''}</Text>
                     {!snapshot ? <Text style={s.muted}>正在读取 Dots 列表…</Text> : !snapshot.dots.length ? <Text style={[s.muted, { paddingVertical: 24 }]}>还没有 Dot，创建第一个助理开始交办。</Text>
                         : snapshot.dots.map(dot => <DotRow key={dot.id} dot={dot} disabled={opening !== null}
-                            editDisabled={opening !== null || Boolean(data.pending)} onOpen={() => void openDot(dot)}
+                            editDisabled={opening !== null || Boolean(data.pending && !['list', 'inspect'].includes(data.pending.request.action))} onOpen={() => void openDot(dot)}
                             onEdit={() => openEdit(dot)} />)}
                 </View>
                 <View style={[s.attention, { width: compact ? '100%' : 280 }]}><Text style={s.heading}>需要你处理</Text>
@@ -220,6 +220,11 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                                 opacity: data.pending || deleteConfirming ? 0.5 : 1 }]}>
                             <Text style={{ color: '#c43c32', fontWeight: '600' }}>{deleteConfirming ? '等待确认…' : '删除 Dot'}</Text>
                         </Pressable>
+                    </View>}
+                    {data.pending && <View style={{ gap: 10 }}>
+                        <Text accessibilityLiveRegion="polite" style={s.muted}>正在等待后台回执，当前显示上次读取的配置；收到回执后可保存修改。</Text>
+                        {data.pending.timedOut && <Pressable accessibilityRole="button" accessibilityLabel="重试编辑表单刷新" onPress={() => data.retry()} style={s.button}>
+                            <Text style={s.muted}>重试刷新</Text></Pressable>}
                     </View>}
                     {(data.error || openError) && <Text accessibilityRole="alert" style={s.muted}>{data.error || openError}</Text>}
                     <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || Boolean(editing.settings)) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => {
