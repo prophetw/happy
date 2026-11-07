@@ -3,6 +3,14 @@
 本文件提供当前部署入口；个人项目身份、Git 发布线、授权范围与最低充分验证规则以
 [AGENTS.md](AGENTS.md) 为准。历史发布结果只证明当时状态，每次发布仍需核对线上版本。
 
+## Dot 删除提示误报与空 thread MCP 刷新修复（2026-11-07）
+
+源码提交 `bdb246abeaf6e44f65f406048b5ed67bfda64149`（`fork/main`）。工作台不再在每次挂载时播报历史删除回执，仅当前视图发起的删除提示一次；本地会话归档仍按回执静默核对。托管运行时在 MCP 集合变化时区分 thread 状态：已派发过输入的 thread 继续 `thread/resume`，从未派发输入的空 thread 因 Codex 没有 rollout 而改为重建；单次刷新失败保留原 MCP 并每 30 秒重试，不再把会话置为 blocked。
+
+发布目标：托管入口 `/home/dev/.local/share/happy-releases/dots-refresh-recovery-20261107T102059Z/packages/happy-cli/bin/happy-hosted-dot.mjs`；Web `.happy-releases/20261107T102059Z-dots-refresh-recovery-bdb246abeaf6`；iOS preview OTA update group `78d1ee75-9a8c-47dc-948a-33395e04ddfa`、iOS update ID `01a1b596-35ab-7548-903f-58a3fad81461`（runtime 21）。宿主切换与冷备记录见 TestLoop `DEPLOY.md` 同日条目。
+
+验证：`hostedDotMain` 14/14、dots 组件 31/31、App `tsc --noEmit` 通过；Web 构建产物与公网回读字节一致。手机真机是否已加载本次 OTA 未验证，不能由发布成功推定。
+
 ## Dot Yolo 权限传递修复（2026-11-07）
 
 托管CLI `25641588332c16c0f20380086248b27c3392ae20` 在接收和恢复原生用户输入时保留permissionMode。TestLoop `1d1fea23de50d72ed8ce8968fb3830fd16d68857`将当前用户模式传入Happy MCP任务启动，Yolo在Claude目录中对应bypassPermissions；模型default不再覆盖选择，普通模式不被模型升级，授权未开放时明确拒绝。已启动会话的冻结模式与新用户模式校验，旧回执保持幂等。主Dot沙盒和项目/Token授权不变。
