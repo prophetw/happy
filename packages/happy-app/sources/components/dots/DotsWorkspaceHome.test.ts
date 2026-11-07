@@ -191,3 +191,33 @@ it.each(['create', 'update', 'delete', 'clear'])('keeps editing disabled while %
     expect(mocks.submit).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });
+
+
+it('opens the native edit modal, loads settings, and saves effort through the workspace receipt flow', async () => {
+    const configuredDot = { ...dot, settings: { agent: 'codex', model: 'gpt-6.1-sol', effort: 'xhigh' } };
+    const snapshot = { schemaVersion: 1, workspaceId: 'workspace-id', revision: 1, requestId: 'list', ok: true,
+        dots: [configuredDot], modelOptions: [{ code: 'gpt-6.1-sol', value: 'GPT 6.1 Sol',
+            thinkingLevels: ['high', 'xhigh'], defaultThinkingLevel: 'xhigh' }] };
+    const projection = { snapshot, receipts: {}, deletions: {}, details: {}, pendingRequest: null };
+    mocks.data = { projection };
+    const props = { session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, props)); });
+    expect(button(renderer, '管理 写作助理').props.disabled).toBe(false);
+    await press(button(renderer, '管理 写作助理'));
+    expect(management(renderer).props.visible).toBe(true);
+    expect(renderer.root.findAllByType('TextInput').find((n: any) => n.props.accessibilityLabel === 'Dot 长期职责')?.props.value).toBe(dot.instruction);
+    expect(button(renderer, '保存 Dot').props.disabled).toBe(true);
+    await press(button(renderer, '推理强度 high'));
+    expect(button(renderer, '保存 Dot').props.disabled).toBe(false);
+    await press(button(renderer, '保存 Dot'));
+    expect(mocks.submit).toHaveBeenCalledExactlyOnceWith({ schemaVersion: 1, requestId: deleteRequest.requestId,
+        action: 'update', dotId: dot.id, name: dot.name, instruction: dot.instruction,
+        settings: { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' } });
+    expect(management(renderer).props.visible).toBe(true);
+    mocks.data = { projection: { ...projection, receipts: { [deleteRequest.requestId]: { ok: true } } } };
+    await act(async () => renderer.update(React.createElement(DotsWorkspacePanel, props)));
+    expect(management(renderer).props.visible).toBe(false);
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
