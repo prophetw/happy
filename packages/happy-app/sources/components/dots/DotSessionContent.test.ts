@@ -42,7 +42,7 @@ beforeEach(() => {
     mocks.submit.mockReset();
     mocks.navigate.mockReset();
 });
-it('confirms clearing without unmounting or clearing the existing composer, navigation, or Dot binding', async () => {
+it('confirms destructive clear and returns to the workspace while the host rotates the session', async () => {
     let mounts = 0;
     function Composer() {
         React.useEffect(() => { mounts++; }, []);
@@ -63,10 +63,10 @@ it('confirms clearing without unmounting or clearing the existing composer, navi
 
     mocks.confirm.mockResolvedValueOnce(true);
     await act(async () => clear().props.onPress());
-    expect(mocks.confirm).toHaveBeenLastCalledWith('清空当前对话？', expect.stringContaining('进行中的目标不会取消'), { confirmText: '清空对话' });
+    expect(mocks.confirm).toHaveBeenLastCalledWith('清空当前对话？', expect.stringContaining('独立后台任务继续运行'), { confirmText: '清空对话' });
     expect(mocks.submit).toHaveBeenCalledExactlyOnceWith({ schemaVersion: 1,
         requestId: '33333333-3333-4333-8333-333333333333', action: 'clear', dotId: 'dot-id' });
-    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(mocks.navigate).toHaveBeenCalledWith('workspace-session');
     expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
     expect(mounts).toBe(1);
 
@@ -118,5 +118,23 @@ it('keeps the real composer mounted through observer tabs and routes memory edit
     expect(requests).toHaveLength(1); expect(JSON.stringify(requests)).toContain('新偏好');
     expect(renderer.root.findByType('Composer').props.draft).toBe('原有草稿'); expect(mounts).toBe(1);
     await switchTo('本轮依据'); expect(renderer.root.findByType('ObservationPanel').props.mode).toBe('basis');
+    await act(async () => renderer.unmount());
+});
+
+it('carries user-level scope explicitly into the existing edit and forget conversation', async () => {
+    let request: { text: string } | null = null;
+    let renderer!: ReturnType<typeof create>;
+    const props = { session: { id: 'dot-session', presence: 'online', metadata: { codexThreadId: 'native-thread' } } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        children: (value: any) => { request = value; return React.createElement('Composer'); } };
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    const panel = renderer.root.findByType('ObservationPanel');
+    await act(async () => panel.props.onEditMemory('偏好', { revision: 1, value: '共享偏好', kind: 'preference', expiresAt: null }, 'user'));
+    const send = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '带入对话')!;
+    await act(async () => send.props.onPress());
+    expect(request!.text).toContain('用户级（所有 Dot 共享）记忆');
+    expect(request!.text).toContain('直接保存并告知结果');
+    await act(async () => panel.props.onForgetMemory('偏好', 'user'));
+    expect(request!.text).toContain('请忘记用户级（所有 Dot 共享）记忆');
     await act(async () => renderer.unmount());
 });

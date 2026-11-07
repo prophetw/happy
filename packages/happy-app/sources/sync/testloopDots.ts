@@ -17,12 +17,13 @@ export function readTestloopDotsMetadata(metadata: unknown): TestloopDotsMetadat
     return parsed.success ? parsed.data : null;
 }
 
+const modelSettings = z.object({ agent: z.literal('codex'), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) }).strict();
 export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('list') }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('create'),
-        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000) }).strict(),
+        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional() }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('update'), dotId: uuid,
-        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000) }).strict(),
+        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional() }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('clear'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('delete'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('inspect'), dotId: uuid }).strict(),
@@ -53,8 +54,9 @@ export const TestloopDotsSnapshotSchema = z.object({
     schemaVersion: z.literal(1), workspaceId: uuid, revision: z.number().int().nonnegative(), requestId: uuid,
     ok: z.boolean(), error: z.string().max(1000).optional(),
     dots: z.array(z.object({ id: uuid, name: z.string().min(1).max(80), instruction: z.string().max(2000),
-        sessionId, status: z.literal('active') }).strict()).max(1000),
+        sessionId, conversationEpoch: z.number().int().nonnegative().optional(), status: z.literal('active'), settings: modelSettings.optional() }).strict()).max(1000),
     deletedDot: z.object({ id: uuid, sessionId }).strict().optional(),
+    modelOptions: z.array(z.object({ code: z.string(), value: z.string(), thinkingLevels: z.array(z.string()), defaultThinkingLevel: z.string() })).optional(),
     limits: z.unknown().optional(),
     workbench: workbench.optional(),
 }).passthrough().refine(value => new Set(value.dots.map(dot => dot.id)).size === value.dots.length
@@ -148,4 +150,16 @@ export function testloopDotsLimitsText(limits: unknown): string | null {
     if (!parsed.success) return null;
     const { config, modelCallsReserved, conversationCallsReserved } = parsed.data;
     return `账户今日对话 ${conversationCallsReserved}/${config.maxDailyConversationCalls ?? 0} · 模型池 ${modelCallsReserved}/${config.maxDailyLoopCalls}`;
+}
+
+/** Only a newer conversation epoch can retire an offline cached session. */
+export function retiredDotSessionIds(snapshot: TestloopDotsSnapshot, sessions: readonly { id: string; metadata: unknown }[]): string[] {
+    if (!snapshot.ok) return [];
+    return sessions.flatMap(session => {
+        const binding = readTestloopDotsMetadata(session.metadata);
+        if (binding?.kind !== 'dot' || binding.workspaceId !== snapshot.workspaceId) return [];
+        const current = snapshot.dots.find(dot => dot.id === binding.dotId);
+        const epoch = binding.conversationEpoch;
+        return current && current.sessionId !== session.id && (current.conversationEpoch ?? 0) > (typeof epoch === 'number' ? epoch : 0) ? [session.id] : [];
+    });
 }

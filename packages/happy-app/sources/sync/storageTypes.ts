@@ -238,6 +238,7 @@ export const MetadataSchema = z.object({
      * means "never picked".
      */
     permissionMode: z.string().nullish(),
+    hostedDotSettings: z.object({ model: z.string(), effort: z.string() }).optional(),
     modelMode: z.string().nullish(),
     effortLevel: z.string().nullish(),
     // Passthrough so read-modify-write metadata updates from this app never

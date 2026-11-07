@@ -36,7 +36,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [managingConnections, setManagingConnections] = React.useState(false);
     const [sideTab, setSideTab] = React.useState<Exclude<Tab, 'chat'>>('activity'), [expanded, setExpanded] = React.useState(true);
     const [taskId, setTaskId] = React.useState<string | null>(null), [error, setError] = React.useState<string | null>(null);
-    const [memoryEdit, setMemoryEdit] = React.useState<{ key: string; text: string; kind: string; json: boolean; expiresAt: string | null; existing: boolean } | null>(null);
+    const [memoryEdit, setMemoryEdit] = React.useState<{ scope: 'dot' | 'user'; key: string; text: string; kind: string; json: boolean; expiresAt: string | null; existing: boolean } | null>(null);
     const [notice, setNotice] = React.useState<string | null>(null);
     const [clearConfirming, setClearConfirming] = React.useState(false);
     const [composeRequest, setComposeRequest] = React.useState<{ id: string; text: string } | null>(null);
@@ -61,6 +61,15 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         setTab('chat'); setTaskId(null); setMemoryEdit(null);
         setNotice('已放入对话输入框。核对后发送，结果会回到这个 Dot。');
     };
+    const replacement = data.projection?.snapshot?.ok ? data.projection.snapshot.dots.find(d => d.id === metadata.dotId)?.sessionId : undefined;
+    React.useEffect(() => {
+        if (!active || !replacement || replacement === session.id) return;
+        const operation = navigation.begin();
+        if (!operation) return;
+        void operation.afterReady(() => sync.ensureSessionReady(replacement), () => {
+            if (currentDots.current.projection?.snapshot?.dots.find(d => d.id === metadata.dotId)?.sessionId === replacement) navigate(replacement);
+        }).catch(() => { if (operation.isCurrent()) setError('新对话暂时无法打开，请返回工作台刷新重试。'); });
+    }, [active, replacement, session.id, navigation, metadata.dotId, navigate]);
     const clearConversation = async () => {
         if (clearConfirming || currentDots.current.pending) return;
         const current = currentDots.current.projection?.snapshot;
@@ -69,13 +78,14 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         setClearConfirming(true);
         try {
             const confirmed = await GlobalModal.confirm('清空当前对话？',
-                '仅为之后的模型上下文隔离此前的历史、运行记录和任务上下文。Dot 与会话保持不变；旧聊天、长期记忆、授权和任务记录仍保留，进行中的目标不会取消。',
+                '将删除当前聊天记录并重置模型上下文，正在进行的聊天轮次会停止。用户与 Dot 长期记忆、身份、模型设置和授权保留；独立后台任务继续运行，旧任务回报不注入新对话。此操作不可撤销。',
                 { confirmText: '清空对话' });
             if (!confirmed || currentDots.current.pending) return;
             const latestDot = currentDots.current.projection?.snapshot?.dots
                 .find(item => item.id === metadata.dotId && item.sessionId === session.id);
             if (!latestDot) return;
-            void currentDots.current.submit({ schemaVersion: 1, requestId: randomUUID(), action: 'clear', dotId: metadata.dotId });
+            await currentDots.current.submit({ schemaVersion: 1, requestId: randomUUID(), action: 'clear', dotId: metadata.dotId });
+            navigate(metadata.workspaceSessionId);
         } finally {
             setClearConfirming(false);
         }
@@ -101,14 +111,14 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             workspaceId={metadata.workspaceId} dotId={metadata.dotId} dotSessionId={session.id} active={Boolean(active && own && (wide ? expanded : tab !== 'chat'))}
             mode={(wide ? sideTab : tab) === 'memory' ? 'memory' : (wide ? sideTab : tab) === 'basis' ? 'basis' : 'activity'}
             presence={session.presence} onExecution={id => void openExecution(id)}
-            onEditMemory={(key, version) => {
+            onEditMemory={(key, version, scope = 'dot') => {
                 if (!data.ready || !own) return;
-                setMemoryEdit({ key, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
+                setMemoryEdit({ scope, key, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
                     kind: version.kind, json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
-            }} onForgetMemory={key => {
-                if (data.ready && own) toConversation(`请忘记当前 Dot 的个人记忆 ${JSON.stringify(key)}，${directMemory ? '直接执行并告知结果' : '先展示变更供我确认'}。`);
-            }} onAddMemory={() => {
-                if (data.ready && own) setMemoryEdit({ key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
+            }} onForgetMemory={(key, scope = 'dot') => {
+                if (data.ready && own) toConversation(`请忘记${scope === 'user' ? '用户级（所有 Dot 共享）' : '当前 Dot 的个人'}记忆 ${JSON.stringify(key)}，${directMemory ? '直接执行并告知结果' : '先展示变更供我确认'}。`);
+            }} onAddMemory={(scope = 'dot') => {
+                if (data.ready && own) setMemoryEdit({ scope, key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
             }} />
     </>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
@@ -159,6 +169,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {action('在对话中跟进此工作', () => toConversation(`请跟进当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），说明最新进展和仍需处理的事项。`))}
         </>)}
         {memoryEdit && data.ready && own && sheet(memoryEdit.key ? '修改记忆' : '添加记忆', () => setMemoryEdit(null), <>
+            <Text style={muted}>范围：{memoryEdit.scope === 'user' ? '用户级 · 所有Dot共享' : 'Dot级 · 当前Dot私有'}</Text>
             <Text style={muted}>名称</Text><TextInput accessibilityLabel="记忆名称" value={memoryEdit.key} editable={!memoryEdit.existing} onChangeText={key => setMemoryEdit(previous => previous && ({ ...previous, key }))} maxLength={200} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
             <Text style={muted}>{memoryEdit.json ? 'JSON 内容' : '内容'}</Text><TextInput accessibilityLabel="记忆内容" value={memoryEdit.text} maxLength={4096} onChangeText={text => setMemoryEdit(previous => previous && ({ ...previous, text }))} multiline style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, minHeight: 120, padding: 12, borderRadius: 10, textAlignVertical: 'top' }} />
             <Text style={muted}>有效期（ISO 时间，留空表示不设到期）</Text><TextInput accessibilityLabel="记忆有效期" value={memoryEdit.expiresAt ?? ''} onChangeText={expiresAt => setMemoryEdit(previous => previous && ({ ...previous, expiresAt: expiresAt || null }))} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
@@ -171,7 +182,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                 if (expiry && (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(expiry) || !Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now())) {
                     setError('请输入包含时区的未来 ISO 时间，或清空有效期。'); return;
                 }
-                setError(null); toConversation(`请将当前 Dot 的个人记忆 ${JSON.stringify(memoryEdit.key.trim())} 保存为 ${memoryEdit.kind}，内容为 ${JSON.stringify(value)}，有效期为 ${expiry ? new Date(expiry).toISOString() : '不设置到期'}。${directMemory ? '直接保存并告知结果' : '先展示变更供我确认'}。`);
+                setError(null); toConversation(`请将${memoryEdit.scope === 'user' ? '用户级（所有 Dot 共享）' : '当前 Dot 的个人'}记忆 ${JSON.stringify(memoryEdit.key.trim())} 保存为 ${memoryEdit.kind}，内容为 ${JSON.stringify(value)}，有效期为 ${expiry ? new Date(expiry).toISOString() : '不设置到期'}。${directMemory ? '直接保存并告知结果' : '先展示变更供我确认'}。`);
             })}
         </>)}
     </View>;

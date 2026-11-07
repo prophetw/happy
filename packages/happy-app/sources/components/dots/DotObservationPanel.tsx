@@ -9,7 +9,7 @@ import { getServerUrl } from '@/sync/serverConfig';
 import { readTestloopDotsMetadata, testloopWorkStatus } from '@/sync/testloopDots';
 import { ObservationOverviewSchema, ObservationResponseSchema, observationError, observationMemoryStatus, observationReasons,
     requestDotObservation, type ObservationEvent, type ObservationMemoryVersion, type ObservationOverview,
-    type ObservationRequest, type ObservationResponse } from '@/sync/dotObservation';
+    type MemoryScope, type ObservationRequest, type ObservationResponse } from '@/sync/dotObservation';
 
 type Mode = 'activity' | 'memory' | 'basis';
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : '未记录';
@@ -32,12 +32,13 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
     onExecution, onEditMemory, onForgetMemory, onAddMemory }: {
     sessionId: string; workspaceId: string; dotId: string; dotSessionId: string; active: boolean; mode: Mode; presence: string | number;
     onExecution: (sessionId: string) => void;
-    onEditMemory: (key: string, version: ObservationMemoryVersion) => void; onForgetMemory: (key: string) => void;
-    onAddMemory: () => void;
+    onEditMemory: (key: string, version: ObservationMemoryVersion, scope?: MemoryScope) => void; onForgetMemory: (key: string, scope?: MemoryScope) => void;
+    onAddMemory: (scope?: MemoryScope) => void;
 }) {
     const { theme } = useUnistyles(), { credentials, isAuthenticated } = useAuth(), server = getServerUrl();
-    const scope = React.useMemo(() => ({}), [credentials?.token, credentials?.secret, isAuthenticated, server, sessionId, workspaceId, dotId, dotSessionId, mode]);
-    const initial = React.useMemo<ObservationRequest>(() => ({ dotId, action: mode === 'memory' ? 'memories' : mode === 'basis' ? 'turns' : 'activity' }), [dotId, mode]);
+    const [memoryScope, setMemoryScope] = React.useState<MemoryScope>('dot');
+    const scope = React.useMemo(() => ({}), [credentials?.token, credentials?.secret, isAuthenticated, server, sessionId, workspaceId, dotId, dotSessionId, mode, memoryScope]);
+    const initial = React.useMemo<ObservationRequest>(() => (mode === 'memory' ? { dotId, action: 'memories', scope: memoryScope } : { dotId, action: mode === 'basis' ? 'turns' : 'activity' }), [dotId, mode, memoryScope]);
     const [loaded, setLoaded] = React.useState<{ scope: object; overview: ObservationOverview; result: ObservationResponse; query: ObservationRequest } | null>(null);
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState<string | null>(null);
     const [showDecision, setShowDecision] = React.useState(false);
@@ -58,13 +59,13 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
             await sync.ensureSessionReady(sessionId);
             if (version !== epoch.current || !valid()) return;
             const [overview, result] = await Promise.all([
-                requestDotObservation(sessionId, { dotId, action: 'overview' }, ObservationOverviewSchema),
+                requestDotObservation(sessionId, { dotId, action: 'overview', scope: mode === 'memory' ? memoryScope : 'dot' }, ObservationOverviewSchema),
                 requestDotObservation(sessionId, query, ObservationResponseSchema),
             ]);
             if (version === epoch.current && valid()) setLoaded({ scope, overview, result, query });
         } catch (failure) { if (version === epoch.current && valid()) setError(observationError(failure)); }
         finally { if (version === epoch.current) setBusy(false); }
-    }, [valid, sessionId, dotId, scope]);
+    }, [valid, sessionId, dotId, scope, mode, memoryScope]);
     useFocusEffect(React.useCallback(() => {
         focused.current = true; void load(initial);
         return () => { focused.current = false; epoch.current++; };
@@ -88,7 +89,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
     const go = (query: Omit<ObservationRequest, 'dotId'>) => { void load({ ...query, dotId } as ObservationRequest); };
     const turn = (turnId: string) => go({ action: 'turn', turnId, section: 'overview' } as Omit<ObservationRequest, 'dotId'>);
     const work = (workId: string) => go({ action: 'work', workId } as Omit<ObservationRequest, 'dotId'>);
-    const memory = (keyDigest: string, section: 'versions' | 'usage' = 'versions') => go({ action: 'memory', keyDigest, section } as Omit<ObservationRequest, 'dotId'>);
+    const memory = (keyDigest: string, section: 'versions' | 'usage' = 'versions') => go({ action: 'memory', keyDigest, section, scope: memoryScope } as Omit<ObservationRequest, 'dotId'>);
     const clipped = (value: { text: string; truncated: boolean }) => <Text selectable style={body}>{value.text || '无'}{value.truncated ? '\n（展示内容已截断）' : ''}</Text>;
     const events = (items: ObservationEvent[]) => items.map(event => <View key={event.id} style={card}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -136,6 +137,13 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 <Text style={{ ...muted, color: colors.text, fontSize: 13 }}>刷新</Text>
             </Pressable>
         </View>
+        {mode === 'memory' && <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(['dot', 'user'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'dot' ? 'Dot级记忆' : '用户级记忆'}
+                accessibilityState={{ selected: memoryScope === value }} onPress={() => setMemoryScope(value)} style={{ padding: 10, borderRadius: 8, backgroundColor: memoryScope === value ? colors.surfaceHigh : 'transparent' }}>
+                <Text style={body}>{value === 'dot' ? 'Dot级 · 私有' : '用户级 · 所有Dot共享'}</Text>
+            </Pressable>)}
+        </View>}
+        {mode === 'memory' && <Text style={muted}>{memoryScope === 'user' ? '同一宿主账号的通用记忆；只操作用户级，不影响同名Dot级记录。' : '仅当前Dot可用；只操作Dot级，不影响同名用户级记录。'}</Text>}
         {busy && <ActivityIndicator />}
         {error && <Text accessibilityRole="alert" style={{ ...body, color: colors.textDestructive }}>{error}</Text>}
         {!detail && overview && <View style={{ gap: 4, paddingVertical: 2 }}>
@@ -161,7 +169,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                         const active = (shown?.query.action === 'memories' ? (shown.query.status ?? 'all') : 'all') === status;
                         const title = status === 'all' ? '全部记忆' : observationMemoryStatus[status];
                         return <Pressable key={status} accessibilityRole="button" accessibilityLabel={title} disabled={busy}
-                            onPress={() => go({ action: 'memories', status } as Omit<ObservationRequest, 'dotId'>)}
+                            onPress={() => go({ action: 'memories', status, scope: memoryScope } as Omit<ObservationRequest, 'dotId'>)}
                             style={{ paddingVertical: 5, paddingHorizontal: 10, borderRadius: 14, backgroundColor: active ? colors.surfaceHigh : 'transparent', borderWidth: 1, borderColor: active ? colors.surfaceHigh : colors.divider }}>
                             <Text style={{ ...muted, color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: active ? '600' : '400' }}>{title}</Text>
                         </Pressable>;
@@ -169,7 +177,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 </View>
                 {overview?.memory?.access.includes('write') && (
                     <Pressable accessibilityRole="button" accessibilityLabel="添加记忆" disabled={busy}
-                        onPress={onAddMemory}
+                        onPress={() => onAddMemory(memoryScope)}
                         style={{ paddingVertical: 5, paddingHorizontal: 10, borderRadius: 14, backgroundColor: colors.surfaceHigh }}>
                         <Text style={{ ...body, fontSize: 12, fontWeight: '500' }}>+ 添加记忆</Text>
                     </Pressable>
@@ -212,6 +220,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 </Pressable>
             </View>
             {result.memory.deletedAt && <Text style={muted}>已于 {date(result.memory.deletedAt)} 忘记，正文已清除。</Text>}
+            {result.section === 'usage' && memoryScope === 'user' && <Text style={muted}>用户级记忆的原生工具读取不记录在旧轮次背景快照中。</Text>}
             {result.section === 'versions' ? result.page.items.map(version => <View key={version.revision} style={card}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ ...body, fontWeight: '600' }}>第 {version.revision} 版 · {version.action === 'confirm' ? '确认' : '保存或更新'} · {version.historical ? '历史版本' : '当前版本'}</Text>
@@ -220,8 +229,8 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 <Text style={muted}>来源：{version.source}{version.sourceRef ? ` · ${version.sourceRef}` : ''} · {version.verified ? '已确认' : '未确认'}</Text>
                 <Text style={muted}>记录于 {date(version.recordedAt)}{version.expiresAt ? ` · 有效期至 ${date(version.expiresAt)}` : ''}</Text>
                 {!version.historical && result.memory.key && <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                    {overview?.memory?.access.includes('write') && button('编辑这条记忆', () => onEditMemory(result.memory.key!, version), { flex: 1 })}
-                    {overview?.memory?.access.includes('forget') && button('请求忘记这条记忆', () => onForgetMemory(result.memory.key!), { flex: 1 })}
+                    {overview?.memory?.access.includes('write') && button('编辑这条记忆', () => onEditMemory(result.memory.key!, version, memoryScope), { flex: 1 })}
+                    {overview?.memory?.access.includes('forget') && button('请求忘记这条记忆', () => onForgetMemory(result.memory.key!, memoryScope), { flex: 1 })}
                 </View>}
             </View>) : listTurns(result.page.items)}
         </>}

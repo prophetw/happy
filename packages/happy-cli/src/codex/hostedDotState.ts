@@ -5,7 +5,7 @@ import type { SessionEnvelope } from '@slopus/happy-wire';
 
 export const HostedDotConfig = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string().min(1),
     happyHome: z.string().startsWith('/'), serverUrl: z.string().url(), directory: z.string().startsWith('/'),
-    executable: z.string().min(1), args: z.array(z.string()), model: z.string().min(1), provider: z.string().regex(/^[A-Za-z0-9_-]+$/),
+    executable: z.string().min(1), args: z.array(z.string()), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('xhigh'), provider: z.string().regex(/^[A-Za-z0-9_-]+$/),
     providerConfig: z.record(z.string(), z.union([z.string(), z.boolean()])).default({}), instruction: z.string().min(1),
     bootstrap: z.strictObject({ file: z.string().startsWith('/'), digest: z.string().regex(/^[a-f0-9]{64}$/), afterSeq: z.number().int().nonnegative() }).optional(),
     codexHome: z.string().startsWith('/'), environment: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).refine(s => !['CODEX_HOME', 'HOME', 'HAPPY_HOME_DIR', 'NODE_OPTIONS'].includes(s), 'reserved_environment')).default([]) });
@@ -34,9 +34,13 @@ export function savePrivate(file: string, value: unknown): void {
 }
 export function loadHostedState(file: string, config: HostedDotConfig): HostedState {
     const binding = hash(config);
-    const state = existsSync(file) ? State.parse(readPrivate(file)) : State.parse({ version: 1, binding, epoch: 0, threadId: null,
+    const state = existsSync(file) ? State.parse(readPrivate(file)) : State.parse({ version: 1, binding, epoch: existsSync(config.directory + '/reset-epoch.json') ? z.object({ epoch: z.number().int().nonnegative() }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch : 0, threadId: null,
         creating: false, afterSeq: config.bootstrap?.afterSeq ?? 0, status: 'starting', error: null, inputs: [], outputs: [] });
-    if (state.binding !== binding) throw new Error('hosted_binding_changed');
+    if (state.binding !== binding) {
+        const { effort, ...legacy } = config;
+        if (state.binding !== hash(legacy)) throw new Error('hosted_binding_changed');
+        state.binding = binding;
+    }
     if (state.bootstrap?.stage === 'injecting') throw new Error('hosted_bootstrap_unconfirmed');
     return state;
 }

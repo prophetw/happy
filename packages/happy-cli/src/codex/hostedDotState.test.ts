@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { HostedDotConfig, loadHostedState, savePrivate, readPrivate, addOutput } from './hostedDotState';
+import { hash, HostedDotConfig, loadHostedState, savePrivate, readPrivate, addOutput } from './hostedDotState';
 import { createEnvelope } from '@slopus/happy-wire';
 const config = () => HostedDotConfig.parse({ version: 1, dotId: randomUUID(), sessionId: 'isolated', happyHome: '/tmp/happy',
     serverUrl: 'http://127.0.0.1:4567', directory: '/tmp/dot', executable: 'codex', args: [], model: 'test', provider: 'openai', instruction: 'chat', codexHome: '/tmp/codex' });
@@ -26,4 +26,18 @@ it('rejects reserved identity environment variables and non-file state', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-file-'));
     try { writeFileSync(join(dir, 'real'), '{}'); symlinkSync(join(dir, 'real'), join(dir, 'link')); expect(() => readPrivate(join(dir, 'link'))).toThrow('hosted_file_invalid'); }
     finally { rmSync(dir, { recursive: true }); }
+});
+it('migrates effort-less config bindings, preserves explicit effort and retains reset epoch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hosted-migrate-')), file = join(dir, 'state.json');
+    try {
+        const c = config(), state = loadHostedState(file, c);
+        const { effort, ...legacy } = c;
+        state.binding = hash(legacy); savePrivate(file, state);
+        expect(loadHostedState(file, c).binding).toBe(hash(c));
+        expect(HostedDotConfig.parse(legacy).effort).toBe('xhigh');
+        expect(HostedDotConfig.parse({ ...legacy, effort: 'high' }).effort).toBe('high');
+        expect(() => loadHostedState(file, { ...c, provider: 'other' })).toThrow('hosted_binding_changed');
+        writeFileSync(join(dir, 'reset-epoch.json'), JSON.stringify({ epoch: 5 }));
+        expect(loadHostedState(join(dir, 'new.json'), { ...c, directory: dir }).epoch).toBe(5);
+    } finally { rmSync(dir, { recursive: true }); }
 });

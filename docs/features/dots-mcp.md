@@ -19,3 +19,20 @@ Happy 写工具通过后台任务调用；原生工具列表仅开放 Happy 只�
 后台执行和迁移分别要求 capabilities.happyDelegation=1 与 migrateRest=1。Happy 服务还需提供 happy_connection 授权查询工具；旧服务需升级后重新检查。
 
 配置变更供后续对话使用，不自动撤回已运行的远端调用。保存响应丢失时刷新核对，不自动重发。组件检查使用固定RPC回执，真实协议、加密存储、独立原生调用与恢复由TestLoop定向测试覆盖；不以这些结果代替真机或线上浏览器交互验收。
+
+
+### 原生 Dot 模型设置与清空
+
+创建默认 `codex / gpt-6.1-sol / xhigh`，工作台创建/管理表单使用宿主实际模型目录，强度按模型校验。设置贯通 testLoop Dot 持久化、宿主设置文件和实际 `turn/start` 的 model/effort；忙碌时下一轮生效，输入栏显示宿主回传的生效值。旧配置缺失 effort 迁移至 xhigh，显式值保留；不更改底层 provider、read-only sandbox 或项目授权。
+
+清空由 testLoop 协调停止旧聊天轮次、轮换加密 Relay session、删除旧 session/messages、切换同一 Dot 绑定及提高 epoch。清除宿主输入输出 journal、原生 transcript 和待发事件，旧任务结果不注入新 epoch。用户级和 Dot 级长期记忆、独立后台任务、身份、模型配置与授权保留。App 清除旧会话缓存和待发消息，离线恢复只接受更高 epoch 的轮换证据。操作有破坏性确认及 requestId 幂等恢复，不使用旧的仅换 thread 清空接口。
+
+assistant 历史审计、既存备份和独立项目任务不是聊天入口；不宣称备份或远端介质物理擦除。非原生旧 Dot 目前明确拒绝真正清空，需先迁移原生宿主。部署/维护时必须同时集成 testLoop 与 Happy，已有宿主在后续受控启动新代码时才应用缺失 effort 的迁移。本次没有部署，也没有重启或清空用户当前真实 Dot。
+
+验证：Happy CLI 宿主/状态 21 项、App Dot/离线缓存与同步 59 项通过；testLoop Dot 相关 41 项通过，最终局部补充 8 项通过，两边类型检查通过。本地 Playwright 使用隔离 PGlite Relay、隔离账号与脚本 Codex App Server，验证默认创建、调整后的真实请求、运行中清空、新 thread、Relay 删除、刷新和重启；最终无页面/Console/非预期 HTTP 错误，真实付费模型调用 0。测试曾发现固定会话 tag 和替代会话缺失 host 元数据问题，均修复后复测通过。
+
+| 验收证据 | 截图 |
+| --- | --- |
+| 清空后替代会话，不显示旧聊天 | [截图](https://szsp.suitbim.com.cn:7100/img-bed/images/a9232f3d-df30-4ab6-96f9-e9afd7b8a6d0.png) |
+
+交付分支为两个仓库的 `feat/dot-settings-clear`，worktree 分别为 `/home/dev/code/happy-dot-settings` 与 `/home/dev/code/testLoop-dot-settings`。未提交、推送、部署；不包含共享工作树已有的会话链接与记忆实现。真实模型服务调用、真机及并行记忆实现合并后的验证尚未执行。

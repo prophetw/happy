@@ -30,7 +30,7 @@ function DotRow({ dot, onOpen, onEdit, disabled, editDisabled }: {
             </View>
             <View style={{ flex: 1, minWidth: 0, gap: 6 }}><Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '600' }}>{dot.name}</Text>
                 <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, lineHeight: 21 }}>{dot.instruction}</Text>
-                <Text style={{ color: session?.thinking ? theme.colors.textLink : theme.colors.textSecondary, fontSize: 12 }}>{status}</Text>
+                <Text style={{ color: session?.thinking ? theme.colors.textLink : theme.colors.textSecondary, fontSize: 12 }}>{status}{dot.settings ? ` · codex / ${dot.settings.model} / ${dot.settings.effort}` : ''}</Text>
             </View><Ionicons name="chevron-forward" size={17} color={theme.colors.textSecondary} />
         </Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel={`管理 ${dot.name}`} disabled={editDisabled} onPress={onEdit}
@@ -54,6 +54,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [creating, setCreating] = React.useState(false);
     const [name, setName] = React.useState(''), [instruction, setInstruction] = React.useState('');
+    const [model, setModel] = React.useState('gpt-6.1-sol'), [effort, setEffort] = React.useState('xhigh');
     const [editing, setEditing] = React.useState<TestloopDot | null>(null);
     const editingRef = React.useRef<TestloopDot | null>(null);
     editingRef.current = editing;
@@ -98,6 +99,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         finally { if (operation.isCurrent()) setOpening(null); }
     };
     const openEdit = (dot: TestloopDot) => {
+        setModel(dot.settings?.model ?? 'gpt-6.1-sol'); setEffort(dot.settings?.effort ?? 'xhigh');
         setEditing(dot); setEditName(dot.name); setEditInstruction(dot.instruction);
     };
     const closeEdit = () => { setEditing(null); setEditName(''); setEditInstruction(''); };
@@ -105,7 +107,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         if (!editing) return;
         const requestId = randomUUID(); updateId.current = requestId;
         void data.submit({ schemaVersion: 1, requestId, action: 'update', dotId: editing.id,
-            name: editName.trim(), instruction: editInstruction.trim() });
+            name: editName.trim(), instruction: editInstruction.trim(), ...(editing.settings ? { settings: { agent: 'codex' as const, model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } } : {}) });
     };
     const deleteDot = async () => {
         const target = editingRef.current;
@@ -125,7 +127,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
             setDeleteConfirming(false);
         }
     };
-    const editUnchanged = !!editing && editName.trim() === editing.name && editInstruction.trim() === editing.instruction;
+    const editUnchanged = !!editing && editName.trim() === editing.name && editInstruction.trim() === editing.instruction && (!editing.settings || model === editing.settings.model && effort === editing.settings.effort);
     const canSubmit = editing
         ? !!editName.trim() && !!editInstruction.trim() && !editUnchanged && !data.pending
         : !!name.trim() && !!instruction.trim() && !data.pending;
@@ -149,7 +151,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         <ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
             <View style={[s.row, { justifyContent: 'space-between' }]}><View style={{ gap: 7, flex: 1, minWidth: 160 }}>
                 <Text accessibilityRole="header" style={s.title}>Dots</Text><Text style={s.muted}>你的长期助理与正在推进的工作。</Text>
-            </View><Pressable accessibilityRole="button" accessibilityLabel="新建 Dot" disabled={!data.ready || Boolean(data.pending)} onPress={() => setCreating(true)}
+            </View><Pressable accessibilityRole="button" accessibilityLabel="新建 Dot" disabled={!data.ready || Boolean(data.pending)} onPress={() => { setModel('gpt-6.1-sol'); setEffort('xhigh'); setCreating(true); }}
                 style={[s.button, { backgroundColor: '#6650b7', opacity: data.ready && !data.pending ? 1 : 0.5 }]}><Text style={{ color: '#fff', fontWeight: '600' }}>＋ 新建 Dot</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={Boolean(data.pending)} onPress={() => data.retry()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="连接与授权" onPress={() => setManagingConnections(true)} style={s.button}><Text style={s.muted}>连接与授权</Text></Pressable>
@@ -193,11 +195,22 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                     <Text accessibilityRole="header" style={s.heading}>{editing ? '管理 Dot' : '创建一个 Dot'}</Text>
                     <Text style={s.muted}>名称</Text><TextInput accessibilityLabel="Dot 名称" value={editing ? editName : name}
                         onChangeText={editing ? setEditName : setName} maxLength={80} editable={!data.pending} style={s.input} />
+                    {(!editing || editing.settings) && <>
+                    <Text style={s.muted}>Agent：codex · 后续轮次设置（当前轮次完成后应用）</Text>
+                    <Text style={s.muted}>模型：{model} · 推理强度：{effort}</Text>
+                    {(snapshot?.modelOptions ?? []).map(option => <Pressable key={option.code} accessibilityRole="button" accessibilityLabel={`模型 ${option.code}`}
+                        disabled={Boolean(data.pending)} onPress={() => { setModel(option.code); if (!option.thinkingLevels.includes(effort)) setEffort(option.defaultThinkingLevel); }} style={s.button}>
+                        <Text style={s.muted}>{model === option.code ? '● ' : ''}{option.value}</Text></Pressable>)}
+                    <View style={s.row}>{(snapshot?.modelOptions?.find(o => o.code === model)?.thinkingLevels ?? []).map(level => <Pressable key={level}
+                        accessibilityRole="button" accessibilityLabel={`推理强度 ${level}`} disabled={Boolean(data.pending)} onPress={() => setEffort(level)} style={s.button}>
+                        <Text style={s.muted}>{effort === level ? '● ' : ''}{level}</Text></Pressable>)}</View>
+                    {!snapshot?.modelOptions?.length && <Text style={s.muted}>宿主尚未提供模型目录，请等待宿主启动后刷新。不会静默回退模型或强度。</Text>}
+                    </>}
                     <Text style={s.muted}>长期职责</Text><TextInput accessibilityLabel="Dot 长期职责" value={editing ? editInstruction : instruction}
                         onChangeText={editing ? setEditInstruction : setInstruction} maxLength={2000} multiline editable={!data.pending}
                         style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} />
                     <Text style={s.muted}>{editing
-                        ? '保存后宿主会更新这个 Dot 的名称与长期职责；不会重建会话，也不改变已有任务、记忆和授权。'
+                        ? '模型设置在当前轮次完成后应用。长期职责调整暂需停机维护；模型调整保留任务、记忆和授权。'
                         : '创建不消耗模型额度。新 Dot 默认未授权项目，创建后请在「连接与授权」中选择可执行项目。'}</Text>
                     {editing && <View style={{ gap: 10, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.divider }}>
                         <Text style={s.heading}>危险操作</Text>
@@ -209,10 +222,10 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                         </Pressable>
                     </View>}
                     {(data.error || openError) && <Text accessibilityRole="alert" style={s.muted}>{data.error || openError}</Text>}
-                    <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit} onPress={() => {
+                    <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || Boolean(editing.settings)) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => {
                         if (editing) { saveEdit(); return; }
                         const requestId = randomUUID(); createId.current = requestId;
-                        void data.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim() });
+                        void data.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim(), settings: { agent: 'codex', model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } });
                     }} style={[s.button, { backgroundColor: '#6650b7', opacity: canSubmit ? 1 : 0.5 }]}><Text style={{ color: '#fff' }}>{editing ? '保存修改' : '创建 Dot'}</Text></Pressable>
                     <Pressable accessibilityRole="button" accessibilityLabel={editing ? '关闭编辑表单' : '关闭创建表单'}
                         onPress={() => { setCreating(false); closeEdit(); }} style={s.button}><Text style={s.muted}>关闭</Text></Pressable>

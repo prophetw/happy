@@ -8,11 +8,13 @@ const identity = z.object({ name: z.string().max(80), instruction: z.string().ma
 export const observationMemoryStatus = { effective: '有效', unconfirmed: '待确认', expired: '已过期', deleted: '已忘记' };
 export const observationReasons = { included: '已带入有效背景', unconfirmed: '未确认', expired: '已过期', deleted: '已忘记',
     entry_limit: '达到条数上限', byte_limit: '达到字节上限', disabled: '未启用记忆背景' };
+export type MemoryScope = 'dot' | 'user';
+const memoryScope = z.enum(['dot', 'user']).default('dot');
 const memoryStatus = z.enum(['effective', 'unconfirmed', 'expired', 'deleted']);
 const base = z.object({ schemaVersion: z.literal(1), dotId: id, asOf: time, snapshotId: hash });
 const page = <T extends z.ZodTypeAny>(row: T) => z.object({ items: z.array(row).max(20), total: z.number().int().nonnegative(),
     offset: z.number().int().nonnegative(), nextOffset: z.number().int().nonnegative().nullable() });
-export const ObservationOverviewSchema = base.extend({ action: z.literal('overview'), dot: identity.extend({ id, createdAt: time }),
+export const ObservationOverviewSchema = base.extend({ action: z.literal('overview'), scope: memoryScope, dot: identity.extend({ id, createdAt: time }),
     host: z.object({ status: z.enum(['stopped', 'healthy', 'unhealthy']), heartbeatAt: time.nullable(), error: z.string().nullable() }),
     channel: z.object({ lastSuccessAt: time.nullable(), error: z.string().nullable() }), processing: z.boolean(), taskTotal: z.number().int().nonnegative(),
     tasks: z.array(z.object({ id, title: z.string(), status: z.string(), needsReview: z.boolean(), goalPhase: z.string().nullable() })).max(5),
@@ -25,7 +27,7 @@ const event = z.object({ sequence: z.number().int().positive(), id: z.string(), 
     reason: z.string().nullable(), workId: id.nullable(), turnId: id.nullable(), keyDigest: hash.nullable(), label: z.string().nullable(),
     identity: identity.optional(), previousIdentity: identity.optional() });
 export const ObservationActivitySchema = base.extend({ action: z.literal('activity'), page: page(event) });
-export const ObservationMemoriesSchema = base.extend({ action: z.literal('memories'), page: page(z.object({
+export const ObservationMemoriesSchema = base.extend({ action: z.literal('memories'), scope: memoryScope, page: page(z.object({
     keyDigest: hash, key: z.string().nullable(), revision: z.number(), status: memoryStatus, kind: z.string().optional(),
     preview: text.optional(), source: z.string().optional(), expiresAt: time.nullable().optional(), deletedAt: time.optional(),
 })) });
@@ -52,10 +54,10 @@ export const ObservationSelectionSchema = turnBase.extend({ action: z.literal('t
     policy: z.object({ version: z.number(), asOf: time, enabled: z.boolean(), maxEntries: z.number(), maxBytes: z.number() }).nullable(),
     page: page(z.object({ keyDigest: hash, key: z.string().nullable(), revision: z.number(), reason: z.enum(['included', 'unconfirmed', 'expired', 'deleted', 'entry_limit', 'byte_limit', 'disabled']) })) });
 const memoryMetadata = z.object({ keyDigest: hash, key: z.string().nullable(), status: memoryStatus, revision: z.number(), deletedAt: time.nullable() });
-export const ObservationMemorySchema = base.extend({ action: z.literal('memory'), section: z.literal('versions'), memory: memoryMetadata,
+export const ObservationMemorySchema = base.extend({ action: z.literal('memory'), section: z.literal('versions'), scope: memoryScope, memory: memoryMetadata,
     page: page(z.object({ revision: z.number(), action: z.enum(['remember', 'confirm']), kind: z.string(), value: z.unknown(), source: z.string(),
         sourceRef: z.string().nullable(), verified: z.boolean(), expiresAt: time.nullable(), recordedAt: time, confirmedAt: time.nullable(), historical: z.boolean() })) });
-export const ObservationMemoryUsageSchema = base.extend({ action: z.literal('memory'), section: z.literal('usage'), memory: memoryMetadata,
+export const ObservationMemoryUsageSchema = base.extend({ action: z.literal('memory'), section: z.literal('usage'), scope: memoryScope, memory: memoryMetadata,
     page: page(turnSummary.extend({ memoryRevision: z.number() })) });
 export const ObservationWorkSchema = base.extend({ action: z.literal('work'), work: z.object({ id, title: z.string(), instruction: z.string(),
     status: z.string(), needsReview: z.boolean(), goalPhase: z.string().nullable(), businessVerification: z.string(),
@@ -70,8 +72,8 @@ export type ObservationOverview = z.infer<typeof ObservationOverviewSchema>;
 export type ObservationEvent = z.infer<typeof event>;
 export type ObservationMemoryVersion = z.infer<typeof ObservationMemorySchema>['page']['items'][number];
 export type ObservationRequest = { dotId: string; offset?: number; limit?: number; snapshotId?: string } & (
-    { action: 'overview' | 'turns' } | { action: 'activity'; workId?: string } | { action: 'memories'; status?: string }
-    | { action: 'memory'; keyDigest: string; section?: 'versions' | 'usage' }
+    { action: 'overview'; scope?: MemoryScope } | { action: 'turns' } | { action: 'activity'; workId?: string } | { action: 'memories'; status?: string; scope?: MemoryScope }
+    | { action: 'memory'; scope?: MemoryScope; keyDigest: string; section?: 'versions' | 'usage' }
     | { action: 'turn'; turnId: string; section?: 'overview' | 'history' | 'memory' | 'selection' } | { action: 'work'; workId: string });
 
 export async function requestDotObservation<T extends ObservationResponse>(sessionId: string, request: ObservationRequest, schema: z.ZodType<T>): Promise<T> {
@@ -85,7 +87,8 @@ export async function requestDotObservation<T extends ObservationResponse>(sessi
     const result = schema.safeParse(envelope.data.data);
     if (!result.success) throw new Error('observation_invalid_response');
     const value = result.data;
-    if (value.dotId !== request.dotId || value.action !== request.action
+    if ('scope' in request && 'scope' in value && value.scope !== (request.scope ?? 'dot')
+        || value.dotId !== request.dotId || value.action !== request.action
         || request.action === 'turn' && (value.action !== 'turn' || value.turnId !== request.turnId || value.section !== (request.section ?? 'overview'))
         || request.action === 'memory' && (value.action !== 'memory' || value.memory.keyDigest !== request.keyDigest || value.section !== (request.section ?? 'versions'))
         || request.action === 'work' && (value.action !== 'work' || value.work.id !== request.workId))
@@ -96,6 +99,7 @@ export function observationError(error: unknown) {
     const code = error instanceof Error ? error.message : '';
     return ({ observation_snapshot_changed: '数据已变化，请刷新后重新翻页。', observation_dot_not_available: '当前 Dot 绑定不可用，请返回工作台核对。',
         observation_memory_permission_denied: '当前 Dot 未授权读取记忆。', observation_turn_not_found: '这条对话记录不可用。',
+        observation_user_memory_unavailable: '用户级记忆暂不可用，请核对宿主账号认证、服务器连接和记忆授权后重试。',
         observation_workspace_not_authorized: '当前工作台授权不可用，请返回重新打开。',
         observation_transport_unconfirmed: '未收到观察数据，请检查连接及宿主是否支持观察台，然后刷新。',
         observation_invalid_response: '观察数据格式无法确认，请核对宿主版本后刷新。',

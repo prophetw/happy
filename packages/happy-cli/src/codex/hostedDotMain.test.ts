@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate } from './hostedDotState';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
-    start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), receive: null as any }));
+    attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), receive: null as any }));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     constructor(_: unknown, options: any) { h.options = options; }
+    listModels = async () => ({ data: [{ model: 'test', displayName: 'test', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'xhigh', isDefault: true }, { model: 'alternate', displayName: 'Alternate', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high', isDefault: false }] });
     connect = async () => {}; disconnect = async () => {};
     setApprovalHandler() {} setEventHandler(fn: any) { h.event = fn; }
     startThread = h.start; injectItems = h.inject;
@@ -16,7 +17,7 @@ vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     sendTurnAndWait = h.send; steerTurn = h.steer;
     abortTurnWithFallback = async () => { h.event({ type: 'turn_aborted' }); return { forcedRestart: true, resumedThread: true }; };
 } }));
-vi.mock('../api/api', () => ({ ApiClient: { create: async () => ({ attachSession: async () => ({}) }) } }));
+vi.mock('../api/api', () => ({ ApiClient: { create: async () => ({ attachSession: async (options: unknown) => { h.attach(options); return {}; } }) } }));
 vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     timer: ReturnType<typeof setInterval>;
     constructor(_token: string, _session: unknown, _credential: unknown, options: any) {
@@ -174,6 +175,12 @@ it('mounts the dedicated memory gateway on an existing thread without replacing 
         await vi.waitFor(() => expect(h.resume).toHaveBeenCalledWith(expect.objectContaining({ threadId: 'native-thread', mcpServers: expect.objectContaining({ dot_memory: f.servers.happy_fixture }) })));
         expect(f.state().threadId).toBe('native-thread'); expect(h.start).toHaveBeenCalledTimes(1);
         expect(h.options.instructions).toContain('dot_memory_');
+        expect(h.options.instructions).toContain('只有用户级(user)和当前Dot级(dot)两层');
+        expect(h.options.instructions).toContain('缺省保守使用dot');
+        expect(h.options.instructions).toContain('无scope旧调用包括recall都默认dot');
+        expect(h.options.instructions).toContain('显式recall scope=all');
+        expect(h.options.instructions).toContain('用户级身份仅由宿主已认证账号绑定');
+        expect(h.options.instructions).toContain('当前明确用户指令始终优先于记忆');
     } finally { await f.stop(); }
 });
 
@@ -213,6 +220,8 @@ it('refreshes memory policy as a trusted developer item after cold resume withou
         const prior = f.state().inputs;
         await f.restart(); await vi.waitFor(() => expect(f.state().status).toBe('ready'));
         expect(h.inject).toHaveBeenCalledTimes(1);
+        expect(h.inject.mock.calls[0][0].items[0].content[0].text).toContain('当前Dot记忆优先于用户级偏好');
+        expect(h.inject.mock.calls[0][0].items[0].content[0].text).toContain('忘记只影响选定scope');
         expect(h.inject.mock.calls[0][0]).toMatchObject({ threadId: 'native-thread', items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: expect.stringContaining('dot_memory_write') }] }] });
         expect(f.state().inputs).toEqual(prior); expect(h.send).toHaveBeenCalledTimes(1);
         await f.restart(); await vi.waitFor(() => expect(f.state().status).toBe('ready'));
@@ -237,4 +246,51 @@ it('preserves authenticated permission metadata across queue, restart and later 
         expect(f.state().inputs[2].permissionMode).toBeUndefined();
         expect(h.send.mock.calls.map(c => c[0])).toEqual(['Yolo task', 'ordinary task', 'API task without mode']);
     } finally { await f.stop(); }
+});
+it('sends xhigh by default and applies an edit to the next actual turn request', async () => {
+    h.send.mockImplementation(async () => { const id = `t-${h.send.mock.calls.length}`; emit('turn/started', { turn: { id } }); emit('turn/completed', { turn: { id, status: 'completed' } }); });
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'first'));
+        await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+        expect(h.send.mock.calls[0][1]).toMatchObject({ model: 'test', effort: 'xhigh', sandbox: 'read-only', approvalPolicy: 'never' });
+        writeFileSync(join(f.config.directory, 'settings.json'), JSON.stringify({ model: 'alternate', effort: 'high' }));
+        h.rows.push(row(2, 'second'));
+        await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(2));
+        expect(h.send.mock.calls[1][1]).toMatchObject({ model: 'alternate', effort: 'high' });
+    } finally { await f.stop(); }
+});
+it('rejects unsupported effort without dispatching a fallback turn', async () => {
+    const f = fixture();
+    writeFileSync(join(f.config.directory, 'settings.json'), JSON.stringify({ model: 'test', effort: 'low' }));
+    try { await expect(f.running).rejects.toThrow('hosted_model_effort_unsupported'); expect(h.send).not.toHaveBeenCalled(); }
+    finally { await f.stop().catch(() => {}); }
+});
+
+it('uses the rotated sealed conversation tag after restart instead of recreating the original session', async () => {
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(h.attach).toHaveBeenCalled());
+        const tag = h.attach.mock.calls[0][0].tag;
+        expect(tag({ testloopDots: { workspaceId: 'workspace' } })).toBe(`testloop-dot:workspace:${f.config.dotId}`);
+        const conversationId = randomUUID();
+        expect(tag({ testloopDots: { workspaceId: 'workspace', conversationId } })).toBe(`testloop-dot-clear:${f.config.dotId}:${conversationId}`);
+        expect(() => tag({ testloopDots: { conversationId: 'forged tag' } })).toThrow();
+    } finally { await f.stop(); }
+});
+it('keeps an active turn on its original settings and applies a busy edit only after it settles', async () => {
+    let finish!: () => void;
+    h.send.mockImplementationOnce(() => { emit('turn/started', { turn: { id: 'busy' } }); return new Promise<void>(r => { finish = r; }); })
+        .mockImplementation(async () => { emit('turn/started', { turn: { id: 'next' } }); emit('turn/completed', { turn: { id: 'next', status: 'completed' } }); });
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'busy')); await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+        writeFileSync(join(f.config.directory, 'settings.json'), JSON.stringify({ model: 'test', effort: 'high' }));
+        h.rows.push(row(2, 'queued')); await vi.waitFor(() => expect(f.state().inputs).toHaveLength(2));
+        expect(h.send).toHaveBeenCalledTimes(1); expect(h.send.mock.calls[0][1].effort).toBe('xhigh');
+        emit('turn/completed', { turn: { id: 'busy', status: 'completed' } }); finish();
+        await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(2)); expect(h.send.mock.calls[1][1].effort).toBe('high');
+    } finally { finish?.(); await f.stop(); }
 });

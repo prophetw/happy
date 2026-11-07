@@ -1227,12 +1227,12 @@ export function SessionViewLoaded({
                 permissionMode={permissionMode}
                 onPermissionModeChange={session && isRigPermissionSelectionEnabled(session.metadata) ? updatePermissionMode : undefined}
                 availableModes={availableModes}
-                modelMode={modelMode}
+                modelMode={session?.metadata?.hostedDotSettings ? { key: session.metadata.hostedDotSettings.model, name: session.metadata.hostedDotSettings.model } : modelMode}
                 availableModels={availableModels}
-                onModelModeChange={session && isRigModelSelectionEnabled(session.metadata) ? updateModelMode : undefined}
-                effortLevel={effortLevel}
+                onModelModeChange={session && !session.metadata?.hostedDotSettings && isRigModelSelectionEnabled(session.metadata) ? updateModelMode : undefined}
+                effortLevel={session?.metadata?.hostedDotSettings ? { key: session.metadata.hostedDotSettings.effort, name: session.metadata.hostedDotSettings.effort } : effortLevel}
                 availableEffortLevels={availableEffortLevels}
-                onEffortLevelChange={session && isRigReasoningSelectionEnabled(session.metadata) ? updateEffortLevel : undefined}
+                onEffortLevelChange={session && !session.metadata?.hostedDotSettings && isRigReasoningSelectionEnabled(session.metadata) ? updateEffortLevel : undefined}
                 metadata={composerSession?.metadata ?? null}
                 connectionStatus={session ? connectionStatus : undefined}
                 blockSend={isRig && session?.thinking && session.metadata?.capabilities?.steering !== true}

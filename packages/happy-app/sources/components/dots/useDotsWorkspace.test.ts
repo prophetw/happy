@@ -98,7 +98,7 @@ it('announces clear only while the current host projection retains the same Dot/
     await update(renderer);
     expect(mocks.values[0].pending).toBeNull();
     expect(mocks.values[0].error).toBeNull();
-    expect(mocks.values[0].notice).toContain('旧聊天、长期记忆、授权、任务记录和进行中目标均保留');
+    expect(mocks.values[0].notice).toContain('已清空旧聊天并重置模型上下文');
     expect(mocks.archive).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });

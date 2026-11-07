@@ -143,6 +143,34 @@ function avatarDescriptorKey(descriptor: NonNullable<DecryptedProjectRecord['ava
 }
 
 class Sync {
+    /** Also used for missed offline deletion events after authoritative Dot rotation. */
+    forgetDeletedDotSession(sessionId: string): void {
+            this.sessionAvatars.cancel(sessionId);
+
+            // Remove session from storage
+            storage.getState().deleteSession(sessionId);
+
+            // Remove encryption keys from memory
+            this.encryption.removeSessionEncryption(sessionId);
+
+            // Clear any cached git status
+            gitStatusSync.clearForSession(sessionId);
+            this.messagePreloader.cancel(sessionId);
+            this.historyPrefetchSessions.delete(sessionId);
+            this.olderMessagesPrefetchAttempts.delete(sessionId);
+            this.preloadedPlanModes.delete(sessionId);
+            this.messagesSync.delete(sessionId);
+            this.sendSync.delete(sessionId);
+            this.pendingOutbox.delete(sessionId);
+            this.sessionLastSeq.delete(sessionId);
+            this.sessionOldestSeq.delete(sessionId);
+            this.sessionMessageLocks.delete(sessionId);
+            this.sessionMessageQueue.delete(sessionId);
+            this.sessionQueueProcessing.delete(sessionId);
+            this.projectsSync.invalidate();
+
+    }
+
     private static readonly BACKGROUND_SEND_TIMEOUT_MS = 30_000;
     encryption!: Encryption;
     serverID!: string;
@@ -2856,29 +2884,7 @@ class Sync {
         } else if (updateData.body.t === 'delete-session') {
             log.log('🗑️ Delete session update received');
             const sessionId = updateData.body.sid;
-            this.sessionAvatars.cancel(sessionId);
-
-            // Remove session from storage
-            storage.getState().deleteSession(sessionId);
-
-            // Remove encryption keys from memory
-            this.encryption.removeSessionEncryption(sessionId);
-
-            // Clear any cached git status
-            gitStatusSync.clearForSession(sessionId);
-            this.messagePreloader.cancel(sessionId);
-            this.historyPrefetchSessions.delete(sessionId);
-            this.olderMessagesPrefetchAttempts.delete(sessionId);
-            this.preloadedPlanModes.delete(sessionId);
-            this.messagesSync.delete(sessionId);
-            this.sendSync.delete(sessionId);
-            this.pendingOutbox.delete(sessionId);
-            this.sessionLastSeq.delete(sessionId);
-            this.sessionOldestSeq.delete(sessionId);
-            this.sessionMessageLocks.delete(sessionId);
-            this.sessionMessageQueue.delete(sessionId);
-            this.sessionQueueProcessing.delete(sessionId);
-            this.projectsSync.invalidate();
+            this.forgetDeletedDotSession(sessionId);
 
             log.log(`🗑️ Session ${sessionId} deleted from local storage`);
         } else if (updateData.body.t === 'update-session') {

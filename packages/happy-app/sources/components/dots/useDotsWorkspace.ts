@@ -7,7 +7,7 @@ import { storage, useRealtimeStatus, useSessionMessages } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { sessionArchiveTestloopDot, sessionUpdateDotIdentity } from '@/sync/ops';
 import { getServerUrl } from '@/sync/serverConfig';
-import { projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, type TestloopDotsRequest } from '@/sync/testloopDots';
+import { retiredDotSessionIds, projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, type TestloopDotsRequest } from '@/sync/testloopDots';
 
 type Pending = { request: TestloopDotsRequest; attempt: number; timedOut: boolean };
 type Deletion = { requestId: string; revision: number; id: string; sessionId: string };
@@ -132,6 +132,11 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         }
     }, [ready, confirmedDeletions]);
 
+    React.useEffect(() => {
+        const snapshot = raw.snapshot;
+        if (!ready || !active || !snapshot?.ok) return;
+        for (const id of retiredDotSessionIds(snapshot, Object.values(storage.getState().sessions))) sync.forgetDeletedDotSession(id);
+    }, [ready, active, raw.snapshot, workspaceId]);
     const reconcileArchive = React.useCallback(async (deletion: Deletion) => {
         if (!validBinding()) return;
         const existing = storage.getState().sessions[deletion.sessionId];
@@ -216,7 +221,7 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
                 setError('后台已接受清空，但最新列表尚未确认原 Dot 与会话仍存在，请刷新核对。');
             } else {
                 setError(null);
-                setNotice('已为之后的模型上下文隔离此前历史；旧聊天、长期记忆、授权、任务记录和进行中目标均保留。');
+                setNotice('已清空旧聊天并重置模型上下文；长期记忆、Dot 身份、模型设置、授权和独立任务保留。');
             }
         } else if (request.action === 'delete') {
             if (receipt.deletedDot?.id !== request.dotId) {

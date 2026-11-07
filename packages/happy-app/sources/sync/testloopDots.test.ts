@@ -197,3 +197,13 @@ describe('real Dots workbench reads', () => {
         expect(projectTestloopDotsMessages([ok, rejected], workspaceId).receipts[requestId].ok).toBe(false);
     });
 });
+
+it('retires only an older offline Dot epoch and never removes a newer cached session from a stale snapshot', async () => {
+    const { retiredDotSessionIds } = await import('./testloopDots');
+    const workspaceId = '11111111-1111-4111-8111-111111111111', dotId = '22222222-2222-4222-8222-222222222222';
+    const snapshot = { ok: true, workspaceId, dots: [{ id: dotId, sessionId: 'new', conversationEpoch: 4 }] } as any;
+    const cached = (id: string, epoch?: number) => ({ id, metadata: { testloopDots: { schemaVersion: 1, kind: 'dot', workspaceId,
+        workspaceSessionId: 'workspace', dotId, ...(epoch === undefined ? {} : { conversationEpoch: epoch }) } } });
+    expect(retiredDotSessionIds(snapshot, [cached('old'), cached('new', 4), cached('future', 5)])).toEqual(['old']);
+    expect(retiredDotSessionIds({ ...snapshot, ok: false }, [cached('old')])).toEqual([]);
+});
