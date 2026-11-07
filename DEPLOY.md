@@ -3,6 +3,14 @@
 本文件提供当前部署入口；个人项目身份、Git 发布线、授权范围与最低充分验证规则以
 [AGENTS.md](AGENTS.md) 为准。历史发布结果只证明当时状态，每次发布仍需核对线上版本。
 
+## Dot Yolo 权限传递修复（2026-11-07）
+
+托管CLI `25641588332c16c0f20380086248b27c3392ae20` 在接收和恢复原生用户输入时保留permissionMode。TestLoop `1d1fea23de50d72ed8ce8968fb3830fd16d68857`将当前用户模式传入Happy MCP任务启动，Yolo在Claude目录中对应bypassPermissions；模型default不再覆盖选择，普通模式不被模型升级，授权未开放时明确拒绝。已启动会话的冻结模式与新用户模式校验，旧回执保持幂等。主Dot沙盒和项目/Token授权不变。
+
+仅切换Dot宿主与隔离托管入口 `/home/dev/.local/share/happy-releases/dots-yolo-20261107T042334Z/packages/happy-cli/bin/happy-hosted-dot.mjs`，未更新全局CLI/daemon，未改App/Web/OTA或Relay。原Dot/session/thread、历史和记忆保持。Happy hosted/state14项、宿主45项及相关编译通过；公网真实浏览器9组（脚本模型）通过。真实Claude/Ali DeepSeek v4.1 Flash/max以bypassPermissions执行最小Python只读命令，人工授权0次，结果回原Dot、重启不重派通过。真机发送未验证，原三项历史attention未新增。
+
+详细策略及权限边界见[TestLoop功能文档](https://github.com/prophetw/testLoop/blob/main/docs/features/dots-mcp-migration.md)，证据位于TestLoop `.e2e-artifacts/dots-yolo-20261107T042334Z/`，备份和验证范围见其DEPLOY.md、E2Etest.md。
+
 ## Dot 原生会话与 Happy MCP 收敛（2026-11-07）
 
 源码 `f7b8d29d1e583b667b7029f4f6a18381ed0f8511`，从干净隔离个人main、与fork/main一致发布。App删除Dot的REST管理/迁移入口，仅保留MCP连接和显式项目选择；托管CLI支持一次性导入旧user/assistant历史、处理水位接续、原thread冷恢复和未知注入阻塞。宿主负责权限、回执与后台任务恢复，临时调查直接通过Happy MCP派工，不需要delegate模板。旧历史审计、冻结目标及Happy内部HTTP保留。
