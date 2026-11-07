@@ -7,15 +7,13 @@ import { storage } from '@/sync/storage';
 import { getServerUrl } from '@/sync/serverConfig';
 import { readTestloopDotsMetadata } from '@/sync/testloopDots';
 import { DotsMcpPanel } from './DotsMcpPanel';
-import { DotsLegacyConnectionsPanel } from './DotsLegacyConnectionsPanel';
 
-/** MCP is the default connection interface. REST records are exposed only for migration. */
+/** Project grants and task dispatch share the Happy MCP connection registry. */
 export function DotsConnectionsPanel({ sessionId, workspaceId, dotId, onClose }: {
     sessionId: string; workspaceId: string; dotId?: string; onClose: () => void;
 }) {
     const { theme } = useUnistyles(), { credentials, isAuthenticated } = useAuth();
     const server = getServerUrl();
-    const [tab, setTab] = React.useState<'mcp' | 'legacy'>('mcp');
     const current = React.useCallback(() => {
         const binding = readTestloopDotsMetadata(storage.getState().sessions[sessionId]?.metadata);
         return isAuthenticated && credentials?.token === sync.getCredentials()?.token
@@ -24,7 +22,7 @@ export function DotsConnectionsPanel({ sessionId, workspaceId, dotId, onClose }:
     }, [sessionId, workspaceId, credentials?.token, credentials?.secret, isAuthenticated, server]);
     const scope = React.useMemo(() => ({}), [sessionId, workspaceId, dotId, credentials?.token, credentials?.secret, isAuthenticated, server]);
     const [renderScope, setRenderScope] = React.useState(scope);
-    React.useEffect(() => { setRenderScope(scope); setTab('mcp'); }, [scope]);
+    React.useEffect(() => { setRenderScope(scope); }, [scope]);
     const text = { color: theme.colors.text, lineHeight: 22 };
     const button = (label: string, action: () => void) => <Pressable accessibilityRole="button" accessibilityLabel={label}
         onPress={action} style={{ padding: 12, minHeight: 44, backgroundColor: theme.colors.surfaceHigh, borderRadius: 8 }}><Text style={text}>{label}</Text></Pressable>;
@@ -37,13 +35,9 @@ export function DotsConnectionsPanel({ sessionId, workspaceId, dotId, onClose }:
                         <Text accessibilityRole="header" style={{ ...text, fontSize: 19, fontWeight: '600' }}>连接与授权</Text>
                         {button('关闭连接管理', onClose)}
                     </View>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                        {button('MCP 连接', () => setTab('mcp'))}{button('旧连接迁移', () => setTab('legacy'))}
-                    </View>
                 </View>
                 <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, gap: 16 }}>
-                        {tab === 'mcp' ? <DotsMcpPanel sessionId={sessionId} dotId={dotId} current={current} />
-                            : <DotsLegacyConnectionsPanel sessionId={sessionId} current={current} onMigrated={() => setTab('mcp')} />}
+                        <DotsMcpPanel sessionId={sessionId} dotId={dotId} current={current} />
                 </ScrollView>
             </View>
         </View>

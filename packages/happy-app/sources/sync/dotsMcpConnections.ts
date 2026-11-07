@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { apiSocket } from './apiSocket';
 
 const config = z.record(z.string(), z.unknown());
-export const DotsMcpViewSchema = z.object({ revision: z.number().int().nonnegative(), capabilities: z.object({ storedToken: z.literal(1), happyDelegation: z.literal(1).optional(), migrateRest: z.literal(1).optional() }).optional(),
+export const DotsMcpViewSchema = z.object({ revision: z.number().int().nonnegative(), capabilities: z.object({ storedToken: z.literal(1), happyDelegation: z.literal(1).optional() }).optional(),
     connections: z.array(z.object({ id: z.string(), name: z.string(), config, enabled: z.boolean(),
         tokenConfigured: z.boolean().optional(), credentialSource: z.enum(['stored', 'environment', 'none']).optional(),
         checkedAt: z.string().nullable(), error: z.string().nullable(),
@@ -15,7 +15,6 @@ export type DotsMcpView = z.infer<typeof DotsMcpViewSchema>;
 export type DotsMcpMutation = { action: 'save'; connectionID?: string; name: string; config: Record<string, unknown>; token?: string | null }
     | { action: 'bind'; dotId: string; connectionIDs: string[] }
     | { action: 'bind-projects'; dotId: string; connectionID: string; projectIDs: string[] }
-    | { action: 'migrate-rest'; connectionID: string; restRevision: number }
     | { action: 'check' | 'delete'; connectionID: string }
     | { action: 'enable'; connectionID: string; enabled: boolean };
 export async function requestDotsMcp(sessionId: string, request: { action: 'list' } | DotsMcpMutation & { revision: number; requestId: string }) {

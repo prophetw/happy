@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate } from './hostedDotState';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), receive: null as any }));
@@ -29,7 +29,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     sendSessionProtocolMessageVerified = async (envelope: unknown, localId: string) => { h.sent.push({ localId, envelope }); };
 } }));
 import { runHostedDot } from './hostedDotMain';
-function fixture(gateway = false) {
+function fixture(gateway = false, imported = false) {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-loop-')), home = join(dir, 'happy'), data = join(dir, 'runtime');
     mkdirSync(home); mkdirSync(data);
     writeFileSync(join(home, 'credential-target.key'), JSON.stringify({ token: 'fixture-token', serverUrl: 'http://127.0.0.1:1234' }));
@@ -37,6 +37,12 @@ function fixture(gateway = false) {
     writeFileSync(join(home, 'sessions.json'), JSON.stringify({ sessions: { session: { encryptionVariant: 'dataKey', encryptionKey: Buffer.alloc(32).toString('base64') } } }));
     const config = { version: 1, dotId: randomUUID(), sessionId: 'session', happyHome: home, serverUrl: 'http://127.0.0.1:1234', directory: data,
         executable: 'codex', args: [], model: 'test', provider: 'openai', providerConfig: {}, instruction: 'chat only', codexHome: join(dir, 'codex'), environment: [] };
+    if (imported) {
+        const file = join(data, 'bootstrap.json'), body = JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, afterSeq: 5,
+            items: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'old request, never dispatch again' }] },
+                { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'old reply' }] }] });
+        writeFileSync(file, body); Object.assign(config, { bootstrap: { file, digest: createHash('sha256').update(body).digest('hex'), afterSeq: 5 } });
+    }
     const servers = { happy_fixture: { command: '/usr/bin/node', args: ['/fixture/gateway.mjs'], startup_timeout_sec: 30, tool_timeout_sec: 30, required: true, default_tools_approval_mode: 'approve' } };
     const policy = (value: unknown) => writeFileSync(join(data, 'task-gateway.json'), JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, servers: value }));
     if (gateway) policy(servers);
@@ -57,7 +63,30 @@ const emit = (method: string, params: any) => {
     if (method === 'turn/started') h.event({ type: 'task_started', thread_id: 'native-thread', turn_id: params.turn.id });
     if (method === 'turn/completed') h.event({ type: 'task_complete', thread_id: 'native-thread', turn_id: params.turn.id, status: params.turn.status });
 };
-beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockResolvedValue({}); });
+beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockReset().mockResolvedValue({}); });
+it('imports actual old conversation once, skips its processed user messages and resumes the imported thread without replay', async () => {
+    h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'new' } }); emit('turn/completed', { turn: { id: 'new', status: 'completed' } }); return { aborted: false }; });
+    const f = fixture(false, true);
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.inject).toHaveBeenCalledTimes(1); expect(JSON.stringify(h.inject.mock.calls[0][0])).toContain('old reply');
+        expect(h.send).not.toHaveBeenCalled();
+        await f.restart(); await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.resume).toHaveBeenCalled(); expect(h.inject).toHaveBeenCalledTimes(1);
+        h.rows.push(row(1, 'old request, never dispatch again'), row(6, 'new request'));
+        await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('completed'));
+        expect(f.state().inputs.map((r: any) => r.seq)).toEqual([6]); expect(h.send).toHaveBeenCalledTimes(1);
+    } finally { await f.stop(); }
+});
+it('blocks an unknown history injection and never repeats it after restart', async () => {
+    h.inject.mockRejectedValueOnce(Error('lost acknowledgement'));
+    const f = fixture(false, true);
+    try {
+        await expect(f.running).rejects.toThrow('hosted_bootstrap_unconfirmed');
+        await expect(runHostedDot(f.config)).rejects.toThrow('hosted_bootstrap_unconfirmed');
+        expect(h.inject).toHaveBeenCalledTimes(1); expect(h.send).not.toHaveBeenCalled();
+    } finally { await f.stop().catch(e => expect(e.message).toBe('hosted_bootstrap_unconfirmed')); }
+});
 it('settles steering when completion arrives before its RPC acknowledgement', async () => {
     let finish!: (v: unknown) => void;
     h.send.mockImplementation(() => { emit('turn/started', { turn: { id: 'turn-1' } }); return new Promise(resolve => { finish = resolve; }); });

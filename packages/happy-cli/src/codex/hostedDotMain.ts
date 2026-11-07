@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
+import { z } from 'zod';
 /** Headless Happy host: one Relay consumer, native thread, and durable delivery journal. */
-import { mkdirSync, existsSync, openSync, closeSync, lstatSync, realpathSync, readdirSync } from 'node:fs';
+import { mkdirSync, existsSync, openSync, closeSync, lstatSync, realpathSync, readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { createEnvelope, type SessionEnvelope } from '@slopus/happy-wire';
@@ -46,6 +48,24 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
         return tools.servers;
     };
     let taskServers: Record<string, unknown> = {}, taskServersDigest = hash(taskServers);
+    const importHistory = async () => {
+        if (!config.bootstrap || state.bootstrap?.stage === 'applied') return;
+        const stat = lstatSync(config.bootstrap.file);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024) throw new Error('hosted_bootstrap_invalid');
+        const bytes = readFileSync(config.bootstrap.file);
+        if (createHash('sha256').update(bytes).digest('hex') !== config.bootstrap.digest)
+            throw new Error('hosted_bootstrap_invalid');
+        const payload = JSON.parse(bytes.toString('utf8'));
+        const history = z.strictObject({ version: z.literal(1), dotId: z.literal(config.dotId), sessionId: z.literal(config.sessionId),
+            afterSeq: z.literal(config.bootstrap.afterSeq), items: z.array(z.strictObject({ type: z.literal('message'), role: z.enum(['user', 'assistant']),
+                content: z.array(z.strictObject({ type: z.enum(['input_text', 'output_text']), text: z.string().max(20000) })).min(1).max(1) })).max(10000) }).parse(payload);
+        state.bootstrap = { stage: 'injecting', threadId: state.threadId! }; persist();
+        try {
+            await client!.injectItems({ threadId: state.threadId!, items: [...history.items, { type: 'message', role: 'developer', content: [{ type: 'input_text',
+                text: '以上是同一Happy会话已处理的真实历史，仅供接续上下文，不重做历史命令，也不生成用户输入回执。新交办按当前职责与项目授权，通过实际挂载的Happy MCP创建并发送任务，不依赖宿主模板；历史中的旧工具/模板限制不代表当前能力。' }] }] });
+        } catch { throw new Error('hosted_bootstrap_unconfirmed'); }
+        state.bootstrap.stage = 'applied'; persist();
+    };
     const policyThreads = new Set<string>();
     const ensureMemoryPolicy = async () => {
         if (!state.threadId || !taskServers.dot_memory || policyThreads.has(state.threadId)) return;
@@ -167,7 +187,8 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             }
         });
         await client.connect();
-        const currentThreadHasInput = state.inputs.some(r => r.epoch === state.epoch && r.beforeTurns !== undefined);
+        const currentThreadHasInput = state.inputs.some(r => r.epoch === state.epoch && r.beforeTurns !== undefined)
+            || state.bootstrap?.stage === 'applied' && state.bootstrap.threadId === state.threadId;
         if (state.threadId && currentThreadHasInput) {
             await client.resumeThread({ threadId: state.threadId, cwd: join(dir, 'workspace'), model: config.model, approvalPolicy: 'never', sandbox: 'read-only', mcpServers: taskServers });
             reconcile((await client.readThread({ threadId: state.threadId })).thread.turns ?? []);
@@ -178,6 +199,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             state.threadId = (await client.startThread({ cwd: join(dir, 'workspace'), model: config.model, approvalPolicy: 'never', sandbox: 'read-only', mcpServers: taskServers })).threadId;
             state.creating = false; policyThreads.add(state.threadId!); persist();
         }
+        await importHistory();
         const api = await ApiClient.create(credentials, { serverUrl: config.serverUrl });
         const attached = await api.attachSession({ sessionId: config.sessionId, encryptionKey: key, encryptionVariant: 'dataKey',
             validateMetadata(metadata) {

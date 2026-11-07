@@ -198,7 +198,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                         style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} />
                     <Text style={s.muted}>{editing
                         ? '保存后宿主会更新这个 Dot 的名称与长期职责；不会重建会话，也不改变已有任务、记忆和授权。'
-                        : '创建不消耗模型额度。新 Dot 默认没有 REST 权限，创建后请在「连接与授权」中选择项目。'}</Text>
+                        : '创建不消耗模型额度。新 Dot 默认未授权项目，创建后请在「连接与授权」中选择可执行项目。'}</Text>
                     {editing && <View style={{ gap: 10, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.divider }}>
                         <Text style={s.heading}>危险操作</Text>
                         <Text style={s.muted}>删除会逻辑停用 Dot 并解除本地 REST/MCP 绑定；不会删除 Happy 会话、旧聊天或历史审计。</Text>
