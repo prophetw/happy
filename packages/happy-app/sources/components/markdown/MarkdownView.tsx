@@ -15,8 +15,9 @@ import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
 import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
-import { isHttpMarkdownLink } from './linkUtils';
+import { isHttpMarkdownLink, markdownSessionId } from './linkUtils';
 import { openExternalUrl } from '@/utils/openExternalUrl';
+import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 
 // Option type for callback
 export type Option = {
@@ -43,14 +44,20 @@ export const MarkdownView = React.memo((props: {
     const markdownCopyV2 = useLocalSetting('markdownCopyV2');
     const selectable = Platform.OS === 'web' || !(markdownCopyV2 || props.externalCopyHandler);
     const router = useRouter();
+    const navigateToSession = useNavigateToSession();
 
     const handleLinkPress = React.useCallback((url: string) => {
+        const sessionId = markdownSessionId(url);
+        if (sessionId) {
+            navigateToSession(sessionId);
+            return;
+        }
         if (!isHttpMarkdownLink(url)) {
             return;
         }
 
         void openExternalUrl(url);
-    }, []);
+    }, [navigateToSession]);
 
     const handleLongPress = React.useCallback(() => {
         try {
@@ -270,15 +277,15 @@ function RenderSpans(props: RenderSpanProps) {
     return (<>
         {props.spans.map((span, index) => {
             if (span.url) {
-                const isExternalLink = isHttpMarkdownLink(span.url);
+                const isLink = isHttpMarkdownLink(span.url) || markdownSessionId(span.url) !== null;
                 return (
                     <Text
                         key={index}
                         selectable={props.selectable}
-                        accessibilityRole={isExternalLink ? 'link' : undefined}
-                        style={[props.baseStyle, isExternalLink && style.link, span.styles.map(s => style[s])]}
-                        {...(isExternalLink && Platform.OS === 'web' ? { onClick: () => props.onLinkPress(span.url!) } as any : {})}
-                        onPress={isExternalLink && Platform.OS !== 'web'
+                        accessibilityRole={isLink ? 'link' : undefined}
+                        style={[props.baseStyle, isLink && style.link, span.styles.map(s => style[s])]}
+                        {...(isLink && Platform.OS === 'web' ? { onClick: () => props.onLinkPress(span.url!) } as any : {})}
+                        onPress={isLink && Platform.OS !== 'web'
                             ? () => props.onLinkPress(span.url!)
                             : undefined}
                     >
