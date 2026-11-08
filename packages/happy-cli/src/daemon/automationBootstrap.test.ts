@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock } from './automationBootstrap';
+import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock, verifyManagedStartupMachine } from './automationBootstrap';
 import { launchAutomationWorker } from './automationMain';
 import type { WorkerConfig, SecretProvider } from 'happy-agent/automation/production';
 const dirs: string[]=[];
@@ -67,4 +67,61 @@ it('managed cleanup rejects a replacement lock even when its PID matches', async
  const f=fixture(),state=join(f.dir,'state.json'),lock=join(f.dir,'owner.lock'),fd=await acquireAutomationDaemonLock(lock);
  try {(await import('node:fs')).renameSync(lock,lock+'.old');writeFileSync(lock,String(process.pid));writeFileSync(state,JSON.stringify({pid:process.pid}));await expect(clearOwnedAutomationState(state,lock,fd)).rejects.toThrow();expect((await import('node:fs')).existsSync(state)).toBe(true);}
  finally {await fd.close();}
+});
+
+describe('managed machine verification after local state creation', () => {
+    async function startup() {
+        const f = fixture(), statePath = join(f.dir, 'daemon.state.json'), lockPath = statePath + '.lock';
+        const handle = await acquireAutomationDaemonLock(lockPath);
+        writeFileSync(statePath, JSON.stringify({ pid: process.pid }));
+        return { statePath, lockPath, handle,
+            stopControl: vi.fn(async () => { expect(existsSync(statePath)).toBe(true); }),
+            closeCredentials: vi.fn(async () => {}), stopCaffeinate: vi.fn(async () => {}), report: vi.fn() };
+    }
+    it('releases only this startup ownership after a failed read so the next supervised attempt can start', async () => {
+        const f = await startup(), error = new Error('AUTOMATION_EXISTING_MACHINE_UNVERIFIED');
+        await expect(verifyManagedStartupMachine(async () => { throw error; }, f)).rejects.toBe(error);
+        expect(f.stopControl).toHaveBeenCalledOnce(); expect(f.closeCredentials).toHaveBeenCalledOnce();
+        expect(f.stopCaffeinate).toHaveBeenCalledOnce();
+        expect(existsSync(f.statePath)).toBe(false); expect(existsSync(f.lockPath)).toBe(false);
+        await expect(assertNoAutomationDaemonState(f.statePath)).resolves.toBeUndefined();
+        const retry = await acquireAutomationDaemonLock(f.lockPath);
+        await releaseOwnedAutomationLock(f.statePath, f.lockPath, retry);
+    });
+    it('keeps live ownership after successful verification', async () => {
+        const f = await startup(), machine = { id: 'fixture-machine' };
+        try {
+            await expect(verifyManagedStartupMachine(async () => machine, f)).resolves.toBe(machine);
+            expect(f.stopControl).not.toHaveBeenCalled(); expect(f.closeCredentials).not.toHaveBeenCalled();
+            expect(existsSync(f.statePath)).toBe(true); expect(existsSync(f.lockPath)).toBe(true);
+        } finally { await f.handle.close(); }
+    });
+    it('retains another PID state and the owner lock when verification fails', async () => {
+        const f = await startup();
+        try {
+            writeFileSync(f.statePath, JSON.stringify({ pid: process.pid + 1 }));
+            await expect(verifyManagedStartupMachine(async () => { throw Error('fixture-read-failed'); }, f)).rejects.toThrow('fixture-read-failed');
+            expect(JSON.parse(readFileSync(f.statePath, 'utf8')).pid).toBe(process.pid + 1);
+            expect(existsSync(f.lockPath)).toBe(true);
+            expect(f.report).toHaveBeenCalledWith('state-clear', 'unconfirmed');
+        } finally { await f.handle.close(); }
+    });
+    it('does not unlink a replacement lock even when its PID matches', async () => {
+        const f = await startup();
+        try {
+            renameSync(f.lockPath, f.lockPath + '.original'); writeFileSync(f.lockPath, String(process.pid));
+            await expect(verifyManagedStartupMachine(async () => { throw Error('fixture-read-failed'); }, f)).rejects.toThrow('fixture-read-failed');
+            expect(existsSync(f.statePath)).toBe(true); expect(existsSync(f.lockPath)).toBe(true);
+            expect(f.report).toHaveBeenCalledWith('state-clear', 'unconfirmed');
+        } finally { await f.handle.close(); }
+    });
+    it('keeps ownership if the local control listener cannot be confirmed closed', async () => {
+        const f = await startup();
+        try {
+            f.stopControl.mockRejectedValueOnce(Error('fixture-close-failed'));
+            await expect(verifyManagedStartupMachine(async () => { throw Error('fixture-read-failed'); }, f)).rejects.toThrow('fixture-read-failed');
+            expect(existsSync(f.statePath)).toBe(true); expect(existsSync(f.lockPath)).toBe(true);
+            expect(f.report).toHaveBeenCalledWith('control-close', 'unconfirmed');
+        } finally { await f.handle.close(); }
+    });
 });
