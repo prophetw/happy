@@ -153,6 +153,13 @@ beforeEach(() => {
 });
 
 describe('getResumeAvailability', () => {
+    it('routes a hosted Dot through host recovery instead of ordinary CLI resume', () => {
+        const session = createMockSession({ flavor: 'codex', codexThreadId: 'thread-12345', testloopDots: {
+            schemaVersion: 1, kind: 'dot', workspaceId: '11111111-1111-4111-8111-111111111111',
+            workspaceSessionId: 'workspace', dotId: '22222222-2222-4222-8222-222222222222',
+        } } as any);
+        expect(getResumeAvailability(session, createMockMachine(true), false).canShowResume).toBe(false);
+    });
     it('returns canResume: true for agy sessions with agyConversationId and online machine', () => {
         const session = createMockSession({
             flavor: 'agy',

@@ -59,7 +59,7 @@ export type ResumeAvailability = {
 };
 
 export function getResumeAvailability(session: Session, machine: Machine | null | undefined, isConnected: boolean): ResumeAvailability {
-    if (isRigMetadata(session.metadata) || session.metadata?.capabilities?.resume === false) {
+    if (readTestloopDotsMetadata(session.metadata) || isRigMetadata(session.metadata) || session.metadata?.capabilities?.resume === false) {
         return {
             canResume: false,
             canShowResume: false,

@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 8 - Bring Dots back online",
+      "summary": "Requires the updated TestLoop host and configured host recovery service.",
+      "markdown": "- **Recover with one tap** — bring an offline Dot back to its original conversation, keeping chats and memories.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 7 - Keep Dot work in one conversation",
       "summary": "Requires the updated TestLoop host and a native Dot conversation.",
       "markdown": "- **Assign investigations directly** — send project work to Happy and keep chatting while it runs; results return to the same conversation.\n- **Choose projects in MCP** — manage the connection and allowed projects from one page.\n- **Keep existing conversations** — the host can migrate an idle Dot while preserving chats, memories and settled work, and keeping already processed requests from running again."
@@ -156,5 +161,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 7 - Keep Dot work in one conversation"
+  "latestTitle": "November 8 - Bring Dots back online"
 }

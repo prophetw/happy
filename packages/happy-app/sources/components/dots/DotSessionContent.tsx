@@ -14,6 +14,7 @@ import { testloopWorkStatus, type TestloopDotsMetadata } from '@/sync/testloopDo
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 import { DotObservationPanel } from './DotObservationPanel';
+import { DotRecoveryNotice } from './DotRecoveryNotice';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
 type Tab = 'chat' | 'activity' | 'work' | 'memory' | 'basis';
@@ -153,7 +154,10 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             <Text accessibilityLiveRegion="polite" style={[muted, { color: colors.textSecondary }]}>{data.notice || notice}</Text>
         </View>}
         <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
-            <View style={{ flex: 1, display: wide || tab === 'chat' ? 'flex' : 'none', minWidth: 0 }}>{children(composeRequest)}</View>
+            <View style={{ flex: 1, display: wide || tab === 'chat' ? 'flex' : 'none', minWidth: 0 }}>
+                <DotRecoveryNotice key={session.id} workspaceId={metadata.workspaceId} dotId={metadata.dotId} sessionId={session.id} online={session.presence === 'online'} />
+                {children(composeRequest)}
+            </View>
             <View style={{ width: wide ? 320 : '100%', display: wide ? expanded ? 'flex' : 'none' : tab === 'chat' ? 'none' : 'flex', borderLeftWidth: wide ? 1 : 0, borderLeftColor: colors.divider }}>{panel}</View>
         </View>
         {selectedTask && sheet(selectedTask.title, () => setTaskId(null), <>

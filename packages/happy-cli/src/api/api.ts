@@ -31,7 +31,21 @@ export class ApiClient {
   }): Promise<Session> {
     const config = { headers: { Authorization: `Bearer ${this.credential.token}` }, timeout: 10000 };
     const listed = await axios.get(`${this.serverUrl}/v1/sessions`, config);
-    const current = listed.data.sessions?.find((session: any) => session.id === opts.sessionId);
+    let current = listed.data.sessions?.find((session: any) => session.id === opts.sessionId);
+    // /v1/sessions only returns the 150 most recently updated sessions. A quiet
+    // hosted Dot can fall outside that window while the machine is offline.
+    let cursor: string | undefined;
+    const visited = new Set<string>();
+    for (let page = 0; !current; page++) {
+      if (page >= 100) throw new Error('session_attach_pagination_limit');
+      const { data } = await axios.get(`${this.serverUrl}/v2/sessions`, { ...config, params: { limit: 200, ...(cursor ? { cursor } : {}) } });
+      if (!Array.isArray(data.sessions)) throw new Error('session_attach_pagination_invalid');
+      current = data.sessions.find((session: any) => session.id === opts.sessionId);
+      if (current || !data.hasNext) break;
+      if (typeof data.nextCursor !== 'string' || !data.nextCursor || visited.has(data.nextCursor)) throw new Error('session_attach_pagination_invalid');
+      const nextCursor: string = data.nextCursor;
+      cursor = nextCursor; visited.add(nextCursor);
+    }
     if (!current) throw new Error('session_attach_missing');
     const metadata = decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(current.metadata));
     opts.validateMetadata(metadata);

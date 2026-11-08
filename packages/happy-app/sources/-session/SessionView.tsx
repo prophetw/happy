@@ -1281,7 +1281,7 @@ export function SessionViewLoaded({
     // A chat that has not been created yet is not a disconnected one: nothing
     // is resumable, and the hint would be the screen telling the user their
     // brand new chat had died.
-    const inactiveHint = session && isDisconnected && !isRig ? (
+    const inactiveHint = session && isDisconnected && !isRig && !readTestloopDotsMetadata(session.metadata) ? (
         <AnimatedFade visible={showBottomDockDetails}>
             <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
                 <InactiveArchivedHint

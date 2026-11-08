@@ -1,3 +1,10 @@
+# November 8 - Bring Dots back online
+
+Requires the updated TestLoop host and configured host recovery service.
+
+- **Recover with one tap** — bring an offline Dot back to its original conversation, keeping chats and memories.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # November 7 - Keep Dot work in one conversation
 
 Requires the updated TestLoop host and a native Dot conversation.

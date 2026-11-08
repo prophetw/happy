@@ -18,6 +18,7 @@ vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: vi.fn() } }));
 vi.mock('@/modal', () => ({ Modal: { confirm: mocks.confirm } }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '33333333-3333-4333-8333-333333333333' }));
 vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
+vi.mock('./DotRecoveryNotice', () => ({ DotRecoveryNotice: () => null }));
 vi.mock('./DotObservationPanel', async () => {
     const module = await import('react'); return { DotObservationPanel: (props: any) => module.createElement('ObservationPanel', props) };
 });

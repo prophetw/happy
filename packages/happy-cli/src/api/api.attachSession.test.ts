@@ -7,7 +7,7 @@ const key = new Uint8Array(32), metadata = { path: '/tmp', testloopDots: { dotId
 const session = { id: 'session', metadata: encodeBase64(encrypt(key, 'dataKey', metadata)), metadataVersion: 2, agentStateVersion: 1, dataEncryptionKey: 'existing-key-envelope' };
 const credentials = { token: 'synthetic', encryption: { type: 'legacy' as const, secret: key } };
 const options = { sessionId: 'session', tag: 'testloop-dot:workspace:dot', encryptionKey: key, encryptionVariant: 'dataKey' as const, validateMetadata: vi.fn() };
-beforeEach(() => { vi.clearAllMocks(); h.get.mockResolvedValue({ data: { sessions: [session] } }); h.post.mockResolvedValue({ data: { session } }); });
+beforeEach(() => { vi.resetAllMocks(); h.get.mockResolvedValue({ data: { sessions: [session] } }); h.post.mockResolvedValue({ data: { session } }); });
 it('reattaches the original identity/tag and preserves encrypted metadata and key', async () => {
     const api = await ApiClient.create(credentials, { serverUrl: 'http://127.0.0.1:1234' });
     const result = await api.attachSession(options);
@@ -19,6 +19,22 @@ it('does not create a session when the original is missing', async () => {
     h.get.mockResolvedValue({ data: { sessions: [] } });
     const api = await ApiClient.create(credentials);
     await expect(api.attachSession(options)).rejects.toThrow('session_attach_missing');
+    expect(h.post).not.toHaveBeenCalled();
+});
+it('finds an older Dot beyond the legacy 150-session list before resuming its exact identity', async () => {
+    h.get.mockResolvedValueOnce({ data: { sessions: [] } })
+        .mockResolvedValueOnce({ data: { sessions: [], hasNext: true, nextCursor: 'cursor_v1_older' } })
+        .mockResolvedValueOnce({ data: { sessions: [session], hasNext: false, nextCursor: null } });
+    const api = await ApiClient.create(credentials, { serverUrl: 'http://127.0.0.1:1234' });
+    expect((await api.attachSession(options)).id).toBe(session.id);
+    expect(h.get).toHaveBeenLastCalledWith('http://127.0.0.1:1234/v2/sessions', expect.objectContaining({ params: { limit: 200, cursor: 'cursor_v1_older' } }));
+    expect(h.post).toHaveBeenCalledTimes(1);
+});
+it('rejects a repeated pagination cursor without creating a substitute session', async () => {
+    h.get.mockResolvedValueOnce({ data: { sessions: [] } })
+        .mockResolvedValue({ data: { sessions: [], hasNext: true, nextCursor: 'cursor_v1_repeat' } });
+    const api = await ApiClient.create(credentials);
+    await expect(api.attachSession(options)).rejects.toThrow('session_attach_pagination_invalid');
     expect(h.post).not.toHaveBeenCalled();
 });
 it('does not attach a different Dot even with a valid encrypted key', async () => {
