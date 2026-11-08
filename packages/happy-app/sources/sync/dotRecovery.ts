@@ -14,12 +14,15 @@ export async function recoverDot(input: { workspaceId: string; dotId: string; se
     const credentials = await TokenStorage.getCredentials();
     if (!credentials) throw new Error(messages.dot_recovery_auth_required);
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
         response = await fetch(getServerUrl().replace(/\/+$/, '') + '/v1/dots/recover', {
             method: 'POST', headers: { Authorization: 'Bearer ' + credentials.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify(input), signal: AbortSignal.timeout(15000),
+            body: JSON.stringify(input), signal: controller.signal,
         });
     } catch { throw new Error('无法连接恢复服务，请确认宿主电脑已开机并连接网络，然后重试。'); }
+    finally { clearTimeout(timeout); }
     const result = await response.json().catch(() => ({}));
     if (response.status === 404) throw new Error('这台宿主尚未配置一键恢复服务。');
     if (!response.ok) throw new Error(messages[result.error] ?? '宿主未能启动，请稍后重试。');
