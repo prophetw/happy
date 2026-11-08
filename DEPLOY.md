@@ -1,5 +1,17 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 重启后一键恢复发布（2026-11-08）
+
+按用户授权提交推送个人main，私网Web/OTA源`825090126c860fcc5dbf4876ccda27fc9724e6e6`，托管CLI/Control源`aafcd3df42be577b67717e5a9edc801833abea51`（后续差异仅App原生超时修复），宿主源`28eb43a721dda20ecd0d43020616ba2c80ac0216`。发布checkout `/home/dev/code/happy-native-dot-release`为干净独立clone，已当次fetch核对main==fork/main，并确认包含上一OTA的82af9001；无原生接口/依赖变更。
+
+私网`/happy/`的index和3个入口JS与产物字节一致；`/home-relay/v1/dots/recover`通过精确反代连接回环18196独立用户服务。`testloop-assistant.service`、`testloop-dot-recovery.service`均enabled/active，使用`/home/dev/.local/share/testloop-releases/dot-recovery-20261108`；固定托管CLI在`/home/dev/.local/share/happy-releases/dot-recovery-20261108`。Control镜像`sha256:861f025e9ba6c24e2b578fb69d488c98a3e44a1b7587ce2977690bade672c29a` healthy，旧锁停机留档、授权目录保持，依赖锁文件与原镜像一致。全局Happy/daemon未替换，Relay和执行Worker未重启。
+
+个人`@prophetwayen/happy` preview环境/分支、iOS runtime21、bundle`com.prophetwayen.happy.preview`：[更新组3ba69aa4](https://expo.dev/accounts/prophetwayen/projects/happy/updates/3ba69aa4-47b2-40d7-9346-21a85595fd06)，update ID `01a1bba0-13be-7404-bf85-0f4a70c6239a`。preview/production原有映射均指向preview，本次未改；两渠道manifest及主包9,984,688字节SHA256回读通过。EAS可选assetmap上传socket hang up，已查CLI源码按warning返回null；实际bundle/manifest/下载哈希通过，不将辅助上传称为成功。未做真机接收或整机重启验收。
+
+已部署产物的隔离手机尺寸浏览器恢复、原session/thread/聊天和刷新保持通过，errors=[]、付费模型0；真实账号停宿主后经私网接口并发恢复双Dot，202及原thread保持；未登录401、旧绑定409。原三项attention仍保留、scanner error=null。原生AbortSignal.timeout不支持已先红后绿修为AbortController；定向回归共60项及对应编译/类型通过，未跑全仓测试。
+
+冷备与回退证据在 TestLoop `.e2e-artifacts/dot-recovery-release-20261108/`，完整冷备`/home/dev/.local/state/testloop-backups/dot-recovery-20261108T1444`及-extras。首轮激活因并发指标快照告警自动回滚，使用状态锁一致快照后第二轮通过；工作区链接、Docker本地镜像名称、Nginx reload瞬时旧worker、可选上传及未经授权的资产探针失败均保留原记录并说明。旧Control回退前必须停唯一实例并留档v2 marker，不能抢占运行中锁或删除`.gateway-lock` inode。详细操作、错误与验证边界见 TestLoop `DEPLOY.md` 本次发布章节。
+
 本文件提供当前部署入口；个人项目身份、Git 发布线、授权范围与最低充分验证规则以
 [AGENTS.md](AGENTS.md) 为准。历史发布结果只证明当时状态，每次发布仍需核对线上版本。
 

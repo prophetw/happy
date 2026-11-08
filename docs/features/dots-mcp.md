@@ -37,10 +37,12 @@ assistant 历史审计、既存备份和独立项目任务不是聊天入口；�
 
 交付分支为两个仓库的 `feat/dot-settings-clear`，worktree 分别为 `/home/dev/code/happy-dot-settings` 与 `/home/dev/code/testLoop-dot-settings`。未提交、推送、部署；不包含共享工作树已有的会话链接与记忆实现。真实模型服务调用、真机及并行记忆实现合并后的验证尚未执行。
 
-## 离线 Dot 恢复（2026-11-08，待发布）
+## 离线 Dot 恢复（2026-11-08，已发布）
 
 Dot 对话离线时显示“一键恢复”，调用当前 Relay 的 `POST /v1/dots/recover`，携带当前登录 Bearer token 和原 workspaceId/dotId/sessionId。宿主上的独立恢复服务负责验证账号与原绑定、启动既有宿主服务。HTTP 202 后界面继续等原 Dot presence 上线；未上线或请求失败可重试，保留原聊天与记忆。Dot 不再显示普通 CLI 的终端恢复提示，也不能通过通用 Resume 操作启动第二个原生拥有者。
 
 托管 CLI 在最近150条会话列表中找不到 Dot 时使用既有 v2 分页查找，保持同一tag/密钥/会话，不创建替代身份。Control 使用 Linux flock，锁持有者崩溃后可重启；旧 `.gateway-owner` 协议需在停止唯一实例后留档迁移，不能直接删除运行中的锁。
 
 恢复服务部署配置、独立用户服务和反代路由见 TestLoop `docs/features/personal-assistant-operations.md` 的“Dot 页面一键恢复”。宿主离线、WSL未启动或物理电脑关机时，界面显示实际连接失败；不提供远程开机能力。手机接收新版需单独发布个人 preview OTA；浏览器验证不等于真机验收。
+
+2026-11-08私网Web/宿主恢复服务及[个人preview iOS OTA](https://expo.dev/accounts/prophetwayen/projects/happy/updates/3ba69aa4-47b2-40d7-9346-21a85595fd06)已发布，runtime21，来源82509012；启动包哈希与实际manifest已回读。真机是否加载仍未验证。
