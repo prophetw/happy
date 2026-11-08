@@ -3,6 +3,9 @@
 更新于 2026-11-07。手机 Shadowrocket、Safari 登录页及当次直连已验证；Clash Verge
 为按官方文档整理的配置示例，尚未实机验证。迁移、备份与服务启动详见[部署手册](../deployment.md)。
 
+MiniNeo 上原生 Windows 客户端的安装、登录与 Peer Relay（UDP 40000）配置见
+[tailscale-peer-relay.md](tailscale-peer-relay.md)。
+
 ## 访问地址与宿主配置
 
 | 用途 | 地址 |
