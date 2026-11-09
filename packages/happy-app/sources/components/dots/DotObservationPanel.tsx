@@ -7,6 +7,8 @@ import { storage } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { getServerUrl } from '@/sync/serverConfig';
 import { readTestloopDotsMetadata, testloopWorkStatus } from '@/sync/testloopDots';
+import { parseToken } from '@/utils/parseToken';
+import { useDotMemoryMove } from './useDotMemoryMove';
 import { ObservationOverviewSchema, ObservationResponseSchema, observationError, observationMemoryStatus, observationReasons,
     requestDotObservation, type ObservationEvent, type ObservationMemoryVersion, type ObservationOverview,
     type MemoryScope, type ObservationRequest, type ObservationResponse } from '@/sync/dotObservation';
@@ -27,7 +29,7 @@ function eventTitle(event: ObservationEvent) {
     return `${event.kind === 'turn' ? '对话' : event.kind === 'memory-proposal' ? '记忆提案' : '工作'} · ${status}`;
 }
 
-/** Reads only. Every asynchronous result remains bound to the account, workspace, Dot and visible screen. */
+/** Observation reads and explicit user memory moves stay bound to the account, workspace, Dot and visible screen. */
 export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionId, active, mode, presence,
     onExecution, onEditMemory, onForgetMemory, onAddMemory }: {
     sessionId: string; workspaceId: string; dotId: string; dotSessionId: string; active: boolean; mode: Mode; presence: string | number;
@@ -42,7 +44,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
     const [loaded, setLoaded] = React.useState<{ scope: object; overview: ObservationOverview; result: ObservationResponse; query: ObservationRequest } | null>(null);
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState<string | null>(null);
     const [showDecision, setShowDecision] = React.useState(false);
-    const epoch = React.useRef(0), focused = React.useRef(false), foreground = React.useRef(true);
+    const epoch = React.useRef(0), moveCancellation = React.useRef(0), focused = React.useRef(false), foreground = React.useRef(true);
     const valid = React.useCallback(() => {
         const sessions = storage.getState().sessions, workspace = readTestloopDotsMetadata(sessions[sessionId]?.metadata);
         const dot = readTestloopDotsMetadata(sessions[dotSessionId]?.metadata);
@@ -68,23 +70,45 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
     }, [valid, sessionId, dotId, scope, mode, memoryScope]);
     useFocusEffect(React.useCallback(() => {
         focused.current = true; void load(initial);
-        return () => { focused.current = false; epoch.current++; };
+        return () => { focused.current = false; epoch.current++; moveCancellation.current++; };
     }, [load, initial]));
     React.useEffect(() => {
         const listener = AppState.addEventListener('change', state => {
             foreground.current = state === 'active';
-            if (!foreground.current) { epoch.current++; setLoaded(null); setBusy(false); }
+            if (!foreground.current) { epoch.current++; moveCancellation.current++; setLoaded(null); setBusy(false); }
             else if (focused.current) void load(initial);
         });
         return () => listener.remove();
     }, [load, initial]);
     const shown = loaded?.scope === scope && valid() ? loaded : null;
     const result = shown?.result, overview = shown?.overview;
+    // JWT sub partitions opaque recovery metadata locally; the host independently authenticates the user.
+    const localMoveScope = React.useMemo(() => {
+        if (!isAuthenticated || !credentials?.token) return null;
+        try { return JSON.stringify([server, parseToken(credentials.token), workspaceId, sessionId, dotId, dotSessionId]); }
+        catch { return null; }
+    }, [isAuthenticated, credentials?.token, server, workspaceId, sessionId, dotId, dotSessionId]);
+    const refreshMovedMemories = React.useCallback(async () => {
+        if (!valid()) return;
+        const version = ++epoch.current;
+        const pairs = await Promise.all((['dot', 'user'] as const).map(async memoryScope => ({
+            memoryScope, overview: await requestDotObservation(sessionId, { dotId, action: 'overview', scope: memoryScope }, ObservationOverviewSchema),
+            result: await requestDotObservation(sessionId, { dotId, action: 'memories', scope: memoryScope }, ObservationResponseSchema),
+        })));
+        if (version !== epoch.current || !valid()) return;
+        const selected = pairs.find(item => item.memoryScope === memoryScope)!;
+        setLoaded({ scope, overview: selected.overview, result: selected.result, query: { dotId, action: 'memories', scope: memoryScope } });
+    }, [valid, sessionId, dotId, memoryScope, scope]);
+    const move = useDotMemoryMove({ sessionId, dotId, localScope: localMoveScope, binding: scope,
+        cancellation: () => moveCancellation.current, current: () => mode === 'memory' && valid(), refresh: refreshMovedMemories });
+    const canMove = Boolean(localMoveScope && overview?.memory?.access.includes('read') && overview.memory.access.includes('write') && overview.memory.access.includes('forget'));
+    const canInspectMove = Boolean(localMoveScope && overview?.memory?.access.includes('read'));
+    const moving = busy || move.busy;
     const colors = theme.colors;
     const body = { color: colors.text, fontSize: 14, lineHeight: 22 }, muted = { color: colors.textSecondary, fontSize: 12, lineHeight: 18 };
     const card = { gap: 6, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.divider };
-    const button = (title: string, run: () => void, customStyle?: object, textStyle?: object) => <Pressable accessibilityRole="button" accessibilityLabel={title} disabled={busy}
-        onPress={run} style={[{ paddingVertical: 8, paddingHorizontal: 12, minHeight: 36, backgroundColor: colors.surfaceHigh, borderRadius: 8, justifyContent: 'center', opacity: busy ? 0.5 : 1 }, customStyle]}>
+    const button = (title: string, run: () => void, customStyle?: object, textStyle?: object) => <Pressable accessibilityRole="button" accessibilityLabel={title} disabled={moving}
+        onPress={run} style={[{ paddingVertical: 8, paddingHorizontal: 12, minHeight: 36, backgroundColor: colors.surfaceHigh, borderRadius: 8, justifyContent: 'center', opacity: moving ? 0.5 : 1 }, customStyle]}>
         <Text style={[{ color: colors.text, fontSize: 13, textAlign: 'center' }, textStyle]}>{title}</Text></Pressable>;
     const go = (query: Omit<ObservationRequest, 'dotId'>) => { void load({ ...query, dotId } as ObservationRequest); };
     const turn = (turnId: string) => go({ action: 'turn', turnId, section: 'overview' } as Omit<ObservationRequest, 'dotId'>);
@@ -144,8 +168,16 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
             </Pressable>)}
         </View>}
         {mode === 'memory' && <Text style={muted}>{memoryScope === 'user' ? '同一宿主账号的通用记忆；只操作用户级，不影响同名Dot级记录。' : '仅当前Dot可用；只操作Dot级，不影响同名用户级记录。'}</Text>}
-        {busy && <ActivityIndicator />}
+        {moving && <ActivityIndicator />}
         {error && <Text accessibilityRole="alert" style={{ ...body, color: colors.textDestructive }}>{error}</Text>}
+        {move.error && <Text accessibilityRole="alert" style={{ ...body, color: colors.textDestructive }}>{move.error}</Text>}
+        {move.notice && <Text accessibilityLiveRegion="polite" style={body}>{move.notice}</Text>}
+        {move.pending.map(intent => <View key={intent.requestID} style={{ gap: 4 }}>
+            <Text style={muted}>有一次记忆移动待核对（{intent.sourceScope === 'dot' ? 'Dot → 用户级' : '用户级 → 当前 Dot'}），重试沿用原请求。</Text>
+            {button(move.pending.length === 1 ? '恢复上次移动' : `恢复移动 ${intent.requestID.slice(0, 8)}`, () => move.recover(intent))}
+            {move.receipt?.requestID === intent.requestID && ['ready', 'target_saved', 'needs_attention'].includes(move.receipt.status)
+                && button('停止本次移动并保留记录', () => move.cancel(intent))}
+        </View>)}
         {!detail && overview && <View style={{ gap: 4, paddingVertical: 2 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <Text style={muted}>宿主：{{ healthy: '在线', unhealthy: '异常', stopped: '未运行' }[overview.host.status]} · Dot 连接：{presence === 'online' ? '在线' : '待确认'}</Text>
@@ -183,8 +215,8 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                     </Pressable>
                 )}
             </View>
-            {result.page.items.map(item => <Pressable key={item.keyDigest} accessibilityRole="button"
-                accessibilityLabel={`查看记忆：${label(item.key, item.keyDigest)}`} disabled={busy}
+            {result.page.items.map(item => <View key={item.keyDigest}><Pressable accessibilityRole="button"
+                accessibilityLabel={`查看记忆：${label(item.key, item.keyDigest)}`} disabled={moving}
                 onPress={() => memory(item.keyDigest)}
                 style={({ pressed }) => ({ ...card, opacity: pressed ? 0.7 : 1 })}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -193,12 +225,14 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                         <Text style={[muted, { fontSize: 11 }]}>{observationMemoryStatus[item.status]}</Text>
                     </View>
                 </View>
-                {item.preview && clipped(item.preview)}
+                {item.status !== 'deleted' && item.preview && clipped(item.preview)}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
                     <Text style={[muted, { fontSize: 11 }]}>第 {item.revision} 版{item.kind ? ` · ${item.kind}` : ''}{item.deletedAt ? ` · 忘记于 ${date(item.deletedAt)}` : ''}</Text>
                     <Text style={[muted, { fontSize: 12, color: colors.textSecondary }]}>详情 →</Text>
                 </View>
-            </Pressable>)}
+            </Pressable>{canMove && item.status === 'effective' && button(memoryScope === 'dot' ? '移至用户级' : '移至当前Dot',
+                () => move.start(item.keyDigest, item.revision, memoryScope))}
+                {canInspectMove && item.status !== 'effective' && button('核对未完成移动', () => move.inspect(item.keyDigest, item.revision, memoryScope))}</View>)}
         </>}
         {result?.action === 'memory' && <>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 2 }}>
@@ -220,8 +254,12 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 </Pressable>
             </View>
             {result.memory.deletedAt && <Text style={muted}>已于 {date(result.memory.deletedAt)} 忘记，正文已清除。</Text>}
+            {canMove && result.memory.status === 'effective' && button(memoryScope === 'dot' ? '移至用户级' : '移至当前Dot',
+                () => move.start(result.memory.keyDigest, result.memory.revision, memoryScope))}
+            {canInspectMove && result.memory.status !== 'effective' && button('核对未完成移动',
+                () => move.inspect(result.memory.keyDigest, result.memory.revision, memoryScope))}
             {result.section === 'usage' && memoryScope === 'user' && <Text style={muted}>用户级记忆的原生工具读取不记录在旧轮次背景快照中。</Text>}
-            {result.section === 'versions' ? result.page.items.map(version => <View key={version.revision} style={card}>
+            {result.section === 'versions' ? result.memory.status === 'deleted' ? null : result.page.items.map(version => <View key={version.revision} style={card}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Text style={{ ...body, fontWeight: '600' }}>第 {version.revision} 版 · {version.action === 'confirm' ? '确认' : '保存或更新'} · {version.historical ? '历史版本' : '当前版本'}</Text>
                 </View>
