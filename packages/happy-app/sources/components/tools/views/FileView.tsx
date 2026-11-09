@@ -8,14 +8,15 @@
  * ratio is used until the actual image lands and contentFit shows it.
  */
 import * as React from 'react';
-import { View, Text } from 'react-native';
+import { Keyboard, Pressable, View, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { ToolViewProps } from './_all';
+import type { ToolViewProps } from './_all';
 import { z } from 'zod';
 import { useAttachmentImage } from '@/hooks/useAttachmentImage';
 import { thumbhashToDataUri } from '@/utils/thumbhash';
+import { AttachmentImagePreview } from '@/components/AttachmentImagePreview';
 
 const fileInputSchema = z.object({
     ref: z.string(),
@@ -35,10 +36,10 @@ const DEFAULT_ASPECT = 4 / 3; // when wire-format omits image{} dimensions
 
 export const FileView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
     const { theme } = useUnistyles();
+    const [previewOpen, setPreviewOpen] = React.useState(false);
     const parsed = fileInputSchema.safeParse(tool.input);
-    if (!parsed.success) return null;
-
-    const { name, image, ref } = parsed.data;
+    const image = parsed.success ? parsed.data.image : undefined;
+    const ref = parsed.success ? parsed.data.ref : undefined;
 
     const placeholder = React.useMemo(() => {
         if (!image?.thumbhash) return undefined;
@@ -47,6 +48,11 @@ export const FileView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
     }, [image?.thumbhash]);
 
     const { uri, error } = useAttachmentImage(sessionId ?? '', sessionId ? ref : undefined);
+
+    React.useEffect(() => { setPreviewOpen(false); }, [sessionId, ref]);
+
+    if (!parsed.success) return null;
+    const { name } = parsed.data;
 
     // Pick display dimensions. Real w/h drives the aspect ratio when present,
     // but a missing image{} block (older messages, iOS picker that didn't
@@ -66,7 +72,17 @@ export const FileView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
 
     return (
         <View style={styles.inlineContainer}>
-            <View style={styles.inlineWrapper}>
+            <Pressable
+                style={styles.inlineWrapper}
+                disabled={!uri}
+                accessibilityRole="button"
+                accessibilityLabel={name}
+                onPress={() => {
+                    if (!uri) return;
+                    Keyboard.dismiss();
+                    setPreviewOpen(true);
+                }}
+            >
                 <Image
                     source={uri ? { uri } : undefined}
                     placeholder={placeholder}
@@ -79,8 +95,11 @@ export const FileView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
                         <Ionicons name="alert-circle-outline" size={20} color={theme.colors.textSecondary} />
                     </View>
                 )}
-            </View>
+            </Pressable>
             <Text style={[styles.filename, { color: theme.colors.textSecondary }]} numberOfLines={1}>{name}</Text>
+            {previewOpen && uri && (
+                <AttachmentImagePreview uri={uri} name={name} onClose={() => setPreviewOpen(false)} />
+            )}
         </View>
     );
 });
