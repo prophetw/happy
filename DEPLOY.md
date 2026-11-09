@@ -1,5 +1,23 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 按项目调度修正发布（2026-11-10）
+
+功能源 Happy `b5e508c1e7323609c3fb956c6c3261899103695a`、TestLoop `505276e50204d8da5860cefe7d53b308d5671323`，已普通推送两仓个人 main；从当次 fetch、干净且与远端一致的 main checkout 准备并发布。未回写原主工作区已有修改，未扩展真实项目授权。
+
+旧策略将默认2设在全机并让legacy整机排他，跨项目被压制。现已在线回读机器账本 V2：`projectConcurrency=2`、`machineConcurrency=null`、项目覆盖为空。项目按可信canonical路径/Git common-dir计数，同repo不同ID/Dot/grant/Worker共用额度；普通legacy仅repo排他，同项目代码并行使用独立worktree/session，跨项目无需额外execution参数。显式机器限制和命名服务/数据库资源继续生效。**回读仍有1个旧全局排他执行受保护，未提前释放；它真正结束前仍可能让新任务等待。** 不把资源锁称安全沙箱。
+
+用户在普通WSL终端执行已审阅root激活，独立oneshot结果success/0；新系统Worker PID `1564545`、NRestarts=0、connected通过，运行 `/home/dev/.local/share/happy-automation/releases/project-concurrency-20261109-b5e508c1`。原执行session根PID `186256`、`4126455`的startTicks/cgroup在切换后保持。Control镜像 `sha256:1bd7dc28cc87a61e2734727cda99d5cdd32a06ffe43aa2a45fc7581b42923824` healthy。没有绕过NoNewPrivileges或通过当前会话前台停启Worker，未替换全局CLI、未重启Relay。
+
+宿主与四个实际MCP/记忆网关使用 `/home/dev/.local/share/testloop-releases/project-concurrency-20261109-505276e`。scanner PID `1580549`、recovery PID `1582146`，原Dot session/thread、输入历史、权限与两层规范记忆均通过切换校验；两个挂载MCP入口用同参数独立tools/list核对了项目默认2/跨项目并行/legacy范围的新描述。health仍degraded，仅保留原三项attention，scanner error=null。旧工作项 `72f58408-16e7-4007-adc2-7aa71c64ccce` 仍blocked/delegation_message_limit，未取消、解锁、复活或重派；没有重启旧发布协调器。
+
+私网 `/happy/` 已发布，HTML和三入口JS线上回读逐字节匹配；手机尺寸匿名页面/未认证Dot guard真实浏览器errors=[]。功能界面另由隔离Relay、实际Codex/MCP和脚本模型验证三类队列原因、branch与取消入口；不是生产真实用户五项目并发或原生手机验收。固定发布包的28项实际Git/子进程/HTTP回归通过，五独立项目真实子进程同刻running、原HEAD/暂存索引保持；同项目第三项等待而其他项目可启动。CLI97/97、宿主相关85/85及追加交办39/39、App组件5/5与相关类型/构建通过，计数有重叠不累计。冻结V1既有断言仍实际12155/预期12154，未改断言或报告全仓全绿。
+
+个人 `@prophetwayen/happy`、preview环境/分支、iOS runtime21、bundle `com.prophetwayen.happy.preview`：[OTA更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/ef3ca2da-217f-480d-b5bf-d3422febaa5d)，update ID `01a1c110-4e7d-7ccf-8fbc-731ef53eea49`，源码 `b5e508c1`。preview/production原有共同preview分支映射保持，两渠道实际manifest的项目/bundle/runtime/源码均匹配；preview启动包10,003,656字节、SHA256 `6d97a916b586b317f3fa19593e9125fdf90b22d0ddfcec471d35b919b8d345ad` 回读通过。手机是否接收/加载仍未验证；未发布新原生包、Android包或npm包。
+
+协调器10个阶段完成，`coordination-status.json.status=deployed`。Happy证据根 `/home/dev/code/happy-project-scheduling-release-20261109/.e2e-artifacts/project-concurrency-release-20261109/`，包含fixed-artifact-tests.log、fixed-five-projects.jsonl、actual-ledger-migration.json、mounted-tools.json、web-deployed.json、ota-published.json、ota-served.json、live-policy.json；宿主activation.json/cold-backup.json在新宿主发布目录同名证据子目录。当前Dot只选中testLoop/happy两项目，另一个MCP连接配置五项目；本轮五项目测试均为隔离fixtures，没有扩大此Dot授权或派真实付费任务。
+
+宿主冷备已验证1377文件，并保存7个native home、Happy profile、用户namespace/ledger及Hindsight冷归档：`/home/dev/.local/state/testloop-backups/project-concurrency-20261109-505276e` 及 `-extras`。系统Worker私有维护目录 `/var/lib/happy-automation-maintenance/20261109T143902Z-project-concurrency-b5e508c1e732` 由root保管；当前Agent未绕过权限读取其中私有状态。机器密文/密钥/journal由独立停机段备份，活跃worktree/temporary保留原位并记录，不伪称活动文件是冷快照。旧V1不能读取V2，禁止恢复旧账本覆盖新任务或直接降级；需保留新状态并采用兼容前向恢复。旧Web完整备份及旧产物保留。
+
 ## Dot 持久队列与 worktree 并行配套发布（2026-11-09）
 
 两仓已正常合入并推送 main：Happy 功能发布源 `1361131889ddd756444181f0e99ee74af031d3fb`（合入 `8bd56c94`），TestLoop 源 `16a10047c769d8bdea0ceb459b3a186b23603142`（合入 `a0afac75`，追加有界长结果采集修复）。源码与依赖相同的最终合并版本通过 Control 156/156、CLI 97/97、RN/UI 65/65、宿主队列61/61，以及固定发布包17项真实 Git/子进程/HTTP隔离场景。相关类型检查、构建与changelog一致性通过。扩展goal仍47/48，冻结V1前缀12155 !=12154的既有基线断言保留，不称全仓全绿。

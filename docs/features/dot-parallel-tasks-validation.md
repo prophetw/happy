@@ -2,7 +2,7 @@
 
 ## 项目粒度修正（2026-11-09）
 
-状态：实现和隔离验证通过，生产激活待外部root。旧全机默认2加legacy机器排他压制跨项目；现为canonical项目默认2、独立可选机器硬上限（默认null，无最大4限制），普通legacy仅repo排他。配置、MCP说明、App管理提示及project-limit/machine-limit/resource-wait同步。
+状态：实现、隔离验证及2026-11-10生产发布回读已完成；真机和生产五项目执行仍未验证。旧全机默认2加legacy机器排他压制跨项目；现为canonical项目默认2、独立可选机器硬上限（默认null，无最大4限制），普通legacy仅repo排他。配置、MCP说明、App管理提示及project-limit/machine-limit/resource-wait同步。
 
 取证基线Happy fca9409c、TestLoop ac0e8ae。前版服务/Worker/宿主/Web/OTA已发布；工作项72f58408-16e7-4007-adc2-7aa71c64ccce仍blocked/delegation_message_limit，旧协调器在production-parallel-acceptance失败退出：旧真实任务未结束、付费并发验收未开始。本轮未取消、解锁、重派该任务或重启旧协调器。
 
@@ -30,7 +30,17 @@ TestLoop新增可重复浏览器脚本test/e2e/dot-project-scheduling.mjs。只�
 
 冻结V1基线仍失败：实际12155、预期12154，前版已在干净4915e33复现；本轮定向重跑未改断言，不称全仓全绿。
 
-当前Dot绑定testLoop/happy两项目；另一个MCP连接确实配置五项目，配置数与Dot选择不同。五项目测试全部fixtures，未扩真实授权。当前进程NoNewPrivileges=1，系统Worker需外部root独立oneshot，保留旧执行session子进程并备份队列/密钥/journal。新策略生效、Web/个人preview iOS OTA和真机结果须各自回读；准备不等于发布。V1不能读V2，回退需兼容前向恢复，禁止旧账本覆盖新状态。
+当前Dot绑定testLoop/happy两项目；另一个MCP连接确实配置五项目，配置数与Dot选择不同。五项目测试全部fixtures，未扩真实授权。当前进程NoNewPrivileges=1，系统Worker已由用户外部root独立oneshot激活，旧执行session保留，队列/密钥/journal完成停机段备份。新策略、Web与个人preview iOS OTA已回读，真机仍未验证。V1不能读V2，回退需兼容前向恢复，禁止旧账本覆盖新状态。
+
+## 项目策略实际发布验收（2026-11-10）
+
+功能源Happy b5e508c1、TestLoop 505276e；root独立切换与后续10阶段协调器均成功。线上账本实际V2/projectConcurrency=2/machineConcurrency=null，仍保留1个旧全局排他任务。Control、系统Worker、宿主/四网关、Web和个人preview iOS OTA已更新；原两个执行session根PID/startTicks/cgroup、Dot session/thread、输入、权限和记忆保持。详情、OTA链接、备份与验收边界见[DEPLOY.md](../../DEPLOY.md#dot-按项目调度修正发布2026-11-10)。
+
+同一固定发布包重新运行28/28（五项目子进程重叠、项目/机器/资源限制、幂等、取消停止确认、SIGKILL恢复等）；实际生产加密账本只在独立副本上做迁移对比，活任务所有字段/资源锁一致，未用新reader提前打开线上V1。root激活后只读回读确认V2与新策略。新schema/提示以两个真实挂载入口的tools/list验证，未借机派发真实模型或扩grant。
+
+上线前产物准备脚本复用文件变量，曾把新清单写到硬链接的happy-control-worker.mjs。已用已提交字节恢复该入口，逐项验证旧产物完整manifest匹配且旧Worker PID/NRestarts保持；随后重新生成独立清单/固定校验，才允许root激活。修复记录artifact-preparation-repair.json与失效准备留档保留；不把先前错误的就绪检查称通过。单独--help不受该Worker入口支持，会按缺配置拒绝，未把它作为运行就绪证据。真实就绪依据独立root启动、connected/身份与最终新策略回读。
+
+宿主冷备首次等待旧writer自然退出后通过，没有解除活任务锁。EAS指纹计算较慢，正常等待后完成，没有跳过；assetmap/启动包上传成功，两个渠道manifest与10,003,656字节启动包hash通过。健康仅保留旧三attention。既有冻结snapshot失败仍保留，真机/生产五项目/任意外部shell遵锁均未验证。
 
 ## 首版隔离实现记录（历史，以下状态不代表当前生产）
 
