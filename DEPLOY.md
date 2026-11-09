@@ -1,5 +1,29 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 持久队列与 worktree 并行配套发布（2026-11-09）
+
+两仓已正常合入并推送 main：Happy 功能发布源 `1361131889ddd756444181f0e99ee74af031d3fb`（合入 `8bd56c94`），TestLoop 源 `16a10047c769d8bdea0ceb459b3a186b23603142`（合入 `a0afac75`，追加有界长结果采集修复）。源码与依赖相同的最终合并版本通过 Control 156/156、CLI 97/97、RN/UI 65/65、宿主队列61/61，以及固定发布包17项真实 Git/子进程/HTTP隔离场景。相关类型检查、构建与changelog一致性通过。扩展goal仍47/48，冻结V1前缀12155 !=12154的既有基线断言保留，不称全仓全绿。
+
+Control镜像 `sha256:dca89350a372f69eef58c91ff6b3ced71bcb17afca4a765cc839180f07cda75c` healthy；固定CLI/系统Worker `/home/dev/.local/share/happy-automation/releases/dot-parallel-20261109-13611318`，PID3486604、NRestarts=0、connected=true、state/lock已核验。系统切换由用户在独立WSL终端执行已审阅的新root协调器，没有绕过NoNewPrivileges；9个旧会话根进程的PID/startTicks/cgroup保持。机器账本实测maxConcurrency=2，同OS用户+machineID共享；配置范围1–4，修改额度须按功能文档的idle检查流程执行。
+
+宿主与四个实际Dot MCP/记忆网关均在 `/home/dev/.local/share/testloop-releases/dot-parallel-20261109-16a1004`；scanner PID3498788、recovery PID3500307、心跳更新且error=null。原两Dot session/thread/输入历史、两层记忆与授权通过切换校验，health保留原三项attention。两个实际MCP挂载进程的入口/参数已核对，以同一入口独立tools/list握手验证create.execution、cancel.sendRequestID和worktree/queued提示；这不冒称真实Dot模型已选择新模式。代码任务显式传 `execution:{mode:"worktree",resources:[]}`，再对confirmed会话执行独立send；旧调用保守串行。
+
+私网Web `/happy/` 已发布，HTML和三入口JS逐字节一致，手机尺寸线上匿名路由无页面/Console/HTTP错误。相同最终产物的隔离浏览器验证queued/资源等待/running/canceled、cwd/branch、取消入口和原编辑流程；任务行是隔离契约夹具，不是生产双任务执行。localhost:8989未更新。
+
+个人 `@prophetwayen/happy`、preview环境/分支、iOS runtime21的[OTA更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/62960448-e270-4cae-92b9-e2a5e7bd350d)，update ID `01a1c05c-0d99-71b1-a46b-f68ded84e948`。preview/production原有共同preview分支映射未改；两渠道实际manifest均匹配源码 `13611318`、项目、bundle和runtime。启动包10002516字节的SHA256已验证，手机实际接收/加载及原生操作仍未验证。
+
+生产签名MCP→gateway→新Worker真实probe创建独立worktree/branch，send返回queued及queueID `a79dbb8b4cb7229b14441723c0c08e64ffb1d1c58c6be81cbc8cc40ac920064a`，原因execution_slot、executionDispatched=false；定向取消变为cancelled，原空闲会话进程另行停止并独立证明stopped，付费模型0次。授权原testLoop目录的旧HEAD及暂存DEPLOY.md保持，probe的baseCommit为该原目录的ebbd284，未把它当作最终源码验证。
+
+**生产双任务真实并发、第三自动启动及付费模型验收仍待现有legacy活轮次空闲。** 独立用户协调器 `dot-parallel-release-20261109.service` 的自动验收只等待，不停止真实用户工作，不重派历史blocked/not_sent。状态见发布checkout `.e2e-artifacts/dot-parallel-release-20261109/coordination-status.json`、`live-parallel.json`，受理/取消见 `live-queued-cancel.json`，挂载契约见 `mounted-tools.json`。独立产物夹具已验证并发/顺序/资源互斥/取消/SIGKILL及丢ACK恢复，不能替代上述待完成的生产并发证据。
+
+宿主协调冷备1375文件及native home、用户namespace/ledger、Happy profile、Hindsight冷归档在 `/home/dev/.local/state/testloop-backups/dot-parallel-20261109-16a1004` 及 `-extras`，已核验；旧产物和Web完整备份保留。系统Worker私密维护目录为 `/var/lib/happy-automation-maintenance/20261109T122544Z-dot-parallel-1361131889dd`，root状态/备份在普通会话不可读取，此项权限限制未绕过。当前已产生新队列/worktree，受限回滚入口会拒绝直接降级旧Worker，需兼容前向恢复；没有恢复旧账本或实际执行回滚。原失败恢复单元未重跑。
+
+| 隔离最终Web产物验收 | 截图 |
+| --- | --- |
+| queued原因、独立目录与分支 | [查看](http://100.116.89.36:3210/img-bed/images/2a6647d0-743a-4313-86c2-e9315878e1c8.png) |
+| running任务详情 | [查看](http://100.116.89.36:3210/img-bed/images/d1b85614-af1f-40fa-abe2-dd882e0d1995.png) |
+
+
 ## Dot ↔ 用户级记忆移动配套发布（2026-11-09）
 
 功能来源 Happy `0d16e04d38c348822885e5d75010c9242700bab9`、TestLoop `6d3fc66bef9da2c99e16f9fc6fa37c070d524a73`，均在当次 fetch、干净个人 main、正常推送及最终验证后发布。隔离提交 `cf1d9e36`、`40a4e419`、`8a8a37d` 的历史均保留。原主工作区的未跟踪文件与已暂存 `DEPLOY.md` 未纳入提交。

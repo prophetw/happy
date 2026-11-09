@@ -138,3 +138,10 @@ test/assistant-delegation.test.mjs
 test/assistant-hosted-tasks.test.mjs
 test/fixtures/hosted-happy-mcp.mjs
 ```
+
+
+## 配套发布进展（2026-11-09）
+
+已合入并正常推送两仓main，部署Control、固定CLI/系统Worker、宿主/scanner及四个实际网关、私网Web和个人preview iOS OTA。发布源Happy13611318、TestLoop16a1004；最终组合重新验证Control156、CLI97、RN65、宿主队列61、固定产物真实Git/子进程/HTTP17项通过；goal基线47/48保持。不是复用旧feature分支成绩冒称main验证。
+
+生产真实worktree queued受理/原ID回执/定向取消/独立stopped证明通过，模型0次；实际Dot挂载入口及同入口tools/list参数/描述通过。现有legacy活任务仍占机器保守排他资源，真实双付费Agent并发验收由独立协调器等待空闲；尚未运行，不能报告完整线上并行PASS。Web部署字节/真实浏览器与OTA两渠道manifest/启动包哈希通过，真机未验证，8989未更新。完整版本、证据路径、备份和回滚边界见[部署记录](../../DEPLOY.md#dot-持久队列与-worktree-并行配套发布2026-11-09)。
