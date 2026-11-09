@@ -253,7 +253,7 @@ describe('resolveMessageModeMeta', () => {
         });
     });
 
-    it('sends settings-level overrides when session has no override', () => {
+    it('sends settings-level overrides for a new session with no override', () => {
         const meta = resolveMessageModeMeta({
             permissionMode: null,
             modelMode: null,
@@ -267,7 +267,7 @@ describe('resolveMessageModeMeta', () => {
                     effortLevel: 'medium',
                 },
             },
-        } as any);
+        } as any, { isNewSession: true });
 
         expect(meta).toEqual({
             permissionMode: 'bypassPermissions',
@@ -380,6 +380,19 @@ describe('resolveMessageModeMeta', () => {
         expect(meta).toEqual({});
     });
 
+    it.each(['claude', undefined])('omits a saved default model for an existing session with no pick (flavor=%s)', (flavor) => {
+        const meta = resolveMessageModeMeta({
+            permissionMode: null,
+            modelMode: null,
+            effortLevel: null,
+            metadata: { flavor, currentModelCode: 'ccs-claude-deepseek--deepseek-flash[1M]' },
+        } as any, {
+            agentDefaultOverrides: { claude: { modelMode: 'claude-fable-5-1' } },
+        });
+
+        expect(meta).not.toHaveProperty('model');
+    });
+
     it('keeps sending a claude session the retired model key it was started with', () => {
         // The composer shows the row that runs the same model, but a running
         // session is never re-modeled behind the user's back.
@@ -393,13 +406,13 @@ describe('resolveMessageModeMeta', () => {
         expect(meta).toEqual({ model: 'claude-sonnet-5-5[1m]' });
     });
 
-    it('sends a saved claude [1m] default as the row it now maps to', () => {
+    it('seeds a new session with a saved claude [1m] default mapped to its current row', () => {
         const meta = resolveMessageModeMeta({
             permissionMode: null,
             modelMode: null,
             effortLevel: null,
             metadata: { flavor: 'claude' },
-        } as any, { agentDefaultOverrides: { claude: { modelMode: 'claude-opus-5[1m]' } } });
+        } as any, { agentDefaultOverrides: { claude: { modelMode: 'claude-opus-5[1m]' } } }, { isNewSession: true });
 
         expect(meta).toEqual({ model: 'claude-opus-5' });
     });

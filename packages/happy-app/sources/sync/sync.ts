@@ -877,7 +877,9 @@ class Sync {
 
         let modeMeta: ReturnType<typeof resolveMessageModeMeta>;
         try {
-            modeMeta = resolveMessageModeMeta(session, storage.getState().settings);
+            modeMeta = resolveMessageModeMeta(session, storage.getState().settings, {
+                isNewSession: options?.source === 'new_session',
+            });
         } catch (error) {
             if (error instanceof UnsupportedPermissionModeError) {
                 // Refuse loudly instead of substituting a mode: swapping in a

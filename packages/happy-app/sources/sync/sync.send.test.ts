@@ -362,6 +362,82 @@ describe('first message session hydration', () => {
     });
 });
 
+describe('Claude session model routing', () => {
+    const sessionId = 'deepseek-session';
+
+    beforeEach(async () => {
+        mocks.state.settings = {
+            ...settingsDefaults,
+            agentDefaultOverrides: { claude: { modelMode: 'claude-fable-5-1' } },
+        };
+        const target = await sessionRecord(sessionId, false, {
+            path: '/test', host: 'test', flavor: 'claude',
+            currentModelCode: 'ccs-claude-deepseek--deepseek-flash[1M]',
+        });
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sessions: [target] }) });
+        await engine.fetchSessions();
+        mocks.state.sessions[sessionId].modelMode = null;
+    });
+
+    async function sentContent(index = 0) {
+        const batch = JSON.parse(mocks.request.mock.calls[index][1].body).messages;
+        expect(batch).toHaveLength(1);
+        return writer.getSessionEncryption(sessionId)!.decryptRaw(batch[0].content);
+    }
+
+    it.each([undefined, 'steer'] as const)('omits the model override when sending without a picker change (deliveryMode=%s)', async deliveryMode => {
+        mocks.state.sessions[sessionId].thinking = deliveryMode === 'steer';
+        await expect(engine.sendMessage(sessionId, 'Keep using DeepSeek', {
+            deliveryMode, awaitDelivery: true,
+        })).resolves.toBe(true);
+
+        const content = await sentContent();
+        expect(content).toMatchObject({
+            role: 'user', content: { type: 'text', text: 'Keep using DeepSeek' },
+            meta: { sentFrom: 'web', ...(deliveryMode ? { deliveryMode } : {}) },
+        });
+        expect(content.meta).not.toHaveProperty('model');
+        expect(mocks.alert).not.toHaveBeenCalled();
+    });
+
+    it.each(['ccs-claude-kimi--kimi-k2.5', 'default'])('sends an explicit session model selection: %s', async modelMode => {
+        mocks.state.sessions[sessionId].modelMode = modelMode;
+        await expect(engine.sendMessage(sessionId, 'Use my selection', { awaitDelivery: true })).resolves.toBe(true);
+
+        expect((await sentContent()).meta).toHaveProperty('model', modelMode === 'default' ? null : modelMode);
+    });
+
+    it.each(['claude-fable-5-1', 'default'])('seeds the first new-session message with the saved default: %s', async modelMode => {
+        mocks.state.settings.agentDefaultOverrides.claude.modelMode = modelMode;
+        await expect(engine.sendMessage(sessionId, 'Initial prompt', {
+            source: 'new_session', awaitDelivery: true,
+        })).resolves.toBe(true);
+
+        expect((await sentContent()).meta).toHaveProperty('model', modelMode === 'default' ? null : modelMode);
+    });
+
+    it('keeps the actual launch selection for a new-session message over the saved default', async () => {
+        mocks.state.sessions[sessionId].modelMode = 'ccs-claude-deepseek--deepseek-flash[1M]';
+        await expect(engine.sendMessage(sessionId, 'Initial prompt', {
+            source: 'new_session', awaitDelivery: true,
+        })).resolves.toBe(true);
+
+        expect((await sentContent()).meta.model).toBe('ccs-claude-deepseek--deepseek-flash[1M]');
+    });
+
+    it('does not inject a model after saved defaults change and the existing session refreshes', async () => {
+        const defaults = ['claude-fable-5-1', 'ccs-claude-ali--qwen3.5-plus', 'default'];
+        for (const [index, modelMode] of defaults.entries()) {
+            mocks.state.settings.agentDefaultOverrides.claude.modelMode = modelMode;
+            await engine.fetchSessions();
+            await expect(engine.sendMessage(sessionId, 'Keep using DeepSeek', { awaitDelivery: true })).resolves.toBe(true);
+
+            expect((await sentContent(index)).meta).not.toHaveProperty('model');
+        }
+        expect(mocks.request).toHaveBeenCalledTimes(defaults.length);
+    });
+});
+
 describe('Happy Agent composer on send', () => {
     const mode = { providerId: 'claude', modelId: 'shared-model', effort: 'low', serviceTier: 'fast', permissionMode: 'read_only' };
 

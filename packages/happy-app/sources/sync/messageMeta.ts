@@ -73,6 +73,7 @@ export class UnsupportedPermissionModeError extends Error {
 export function resolveMessageModeMeta(
     session: Pick<Session, 'permissionMode' | 'modelMode' | 'metadata' | 'effortLevel' | 'serviceTier'>,
     settings?: Pick<Settings, 'agentDefaultOverrides'>,
+    options?: { isNewSession?: boolean },
 ): MessageModeMeta {
     if (isRigMetadataV1(session.metadata)) {
         // The local mirror is the composer (draft, then lastMode); the
@@ -149,7 +150,9 @@ export function resolveMessageModeMeta(
         meta.permissionMode = supported(agentOverrides.permissionMode);
     }
 
-    const modelMode = session.modelMode ?? agentOverrides.modelMode;
+    // Saved model defaults seed new sessions. Without an explicit session pick,
+    // omit the override so the CLI keeps its current model on ordinary sends.
+    const modelMode = session.modelMode ?? (options?.isNewSession === true ? agentOverrides.modelMode : undefined);
     if (modelMode !== undefined) {
         meta.model = modelMode === 'default' ? null : modelMode;
     }

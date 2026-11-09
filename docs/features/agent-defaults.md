@@ -55,6 +55,8 @@
 4. 最终配置写入新会话的 `Session.modelMode`、`Session.permissionMode`、`Session.effortLevel`。
 5. 发送消息时，`sync.ts` 读取会话上的值并写入 `message.meta.model` / `message.meta.permissionMode`。
 
+对于 Claude 既有会话，未显式选择模型时省略 `meta.model`，由 CLI 保持当前运行模型；修改全局默认模型不会在普通消息或 steering 消息中覆盖它。仅新会话首条消息（`source: 'new_session'`）允许在会话未保存模型选择时使用全局默认模型。显式选择具体模型仍发送对应 key，选择 `default` 仍发送 `meta.model = null` 清除覆盖。Codex、Agy 与 Rig 的发送逻辑保持各自原有的配置解析方式。
+
 ### Claude 宿主机模型
 
 Claude 模型选择器使用宿主机配置，移除了固定的 Fable / Opus / Sonnet 型号列表。daemon 在心跳时通过已安装 Claude Agent SDK 的 `resolveSettings` 读取用户设置，将模型目录发布为机器元数据 `claudeModels: { options, currentCode, detectedAt }`。新建会话、首页输入框和 Agent Defaults 使用该目录；切换机器时切换目录。目录未到达时默认跟随 Claude Code，已保存的显式模型覆盖仍可显示。
