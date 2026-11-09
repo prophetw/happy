@@ -1,5 +1,6 @@
 import { lstat, open } from 'node:fs/promises';
 import type { Credentials } from '@/persistence';
+import { cleanupAutomationDaemon } from './automationShutdown';
 /** No login callback exists in this production path. Missing data always rejects. */
 export async function existingAutomationAuth(machineID: string | undefined, deps: {
     credentials: () => Promise<Credentials | null>; settings: () => Promise<{ machineId?: string }>;
@@ -49,4 +50,27 @@ export async function releaseOwnedAutomationLock(statePath: string, lockPath: st
     const { unlink } = await import('node:fs/promises');
     await assertNoAutomationDaemonState(statePath); await ownedAutomationLock(lockPath, handle, pid);
     await unlink(lockPath); await handle.close();
+}
+
+/** The existing-machine read happens after local state/listener creation. A rejected
+ * read must not poison every subsequent supervised retry with our own stale state.
+ * This seam is only for that pre-connection phase: no worker or relay client exists.
+ */
+export async function verifyManagedStartupMachine<T>(verify: () => Promise<T>, ownership: {
+    statePath: string; lockPath: string; handle: Awaited<ReturnType<typeof open>>;
+    stopControl: () => Promise<void>; closeCredentials?: () => Promise<void>;
+    stopCaffeinate: () => Promise<void>;
+    report: (phase: string, outcome: 'completed' | 'unconfirmed') => void;
+}) {
+    try { return await verify(); }
+    catch (error) {
+        await cleanupAutomationDaemon({
+            stopWorker: async () => {}, closeCredentials: ownership.closeCredentials,
+            announce: async () => {}, disconnect: () => {}, stopControl: ownership.stopControl,
+            clearState: () => clearOwnedAutomationState(ownership.statePath, ownership.lockPath, ownership.handle),
+            releaseLock: () => releaseOwnedAutomationLock(ownership.statePath, ownership.lockPath, ownership.handle),
+            stopCaffeinate: ownership.stopCaffeinate,
+        }, ownership.report);
+        throw error;
+    }
 }

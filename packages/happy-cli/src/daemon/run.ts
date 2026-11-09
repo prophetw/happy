@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import { cleanupAutomationDaemon } from './automationShutdown';
 import { createAutomationControl, observeOwnedProcess, observePersistedProcess } from './automationControl';
-import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock } from './automationBootstrap';
+import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock, verifyManagedStartupMachine } from './automationBootstrap';
 import { startDaemonAutomation, type DaemonAutomationOptions } from './automationWorker';
 import os from 'os';
 import * as tmp from 'tmp';
@@ -1064,7 +1064,11 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     };
 
     // Get or create machine
-    const machine = options.existingOnly ? await api.getExistingAutomationMachine(machineId) : await api.getOrCreateMachine({
+    const machine = options.existingOnly ? await verifyManagedStartupMachine(() => api.getExistingAutomationMachine(machineId), {
+      statePath: configuration.daemonStateFile, lockPath: configuration.daemonLockFile, handle: daemonLockHandle,
+      stopControl: stopControlServer, closeCredentials: options.closeAutomationCredentials, stopCaffeinate,
+      report: (phase, outcome) => logger.debug(`[DAEMON RUN] Managed startup cleanup ${phase}: ${outcome}`),
+    }) : await api.getOrCreateMachine({
       machineId,
       metadata: initialMachineMetadata,
       daemonState: initialDaemonState
