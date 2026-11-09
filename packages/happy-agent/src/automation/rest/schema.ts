@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { posix } from 'node:path';
 import { hash } from '../journal';
 import { methods } from '../control';
+import { executionSchema } from './execution';
 import { taskOptionsSchema, connectionOptionsSchema, launchOptionsPolicySchema } from './options';
 
 export const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -52,6 +53,7 @@ export type WorkerRegistration = Registration & {
     methods: string[]; protocol: 1; directorySelection?: z.infer<typeof directorySelectionSchema>;
     /** Owner-configured launch allowlist for delegated tasks on this machine. */
     launchOptions?: z.infer<typeof launchOptionsPolicySchema>;
+    maxConcurrency?: number;
 };
 export type Connection = Omit<Scope, 'projectID'> & {
     projectID?: string; projectDirectory?: string;
@@ -66,7 +68,8 @@ export type Connection = Omit<Scope, 'projectID'> & {
 };
 export const approvalSchema = z.object({ digest: z.string().length(64), challenge: identifier, credentialMode: z.literal('service-token-v1').optional(), scopeVersion: z.union([z.literal(2), z.literal(3)]).optional() }).strict();
 export const mutationSchema = z.object({ requestID: identifier }).strict();
-export const createTaskSchema = mutationSchema.extend({ machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional() }).strict();
+export const createTaskSchema = mutationSchema.extend({ machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional(), execution: executionSchema.optional() }).strict();
+export const cancelSchema = mutationSchema.extend({ sendRequestID: identifier.optional() }).strict();
 export const sendSchema = mutationSchema.extend({ text: z.string().min(1).max(100000) }).strict();
 export const taskOptionsQuerySchema = z.object({ machineID: identifier }).strict();
 export const workerPollSchema = z.object({ protocol: z.literal(1), busy: z.boolean().optional(), projectScopes: z.literal(1).optional(), directoryScopes: z.literal(1).optional() }).strict();

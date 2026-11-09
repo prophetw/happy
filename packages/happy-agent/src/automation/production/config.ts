@@ -10,7 +10,7 @@ export const registrationSchema = z.object({ id: identifier, userID: identifier,
 export const workerRegistrationSchema = registrationSchema.extend({ machineID: identifier, directorySelection: directorySelectionSchema.optional(), projects: z.array(z.object({ id: identifier, directory: absolute, sessionIDs: z.array(identifier).max(100) }).strict()).min(1), methods: z.array(method).min(1), protocol: z.literal(1),
     // Owner-approved launch allowlist for delegated tasks. Absent = fixed
     // defaults only; any requested override is denied.
-    launchOptions: launchOptionsPolicySchema.optional() }).strict();
+    launchOptions: launchOptionsPolicySchema.optional(), maxConcurrency: z.number().int().min(1).max(4).optional() }).strict();
 const provider = z.object({ type: z.literal('encrypted-pkcs8-credentials'), credentialsDirectory: absolute,
     keys: z.record(identifier, z.object({ encryptedPKCS8: absolute, passphraseCredential: identifier }).strict()) }).strict();
 const oauth = z.object({ issuer: https, jwksURL: https, resource: https.refine(s => new URL(s).pathname === '/happy-control/mcp'), scope: z.literal('happy:control'),

@@ -89,8 +89,9 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   const results=await Promise.all(Array.from({length:3},()=>request(r,token,'/tasks','POST',body)));
   const confirmed=results.find(x=>x.body.data?.state==='confirmed')!;expect(!!confirmed).toBe(true);const sid=confirmed.body.data.sessionID;
   const receipt=await request(r,token,'/requests/create_1');expect(receipt.body.data.sessionID).toBe(sid);expect(r.spawnCount).toBe(1);
-  const sent=await request(r,token,`/sessions/${sid}/messages`,'POST',{requestID:'send_1',text:'fixture instruction'});expect(sent.body.data.state).toBe('submitted');
-  const duplicate=await request(r,token,`/sessions/${sid}/messages`,'POST',{requestID:'send_1',text:'fixture instruction'});expect(duplicate.body.data.messageID).toBe(sent.body.data.messageID);expect(r.sendCount).toBe(1);
+  const sent=await request(r,token,`/sessions/${sid}/messages`,'POST',{requestID:'send_1',text:'fixture instruction'});expect(sent.body.data.state).toBe('queued');
+  const submitted=await r.waitForSubmitted('', 'send_1',async()=>(await request(r,token,'/requests/send_1')).body);
+  const duplicate=await request(r,token,`/sessions/${sid}/messages`,'POST',{requestID:'send_1',text:'fixture instruction'});expect(duplicate.body.data.messageID).toBe(submitted.data.messageID);expect(r.sendCount).toBe(1);
   expect((await request(r,token,`/sessions/${sid}/messages`,'POST',{requestID:'send_1',text:'different fixture'})).body.error.code).toBe('REQUEST_ID_CONFLICT');
   r.complete(sid,'turn_service');let after=0,ready=false;const rows:any[]=[];
   for(let i=0;i<5;i++){const x=await request(r,token,`/sessions/${sid}/result?turnID=turn_service&after_seq=${after}&limit=2`);expect(x.body.data.attribution).toBe('session_turn_only');expect(x.body.data.nextCursor).toBeGreaterThanOrEqual(after);after=x.body.data.nextCursor;ready ||=x.body.data.ready;rows.push(...x.body.data.messages);if(!x.body.data.hasMore)break;}

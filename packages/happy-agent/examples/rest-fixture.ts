@@ -47,7 +47,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
         } };
     let gateway = createGateway(gatewayOptions);
     let address = await gateway.app.listen({ port: 0, host: '127.0.0.1' });
-    const makeClient = (id: typeof clientIdentity, kind: 'client' | 'worker' = 'client') => new ProofClient(`${address}/happy-control/v1`, id, kind, { allowLoopback: true, now, timeoutMs: 10000 });
+    const makeClient = (id: typeof clientIdentity, kind: 'client' | 'worker' = 'client') => new ProofClient(`${address}/happy-control/v1`,id,kind,{allowLoopback:true,now,timeoutMs:10000});
     let client = makeClient(clientIdentity), workerClient = makeClient(workerIdentity, 'worker');
     const key = new Uint8Array(32).fill(31), encryption = { key, variant: 'dataKey' as const };
     const machine = { id: 'machineA', encryption, active: true, activeAt: now(), metadata: {} } as DecryptedMachine;
@@ -83,12 +83,12 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
             return { id: message.id, seq: message.seq };
         },
     };
-    let abort: AbortController | undefined, running: Promise<void> | undefined;
+    let abort: AbortController | undefined, running: Promise<void> | undefined, runner: HTTPWorkerRunner | undefined;
     const statuses: unknown[] = [];
     async function startWorker() {
         abort = new AbortController();
-        const runner = new HTTPWorkerRunner(workerClient, registration, transport, join(dir, 'worker'), now);
-        await runner.pollOnce(); running = runner.run(abort.signal, options.workerIntervalMs ?? 2, s => { statuses.push(s); });
+        runner = new HTTPWorkerRunner(workerClient, registration, transport, join(dir, 'worker'), now, undefined, join(dir, 'queue'));
+        await runner.pollOnce(); running = runner.run(abort.signal, options.workerIntervalMs ?? 25, s => { statuses.push(s); });
     }
     async function stopWorker() { abort?.abort(); await running; abort = undefined; running = undefined; }
     async function ownerRequest(route: string, method = 'GET', body?: unknown, user = 'A', origin = gatewayOptions.origin) {
@@ -115,6 +115,17 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
             append(sessionID, { role: 'session', content: { role: 'agent', turn: turnID, ev: { t: 'turn-end', status: outcome } } });
         },
         startWorker, stopWorker, connect, ownerRequest,
+        async pump() { await runner?.worker.tick(); },
+        async waitForSubmitted(grant: string, requestID: string, read?: () => Promise<any>) {
+            const end = Date.now() + 3000;
+            for (;;) {
+                await runner?.worker.tick();
+                const receipt = read ? await read() : await client.request('GET', '/requests/' + requestID, undefined, grant);
+                if (receipt.data?.state === 'submitted') return receipt;
+                if (Date.now() > end) throw new Error('fixture_submission_timeout');
+                await new Promise(resolve => setTimeout(resolve, 20));
+            }
+        },
         async restartGateway() { await stopWorker(); await gateway.app.close(); gateway = createGateway(gatewayOptions); address = await gateway.app.listen({ port: 0, host: '127.0.0.1' }); client = makeClient(clientIdentity); workerClient = makeClient(workerIdentity, 'worker'); },
         async close() { releaseSpawn?.(); await stopWorker(); await gateway.app.close(); rmSync(dir, { recursive: true, force: true }); },
     };

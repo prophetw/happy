@@ -139,3 +139,24 @@ it('carries user-level scope explicitly into the existing edit and forget conver
     expect(request!.text).toContain('请忘记用户级（所有 Dot 共享）记忆');
     await act(async () => renderer.unmount());
 });
+
+it('shows queue/resource/location state and routes targeted cancellation through the existing user composer',async()=>{
+    const task={id:'11111111-1111-4111-8111-111111111111',title:'隔离代码任务',kind:'delegate',status:'queued',needsReview:false,projectID:'project',goalPhase:null,
+        instruction:'写入独立文件',runId:null,reason:null,nextWakeAt:null,finishedAt:null,executionSessionId:'actual-session',executionOutcome:null,businessVerification:'unverified',steps:[],result:null,resultTruncated:false,
+        queueReason:'execution_slot',canCancel:true,execution:{mode:'worktree',directory:'/fixture/worktrees/task-a',branch:'dot-task/task-a',projectID:'project'}};
+    const snapshot={dots:[{id:'dot-id',sessionId:'dot-session'}]},detail={dotId:'dot-id',taskTotal:1,tasks:[task],memory:null};
+    mocks.data={projection:{snapshot,details:{'dot-id':{asOf:'2026-11-09T00:00:00Z',data:detail}}}};
+    let request:any,renderer!:ReturnType<typeof create>;
+    const props={session:{id:'dot-session',presence:'online'} as any,active:true,metadata:{schemaVersion:1 as const,kind:'dot' as const,workspaceId:'workspace-id',workspaceSessionId:'workspace-session',dotId:'dot-id'},children:(value:unknown)=>{request=value;return React.createElement('Composer');}};
+    await act(async()=>{renderer=create(React.createElement(DotSessionContent,props));});
+    await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());
+    const open=()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='查看工作项：隔离代码任务')!;await act(async()=>open().props.onPress());
+    const text=()=>JSON.stringify(renderer.root.findAllByType('Text').map((node:any)=>node.props.children));
+    expect(text()).toContain('已排队，尚未开始');expect(text()).toContain('dot-task/task-a');expect(text()).toContain('/fixture/worktrees/task-a');
+    const cancel=renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='在对话中取消此工作')!;expect(cancel).toBeDefined();await act(async()=>cancel.props.onPress());
+    expect(request.text).toContain(task.id);expect(request.text).toContain('只取消这一交办');expect(mocks.submit).not.toHaveBeenCalled();
+    task.status='waiting-resource';task.queueReason='session_turn';await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());await act(async()=>open().props.onPress());expect(text()).toContain('等待执行资源');expect(text()).toContain('等待同会话前一交办结束');
+    task.status='running';task.queueReason='';await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());await act(async()=>open().props.onPress());expect(text()).toContain('执行中');
+    task.status='canceled';task.canCancel=false;await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));expect(text()).toContain('已取消');expect(renderer.root.findAllByType('Pressable').some((node:any)=>node.props.accessibilityLabel==='在对话中取消此工作')).toBe(false);
+    await act(async()=>renderer.unmount());
+});

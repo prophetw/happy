@@ -7,11 +7,11 @@ import { privateDirectory, privateRead } from './privateFs';
 
 /** Non-secret metadata only. Corruption never becomes an empty/default grant store. */
 export class MetadataStore {
-    constructor(private directory: string) { privateDirectory(directory, true); }
+    constructor(private directory: string, private maxBytes = 1024 * 1024) { privateDirectory(directory, true); }
     private path(key: string) { return join(this.directory, `${hash(key)}.json`); }
     get<T>(key: string): T | null {
         privateDirectory(this.directory);
-        try { return JSON.parse(privateRead(this.path(key)).toString('utf8')).value as T; }
+        try { return JSON.parse(privateRead(this.path(key), this.maxBytes).toString('utf8')).value as T; }
         catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw new ApiError('STORE_UNAVAILABLE', 503); }
     }
     list<T>(prefix: string): T[] {

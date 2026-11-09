@@ -18,6 +18,7 @@ import { DotRecoveryNotice } from './DotRecoveryNotice';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
 type Tab = 'chat' | 'activity' | 'work' | 'memory' | 'basis';
+const queueReasons: Record<string,string> = { execution_slot:'等待机器执行槽', integration_worktree_dirty:'集成目录有未提交改动，等待用户处理', session_turn:'等待同会话前一交办结束', resource_lock:'等待排他资源', preparing_worktree:'准备独立工作目录', preparation_interrupted:'准备进程中断，需原请求恢复', session_process_unknown:'执行进程状态待确认', execution_unavailable:'等待执行端恢复' };
 const tabLabels = { chat: '对话', activity: '活动', work: '工作', memory: '记忆', basis: '本轮依据' };
 
 /** Keep Happy's real conversation mounted while its host-backed work/memory panel changes. */
@@ -164,8 +165,12 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             <Text style={body}>{testloopWorkStatus(selectedTask)}</Text>
             <Text style={body}>{selectedTask.instruction}</Text>
             {selectedTask.projectID && <Text style={muted}>项目：{selectedTask.projectID}</Text>}
+            {selectedTask.queueReason && <Text style={muted}>排队原因：{queueReasons[selectedTask.queueReason] ?? selectedTask.queueReason}</Text>}
+            {selectedTask.execution && <><Text selectable style={muted}>执行位置：{selectedTask.execution.directory}</Text>{selectedTask.execution.branch && <Text selectable style={muted}>分支：{selectedTask.execution.branch}</Text>}{selectedTask.execution.resultCommit && <Text selectable style={muted}>提交：{selectedTask.execution.resultCommit}</Text>}{selectedTask.execution.dirty && <Text style={muted}>存在未提交改动，现场已保留</Text>}</>}
+            {selectedTask.recovery && <Text style={muted}>{selectedTask.recovery}</Text>}
+            {selectedTask.canCancel && action('在对话中取消此工作', () => toConversation(`请取消当前 Dot 的工作项 ${selectedTask.id}，只取消这一交办，保留已有改动，并核对停止结果。`))}
             {selectedTask.reason && <Text style={muted}>状态原因：{selectedTask.reason}</Text>}
-            {selectedTask.nextWakeAt && <Text style={muted}>最早执行时间：{new Date(selectedTask.nextWakeAt).toLocaleString()}</Text>}
+            {selectedTask.nextWakeAt && <Text style={muted}>{selectedTask.queueID ? '下次状态检查' : '最早执行时间'}：{new Date(selectedTask.nextWakeAt).toLocaleString()}</Text>}
             {selectedTask.steps.map(step => <Text key={step.id} style={body}>{step.title} · {step.status}</Text>)}
             {['delegate', 'goal'].includes(selectedTask.kind) && <Text style={muted}>{selectedTask.businessVerification === 'independent_agent_report' ? '已有独立执行会话提供的验收报告' : '业务验收尚未核验'}</Text>}
             {selectedTask.result && <><Text style={heading}>实际回报{selectedTask.resultTruncated ? '（已截断）' : ''}</Text><Text selectable style={body}>{selectedTask.result}</Text></>}

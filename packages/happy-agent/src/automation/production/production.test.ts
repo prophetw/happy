@@ -185,7 +185,8 @@ describe('OAuth resource adaptation without Happy account delegation', () => {
         const args={requestID:'concurrent-create',machineID:'machineA',projectID:'projectA'};
         const calls=await Promise.all([client.callTool({name:'happy_create_task',arguments:args}),client.callTool({name:'happy_create_task',arguments:args})]);
         expect(r.spawnCount).toBe(1);const created=result(calls[0]);expect(created.ok).toBe(true);const sessionID=created.data.sessionID;
-        const sent=result(await client.callTool({name:'happy_send',arguments:{sessionID,requestID:'send-one',text:'fixture-only instruction'}}));expect(sent.data.state).toBe('submitted');
+        const sent=result(await client.callTool({name:'happy_send',arguments:{sessionID,requestID:'send-one',text:'fixture-only instruction'}}));expect(sent.data.state).toBe('queued');
+        await r.waitForSubmitted('', 'send-one',async()=>result(await client.callTool({name:'happy_request_status',arguments:{requestID:'send-one'}})));
         r.complete(sessionID,'fixture-turn','completed','Bearer fixture-private-value');
         const logs=result(await client.callTool({name:'happy_events',arguments:{sessionID,after_seq:1,limit:2}}));expect(logs.data.nextCursor).toBe(3);expect(logs.data.hasMore).toBe(true);
         const completed=result(await client.callTool({name:'happy_result',arguments:{sessionID,turnID:'fixture-turn',after_seq:0}}));expect(completed.data.outcome).toBe('completed');expect(JSON.stringify(completed)).not.toContain('fixture-private-value');

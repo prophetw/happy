@@ -1085,7 +1085,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         directory: join(configuration.happyHomeDir, 'automation-receipts', machineId),
         // Delegated launches stay inside the owner's allowlist; omitted options
         // reproduce the original fixed codex launch exactly.
-        spawn: (directory, launch) => spawnSession({ directory, agent: launch.agent as SpawnSessionOptions['agent'],
+        spawn: (directory, launch, environmentVariables) => spawnSession({ directory, environmentVariables, agent: launch.agent as SpawnSessionOptions['agent'],
           approvedNewDirectoryCreation: false, permissionMode: launch.permissionMode,
           modelMode: launch.model, effortLevel: launch.effort || undefined }),
         options: () => {

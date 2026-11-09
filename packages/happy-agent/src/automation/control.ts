@@ -131,7 +131,8 @@ export class AutomationControl {
         if (reply.sessionID !== undefined) entry.sessionID = id(reply.sessionID);
         entry.state = receiptState(reply.state);
         this.journal.save(entry);
-        return { ...this.receipt(entry), process: processState(reply.process), safeToRetrySameRequestID: reply.safeToRetrySameRequestID === true };
+        return { ...this.receipt(entry), process: processState(reply.process), safeToRetrySameRequestID: reply.safeToRetrySameRequestID === true,
+            ...(entry.method === 'tasks.create' && reply.options && typeof reply.options === 'object' ? {options:reply.options} : {}) };
     }
     async handle(input: unknown): Promise<unknown> {
         let requestID: string | undefined;
