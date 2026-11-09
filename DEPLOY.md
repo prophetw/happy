@@ -1,5 +1,15 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot ↔ 用户级记忆移动配套发布（2026-11-09）
+
+功能来源 Happy `0d16e04d38c348822885e5d75010c9242700bab9`、TestLoop `6d3fc66bef9da2c99e16f9fc6fa37c070d524a73`，均在当次 fetch、干净个人 main、正常推送及最终验证后发布。隔离提交 `cf1d9e36`、`40a4e419`、`8a8a37d` 的历史均保留。原主工作区的未跟踪文件与已暂存 `DEPLOY.md` 未纳入提交。
+
+宿主及四个 gateway 已更新；托管 CLI 和系统 Worker 均使用 `/home/dev/.local/share/happy-automation/releases/memory-move-20261109`，Worker PID `3309144`、连接/心跳/state/lock 核验通过，原五个会话根进程保持。Web `/happy/` 已更新，HTML/三入口 JS 字节及手机尺寸真实浏览器回读通过。
+
+个人 `@prophetwayen/happy`、preview 环境/分支、iOS runtime `21`：[OTA 更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/131cc65a-3538-4204-a2dc-e4a27ceb7490)，update ID `01a1bdb5-180f-79e6-8b28-53f24a210ca2`。preview/production 原有同分支映射保持，两渠道实际 manifest 的项目、bundle、runtime、提交及 update ID 均匹配。**桌面直接下载 CDN 主包返回 HTTP 403，主包下载字节与手机接收尚未验证，不能据此称手机已经更新。** 手机应用更新后核对提交 `0d16e04d`。
+
+冷备、严格 schema 回滚限制、最终测试和验收边界见 [完整发布记录](docs/research/memory-move-validation-20261109.md#配套发布验收2026-11-09)。真实 Hindsight 使用独立 bank 验证后已清理，真实用户记忆/聊天未被测试写入。宿主仅保留原三项 attention；历史 `dot-recovery-upgrade-20261108.service` 仍 failed，本次没有重跑或清除它。
+
 ## Dot 重启后一键恢复发布（2026-11-08）
 
 按用户授权提交推送个人main，私网Web/OTA源`825090126c860fcc5dbf4876ccda27fc9724e6e6`，托管CLI/Control源`aafcd3df42be577b67717e5a9edc801833abea51`（后续差异仅App原生超时修复），宿主源`28eb43a721dda20ecd0d43020616ba2c80ac0216`。发布checkout `/home/dev/code/happy-native-dot-release`为干净独立clone，已当次fetch核对main==fork/main，并确认包含上一OTA的82af9001；无原生接口/依赖变更。

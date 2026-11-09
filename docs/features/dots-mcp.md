@@ -30,7 +30,7 @@ App 使用加密 workspace RPC `testloop-dot-memory-move` 的 `prepare / move / 
 
 设备只持久化 requestID、Dot/key 摘要、范围和 revision，按 Relay、认证账号、工作台与 Dot 分区，不保存记忆正文或凭据。超时、组件关闭或 App 重启后，用户可显式恢复原请求；另一设备发现宿主旧请求时也须点击恢复，不自动续写。非有效记录的列表及详情提供“核对未完成移动”，仅查询旧请求，不发起新移动；源已编辑、过期或删除时仍可找回原请求并停止，已删除正文不展示。账号、密钥、服务器、Dot 绑定、授权或前台状态变化，会阻止旧异步读取继续提交移动。完成后读取两层目录；目录刷新失败仍保留已核对的移动回执。
 
-事件回归使用 React Native 组件和隔离宿主数据，覆盖双向入口、冲突、持久恢复、账号变化、部分完成、停止和失败提示。发布前须协调升级 TestLoop 记忆移动宿主和既有 memory gateway，再交付 App，不能仅发布 OTA。该实现未发布 OTA / 原生安装包，真机接收、实际点击和线上索引状态尚未验证。跨仓验证与集成边界见 [2026-11-09 验证记录](../research/memory-move-validation-20261109.md)。
+事件回归使用 React Native 组件和隔离宿主数据，覆盖双向入口、冲突、持久恢复、账号变化、部分完成、停止和失败提示。2026-11-09 已配套升级 TestLoop 宿主、既有 memory gateway、系统 Worker、Web，并发布个人 preview iOS runtime 21 OTA；未发布原生安装包。真实 Hindsight 的独立测试 bank 验证及清理通过，用户真实账本未被测试写入。手机实际接收和真机点击仍未验证；桌面 CDN 主包下载探针返回 403。跨仓验证、OTA 链接及发布边界见 [2026-11-09 验证记录](../research/memory-move-validation-20261109.md)。
 
 
 ### 原生 Dot 模型设置与清空
