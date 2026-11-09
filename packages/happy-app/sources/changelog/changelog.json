@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 9 - Move memories between Dots and your account",
+      "summary": "Requires the updated TestLoop host and memory gateway.",
+      "markdown": "- **Move a memory with one tap** — make a Dot memory available to all your Dots, or move an account memory into the current Dot, keeping its content and expiry.\n- **Resume interrupted moves** — recover the original request or stop while keeping existing copies; conflicting memories are never silently overwritten.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 8 - Bring Dots back online",
       "summary": "Requires the updated TestLoop host and configured host recovery service.",
       "markdown": "- **Recover with one tap** — bring an offline Dot back to its original conversation, keeping chats and memories.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -161,5 +166,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 8 - Bring Dots back online"
+  "latestTitle": "November 9 - Move memories between Dots and your account"
 }

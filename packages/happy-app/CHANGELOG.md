@@ -1,3 +1,11 @@
+# November 9 - Move memories between Dots and your account
+
+Requires the updated TestLoop host and memory gateway.
+
+- **Move a memory with one tap** — make a Dot memory available to all your Dots, or move an account memory into the current Dot, keeping its content and expiry.
+- **Resume interrupted moves** — recover the original request or stop while keeping existing copies; conflicting memories are never silently overwritten.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # November 8 - Bring Dots back online
 
 Requires the updated TestLoop host and configured host recovery service.
