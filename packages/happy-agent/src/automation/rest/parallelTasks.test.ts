@@ -138,6 +138,76 @@ it('adopts old live turns atomically and reduces all pages instead of treating o
     // The old session PID is still alive, but its ended turn holds no execution slot.
     expect(f.transport).toBeDefined();expect(f.sessions().find(s=>s.id===old.sessionID)).toBeDefined();
 });
+it('scopes an ordinary live legacy turn to its canonical repository instead of blocking unrelated projects',async()=>{
+    const f=setup(),other=join(f.root,'other');mkdirSync(other);git(other,'init','-q');
+    const old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'ordinary-other',directory:other});
+    appendFileSync(join(f.root,'sessions',old.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'ordinary-turn',ev:{t:'turn-start'}}}})+'\n');
+    const task=await f.create('new-project');await f.send(task.sessionID,'new-project-send');await f.worker.tick();
+    const adopted=f.worker.queue.tasks().find(t=>t.legacy)!;
+    expect(adopted.resources).toEqual([{key:'machine',mode:'shared'},{key:'repo:'+hash(join(other,'.git')),mode:'exclusive'},{key:'session:'+old.sessionID,mode:'exclusive'}]);
+    expect(adopted.state).toBe('running');expect(f.state('new-project-send')).toBe('running');
+});
+it('reclassifies a persisted generated legacy machine lease without changing its turn or replaying input',async()=>{
+    const f=setup(),other=join(f.root,'other');mkdirSync(other);git(other,'init','-q');
+    const old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'persisted-other',directory:other});
+    appendFileSync(join(f.root,'sessions',old.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'persisted-turn',ev:{t:'turn-start'}}}})+'\n');
+    const previous=f.worker.queue.adoptLegacy({requestID:hash(`legacy:${old.sessionID}:persisted-turn`),workerID:'worker',grantID:'legacy-import',sessionID:old.sessionID,authorization:'',text:'',resources:[{key:'machine',mode:'exclusive'}],legacy:true,turnID:'persisted-turn',processID:f.sessions().find(s=>s.id===old.sessionID)!.metadata.hostPid});
+    const task=await f.create('new-project');await f.send(task.sessionID,'after-restart');const restarted=fixtureWorker(f.root);await restarted.worker.tick();
+    const adopted=restarted.worker.queue.tasks().find(t=>t.id===previous.id)!;
+    expect(adopted.resources.find(r=>r.key==='machine')?.mode).toBe('shared');expect(adopted.turnID).toBe(previous.turnID);expect(adopted.processID).toBe(previous.processID);expect(adopted.requestID).toBe(previous.requestID);
+    expect(restarted.worker.queue.tasks().filter(t=>t.sessionID===old.sessionID)).toHaveLength(1);expect(f.messages(old.sessionID).filter(m=>m.localId)).toHaveLength(0);expect(f.state('after-restart')).toBe('running');
+    expect(fixtureWorker(f.root).worker.queue.tasks().find(t=>t.id===previous.id)?.resources).toEqual(adopted.resources);
+});
+it('keeps the declared scope of an explicitly managed worktree when adopting its ordinary follow-up',async()=>{
+    const f=setup(3),old=await f.create('explicit-worktree',{mode:'worktree',resources:['service:old']});
+    appendFileSync(join(f.root,'sessions',old.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'ordinary-turn',ev:{t:'turn-start'}}}})+'\n');
+    const sameRepo=await f.create('other-worktree'),sameService=await f.create('service-waiter',{mode:'worktree',resources:['service:old']});
+    await f.send(sameRepo.sessionID,'other-worktree-send');await f.send(sameService.sessionID,'service-waiter-send');await f.worker.tick();
+    const adopted=f.worker.queue.tasks().find(t=>t.legacy)!;
+    expect(adopted.resources.find(r=>r.key.startsWith('repo:'))?.mode).toBe('shared');expect(adopted.resources).toContainEqual({key:'declared:service:old',mode:'exclusive'});
+    expect(f.state('other-worktree-send')).toBe('running');expect(f.state('service-waiter-send')).toBe('waiting-resource');
+});
+it('retains an unverified legacy scope until a real terminal turn, without treating the idle PID as a lease',async()=>{
+    const f=setup(),old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'unknown-scope',directory:f.repo});
+    const metadata=join(f.root,'sessions',old.sessionID,'metadata'),record=JSON.parse(readFileSync(metadata,'utf8'));record.metadata.path=join(f.root,'missing-directory');writeFileSync(metadata,JSON.stringify(record));
+    const events=join(f.root,'sessions',old.sessionID,'events');appendFileSync(events,JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'unknown-turn',ev:{t:'turn-start'}}}})+'\n');
+    const task=await f.create('waiter');await f.send(task.sessionID,'unknown-scope-waiter');await f.worker.tick();
+    expect(f.worker.queue.tasks().find(t=>t.legacy)?.resources).toEqual([{key:'machine',mode:'exclusive'}]);expect(f.state('unknown-scope-waiter')).toBe('waiting-resource');
+    appendFileSync(events,JSON.stringify({id:'m2',seq:2,content:{role:'session',content:{role:'agent',turn:'unknown-turn',ev:{t:'turn-end',status:'completed'}}}})+'\n');await f.worker.tick();
+    expect(f.worker.queue.tasks().find(t=>t.legacy)?.state).toBe('completed');expect(f.state('unknown-scope-waiter')).toBe('running');expect(f.state(old.sessionID)).toBeUndefined();
+    expect(f.sessions().find(s=>s.id===old.sessionID)).toBeDefined();
+});
+it('never reclassifies an explicit machine maintenance task or a legacy lease with changed process identity',async()=>{
+    const f=setup(3),old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'maintenance-session',directory:f.repo});
+    appendFileSync(join(f.root,'sessions',old.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'maintenance-turn',ev:{t:'turn-start'}}}})+'\n');
+    const explicit=f.worker.queue.enqueue({requestID:'explicit-machine-maintenance',workerID:'worker',grantID:'grant-a',sessionID:old.sessionID,authorization:hash(canonicalBody(f.grant('grant-a'))),text:'',resources:[{key:'machine',mode:'exclusive'}]});
+    f.worker.queue.update(explicit.id,t=>{t.state='running';t.dispatched=true;t.seq=0;t.turnID='maintenance-turn';});
+    const task=await f.create('waiter');await f.send(task.sessionID,'maintenance-waiter');await f.worker.tick();
+    expect(f.worker.queue.tasks().find(t=>t.id===explicit.id)?.resources).toEqual([{key:'machine',mode:'exclusive'}]);expect(f.state('maintenance-waiter')).toBe('waiting-resource');
+    const ordinary:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'changed-owner',directory:f.repo});
+    appendFileSync(join(f.root,'sessions',ordinary.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'changed-turn',ev:{t:'turn-start'}}}})+'\n');
+    const imported=f.worker.queue.adoptLegacy({requestID:hash(`legacy:${ordinary.sessionID}:changed-turn`),workerID:'worker',grantID:'legacy-import',sessionID:ordinary.sessionID,authorization:'',text:'',resources:[{key:'machine',mode:'exclusive'}],legacy:true,turnID:'changed-turn',processID:1});
+    await f.worker.tick();expect(f.worker.queue.tasks().find(t=>t.id===imported.id)?.resources).toEqual([{key:'machine',mode:'exclusive'}]);
+});
+it('keeps a known repository globally conservative while its execution process is unverified',async()=>{
+    const f=setup(),other=join(f.root,'other');mkdirSync(other);git(other,'init','-q');
+    const old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'unknown-process',directory:other});
+    appendFileSync(join(f.root,'sessions',old.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'unknown-process-turn',ev:{t:'turn-start'}}}})+'\n');
+    const rpc=f.transport.rpc;f.transport.rpc=async(machine,input)=>input.operation==='status'&&input.sessionID===old.sessionID?{version:1,process:'unknown'}:rpc(machine,input);
+    const task=await f.create('waiter');await f.send(task.sessionID,'unknown-process-waiter');await f.worker.tick();
+    expect(f.worker.queue.tasks().find(t=>t.legacy)?.resources).toEqual([{key:'machine',mode:'exclusive'}]);expect(f.state('unknown-process-waiter')).toBe('waiting-resource');
+});
+it('does not refine an old pending input lease from a different pending sequence',async()=>{
+    const f=setup(),other=join(f.root,'other');mkdirSync(other);git(other,'init','-q');
+    const old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'pending-owner',directory:other});
+    const previous=f.worker.queue.adoptLegacy({requestID:hash(`legacy:${old.sessionID}:input-1`),workerID:'worker',grantID:'legacy-import',sessionID:old.sessionID,authorization:'',text:'',resources:[{key:'machine',mode:'exclusive'}],legacy:true,seq:1,processID:f.sessions().find(s=>s.id===old.sessionID)!.metadata.hostPid});
+    const messages=f.transport.messages;f.transport.messages=async(session,cursor,limit)=>session.id===old.sessionID?{messages:[{id:'m2',seq:2,localId:'automation:other-input',content:{role:'user',content:{type:'text',text:'pending'}}}],hasMore:false}:messages(session,cursor,limit);
+    const task=await f.create('waiter');await f.send(task.sessionID,'pending-waiter');await f.worker.tick();
+    expect(f.worker.queue.tasks().find(t=>t.id===previous.id)?.resources).toEqual([{key:'machine',mode:'exclusive'}]);expect(f.state('pending-waiter')).toBe('waiting-resource');
+    const snapshot=f.worker.queue.tasks().find(t=>t.id===previous.id)!;f.worker.queue.update(previous.id,t=>{t.seq=3;});
+    f.worker.queue.refineLegacyResources(snapshot,[{key:'machine',mode:'shared'},{key:'repo:'+hash(join(other,'.git')),mode:'exclusive'}]);
+    expect(f.worker.queue.tasks().find(t=>t.id===previous.id)?.resources).toEqual([{key:'machine',mode:'exclusive'}]);
+});
 it('rejects subdirectory and symlink worktree authorization, preserves dirty completed work and requires stopped cleanup',async()=>{
     const f=setup(),sub=join(f.repo,'approved-child');mkdirSync(sub);writeFileSync(join(sub,'keep'),'a');git(f.repo,'add','approved-child');git(f.repo,'commit','-qm','subdir');
     const config=JSON.parse(readFileSync(join(f.root,'config.json'),'utf8')),grants=JSON.parse(readFileSync(join(f.root,'grants.json'),'utf8'));config.registration.projects[0].directory=sub;grants['grant-a'].projectDirectory=sub;writeFileSync(join(f.root,'config.json'),JSON.stringify(config));writeFileSync(join(f.root,'grants.json'),JSON.stringify(grants));

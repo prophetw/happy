@@ -67,7 +67,7 @@ export class ScopedWorker {
         } while (cursor);
         throw new ApiError('NOT_FOUND', 404);
     }
-    private async observeLegacy(sessionID: string): Promise<Observation> {
+    private async observeLegacy(sessionID: string): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
         const session = await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
         if (!machine) throw new ApiError('MACHINE_UNAVAILABLE', 503);
         const process = await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID });
@@ -80,10 +80,26 @@ export class ScopedWorker {
                 if (m.kind === 'turn' && 'turnID' in m && 'state' in m) { lastTurn = raw.seq; turnID = m.turnID; outcome = m.state as Observation['outcome']; }
             }
             const next = page.messages.at(-1)?.seq ?? cursor;
-            if (!page.hasMore) { const pendingInput = lastInput > lastTurn; return { process: String(process.process ?? 'unknown'), cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput }; }
+            if (!page.hasMore) { const pendingInput = lastInput > lastTurn; return { process: String(process.process ?? 'unknown'), cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session }; }
             if (next <= cursor) throw new ApiError('INVALID_CURSOR'); cursor = next;
         }
         throw new ApiError('OBSERVATION_PAGE_LIMIT');
+    }
+    private legacyResources(session: { id: string; metadata: unknown }) {
+        try {
+            const directory = (session.metadata as any)?.path;
+            if (typeof directory !== 'string' || !statSync(directory).isDirectory()) throw new Error();
+            const workspace = this.queue.transaction(s => s.workspaces.find(w => w.sessionID === session.id));
+            if (workspace) {
+                if (workspace.cwd !== directory) throw new Error();
+                verifyWorkspace(workspace);
+                return workspaceResources(workspace, session.id);
+            }
+            return workspaceResources({ repository: canonicalRepository(directory), execution: { mode: 'legacy', resources: [] } }, session.id);
+        } catch {
+            // Unknown or changed paths retain the conservative machine lease.
+            return workspaceResources();
+        }
     }
     async tick() {
         // Read-only adoption of genuinely live pre-queue turns. Never resends historical
@@ -92,11 +108,24 @@ export class ScopedWorker {
         do {
             const page = await this.transport.sessions(cursor);
             for (const session of page.sessions) {
-                if ((session.metadata as any)?.machineId !== this.registration.machineID || this.queue.tasks().some(t => t.sessionID === session.id && occupiesSlot(t))) continue;
+                if ((session.metadata as any)?.machineId !== this.registration.machineID) continue;
+                const active = this.queue.tasks().find(t => t.sessionID === session.id && occupiesSlot(t));
+                if (active && (!active.legacy || active.resources.length !== 1 || active.resources[0].key !== 'machine' || active.resources[0].mode !== 'exclusive')) continue;
                 const observed = await this.observeLegacy(session.id);
+                if (active) {
+                    const pid = (observed.sourceSession.metadata as any)?.hostPid;
+                    if (observed.process === 'running' && (observed.outcome === 'running' || observed.pendingInput) && Number.isInteger(pid) && pid > 0 && pid === active.processID
+                        && (observed.turnID !== undefined && observed.turnID === active.turnID
+                            || observed.pendingInput && observed.seq !== undefined && observed.seq === active.seq && active.turnID === undefined)) {
+                        this.queue.refineLegacyResources(active, this.legacyResources(observed.sourceSession));
+                    }
+                    continue;
+                }
                 if (observed.outcome !== 'running' && !observed.pendingInput || observed.process === 'stopped') continue;
+                const pid = (observed.sourceSession.metadata as any)?.hostPid;
+                const knownOwner = observed.process === 'running' && Number.isInteger(pid) && pid > 0;
                 this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`), workerID: this.registration.id, grantID: 'legacy-import', sessionID: session.id,
-                    authorization: '', text: '', resources: [{ key: 'machine', mode: 'exclusive' }], legacy: true, seq: observed.seq, turnID: observed.turnID, processID: (session.metadata as any)?.hostPid });
+                    authorization: '', text: '', resources: knownOwner ? this.legacyResources(observed.sourceSession) : workspaceResources(), legacy: true, seq: observed.seq, turnID: observed.turnID, processID: Number.isInteger(pid) && pid > 0 ? pid : undefined });
             }
             if (page.nextCursor === cursor) throw new ApiError('INVALID_CURSOR'); cursor = page.nextCursor ?? undefined;
         } while (cursor);

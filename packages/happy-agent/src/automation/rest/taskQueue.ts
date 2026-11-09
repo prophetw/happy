@@ -161,6 +161,20 @@ export class TaskQueue {
             task.fingerprint = taskFingerprint(task); s.tasks.push(task); return task;
         });
     }
+    /** Refine only the old generated fallback after its owner is observed again.
+     * Explicit task/maintenance resources are immutable and never enter this path.
+     */
+    refineLegacyResources(observed: QueueTask, resources: Resource[]) {
+        return this.transaction(s => {
+            const task = s.tasks.find(t => t.id === observed.id);
+            if (!task || terminalTask(task) || task.fingerprint !== observed.fingerprint || task.processID !== observed.processID || task.turnID !== observed.turnID || task.seq !== observed.seq
+                || !task.legacy || task.grantID !== 'legacy-import' || task.authorization || task.text
+                || task.resources.length !== 1 || task.resources[0].key !== 'machine' || task.resources[0].mode !== 'exclusive'
+                || !resources.some(r => r.key === 'machine' && r.mode === 'shared') || !resources.some(r => r.key.startsWith('repo:'))) return;
+            task.resources = resources;
+            task.fingerprint = taskFingerprint(task);
+        });
+    }
     cancellation(grantID: string, requestID: string) {
         return this.transaction(s => {
             const c = s.cancellations.find(c => c.grantID === grantID && c.requestID === requestID);
