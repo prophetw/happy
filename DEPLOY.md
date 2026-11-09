@@ -1,5 +1,21 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 派发与重启会话强证明修复（2026-11-10）
+
+最终 Worker 功能源为 Happy `5ca49e93956b166189a65628a54289e80b3e5f10`，已正常推送个人 main。此前 `92599a0d` 的 legacy 锁缩域修复已实际部署，但线上仍被整机排他锁阻塞：真实 CLI 对重启后恢复的活进程返回 `unknown`，先前仅接受 `running` 的调度守卫无法缩域；该次上线不能作为问题已解决的证明。
+
+本次在机器私有子目录保存会话与 canonical 仓库、UID、boot ID、PID/startTicks、cwd/cgroup 绑定的进程证明。恢复会话仅在既存强证明与当前内核身份完全匹配时获得调度内部的 `sessionOwnerVerified/dispatchable`；CLI 的 `unknown`、停止和取消权限契约保持原样。已知仓库普通活轮次使用 `machine/shared` 与 canonical repo 排他资源；未知身份、失效证明及显式整机维护继续保守，命名资源仍是字面合作锁。本机管理员根据成功维护前后及当前身份核验，由原 dev 身份为三个既存会话写入证明；没有改队列资源、清锁或重发未知写入。
+
+真实 CLI 恢复接口回归 **10/10**、队列/项目调度与证明回归 **41/41**、管理员 bootstrap 安全回归 **3/3**，happy-agent 类型检查及子系统构建通过。未重建 CLI 或发布 App/OTA。新候选上线前经真实只读 RPC 验证，三个会话的进程态仍为 `unknown`，而强证明及调度标记有效；没有将 saved PID 直接视为 `running`。
+
+系统 Worker 已切至 `/home/dev/.local/share/happy-automation/releases/dot-process-proofs-20261110`，PID `1920200`，active/running、NRestarts=0；切换前采集的 **12 个活会话根进程**身份保持。独立 root 维护目录为 `/var/lib/happy-automation-maintenance/20261109T223231Z-session-process-proofs-5ca49e93956b`；机器密文、密钥、journal 与私有证明目录在 Worker 停止后的静止段冷备，活跃 worktree 保留原位。注册配置、项目默认额度 2 与无全机并发上限均保持，没有恢复旧账本覆盖新状态。
+
+真实生产 MCP 独立只读会话 `cmw9ueqe318ummm16yv2mzogf` 已受理并派发，turn `01a1c277-1d28-7701-9b97-6939545a8050` 返回精确标记 `DISPATCH_PROOF_OK_0d01e2e31a64` 并完成，测试会话进程已停止。此项证明真实 turn 完成，不将测试清理后的队列状态称为 completed，也不冒称向两个现有 Dot 主会话发过验收消息。
+
+原 `5069415d…` 任务在本次部署前已完成，不计为本次修复成果。Bim `737e0c1c…` 当前仍为 `waiting-resource / integration_worktree_dirty`、`executionDispatched=false`，原因是 integration 目录中四个用户已暂存的 Java 文件；这些改动及原 requestID 均保留，已无 `machine/exclusive` 阻塞。两个 testLoop legacy 当前均为 `machine/shared` 加 repo 排他。原三项未知写入保持原证据且未重放；宿主已先行修复 receipt 查询失败不能推翻原写入未知结果的边界。
+
+上线证据在 TestLoop `.e2e-artifacts/dot-dispatch-fix-20261110/` 的 `final-worker-maintenance-status.json`、`proof-before-worker.json`、`proof-after-worker.json`、`production-dispatch-smoke.json`；定向测试及构建证据在本发布 checkout `.e2e-artifacts/dot-process-proofs-20261110/`，真实 CLI 回归日志另保留在前述 TestLoop 证据目录。手机真机操作与整机重启恢复仍未验证；未将本次后端真实派发验收扩展为全仓或所有客户端全绿。
+
 ## Dot 按项目调度修正发布（2026-11-10）
 
 功能源 Happy `b5e508c1e7323609c3fb956c6c3261899103695a`、TestLoop `505276e50204d8da5860cefe7d53b308d5671323`，已普通推送两仓个人 main；从当次 fetch、干净且与远端一致的 main checkout 准备并发布。未回写原主工作区已有修改，未扩展真实项目授权。
