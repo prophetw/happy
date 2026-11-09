@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { TaskQueue, occupiesSlot, type QueueTask } from './taskQueue';
 import { TaskScheduler, type Observation } from './taskScheduler';
-import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, assertIntegrationReady } from './taskWorkspaces';
+import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, assertIntegrationReady, canonicalRepository } from './taskWorkspaces';
 import { realpathSync, statSync } from 'node:fs';
 import { AutomationControl, projectMessage, type Policy } from '../control';
 import { Journal, hash } from '../journal';
@@ -25,7 +25,18 @@ export class ScopedWorker {
         private authorizeGrant?: (grantID: string) => Promise<Connection>, queueDirectory?: string) {
         // This path is independent of Dot, grant, checkout and HAPPY_HOME. All workers
         // for one OS user/machine use one durable machine ledger and kernel lock.
-        this.queue = new TaskQueue(queueDirectory ?? join(userInfo().homedir, '.local/state/happy-control/machines', hash(registration.machineID)), registration.maxConcurrency ?? 2);
+        if (registration.maxConcurrency !== undefined && registration.machineConcurrency !== undefined && registration.maxConcurrency !== registration.machineConcurrency) throw new ApiError('INVALID_CONCURRENCY');
+        const projectOverrides: Record<string,number> = {};
+        for (const [path,limit] of Object.entries(registration.projectConcurrencyOverrides ?? {})) {
+            const repository=canonicalRepository(path);
+            if (projectOverrides[repository] !== undefined && projectOverrides[repository] !== limit) throw new ApiError('INVALID_CONCURRENCY');
+            projectOverrides[repository]=limit;
+        }
+        this.queue = new TaskQueue(queueDirectory ?? join(userInfo().homedir, '.local/state/happy-control/machines', hash(registration.machineID)), {
+            projectConcurrency: registration.projectConcurrency ?? 2,
+            machineConcurrency: registration.machineConcurrency === undefined ? registration.maxConcurrency ?? null : registration.machineConcurrency,
+            projectOverrides,
+        });
         const run = (t: QueueTask, command: Record<string, unknown>, launchCheck = false) => this.run({ id: t.id, workerID: registration.id, grantID: t.grantID,
             command, deadline: this.now() + 60000 }, () => this.currentGrant(t), true, launchCheck);
         this.scheduler = new TaskScheduler(this.queue, {
@@ -95,6 +106,11 @@ export class ScopedWorker {
         if (!this.authorizeGrant) throw new ApiError('QUEUE_AUTHORITY_UNAVAILABLE', 503);
         const live = await this.authorizeGrant(t.grantID);
         if (hash(canonicalBody(live)) !== t.authorization) throw new ApiError('GRANT_REVOKED', 403);
+        if (!t.workspaceID && t.resources.some(r=>r.key.startsWith('repo:'))) {
+            const session=await this.localSession(t.sessionID);
+            const project=checkBoundProjects(live,this.registration,this.now()).find(p=>p.directory===(session.metadata as any)?.path);
+            if (!project || !t.resources.some(r=>r.key===`repo:${hash(canonicalRepository(project.directory))}`)) throw new ApiError('WORKTREE_BINDING_CHANGED',403);
+        }
         return live;
     }
     private async observeTask(t: QueueTask, run: (t: QueueTask, command: Record<string, unknown>) => Promise<any>): Promise<Observation> {
@@ -275,8 +291,14 @@ export class ScopedWorker {
                 return readCore({ version: 1, method: 'requests.get', requestID: command.requestID });
             }
             const w = workspaces.find(w => w.sessionID === command.sessionID);
+            const accepted = this.queue.tasks().find(t=>t.grantID===live.id && t.requestID===command.requestID);
+            // A new turn on an authorized pre-queue session is ordinary project work.
+            // Importing its already-live old turn still retains global exclusion in tick().
+            const session = !w && !accepted ? await this.localSession(String(command.sessionID)) : undefined;
+            const project = session ? projects.find(p=>p.directory===(session.metadata as any)?.path) : undefined;
+            const binding = w ?? (project ? {repository:canonicalRepository(project.directory),execution:{mode:'legacy' as const,resources:[]}} : undefined);
             const task = this.queue.enqueue({ requestID: command.requestID, grantID: live.id, workerID: this.registration.id, sessionID: String(command.sessionID),
-                workspaceID: w?.id, authorization: hash(canonicalBody(live)), text: command.text, resources: workspaceResources(w, String(command.sessionID)) });
+                workspaceID: w?.id, authorization: hash(canonicalBody(live)), text: command.text, resources: accepted?.resources ?? workspaceResources(binding, String(command.sessionID)) });
             await check(true); return reply(this.queue.receipt(task));
         }
         if (!internal && command.method === 'sessions.cancel') {

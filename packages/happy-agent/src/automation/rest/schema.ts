@@ -54,6 +54,9 @@ export type WorkerRegistration = Registration & {
     /** Owner-configured launch allowlist for delegated tasks on this machine. */
     launchOptions?: z.infer<typeof launchOptionsPolicySchema>;
     maxConcurrency?: number;
+    projectConcurrency?: number;
+    machineConcurrency?: number | null;
+    projectConcurrencyOverrides?: Record<string, number>;
 };
 export type Connection = Omit<Scope, 'projectID'> & {
     projectID?: string; projectDirectory?: string;

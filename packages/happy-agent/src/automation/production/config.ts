@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { directorySelectionSchema, externalIdentitySchema, identifier, method, scopeSchema, serviceTokensConfigSchema, additionalBrowserOriginsSchema } from '../rest/schema';
 import { launchOptionsPolicySchema } from '../rest/options';
 import { privateRead } from '../rest/privateFs';
+import { concurrencyLimit } from '../rest/concurrency';
 
 const https = z.string().url().refine(s => { const u = new URL(s); return u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash; }, 'HTTPS endpoint required');
 const absolute = z.string().startsWith('/').max(4096);
@@ -10,7 +11,13 @@ export const registrationSchema = z.object({ id: identifier, userID: identifier,
 export const workerRegistrationSchema = registrationSchema.extend({ machineID: identifier, directorySelection: directorySelectionSchema.optional(), projects: z.array(z.object({ id: identifier, directory: absolute, sessionIDs: z.array(identifier).max(100) }).strict()).min(1), methods: z.array(method).min(1), protocol: z.literal(1),
     // Owner-approved launch allowlist for delegated tasks. Absent = fixed
     // defaults only; any requested override is denied.
-    launchOptions: launchOptionsPolicySchema.optional(), maxConcurrency: z.number().int().min(1).max(4).optional() }).strict();
+    launchOptions: launchOptionsPolicySchema.optional(),
+    // Deprecated maxConcurrency remains an explicit machine ceiling, never silently relaxed.
+    maxConcurrency: concurrencyLimit.optional(),
+    projectConcurrency: concurrencyLimit.optional(), machineConcurrency: concurrencyLimit.nullable().optional(),
+    projectConcurrencyOverrides: z.record(absolute, concurrencyLimit).optional(),
+}).strict().refine(c => c.maxConcurrency === undefined || c.machineConcurrency === undefined || c.maxConcurrency === c.machineConcurrency,
+    'Conflicting legacy and machine concurrency limits');
 const provider = z.object({ type: z.literal('encrypted-pkcs8-credentials'), credentialsDirectory: absolute,
     keys: z.record(identifier, z.object({ encryptedPKCS8: absolute, passphraseCredential: identifier }).strict()) }).strict();
 const oauth = z.object({ issuer: https, jwksURL: https, resource: https.refine(s => new URL(s).pathname === '/happy-control/mcp'), scope: z.literal('happy:control'),

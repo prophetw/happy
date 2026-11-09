@@ -9,6 +9,7 @@ import { hash } from '../journal';
 import { canonicalBody } from './auth';
 import { z } from 'zod';
 import { executionSchema } from './execution';
+import { concurrencyPolicySchema, normalizeConcurrency, type ConcurrencyPolicy } from './concurrency';
 
 export { executionSchema } from './execution';
 import type { Execution } from './execution';
@@ -22,7 +23,7 @@ export type QueueTask = { id: string; requestID: string; grantID: string; worker
     reason?: string; dispatched: boolean; seq?: number; messageID?: string; turnID?: string; cursor: number;
     notBefore?: number; resultCommit?: string; worktreeDirty?: boolean; ownerPID?: number; processID?: number; legacy?: boolean; createdAt: number; finishedAt?: number };
 type Cancellation = { requestID: string; grantID: string; sessionID: string; sendRequestID?: string; fingerprint: string; taskIDs: string[] };
-type State = { schedulers: Record<string,{lastSeen:number}>; cancellations: Cancellation[]; version: 1; maxConcurrency: number; nextOrder: number; workspaces: Workspace[]; tasks: QueueTask[] };
+type State = { schedulers: Record<string,{lastSeen:number}>; cancellations: Cancellation[]; version: 2; policy: ConcurrencyPolicy; nextOrder: number; workspaces: Workspace[]; tasks: QueueTask[] };
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), digest = z.string().regex(/^[a-f0-9]{64}$/);
 const resourceSchema = z.object({ key: z.string().min(1).max(256), mode: z.enum(['shared','exclusive']) }).strict();
 const taskSchema = z.object({ id: digest, requestID: identifier, grantID: identifier, workerID: identifier, sessionID: identifier,
@@ -34,8 +35,9 @@ const workspaceSchema = z.object({ id: digest, grantID: identifier, projectID: i
     stage: z.enum(['preparing','ready']).optional(), preparationPID: z.number().int().positive().optional(), preparationError: z.string().optional(), branch: z.string().optional(), baseCommit: z.string().optional(), execution: executionSchema, fingerprint: digest, sessionID: identifier.optional(),
     options: z.record(z.string(),z.json()).optional(), resolvedOptions: z.json().optional(), temporaryDirectory: z.string().startsWith('/'), port: z.number().int().min(20000).max(60000) }).strict();
 const cancellationSchema = z.object({ requestID: identifier, grantID: identifier, sessionID: identifier, sendRequestID: identifier.optional(), fingerprint: digest, taskIDs: z.array(digest).max(1000) }).strict();
-const stateSchema = z.object({ version: z.literal(1), maxConcurrency: z.number().int().min(1).max(4), nextOrder: z.number().int().nonnegative(),
+const legacyStateSchema = z.object({ version: z.literal(1), maxConcurrency: z.number().int().min(1).max(4), nextOrder: z.number().int().nonnegative(),
     schedulers: z.record(z.string(),z.object({lastSeen:z.number().nonnegative()}).strict()), workspaces: z.array(workspaceSchema).max(40001), tasks: z.array(taskSchema).max(1000), cancellations: z.array(cancellationSchema).max(5000) }).strict();
+const stateSchema = legacyStateSchema.omit({version:true,maxConcurrency:true}).extend({version:z.literal(2),policy:concurrencyPolicySchema}).strict();
 const taskFingerprint = (t: Pick<QueueTask,'requestID'|'grantID'|'workerID'|'sessionID'|'authorization'|'text'|'resources'|'workspaceID'|'legacy'>) => hash(canonicalBody({
     requestID: t.requestID, grantID: t.grantID, workerID: t.workerID, sessionID: t.sessionID, authorization: t.authorization, text: t.text, resources: t.resources, workspaceID: t.workspaceID, legacy: t.legacy }));
 export const terminalTask = (t: QueueTask) => ['completed', 'failed', 'cancelled'].includes(t.state);
@@ -47,8 +49,11 @@ const conflicts = (a: Resource[], b: Resource[]) => a.some(x => b.some(y => x.ke
  */
 export class TaskQueue {
     private store: MetadataStore;
-    constructor(readonly directory: string, readonly maxConcurrency = 2) {
-        if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 4) throw new ApiError('INVALID_CONCURRENCY');
+    readonly policy: ConcurrencyPolicy;
+    /** Compatibility for explicit old callers; absent machine limit has no artificial ceiling. */
+    get maxConcurrency() { return this.policy.machineConcurrency ?? Infinity; }
+    constructor(readonly directory: string, policy: Partial<ConcurrencyPolicy> | number = {}) {
+        this.policy = normalizeConcurrency(policy);
         this.store = new MetadataStore(directory, 64 * 1024 * 1024);
         this.transaction(() => undefined);
     }
@@ -62,7 +67,7 @@ export class TaskQueue {
             if (spawnSync('flock', ['--exclusive', '--timeout', '5', '3'], { stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 6000 }).status !== 0) throw new ApiError('QUEUE_UNAVAILABLE', 503);
             const stored = this.store.get<{ sealed: string }>('queue');
             const key = this.payloadKey(!stored);
-            let saved: State | null = null;
+            let saved: unknown = null;
             if (stored) {
                 try {
                     if (typeof stored.sealed !== 'string') throw new Error();
@@ -71,15 +76,36 @@ export class TaskQueue {
                     saved = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)),decipher.final()]).toString('utf8'));
                 } catch { throw new ApiError('QUEUE_CORRUPT', 503); }
             }
-            const state = saved ?? { version: 1, maxConcurrency: this.maxConcurrency, nextOrder: 0, schedulers: {}, cancellations: [], workspaces: [], tasks: [] };
+            let migrated = false;
+            let state: State;
+            if (saved && (saved as {version?:number}).version === 1) {
+                const old = legacyStateSchema.safeParse(saved);
+                if (!old.success) throw new ApiError('QUEUE_CORRUPT',503);
+                if (old.data.tasks.some(t=>t.fingerprint!==taskFingerprint(t))) throw new ApiError('QUEUE_CORRUPT',503);
+                // Historical implicit 2 is now the project default. Explicit legacy registration
+                // maxConcurrency is translated to machineConcurrency by the Worker. Never widen
+                // a non-default persisted ceiling without an explicit matching machine policy.
+                if (old.data.maxConcurrency !== 2 && this.policy.machineConcurrency !== old.data.maxConcurrency)
+                    throw new ApiError('QUEUE_MIGRATION_REQUIRES_MACHINE_LIMIT',503);
+                const {version: _version,maxConcurrency: _max,...rest} = old.data;
+                state = {...rest,version:2,policy:this.policy};
+                // Already claimed/unknown operations retain every old global lock until exit.
+                for (const t of state.tasks.filter(t=>!occupiesSlot(t))) {
+                    if (state.workspaces.some(w=>w.id===t.workspaceID)) {
+                        t.resources=t.resources.map(r=>r.key==='machine'?{...r,mode:'shared'}:r);
+                        t.fingerprint=taskFingerprint(t);
+                    }
+                }
+                migrated=true;
+            } else state = (saved ?? { version: 2, policy: this.policy, nextOrder: 0, schedulers: {}, cancellations: [], workspaces: [], tasks: [] }) as State;
             if (!stateSchema.safeParse(state).success) throw new ApiError('QUEUE_CORRUPT',503);
-            if (state.maxConcurrency !== this.maxConcurrency) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
+            if (canonicalBody(state.policy) !== canonicalBody(this.policy)) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
             if (new Set(state.tasks.map(t => t.id)).size !== state.tasks.length || new Set(state.workspaces.map(w => w.id)).size !== state.workspaces.length
                 || new Set(state.tasks.map(t => t.order)).size !== state.tasks.length || state.tasks.some(t => t.id !== hash(`${t.grantID}\n${t.requestID}`) || t.fingerprint !== taskFingerprint(t) || t.order >= state.nextOrder)) throw new ApiError('QUEUE_CORRUPT', 503);
             const before = JSON.stringify(state);
             state.cancellations ??= [];
             const result = fn(state);
-            if (!saved || JSON.stringify(state) !== before) {
+            if (!saved || migrated || JSON.stringify(state) !== before) {
                 // Migration and cancellation also write through this boundary. Never persist
                 // a ledger which the next process would reject, even when an enqueue is bypassed.
                 if (state.tasks.length > 1000 || state.workspaces.length > 40001 || state.cancellations.length > 5000) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
@@ -106,9 +132,9 @@ export class TaskQueue {
             return key;
         }
     }
-    configureConcurrency(value: number) {
-        if (!Number.isInteger(value) || value < 1 || value > 4) throw new ApiError('INVALID_CONCURRENCY');
-        this.transaction(s => { if (s.tasks.some(t => !terminalTask(t))) throw new ApiError('QUEUE_IN_USE'); s.maxConcurrency = value; });
+    configureConcurrency(value: Partial<ConcurrencyPolicy> | number) {
+        const policy = normalizeConcurrency(value);
+        this.transaction(s => { if (s.tasks.some(t => !terminalTask(t))) throw new ApiError('QUEUE_IN_USE'); s.policy = policy; });
         // Call only with all workers stopped, then construct with the new configuration.
     }
     noteScheduler(workerID: string) { this.transaction(s=>{s.schedulers[workerID]={lastSeen:Date.now()};}); }
@@ -121,7 +147,7 @@ export class TaskQueue {
             if (s.workspaces.some(w => w.id === id) || s.cancellations.some(c => c.grantID === input.grantID && c.requestID === input.requestID)) throw new ApiError('REQUEST_ID_CONFLICT', 409);
             const previous = s.tasks.find(t => t.id === id);
             if (previous) { if (previous.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409); return previous; }
-            const task: QueueTask = { ...input, id, fingerprint, order: s.nextOrder++, state: 'queued', reason: 'execution_slot', dispatched: false, cursor: 0, createdAt: Date.now() };
+            const task: QueueTask = { ...input, id, fingerprint, order: s.nextOrder++, state: 'queued', reason: 'scheduler-ready', dispatched: false, cursor: 0, createdAt: Date.now() };
             if (s.tasks.length >= 1000 || Buffer.byteLength(JSON.stringify(s)) + Buffer.byteLength(JSON.stringify(task)) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED', 503);
             s.tasks.push(task); return task;
         });
@@ -161,19 +187,31 @@ export class TaskQueue {
     claim(workerID?: string): QueueTask | null {
         return this.transaction(s => {
             const active = s.tasks.filter(occupiesSlot);
-            if (active.length >= s.maxConcurrency) return null;
-            // FIFO among runnable tasks. Earlier resource/session waiters retain their order;
-            // unrelated ready work can pass blocked waiters; the oldest runnable task wins each newly free resource.
+            const project = (t: QueueTask) => {
+                const workspace=s.workspaces.find(w=>w.id===t.workspaceID);
+                return workspace ? `repo:${hash(workspace.repository)}`
+                    : t.resources.find(r=>r.key.startsWith('repo:'))?.key ?? 'unknown-project';
+            };
+            const overrides = new Map(Object.entries(s.policy.projectOverrides).map(([path,limit])=>[`repo:${hash(path)}`,limit]));
+            const projectLimit = (key: string) => overrides.get(key) ?? s.policy.projectConcurrency;
+            // Include only live owners in reservations. A worker never claims another owner's
+            // task; its ready task still reserves resources and quotas to prevent starvation.
             const waiting = s.tasks.filter(t => !t.legacy && (!workerID || t.workerID===workerID || (s.schedulers[t.workerID]?.lastSeen ?? 0)>Date.now()-10000) && ['queued', 'waiting-resource'].includes(t.state) && (!t.notBefore || t.notBefore<=Date.now())).sort((a,b) => a.order - b.order);
-            const reserved: Resource[]=[]; let reservedSlots=0;
+            const reserved: Resource[]=[]; const reservedProjects=new Map<string,number>(); let reservedSlots=0;
             for (const task of waiting) {
                 const sessionBusy = s.tasks.some(t => !terminalTask(t) && t.id !== task.id && t.sessionID === task.sessionID && (occupiesSlot(t) || t.order < task.order));
                 if (sessionBusy) {task.state='waiting-resource';task.reason='session_turn';continue;}
-                if (active.some(t=>conflicts(task.resources,t.resources))||conflicts(task.resources,reserved)) {
-                    task.state='waiting-resource';task.reason='resource_lock';reserved.push(...task.resources);continue;
+                const key=project(task);
+                if (s.policy.machineConcurrency !== null && active.length+reservedSlots >= s.policy.machineConcurrency) {
+                    task.state='queued';task.reason='machine-limit';continue;
                 }
-                if(workerID && task.workerID!==workerID){reserved.push(...task.resources);reservedSlots++;continue;}
-                if(active.length+reservedSlots>=s.maxConcurrency)return null;
+                if (active.filter(t=>project(t)===key).length+(reservedProjects.get(key)??0) >= projectLimit(key)) {
+                    task.state='queued';task.reason='project-limit';continue;
+                }
+                if (active.some(t=>conflicts(task.resources,t.resources))||conflicts(task.resources,reserved)) {
+                    task.state='waiting-resource';task.reason='resource-wait';reserved.push(...task.resources);continue;
+                }
+                if(workerID && task.workerID!==workerID){reserved.push(...task.resources);reservedSlots++;reservedProjects.set(key,(reservedProjects.get(key)??0)+1);continue;}
                 task.state = 'preparing'; task.reason = undefined; delete task.notBefore; task.ownerPID = process.pid;
                 return task;
             }

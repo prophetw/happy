@@ -57,7 +57,8 @@ export class TaskScheduler {
                     this.queue.update(task.id, t => { if (terminalTask(t)) return; if (stopped) { t.state = t.state === 'canceling' ? 'cancelled' : 'failed'; t.finishedAt = Date.now(); t.reason = 'execution_stopped'; } else t.reason = revoked(e) ? 'authorization_revoked_execution_unconfirmed' : 'observation_unavailable'; });
                 }
             }
-            for (let n = 0; n < this.queue.maxConcurrency; n++) {
+            // Ledger capacity bounds a tick; an absent machine ceiling must not impose 2/4.
+            for (let n = 0; n < 1000; n++) {
                 const task = this.queue.claim(this.workerID); if (!task) break;
                 try {
                     await this.executor.authorize(task);

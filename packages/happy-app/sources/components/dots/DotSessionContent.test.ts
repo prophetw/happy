@@ -153,6 +153,11 @@ it('shows queue/resource/location state and routes targeted cancellation through
     const open=()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='查看工作项：隔离代码任务')!;await act(async()=>open().props.onPress());
     const text=()=>JSON.stringify(renderer.root.findAllByType('Text').map((node:any)=>node.props.children));
     expect(text()).toContain('已排队，尚未开始');expect(text()).toContain('dot-task/task-a');expect(text()).toContain('/fixture/worktrees/task-a');
+    for(const [reason,label] of [['project-limit','等待本项目执行名额'],['machine-limit','等待机器硬上限名额'],['resource-wait','等待共享排他资源']]) {
+        task.queueReason=reason;
+        await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));
+        expect(text()).toContain(label);
+    }
     const cancel=renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='在对话中取消此工作')!;expect(cancel).toBeDefined();await act(async()=>cancel.props.onPress());
     expect(request.text).toContain(task.id);expect(request.text).toContain('只取消这一交办');expect(mocks.submit).not.toHaveBeenCalled();
     task.status='waiting-resource';task.queueReason='session_turn';await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());await act(async()=>open().props.onPress());expect(text()).toContain('等待执行资源');expect(text()).toContain('等待同会话前一交办结束');

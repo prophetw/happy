@@ -19,7 +19,7 @@ function setup(maxConcurrency = 2) {
     const root = mkdtempSync(join(tmpdir(), 'happy-parallel-')); roots.push(root); const repo = join(root, 'repo'); mkdirSync(repo);
     git(repo, 'init', '-q'); git(repo, 'config', 'user.name', 'fixture'); git(repo, 'config', 'user.email', 'fixture@invalid');
     writeFileSync(join(repo, 'baseline'), 'unchanged'); git(repo, 'add', 'baseline'); git(repo, 'commit', '-qm', 'base');
-    const registration = { id: 'worker', userID: 'owner', machineID: 'machine', publicKey: 'fixture-key', projects: [{ id: 'project', directory: repo, sessionIDs: [] }], methods: [...methods], protocol: 1, maxConcurrency };
+    const registration = { id: 'worker', userID: 'owner', machineID: 'machine', publicKey: 'fixture-key', projects: [{ id: 'project', directory: repo, sessionIDs: [] }], methods: [...methods], protocol: 1, projectConcurrency: maxConcurrency, machineConcurrency: maxConcurrency };
     const grant = { id: 'grant-a', clientID: 'client-a', userID: 'owner', workerID: 'worker', workerFingerprint: hash('fixture-key'), machineID: 'machine', projectID: 'project', projectDirectory: repo, sessionIDs: [], methods: [...methods], expiresAt: Date.now() + 600000, state: 'approved' };
     writeFileSync(join(root, 'config.json'), JSON.stringify({ registration }));
     writeFileSync(join(root, 'grants.json'), JSON.stringify({ 'grant-a': grant, 'grant-b': { ...grant, id: 'grant-b', clientID: 'client-b' } }));
@@ -87,7 +87,7 @@ describe('durable machine queue with actual Git worktrees and session processes'
         const f=setup(),a=await f.create('a');await f.send(a.sessionID,'one');const g=JSON.parse(readFileSync(join(f.root,'grants.json'),'utf8'));g['grant-a'].state='revoked';writeFileSync(join(f.root,'grants.json'),JSON.stringify(g));
         await f.tick();expect(f.state('one')).toBe('failed');expect(f.messages(a.sessionID)).toHaveLength(0);
         writeFileSync(join(a.execution.directory,'dirty'),'keep');expect(()=>cleanCompletedWorkspace(f.worker.queue, f.worker.queue.workspaces('grant-a')[0].id)).toThrow('WORKTREE_IN_USE');
-        expect(readFileSync(join(a.execution.directory,'dirty'),'utf8')).toBe('keep');expect(()=>new TaskQueue(join(f.root,'bad'),0)).toThrow('INVALID_CONCURRENCY');expect(()=>new TaskQueue(join(f.root,'too-many'),5)).toThrow('INVALID_CONCURRENCY');expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CONFIGURATION_CHANGED');
+        expect(readFileSync(join(a.execution.directory,'dirty'),'utf8')).toBe('keep');expect(()=>new TaskQueue(join(f.root,'bad'),0)).toThrow('INVALID_CONCURRENCY');expect(()=>new TaskQueue(join(f.root,'invalid'),1.5)).toThrow('INVALID_CONCURRENCY');expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CONFIGURATION_CHANGED');
     });
     it('holds a single cross-Dot/process ceiling and reconnects running processes after real scheduler SIGKILL',async()=>{
         const f=setup(),a=await f.create('a'),b=await f.create('b'),c=await f.create('c');await f.send(a.sessionID,'one');await f.send(b.sessionID,'two');await f.send(c.sessionID,'three');
@@ -158,7 +158,7 @@ it('authenticates durable payloads, refuses corrupt state, and reconfigures only
     const template=queue.enqueue(input);
     queue.transaction(s=>{s.tasks=Array.from({length:1000},(_,order)=>{const value={...input,requestID:`capacity-${order}`};return {...template,...value,order,id:hash(`${value.grantID}\n${value.requestID}`),fingerprint:hash(canonicalBody(value))};});s.nextOrder=1000;});
     expect(()=>queue.adoptLegacy({...input,requestID:'legacy-overflow'})).toThrow('QUEUE_CAPACITY_EXCEEDED');
-    expect(new TaskQueue(join(f.root,'queue')).tasks()).toHaveLength(1000);
+    expect(new TaskQueue(join(f.root,'queue'),2).tasks()).toHaveLength(1000);
     queue.transaction(s=>{s.tasks=[];}); // Isolated fixture only: restore an idle ledger for the encryption checks.
     queue.configureConcurrency(3);expect(new TaskQueue(join(f.root,'queue'),3).maxConcurrency).toBe(3);
     const file=readdirSync(join(f.root,'queue')).find(p=>p.endsWith('.json'))!,path=join(f.root,'queue',file);const data=JSON.parse(readFileSync(path,'utf8'));const original=structuredClone(data),key=readFileSync(join(f.root,'queue/.payload-key')),bytes=Buffer.from(data.value.sealed,'base64'),decipher=createDecipheriv('aes-256-gcm',key,bytes.subarray(0,12));decipher.setAuthTag(bytes.subarray(12,28));const plain=JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)),decipher.final()]).toString());plain.nextOrder='corrupt';const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv),payload=Buffer.concat([cipher.update(JSON.stringify(plain)),cipher.final()]);data.value.sealed=Buffer.concat([iv,cipher.getAuthTag(),payload]).toString('base64');writeFileSync(path,JSON.stringify(data));expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CORRUPT');Object.assign(data,original);data.value.sealed=data.value.sealed.slice(0,-10)+'AAAAAAAAAA';writeFileSync(path,JSON.stringify(data));expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CORRUPT');

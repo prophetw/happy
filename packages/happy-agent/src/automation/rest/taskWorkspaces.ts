@@ -12,6 +12,12 @@ const git = (cwd: string, args: string[]) => execFileSync('git', ['-c','core.hoo
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
 }).trim();
 
+export function canonicalRepository(root: string): string {
+    if (realpathSync(root) !== root) throw new ApiError('PROJECT_PATH_CHANGED',403);
+    try { return realpathSync(resolve(root,git(root,['rev-parse','--git-common-dir']))); }
+    catch { return root; } // Non-Git projects share their canonical directory.
+}
+
 /** No checkout holds the machine queue lock or blocks the worker event loop.
  * The per-workspace flock is inherited by Git, so parent death cannot permit
  * a second checkout while the original Git process is still running.
@@ -92,14 +98,17 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
 }
 export function verifyWorkspace(w: Workspace) {
     if (realpathSync(w.root) !== w.root || realpathSync(w.cwd) !== w.cwd) throw new ApiError('PROJECT_PATH_CHANGED', 403);
+    if (canonicalRepository(w.root) !== w.repository) throw new ApiError('WORKTREE_BINDING_CHANGED',403);
     if (w.branch) {
         const common = realpathSync(resolve(w.cwd, git(w.cwd, ['rev-parse', '--git-common-dir'])));
         if (common !== w.repository || git(w.cwd, ['symbolic-ref', '--short', 'HEAD']) !== w.branch
             || git(w.cwd, ['merge-base', '--is-ancestor', w.baseCommit!, 'HEAD']) !== '') throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
     }
 }
-export function workspaceResources(w?: Workspace, sessionID?: string): Resource[] {
-    const result: Resource[] = [{ key: 'machine', mode: !w || w.execution.mode === 'legacy' ? 'exclusive' : 'shared' }];
+export function workspaceResources(w?: Pick<Workspace,'repository'|'execution'>, sessionID?: string): Resource[] {
+    // Unknown pre-queue execution remains globally exclusive. Known legacy writes
+    // exclude only their canonical repository and can run alongside other projects.
+    const result: Resource[] = [{ key: 'machine', mode: !w ? 'exclusive' : 'shared' }];
     if (w) {
         result.push({ key: `repo:${hash(w.repository)}`, mode: ['worktree', 'read-only'].includes(w.execution.mode) ? 'shared' : 'exclusive' });
         result.push(...w.execution.resources.map(key => ({ key: `declared:${key}`, mode: 'exclusive' as const })));

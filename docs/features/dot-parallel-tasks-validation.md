@@ -1,5 +1,39 @@
 # Dot 并行任务实现与验证记录
 
+## 项目粒度修正（2026-11-09）
+
+状态：实现和隔离验证通过，生产激活待外部root。旧全机默认2加legacy机器排他压制跨项目；现为canonical项目默认2、独立可选机器硬上限（默认null，无最大4限制），普通legacy仅repo排他。配置、MCP说明、App管理提示及project-limit/machine-limit/resource-wait同步。
+
+取证基线Happy fca9409c、TestLoop ac0e8ae。前版服务/Worker/宿主/Web/OTA已发布；工作项72f58408-16e7-4007-adc2-7aa71c64ccce仍blocked/delegation_message_limit，旧协调器在production-parallel-acceptance失败退出：旧真实任务未结束、付费并发验收未开始。本轮未取消、解锁、重派该任务或重启旧协调器。
+
+本worktree证据 `.e2e-artifacts/project-concurrency-20261109/`：
+
+- 旧代码先红，五项目普通legacy仅1 running；原回执笼统execution_slot。
+- 五个独立Git仓库/worktree/真实子进程同一观测点均running，各有input+turn-start、无turn-end。five-project-overlap.jsonl记录UTC时间、PID、cwd、策略和原索引/HEAD；释放gate后真实写文件并commit，原HEAD/索引/预先暂存文件保持。
+- 同项目3项前2 running、第3 project-limit；其他项目同时启动，释放后第3自动启动。五项目legacy无需execution参数可并行，同repo legacy/worktree冲突；旧空闲session的新send也按项目域锁。
+- 同服务跨项目resource-wait，不相关资源旁路；机器硬上限2跨项目/Worker统计并准确回执。同repo不同ID/Dot/grant/Worker/授权worktree别名共享额度；symlink拒绝沿用。覆盖配置持久化、配置冲突拒绝、显式旧机器2保留、机器5接受。
+- V1默认2迁移成项目意图；显式maxConcurrency保持机器限制，非默认旧账本须匹配机器配置。旧活跃全局锁保持至确实结束，重复请求仍幂等，blocked/not_sent不复活。原取消停止确认、撤权、多调度器、真实SIGKILL、崩溃恢复、组合资源防饥饿、准备fencing/导入均复验。
+
+| 验证 | 结果 |
+| --- | --- |
+| Control相关子系统 | 166/166（15文件，后续细化按下行复验） |
+| 最终调度真实Git/子进程/HTTP | 28/28（11新策略+17原回归） |
+| 最终生产配置/MCP协议 | 25/25（3文件） |
+| CLI控制/生命周期 | 97/97（8文件） |
+| 宿主队列/委派/客户端/连接 | 85/85；原因透传追加后交办39/39，有重叠 |
+| App工作组件 | 5/5 |
+| agent/CLI/App与宿主相关类型/构建 | 通过；既有bin路径/空chunk警告保留 |
+| OpenAPI与App changelog一致性 | 通过 |
+| Chromium+隔离Relay/原生Codex/MCP | 三类等待原因、branch与取消入口通过，errors=[]，付费模型0 |
+
+TestLoop新增可重复浏览器脚本test/e2e/dot-project-scheduling.mjs。只有模型决策与队列证据是脚本，原生Codex/MCP/Relay/浏览器是真实链路。三次夹具失败保留：模型目录未初始化、脚本模型缺effort、权限仅default而实际UI传auto且脚本误期待submitted。最终显式声明low/auto并断言queued，未放宽产品校验。截图等待Modal动画结束后拍摄。依赖复用为本worktree目录，workspace链接核实指向本任务agent/wire。
+
+冻结V1基线仍失败：实际12155、预期12154，前版已在干净4915e33复现；本轮定向重跑未改断言，不称全仓全绿。
+
+当前Dot绑定testLoop/happy两项目；另一个MCP连接确实配置五项目，配置数与Dot选择不同。五项目测试全部fixtures，未扩真实授权。当前进程NoNewPrivileges=1，系统Worker需外部root独立oneshot，保留旧执行session子进程并备份队列/密钥/journal。新策略生效、Web/个人preview iOS OTA和真机结果须各自回读；准备不等于发布。V1不能读V2，回退需兼容前向恢复，禁止旧账本覆盖新状态。
+
+## 首版隔离实现记录（历史，以下状态不代表当前生产）
+
 状态：可评审实现已完成，隔离纵向链路已验证；整体验证为**部分验证**。未部署、未 OTA、未更新全局 CLI、未重启实际 Worker/scanner、未推送或合入 main。真实手机、生产 Web/Relay、付费 Agent 和跨 OS 用户机器额度未验证。
 
 ## 源码、工作区与现状取证

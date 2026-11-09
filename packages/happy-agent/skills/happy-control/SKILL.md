@@ -37,7 +37,7 @@ description: Guides agents through Happy Control MCP connection, project, machin
 ## 并行、资源与交付
 
 - 创建代码任务时显式传 `execution: {mode: "worktree", resources: []}`，保留原用户 permissionMode；固定基线、任务分支、真实cwd从回执读取，不编造。非Git或子目录项目不支持worktree时会明确拒绝，可经用户范围选择legacy串行。
-- 省略execution的旧调用为机器级legacy串行；每机默认同时执行2个隔离交办，各Dot/项目/进程共用总额度。任务满时应保存queued回执，不称派发失败。
+- 跨授权项目默认并行，无需额外execution参数；同一canonical仓库默认同时执行2项，可配置，多个Dot/grant/Worker共用项目额度。省略execution的legacy仅在该仓库排他；同项目代码并行选择独立worktree/session。机器硬上限是单独可选配置，不默认限制为2或4。机器维护、服务部署、共享数据库及合main必须选integration并声明实际命名资源。任务满时应保存queued回执，不称派发失败。
 - main合并/push使用明确授权的integration任务；部署/重启/迁移声明相同机器资源名（如service:relay、database:orders）以排他串行。锁是调度保证，不拦截任意shell。
 - 每个任务在自己的worktree安装和构建，遵循仓库包源，不链接共享可写node_modules/dist；端口显式使用HAPPY_TASK_PORT或声明固定port资源。代码结果应提交在任务分支并回报commit，集中集成/发布需要另有授权。
 - 排队期间先查原send requestID回执，出现真实sentSeq/turnID后才按该轮读取结果；必须读取最新分页，不能把旧running当当前状态。

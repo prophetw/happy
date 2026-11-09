@@ -18,7 +18,7 @@ import { DotRecoveryNotice } from './DotRecoveryNotice';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
 type Tab = 'chat' | 'activity' | 'work' | 'memory' | 'basis';
-const queueReasons: Record<string,string> = { execution_slot:'等待机器执行槽', integration_worktree_dirty:'集成目录有未提交改动，等待用户处理', session_turn:'等待同会话前一交办结束', resource_lock:'等待排他资源', preparing_worktree:'准备独立工作目录', preparation_interrupted:'准备进程中断，需原请求恢复', session_process_unknown:'执行进程状态待确认', execution_unavailable:'等待执行端恢复' };
+const queueReasons: Record<string,string> = { 'scheduler-ready':'等待调度', 'project-limit':'等待本项目执行名额', 'machine-limit':'等待机器硬上限名额', 'resource-wait':'等待共享排他资源', execution_slot:'等待机器执行槽', integration_worktree_dirty:'集成目录有未提交改动，等待用户处理', session_turn:'等待同会话前一交办结束', resource_lock:'等待排他资源', preparing_worktree:'准备独立工作目录', preparation_interrupted:'准备进程中断，需原请求恢复', session_process_unknown:'执行进程状态待确认', execution_unavailable:'等待执行端恢复' };
 const tabLabels = { chat: '对话', activity: '活动', work: '工作', memory: '记忆', basis: '本轮依据' };
 
 /** Keep Happy's real conversation mounted while its host-backed work/memory panel changes. */
@@ -136,6 +136,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}
             {(wide ? sideTab : tab) !== 'work' ? observationPanel : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
                     <Text style={heading}>工作项 · {detail.taskTotal}</Text>
+                    <Text style={muted}>不同授权项目默认可同时执行；同项目默认最多 2 项，独立代码任务使用工作树。机器硬上限与共享资源可能让任务等待，具体见排队原因。</Text>
                     {detail.tasks.map(task => <Pressable key={task.id} accessibilityRole="button" accessibilityLabel={`查看工作项：${task.title}`} onPress={() => setTaskId(task.id)} style={{ gap: 6, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                         <Text style={body}>{task.title}</Text><Text style={muted}>{testloopWorkStatus(task)}{task.projectID ? ` · ${task.projectID}` : ''}</Text>
                     </Pressable>)}
