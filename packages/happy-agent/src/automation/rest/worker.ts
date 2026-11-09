@@ -14,15 +14,17 @@ import { ApiError, cancelSchema, sendSchema, checkBoundProjects, type Connection
 import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
+import { SessionProcessProofs } from './sessionProcessProofs';
 
 /** Independent worker-side policy check, not a trusted copy of the caller's scope. */
 export class ScopedWorker {
     readonly queue: TaskQueue;
     readonly scheduler: TaskScheduler;
+    readonly processProofs: SessionProcessProofs;
     constructor(private registration: WorkerRegistration, private transport: Transport, private directory: string,
         private authorize: (jobID: string) => Promise<Connection>, private now = Date.now,
         private canonicalDirectory: (path: string) => string = realpathSync,
-        private authorizeGrant?: (grantID: string) => Promise<Connection>, queueDirectory?: string) {
+        private authorizeGrant?: (grantID: string) => Promise<Connection>, queueDirectory?: string, processProofs?: SessionProcessProofs) {
         // This path is independent of Dot, grant, checkout and HAPPY_HOME. All workers
         // for one OS user/machine use one durable machine ledger and kernel lock.
         if (registration.maxConcurrency !== undefined && registration.machineConcurrency !== undefined && registration.maxConcurrency !== registration.machineConcurrency) throw new ApiError('INVALID_CONCURRENCY');
@@ -37,6 +39,7 @@ export class ScopedWorker {
             machineConcurrency: registration.machineConcurrency === undefined ? registration.maxConcurrency ?? null : registration.machineConcurrency,
             projectOverrides,
         });
+        this.processProofs = processProofs ?? new SessionProcessProofs(join(this.queue.directory, 'session-process-proofs'), registration.machineID);
         const run = (t: QueueTask, command: Record<string, unknown>, launchCheck = false) => this.run({ id: t.id, workerID: registration.id, grantID: t.grantID,
             command, deadline: this.now() + 60000 }, () => this.currentGrant(t), true, launchCheck);
         this.scheduler = new TaskScheduler(this.queue, {
@@ -46,7 +49,17 @@ export class ScopedWorker {
                 return (await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID: t.sessionID })).process === 'stopped';
             },
             authorize: async t => { const result = await run(t, { version: 1, method: 'sessions.status', sessionID: t.sessionID, cursor: 0, limit: 1 }, true); if(!result.ok)throw new ApiError(result.error?.code??'EXECUTION_UNAVAILABLE',503); },
-            observe: async t => t.legacy ? this.observeLegacy(t.sessionID) : this.observeTask(t, run),
+            observe: async t => {
+                if (!t.legacy) return this.observeTask(t, run);
+                try {
+                    const observed = await this.observeLegacy(t.sessionID);
+                    if (observed.process === 'unknown' && !observed.sessionOwnerVerified) this.queue.restoreLegacyExclusion(t);
+                    return observed;
+                } catch (error) {
+                    this.queue.restoreLegacyExclusion(t);
+                    throw error;
+                }
+            },
             send: async t => {
                 const result: any = await run(t, { version: 1, method: 'sessions.send', sessionID: t.sessionID, requestID: t.requestID, text: t.text });
                 if (!result.ok || result.data?.state !== 'submitted' || typeof result.data.seq !== 'number') throw new ApiError(result.error?.code ?? 'DISPATCH_UNKNOWN', 503);
@@ -67,6 +80,11 @@ export class ScopedWorker {
         } while (cursor);
         throw new ApiError('NOT_FOUND', 404);
     }
+    private schedulingProof(session: { id: string; metadata: unknown }, process: string) {
+        if (process === 'running') this.processProofs.recordRunning(session, process);
+        const sessionOwnerVerified = process === 'running' || this.processProofs.verify(session);
+        return { sessionOwnerVerified, dispatchable: process === 'unknown' && sessionOwnerVerified };
+    }
     private async observeLegacy(sessionID: string): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
         const session = await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
         if (!machine) throw new ApiError('MACHINE_UNAVAILABLE', 503);
@@ -80,7 +98,7 @@ export class ScopedWorker {
                 if (m.kind === 'turn' && 'turnID' in m && 'state' in m) { lastTurn = raw.seq; turnID = m.turnID; outcome = m.state as Observation['outcome']; }
             }
             const next = page.messages.at(-1)?.seq ?? cursor;
-            if (!page.hasMore) { const pendingInput = lastInput > lastTurn; return { process: String(process.process ?? 'unknown'), cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session }; }
+            if (!page.hasMore) { const pendingInput = lastInput > lastTurn, state = String(process.process ?? 'unknown'); return { process: state, cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session, ...this.schedulingProof(session, state) }; }
             if (next <= cursor) throw new ApiError('INVALID_CURSOR'); cursor = next;
         }
         throw new ApiError('OBSERVATION_PAGE_LIMIT');
@@ -110,11 +128,11 @@ export class ScopedWorker {
             for (const session of page.sessions) {
                 if ((session.metadata as any)?.machineId !== this.registration.machineID) continue;
                 const active = this.queue.tasks().find(t => t.sessionID === session.id && occupiesSlot(t));
-                if (active && (!active.legacy || active.resources.length !== 1 || active.resources[0].key !== 'machine' || active.resources[0].mode !== 'exclusive')) continue;
+                if (active && (!active.legacy || !active.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))) continue;
                 const observed = await this.observeLegacy(session.id);
                 if (active) {
                     const pid = (observed.sourceSession.metadata as any)?.hostPid;
-                    if (observed.process === 'running' && (observed.outcome === 'running' || observed.pendingInput) && Number.isInteger(pid) && pid > 0 && pid === active.processID
+                    if (observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && (observed.outcome === 'running' || observed.pendingInput) && Number.isInteger(pid) && pid > 0 && pid === active.processID
                         && (observed.turnID !== undefined && observed.turnID === active.turnID
                             || observed.pendingInput && observed.seq !== undefined && observed.seq === active.seq && active.turnID === undefined)) {
                         this.queue.refineLegacyResources(active, this.legacyResources(observed.sourceSession));
@@ -123,7 +141,7 @@ export class ScopedWorker {
                 }
                 if (observed.outcome !== 'running' && !observed.pendingInput || observed.process === 'stopped') continue;
                 const pid = (observed.sourceSession.metadata as any)?.hostPid;
-                const knownOwner = observed.process === 'running' && Number.isInteger(pid) && pid > 0;
+                const knownOwner = observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && Number.isInteger(pid) && pid > 0;
                 this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`), workerID: this.registration.id, grantID: 'legacy-import', sessionID: session.id,
                     authorization: '', text: '', resources: knownOwner ? this.legacyResources(observed.sourceSession) : workspaceResources(), legacy: true, seq: observed.seq, turnID: observed.turnID, processID: Number.isInteger(pid) && pid > 0 ? pid : undefined });
             }
@@ -167,7 +185,7 @@ export class ScopedWorker {
                     if (message.turnID === turnID) outcome = message.state;
                 }
             }
-            if (!data.hasMore) { const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID); return { ...(workspace && outcome && outcome !== 'running' ? workspaceResult(workspace) : {}), process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome, externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID) }; }
+            if (!data.hasMore) { const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID); return { ...(workspace && outcome && outcome !== 'running' ? workspaceResult(workspace) : {}), process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome, externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID), ...this.schedulingProof(local, process) }; }
             if (data.nextCursor <= cursor) throw new ApiError('INVALID_CURSOR');
             cursor = data.nextCursor;
         }
@@ -352,6 +370,10 @@ export class ScopedWorker {
         workspace ??= command.method === 'requests.get' ? workspaces.find(w=>w.id===hash(`${live.id}\n${command.requestID}`)) : undefined;
         if (workspace && (result as any)?.data?.sessionID) {
             this.queue.transaction(s => { const w = s.workspaces.find(w => w.id === workspace!.id)!; w.sessionID = (result as any).data.sessionID; if ((result as any).data.options) w.resolvedOptions = (result as any).data.options; });
+            if ((result as any).data.process === 'running') {
+                // A corroboration cache failure cannot replace a confirmed create receipt.
+                try { this.processProofs.recordRunning(await this.localSession((result as any).data.sessionID), 'running'); } catch { /* Missing proof keeps later recovery conservative. */ }
+            }
             return { ...(result as any), data: { ...(result as any).data, execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch, baseCommit: workspace.baseCommit, projectID: workspace.projectID, port: workspace.port } } };
         }
         return result;

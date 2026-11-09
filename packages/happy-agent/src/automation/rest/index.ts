@@ -21,3 +21,5 @@ export type { SecretProvider } from '../production/secrets';
 
 export { TaskQueue } from './taskQueue';
 export { cleanCompletedWorkspace } from './taskWorkspaces';
+export { SessionProcessProofs, readLinuxProcess, LinuxProcessIdentitySchema } from './sessionProcessProofs';
+export type { LinuxProcessIdentity } from './sessionProcessProofs';

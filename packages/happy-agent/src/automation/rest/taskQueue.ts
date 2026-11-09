@@ -169,10 +169,22 @@ export class TaskQueue {
             const task = s.tasks.find(t => t.id === observed.id);
             if (!task || terminalTask(task) || task.fingerprint !== observed.fingerprint || task.processID !== observed.processID || task.turnID !== observed.turnID || task.seq !== observed.seq
                 || !task.legacy || task.grantID !== 'legacy-import' || task.authorization || task.text
-                || task.resources.length !== 1 || task.resources[0].key !== 'machine' || task.resources[0].mode !== 'exclusive'
+                || !task.resources.some(r => r.key === 'machine' && r.mode === 'exclusive')
+                || task.resources.length !== 1 && canonicalBody(task.resources.filter(r => r.key !== 'machine')) !== canonicalBody(resources.filter(r => r.key !== 'machine'))
                 || !resources.some(r => r.key === 'machine' && r.mode === 'shared') || !resources.some(r => r.key.startsWith('repo:'))) return;
             task.resources = resources;
             task.fingerprint = taskFingerprint(task);
+        });
+    }
+    /** Losing corroboration restores conservative exclusion without dropping declared resources. */
+    restoreLegacyExclusion(observed: QueueTask) {
+        this.transaction(s => {
+            const task = s.tasks.find(t => t.id === observed.id);
+            if (!task || terminalTask(task) || task.fingerprint !== observed.fingerprint || task.processID !== observed.processID || task.turnID !== observed.turnID || task.seq !== observed.seq
+                || !task.legacy || task.grantID !== 'legacy-import' || task.authorization || task.text) return;
+            const machine = task.resources.find(r => r.key === 'machine');
+            if (machine?.mode !== 'shared') return;
+            machine.mode = 'exclusive'; task.fingerprint = taskFingerprint(task);
         });
     }
     cancellation(grantID: string, requestID: string) {

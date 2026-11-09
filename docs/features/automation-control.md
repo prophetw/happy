@@ -204,6 +204,10 @@ pnpm --dir packages/happy-app exec node --import tsx scripts/service-access.e2e.
 
 普通 Happy 会话的活跃轮次若能核对执行进程和 canonical repository，只占用该仓库的写锁及会话锁，不独占整台机器；已明确配置的 worktree 会话继续保留原并发模式和声明资源。旧版本自动导入的 `legacy-import` 全机锁，仅在重新观察到同一 PID 与明确相同的 turn，或同一已定义 pending input 序号后，才原子缩小范围并更新指纹；不重发输入、不终止会话。未知路径/进程及显式机器维护锁继续保守保留，真实终态仍由原观察流程释放。`execution.resources` 中的名称是字面合作锁，例如 `git-maintenance:happy` 不会自动映射成 Happy 仓库的 canonical Git 锁，跨仓操作需要参与者声明相同资源。
 
+Worker 重启后，旧 daemon 会话的 CLI `status.process` 仍可能是 `unknown`，不能因此声称可以停止该进程。调度器另在机器私有目录的 `session-process-proofs/` 保存只读佐证，严格绑定 machine/session、canonical repo/cwd 以及 Linux UID、boot ID、PID、startTicks 和 cgroup。只有强 RPC `running` 可自动记录；同一完整绑定重复观察不重写。原状态为 `unknown` 时，只有既存佐证与当前内核身份完全一致，才允许缩小自动导入的资源范围或对原队列中尚未派发的输入放行。该佐证不改变 status/cancel/stop、不授予项目权限，也不重放已派发的不明写入；佐证失效时恢复保守机器排他，原声明资源保留。独立子目录不改变 V2 队列格式，旧 reader 仍可读取队列。
+
+没有历史佐证的现存会话只能由本机管理员显式初始化：对成功维护目录执行 `python3 deploy/automation/bootstrap-session-process-proofs.py --maintenance /var/lib/happy-automation-maintenance/<成功记录> --release /home/dev/.local/share/happy-automation/releases/<已核验发布> --session <原会话ID>`。缺少 `--apply` 时只核验，不创建佐证目录或写文件；管理员检查输出后显式加 `--apply` 才导入。工具要求 root 私有、成功且原进程未变的维护证据和仍相同的 Worker invocation，再核对原会话当前 metadata 与内核 PID/startTicks/cgroup/cwd；写入通过固定 argv 的 `runuser -u dev` 交回原用户，继续接受 `privateFs` 的 UID1000、0700/0600 校验。它不写 `sessions.json`、不改授权/队列资源、不清锁、不发送任务。所有身份不明、路径/boot/PID/权限不匹配都拒绝。
+
 基址 `/happy-control/v1`，完整机器契约见 OpenAPI；所有响应为 version 1 envelope。
 
 | 方法/路径 | 必需 scope / 行为 |

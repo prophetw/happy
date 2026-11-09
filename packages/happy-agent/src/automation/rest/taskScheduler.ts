@@ -2,6 +2,7 @@ import { TaskQueue, occupiesSlot, terminalTask, type QueueTask } from './taskQue
 import { ApiError } from './schema';
 
 export type Observation = { resultCommit?: string; worktreeDirty?: boolean; pendingInput?: boolean; process: string; cursor: number; seq?: number; messageID?: string; turnID?: string;
+    sessionOwnerVerified?: boolean; dispatchable?: boolean;
     outcome?: 'running' | 'completed' | 'failed' | 'cancelled'; externalRunning?: boolean };
 export type QueueExecutor = {
     authorize: (task: QueueTask) => Promise<void>;
@@ -64,7 +65,7 @@ export class TaskScheduler {
                     await this.executor.authorize(task);
                     const before = await this.executor.observe(task);
                     if (before.process === 'stopped') { this.queue.update(task.id,t=>{if(t.state==='preparing'){t.state='failed';t.reason='session_stopped';t.finishedAt=Date.now();}});continue; }
-                    if (before.externalRunning || before.process !== 'running') {
+                    if (before.externalRunning || !(before.process === 'running' || before.process === 'unknown' && before.dispatchable === true)) {
                         this.queue.update(task.id, t => { if (t.state === 'preparing') { t.state = 'waiting-resource'; t.reason = before.externalRunning ? 'session_turn' : 'session_process_unknown'; t.notBefore=Date.now()+1000; } }); continue;
                     }
                     // Durable point of no automatic replay, before invoking the transport.
