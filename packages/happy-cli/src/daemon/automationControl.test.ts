@@ -162,3 +162,10 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
         expect(noPolicy.spawn).not.toHaveBeenCalled();
     });
 });
+
+it('passes only fixed task-local environment keys without changing launch permissions', async()=>{
+    const s=setup(),environment={TMPDIR:'/fixture/task-temp',HAPPY_TASK_ID:'task-a',HAPPY_TASK_PORT:'20001'};
+    expect(await s.control({...create,taskEnvironment:environment})).toMatchObject({state:'confirmed'});
+    expect(s.spawn.mock.calls[0]).toEqual(['/fixture',{agent:'codex',model:'gpt-6.1-sol',permissionMode:'default',effort:'high'},environment]);
+    const rejected=setup();expect(await rejected.control({...create,taskEnvironment:{NODE_OPTIONS:'--require /untrusted'}})).toMatchObject({errorCode:'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE'});expect(rejected.spawn).not.toHaveBeenCalled();
+});

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { hash } from '../journal';
 import type { ControlClient } from './client';
 import { ApiError, identifier, scopeSchema } from './schema';
+import { executionSchema } from './execution';
 import { taskOptionsSchema } from './options';
 import { loadControlSkills } from './skills';
 
@@ -15,13 +16,13 @@ export const toolContracts = {
     happy_machines: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/machines', query: true },
     happy_projects: { method: 'GET', schema: z.object({}).strict(), route: (_: any) => '/projects' },
     happy_sessions: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/sessions', query: true },
-    happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional() }).strict(), route: (_: any) => '/tasks' },
+    happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional(), execution: executionSchema.optional() }).strict(), route: (_: any) => '/tasks' },
     happy_options: { method: 'GET', schema: z.object({ machineID: identifier }).strict(), route: (_: any) => '/options', query: true },
     happy_send: { method: 'POST', schema: z.object({ sessionID: identifier, requestID: identifier, text: z.string().min(1).max(100000) }).strict(), route: (a: any) => `/sessions/${a.sessionID}/messages`, omit: 'sessionID' },
     happy_status: { method: 'GET', schema: z.object(events).strict(), route: (a: any) => `/sessions/${a.sessionID}/status`, query: true, omit: 'sessionID' },
     happy_events: { method: 'GET', schema: z.object(events).strict(), route: (a: any) => `/sessions/${a.sessionID}/events`, query: true, omit: 'sessionID' },
     happy_result: { method: 'GET', schema: z.object({ ...events, turnID: identifier }).strict(), route: (a: any) => `/sessions/${a.sessionID}/result`, query: true, omit: 'sessionID' },
-    happy_cancel: { method: 'POST', schema: z.object({ sessionID: identifier, requestID: identifier }).strict(), route: (a: any) => `/sessions/${a.sessionID}/cancel`, omit: 'sessionID' },
+    happy_cancel: { method: 'POST', schema: z.object({ sessionID: identifier, requestID: identifier, sendRequestID: identifier.optional() }).strict(), route: (a: any) => `/sessions/${a.sessionID}/cancel`, omit: 'sessionID' },
     happy_request_status: { method: 'GET', schema: z.object({ requestID: identifier }).strict(), route: (a: any) => `/requests/${a.requestID}`, omit: 'requestID' },
 } as const;
 export async function callControlTool(client: ControlClient, grantID: string, name: keyof typeof toolContracts, input: unknown) {
@@ -58,7 +59,7 @@ export function createControlMcp(client: ControlClient, grant: () => string, opt
     };
     const server = new McpServer({ name: 'happy-control', version: '1.0.0' });
     for (const [name, contract] of Object.entries(toolContracts)) server.registerTool(name, {
-        description: `Happy REST control: ${name}. Mutations require a stable requestID; query uncertain requests before retrying.`,
+        description: `Happy REST control: ${name}. Mutations require a stable requestID; query uncertain requests before retrying. Create only creates a real session; send durably queues a future turn and does not steer an active turn. Queued means accepted, not started/completed. Use execution.mode=worktree for isolated code tasks, integration with named resources for merge/push/service actions; legacy defaults to machine-wide serial execution. Worktree isolation is not a permission sandbox. Never change the user's permissionMode. Cancel may target sendRequestID to cancel only one queued turn.`,
         inputSchema: contract.schema,
     }, async (input: unknown): Promise<CallToolResult> => {
         try {

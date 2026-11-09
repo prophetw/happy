@@ -64,7 +64,7 @@ describe('independent approval/authentication', () => {
         const r = await setup(), grant = await r.connect(), c = r.gateway.grants.get(grant);
         const job = { id: 'job1', workerID: 'worker', grantID: grant, deadline: Date.now()+60000, command: { version: 1, method: 'tasks.create', requestID: 'rogue', machineID: 'machineA', projectID: 'projectA' } };
         for (const registration of [{ ...r.registration, userID: 'other' }, { ...r.registration, machineID: 'other' }, { ...r.registration, projects: [] }, { ...r.registration, methods: ['machines.list'] }]) {
-            await expect(new ScopedWorker(registration, r.transport, join(r.dir, 'rogue'), async () => c).execute(job)).rejects.toThrow();
+            await expect(new ScopedWorker(registration, r.transport, join(r.dir, 'rogue'), async () => c, Date.now, undefined, undefined, join(r.dir, 'queue')).execute(job)).rejects.toThrow();
         }
         expect(r.spawnCount).toBe(0);
     });
@@ -152,7 +152,8 @@ describe('loopback REST → worker → existing core/daemon', () => {
     it('recovers durable message ack and rejects changed payload', async () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker(); const sid = (await create(r, grant)).data.sessionID;
         r.loseSendAck(); const body = { requestID: 'send1', text: 'fixture private instruction' };
-        expect((await r.client.request('POST', `/sessions/${sid}/messages`, body, grant)).ok).toBe(false);
+        expect((await r.client.request('POST', `/sessions/${sid}/messages`, body, grant)).data.state).toBe('queued');
+        await r.waitForSubmitted(grant, 'send1');
         expect((await r.client.request('GET', '/requests/send1', undefined, grant)).data.state).toBe('submitted');
         expect((await r.client.request('POST', `/sessions/${sid}/messages`, body, grant)).data.state).toBe('submitted'); expect(r.sendCount).toBe(1);
         expect((await r.client.request('POST', `/sessions/${sid}/messages`, { ...body, text: 'changed' }, grant)).error.code).toBe('REQUEST_ID_CONFLICT');
@@ -182,7 +183,7 @@ describe('loopback REST → worker → existing core/daemon', () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker();
         const input = { requestID: 'parent', machineID: 'machineA', projectID: 'projectA', text: 'fixture task' };
         const first = await startTask(r.client, grant, input), again = await startTask(r.client, grant, input);
-        expect(first.result.data.state).toBe('submitted'); expect(again.requests).toEqual(first.requests); expect(r.spawnCount).toBe(1); expect(r.sendCount).toBe(1);
+        expect(first.result.data.state).toBe('queued'); await r.waitForSubmitted(grant, first.requests.send); expect(again.requests).toEqual(first.requests); expect(r.spawnCount).toBe(1); expect(r.sendCount).toBe(1);
         expect((await callControlTool(r.client, grant, 'happy_machines', {})).ok).toBe(true);
         await expect(callControlTool(r.client, grant, 'happy_send', { sessionID: first.sessionID, requestID: 'bad', text: 'x', shell: 'arbitrary' })).rejects.toThrow();
         expect(Object.keys(toolContracts).some(n => /shell|fetch|exec/.test(n))).toBe(false);

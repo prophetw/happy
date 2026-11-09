@@ -10,7 +10,7 @@ import { MetadataStore } from './store';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
-import { ApiError, approvalSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
+import { ApiError, cancelSchema, approvalSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
@@ -297,13 +297,13 @@ export function createGateway(options: GatewayOptions) {
         const c = active(req, 'tasks.create'), body = createTaskSchema.parse(req.body);
         if (body.machineID !== c.machineID || !scopeProjectIDs(c).includes(body.projectID)) throw new ApiError('SCOPE_DENIED', 403);
         const result = await invoke(c, { method: 'tasks.create', requestID: body.requestID, machineID: c.machineID, projectID: body.projectID,
-            ...(body.options ? { options: body.options } : {}) }, true);
+            ...(body.options ? { options: body.options } : {}), ...(body.execution ? { execution: body.execution } : {}) }, true);
         return reply.code(result?.ok ? 200 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
     });
     for (const [suffix, methodName] of [['messages', 'sessions.send'], ['cancel', 'sessions.cancel']] as const) {
         app.post<{ Params: { id: string } }>(`${base}/sessions/:id/${suffix}`, async (req, reply) => {
             const c = active(req, methodName), sessionID = identifier.parse(req.params.id); target(c, sessionID);
-            const body = methodName === 'sessions.send' ? sendSchema.parse(req.body) : mutationSchema.parse(req.body);
+            const body = methodName === 'sessions.send' ? sendSchema.parse(req.body) : cancelSchema.parse(req.body);
             const result = await invoke(c, { method: methodName, sessionID, ...body }, true);
             return reply.code(result?.ok ? 200 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
         });
@@ -356,6 +356,14 @@ export function createGateway(options: GatewayOptions) {
     });
     app.post(`${base}/worker/directory-result`, async req => {
         const p = proof(req, 'worker'); directories.result(p.registration as WorkerRegistration, req.body); return ok({ accepted: true });
+    });
+    // Queue authorization outlives the short-lived transport job, never the grant.
+    app.post(`${base}/worker/authorize`, async req => {
+        const p = proof(req, 'worker'), body = req.body as Record<string, unknown>;
+        if (!body || Object.keys(body).some(k => k !== 'grantID')) throw new ApiError('INVALID_REQUEST');
+        const c = grants.active(identifier.parse(body.grantID));
+        if (c.workerID !== p.registration.id || c.userID !== p.registration.userID) throw new ApiError('SCOPE_DENIED', 403);
+        return ok(c);
     });
     app.post(`${base}/worker/check`, async req => {
         const p = proof(req, 'worker'), id = workerCheckSchema.parse(req.body).jobID, job = jobs.get(id);

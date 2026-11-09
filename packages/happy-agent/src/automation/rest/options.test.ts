@@ -204,7 +204,7 @@ describe('REST option discovery and allowlisted task creation', () => {
         const { startTask } = await import('./mcp');
         const started = await startTask(r.client, grant, { requestID: 'composite', machineID: 'machineA', projectID: 'projectA', text: 'fixture task',
             options: { agent: 'claude', permissionMode: 'acceptEdits' } });
-        expect(started.result.data.state).toBe('submitted');
+        expect(started.result.data.state).toBe('queued'); await r.waitForSubmitted(grant, started.requests.send);
         expect(r.launches.at(-1).options).toEqual({ agent: 'claude', model: 'default', permissionMode: 'acceptEdits', effort: '' });
         // A delegated claude session must remain usable for status/logs, not
         // just for the initial send (flavor check in the core session lookup).

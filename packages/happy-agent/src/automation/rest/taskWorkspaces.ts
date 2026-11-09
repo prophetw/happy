@@ -1,0 +1,134 @@
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, realpathSync, constants, openSync, closeSync, fstatSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { hash } from '../journal';
+import { canonicalBody } from './auth';
+import { ApiError } from './schema';
+import { privateDirectory } from './privateFs';
+import { TaskQueue, executionSchema, type Workspace, type Resource } from './taskQueue';
+
+const git = (cwd: string, args: string[]) => execFileSync('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C', cwd, ...args], {
+    encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+}).trim();
+
+/** No checkout holds the machine queue lock or blocks the worker event loop.
+ * The per-workspace flock is inherited by Git, so parent death cannot permit
+ * a second checkout while the original Git process is still running.
+ */
+async function gitAsync(cwd: string, args: string[], lockFD?: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const child = spawn('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C',cwd,...args], { stdio: lockFD === undefined ? ['ignore','pipe','pipe'] : ['ignore','pipe','pipe',lockFD],
+            detached: true, env: {...process.env,GIT_TERMINAL_PROMPT:'0'} });
+        let output = '', bytes = 0, timedOut = false;
+        child.stdout?.on('data', data => { bytes += data.length; if (bytes <= 1024*1024) output += data; });
+        child.stderr?.on('data', data => { bytes += data.length; });
+        const timer = setTimeout(() => { timedOut = true; if (child.pid) { try { process.kill(-child.pid,'SIGTERM'); } catch { /* Exit is independently observed below. */ } } },30000);
+        child.once('error', () => { clearTimeout(timer); reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
+        child.once('close', code => { clearTimeout(timer); code === 0 && !timedOut && bytes <= 1024*1024 ? resolve(output.trim()) : reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
+    });
+}
+async function workspaceLock(directory: string, id: string): Promise<number> {
+    const locks = join(directory,'workspace-locks'); privateDirectory(locks,true);
+    const fd = openSync(join(locks,id),constants.O_CREAT|constants.O_RDWR|constants.O_NOFOLLOW,0o600);
+    try {
+        const stat=fstatSync(fd);if(!stat.isFile()||stat.nlink!==1||stat.uid!==process.getuid?.()||(stat.mode&0o077))throw new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503);
+        await new Promise<void>((resolve,reject) => {
+            const child = spawn('flock',['--exclusive','--timeout','30','3'],{stdio:['ignore','ignore','ignore',fd]});
+            child.once('error',()=>reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)));
+            child.once('close',code=>code===0?resolve():reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)));
+        });
+        return fd;
+    } catch(e) {closeSync(fd);throw e;}
+}
+
+/** Fixed committed baseline; no dependency links, dist copies, stash or main mutations. */
+export async function prepareWorkspace(queue: TaskQueue, input: { requestID: string; grantID: string; projectID: string; root: string; execution?: unknown; options?: unknown }, authorize: () => Promise<void> = async()=>{}): Promise<Workspace> {
+    const execution = executionSchema.parse(input.execution ?? {}), id = hash(`${input.grantID}\n${input.requestID}`);
+    const fingerprint = hash(canonicalBody({ ...input, execution }));
+    let workspace = queue.workspaces(input.grantID).find(w=>w.id===id);
+    if (workspace && workspace.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT',409);
+    if (!workspace) {
+        if (realpathSync(input.root) !== input.root) throw new ApiError('PROJECT_PATH_CHANGED',403);
+        let repository: string, baseCommit: string | undefined;
+        try { repository = realpathSync(resolve(input.root,await gitAsync(input.root,['rev-parse','--git-common-dir']))); }
+        catch { if (!['legacy','integration'].includes(execution.mode)) throw new ApiError('WORKTREE_REQUIRES_GIT'); repository = input.root; }
+        if (['worktree','read-only'].includes(execution.mode)) {
+            if (realpathSync(await gitAsync(input.root,['rev-parse','--show-toplevel'])) !== input.root) throw new ApiError('WORKTREE_REQUIRES_REPOSITORY_ROOT',403);
+            baseCommit = await gitAsync(input.root,['rev-parse','--verify','HEAD^{commit}']);
+        }
+        workspace = queue.transaction(s=>{
+            if (s.tasks.some(t=>t.id===id)||s.cancellations.some(c=>c.grantID===input.grantID&&c.requestID===input.requestID)) throw new ApiError('REQUEST_ID_CONFLICT',409);
+            const prior=s.workspaces.find(w=>w.id===id);
+            if(prior){if(prior.fingerprint!==fingerprint)throw new ApiError('REQUEST_ID_CONFLICT',409);return prior;}
+            const port=20000+s.workspaces.length;if(port>60000)throw new ApiError('TASK_PORT_RANGE_EXHAUSTED');
+            const value: Workspace={id,fingerprint,grantID:input.grantID,projectID:input.projectID,root:input.root,repository,
+                cwd:baseCommit?join(queue.directory,'worktrees',id):input.root,branch:baseCommit?`dot-task/${id}`:undefined,baseCommit,execution,
+                options:input.options as Record<string,unknown>|undefined,temporaryDirectory:join(queue.directory,'temporary',id),port,stage:'preparing',preparationPID:process.pid};
+            s.workspaces.push(value);return value;
+        });
+    }
+    const fd=await workspaceLock(queue.directory,id);
+    try {
+        workspace=queue.workspaces(input.grantID).find(w=>w.id===id)!;
+        if(workspace.stage==='preparing') {
+            queue.transaction(s=>{s.workspaces.find(w=>w.id===id)!.preparationPID=process.pid;});
+            if(workspace.branch&&!existsSync(workspace.cwd)) {
+                privateDirectory(join(queue.directory,'worktrees'),true);
+                await authorize();
+                await gitAsync(input.root,['worktree','add','-b',workspace.branch,workspace.cwd,workspace.baseCommit!],fd);
+            }
+            // A partially checked out/conflicting directory is retained. Never reset/force it.
+            verifyWorkspace(workspace);
+            if(workspace.branch && git(workspace.cwd,['status','--porcelain=v1','--untracked-files=all'])) throw new ApiError('WORKTREE_RECOVERY_REQUIRED',409);
+            privateDirectory(workspace.temporaryDirectory,true);
+            queue.transaction(s=>{const w=s.workspaces.find(w=>w.id===id)!;w.stage='ready';delete w.preparationError;});
+        } else verifyWorkspace(workspace);
+        return queue.workspaces(input.grantID).find(w=>w.id===id)!;
+    } catch(e) {
+        queue.transaction(s=>{const w=s.workspaces.find(w=>w.id===id)!;w.preparationError='WORKTREE_PREPARATION_UNCONFIRMED';});
+        throw e;
+    } finally {closeSync(fd);}
+}
+export function verifyWorkspace(w: Workspace) {
+    if (realpathSync(w.root) !== w.root || realpathSync(w.cwd) !== w.cwd) throw new ApiError('PROJECT_PATH_CHANGED', 403);
+    if (w.branch) {
+        const common = realpathSync(resolve(w.cwd, git(w.cwd, ['rev-parse', '--git-common-dir'])));
+        if (common !== w.repository || git(w.cwd, ['symbolic-ref', '--short', 'HEAD']) !== w.branch
+            || git(w.cwd, ['merge-base', '--is-ancestor', w.baseCommit!, 'HEAD']) !== '') throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
+    }
+}
+export function workspaceResources(w?: Workspace, sessionID?: string): Resource[] {
+    const result: Resource[] = [{ key: 'machine', mode: !w || w.execution.mode === 'legacy' ? 'exclusive' : 'shared' }];
+    if (w) {
+        result.push({ key: `repo:${hash(w.repository)}`, mode: ['worktree', 'read-only'].includes(w.execution.mode) ? 'shared' : 'exclusive' });
+        result.push(...w.execution.resources.map(key => ({ key: `declared:${key}`, mode: 'exclusive' as const })));
+    }
+    if (sessionID) result.push({ key: `session:${sessionID}`, mode: 'exclusive' });
+    return result;
+}
+
+/** Explicit cleanup only. Failed/cancelled/dirty worktrees and every branch are retained. */
+export function cleanCompletedWorkspace(queue: TaskQueue, id: string, processStopped: () => boolean = () => false) {
+    return queue.transaction(s => {
+        const workspace = s.workspaces.find(w => w.id === id);
+        if (!workspace?.branch) throw new ApiError('WORKTREE_NOT_MANAGED');
+        const tasks = s.tasks.filter(t => t.workspaceID === id);
+        if (!tasks.length || tasks.some(t => t.state !== 'completed')) throw new ApiError('WORKTREE_IN_USE');
+        verifyWorkspace(workspace);
+        if (git(workspace.cwd, ['status', '--porcelain=v1', '--untracked-files=all'])) throw new ApiError('WORKTREE_DIRTY');
+        if (!processStopped()) throw new ApiError('WORKTREE_PROCESS_UNCONFIRMED');
+        git(workspace.root, ['worktree', 'remove', workspace.cwd]);
+        return { branch: workspace.branch, baseCommit: workspace.baseCommit, retained: true };
+    });
+}
+
+export function workspaceResult(w: Workspace) {
+    verifyWorkspace(w);
+    if (w.repository === w.root) return {};
+    return { resultCommit: git(w.cwd,['rev-parse','--verify','HEAD^{commit}']), worktreeDirty: Boolean(git(w.cwd,['status','--porcelain=v1','--untracked-files=all'])) };
+}
+
+export function assertIntegrationReady(w: Workspace) {
+    if(w.execution.mode==='integration' && w.repository!==w.root && git(w.cwd,['status','--porcelain=v1','--untracked-files=all'])) throw new ApiError('INTEGRATION_WORKTREE_DIRTY',409);
+}

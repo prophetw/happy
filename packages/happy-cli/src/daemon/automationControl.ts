@@ -17,7 +17,7 @@ type Receipt = {
 
 type Dependencies = {
     directory: string;
-    spawn: (directory: string, options: ResolvedTaskOptions) => Promise<{ type: string; sessionId?: string }>;
+    spawn: (directory: string, options: ResolvedTaskOptions, environment?: Record<string, string>) => Promise<{ type: string; sessionId?: string }>;
     stop: (sessionID: string) => boolean;
     // A false value is not evidence of exit. Only the owner may attest stopped.
     observe: (sessionID: string) => 'running' | 'stopping' | 'stopped' | 'unknown';
@@ -142,6 +142,8 @@ export function createAutomationControl(deps: Dependencies) {
             // Fixed key order: idempotency is stable regardless of caller JSON order.
             const requested = { agent: parsed.data.agent, model: parsed.data.model, permissionMode: parsed.data.permissionMode, effort: parsed.data.effort };
             const fingerprint = digest(JSON.stringify({ operation, directory, sessionID, options: requested }));
+            const environment = req.taskEnvironment as Record<string, unknown> | undefined;
+            if (environment && (typeof environment !== 'object' || Array.isArray(environment) || Object.entries(environment).some(([k,v]) => !['TMPDIR','TMP','TEMP','HAPPY_TASK_ID','HAPPY_TASK_PORT'].includes(k) || typeof v !== 'string' || v.length > 4096))) throw new Error('INVALID_REQUEST');
             const previous = read(requestID);
             if (previous) return previous.fingerprint === fingerprint ? view(previous) : { version: 1, errorCode: 'REQUEST_ID_CONFLICT' };
             const receipt: Receipt = { version: 1, requestID, fingerprint, operation, state: 'pending', sessionID,
@@ -151,7 +153,7 @@ export function createAutomationControl(deps: Dependencies) {
             inFlight.add(requestID);
             try {
                 if (operation === 'create') {
-                    const result = await deps.spawn(directory!, launch);
+                    const result = environment ? await deps.spawn(directory!, launch, environment as Record<string, string>) : await deps.spawn(directory!, launch);
                     if (result.type === 'success' && result.sessionId) {
                         receipt.sessionID = result.sessionId;
                         receipt.state = 'confirmed';

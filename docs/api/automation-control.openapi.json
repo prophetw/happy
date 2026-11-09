@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Happy scoped automation control",
-    "version": "1.8.0",
+    "version": "1.9.0",
     "description": "Scoped signed REST with optional owner-approved service bearer tokens and explicit multi-project service scopes. tasks.create accepts owner-allowlisted launch options (agent/model/permissionMode/effort) discovered via /options. Worker modelSource=machine follows the live Happy Claude/Codex/Agy directory; explicit grant subsets still narrow it and permission modes remain separately allowlisted. /projects exposes only the current grant project scope. HTTP MCP supports separate OAuth or explicit service-token-v1 modes; service bearers never authenticate owner, worker or OAuth MCP endpoints."
   },
   "servers": [
@@ -3113,7 +3113,7 @@
     "/tasks": {
       "post": {
         "operationId": "createTask",
-        "description": "tasks.create; one explicit projectID selected from this grant, creates empty dedicated session. Optional options {agent,model,permissionMode,effort} select launch overrides; every override must be inside the worker allowlist AND this grant’s approved options subset (else OPTION_DENIED). Omit options for the worker defaults. Send text separately with another stable requestID. Idempotency remains grant-wide: reusing one requestID for a different selected project or different options conflicts.",
+        "description": "tasks.create; one explicit projectID selected from this grant, creates empty real dedicated session; execution.mode worktree creates a fixed-baseline isolated Git branch/worktree; legacy is machine-wide serial and integration locks the repository. execution.resources names machine-scoped exclusive resources. Optional options {agent,model,permissionMode,effort} select launch overrides; every override must be inside the worker allowlist AND this grant’s approved options subset (else OPTION_DENIED). Omit options for the worker defaults. Send text separately with another stable requestID. Idempotency remains grant-wide: reusing one requestID for a different selected project or different options conflicts.",
         "security": [
           {
             "ClientProof": []
@@ -3167,6 +3167,35 @@
                         "pattern": "^[A-Za-z0-9_.:\\[\\]-]{1,128}$"
                       }
                     },
+                    "additionalProperties": false
+                  },
+                  "execution": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "default": "legacy",
+                        "type": "string",
+                        "enum": [
+                          "legacy",
+                          "worktree",
+                          "integration",
+                          "read-only"
+                        ]
+                      },
+                      "resources": {
+                        "default": [],
+                        "maxItems": 32,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "resources"
+                    ],
                     "additionalProperties": false
                   }
                 },
@@ -3589,7 +3618,7 @@
     "/sessions/{id}/messages": {
       "post": {
         "operationId": "send",
-        "description": "sessions.send; submitted means relay persistence, not agent consumption.",
+        "description": "sessions.send; persists a future turn and returns queued/queueID, with no steer. submitted means actual relay persistence with seq, not agent consumption. Machine-wide default concurrency is 2; same-session turns serialize.",
         "security": [
           {
             "ClientProof": []
@@ -3753,7 +3782,7 @@
     "/sessions/{id}/cancel": {
       "post": {
         "operationId": "cancel",
-        "description": "sessions.cancel; cancel_requested does not prove stopped.",
+        "description": "sessions.cancel; optional sendRequestID cancels one queued/active turn; queued cancellation has no process side effects. Untargeted cancels the session. cancel_requested does not prove stopped.",
         "security": [
           {
             "ClientProof": []
@@ -3782,6 +3811,10 @@
                 "type": "object",
                 "properties": {
                   "requestID": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                  },
+                  "sendRequestID": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9_-]{1,128}$"
                   }
@@ -4846,6 +4879,151 @@
                 "required": [
                   "jobID",
                   "result"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Mutation outcome uncertain: query the SAME requestID; no automatic redispatch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "401",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "409",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "413",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "426": {
+            "description": "426",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "503",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/worker/authorize": {
+      "post": {
+        "operationId": "worker_authorize",
+        "description": "Internal queue reauthorization by live grantID after the transport job expires. Worker/user/machine ownership is checked.",
+        "security": [
+          {
+            "WorkerProof": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "grantID": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,128}$"
+                  }
+                },
+                "required": [
+                  "grantID"
                 ],
                 "additionalProperties": false
               }

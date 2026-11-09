@@ -85,7 +85,9 @@ describe('explicit multi-project service grants, fixture-only identities/transpo
         expect((await create(r, token, 'projectA', 'create_b')).body.error.code).toBe('REQUEST_ID_CONFLICT');
         for (const sid of [a, b]) {
             const message = await request(r, token, `/sessions/${sid}/messages`, 'POST', { requestID: 'send_' + sid, text: 'isolated-multi-project-instruction' });
-            expect(message.body.data.state).toBe('submitted');
+            expect(message.body.data.state).toBe('queued');
+            let submitted: any; for (let i=0;i<100;i++) { await r.pump(); submitted = await request(r, token, '/requests/send_' + sid); if(submitted.body.data?.state === 'submitted') break; await new Promise(resolve=>setTimeout(resolve,20)); }
+            expect(submitted.body.data.state).toBe('submitted');
             r.complete(sid, 'turn_' + sid); let cursor = 0, ready = false;
             for (let i = 0; i < 4; i++) {
                 const result = await request(r, token, `/sessions/${sid}/result?turnID=turn_${sid}&after_seq=${cursor}&limit=2`);
@@ -126,9 +128,9 @@ describe('explicit multi-project service grants, fixture-only identities/transpo
             { ...r.registration, projects: r.registration.projects.filter((p: any) => p.id !== 'projectB') },
             { ...r.registration, methods: ['machines.list'] },
             { ...r.registration, projects: r.registration.projects.map((p: any) => p.id === 'projectB' ? { ...p, directory: r.projectC } : p) }];
-        for (const registration of registrations) await expect(new ScopedWorker(registration, r.transport, join(r.dir, 'rogue'), async () => c).execute(job(c))).rejects.toThrow();
-        await expect(new ScopedWorker(r.registration, r.transport, join(r.dir, 'rogue'), async () => c).execute(job(c, 'projectC'))).rejects.toThrow('SCOPE_DENIED');
-        await expect(new ScopedWorker(r.registration, r.transport, join(r.dir, 'rogue'), async () => c, Date.now, p => p === r.projectB ? r.projectC : p).execute(job(c))).rejects.toThrow('PROJECT_PATH_CHANGED');
+        for (const registration of registrations) await expect(new ScopedWorker(registration, r.transport, join(r.dir, 'rogue'), async () => c, Date.now, undefined, undefined, join(r.dir, 'queue')).execute(job(c))).rejects.toThrow();
+        await expect(new ScopedWorker(r.registration, r.transport, join(r.dir, 'rogue'), async () => c, Date.now, undefined, undefined, join(r.dir, 'queue')).execute(job(c, 'projectC'))).rejects.toThrow('SCOPE_DENIED');
+        await expect(new ScopedWorker(r.registration, r.transport, join(r.dir, 'rogue'), async () => c, Date.now, p => p === r.projectB ? r.projectC : p, undefined, join(r.dir, 'queue')).execute(job(c))).rejects.toThrow('PROJECT_PATH_CHANGED');
         expect(r.spawnCount).toBe(0);
     });
     it('invalidates the whole grant if any bound directory is rebound, and restoring config cannot revive it', async () => {
@@ -181,7 +183,7 @@ describe('explicit multi-project service grants, fixture-only identities/transpo
             if (route === '/compatibility') return { ok: true, data: supports ? { projectScopes: 1 } : {} };
             polls.push(value); return { ok: true, data: null };
         } } as unknown as ProofClient;
-        const runner = new HTTPWorkerRunner(client, r.registration, r.transport, join(r.dir, 'upgrade-worker'), () => time);
+        const runner = new HTTPWorkerRunner(client, r.registration, r.transport, join(r.dir, 'upgrade-worker'), () => time, undefined, join(r.dir, 'queue'));
         await runner.pollOnce(); expect(polls[0].projectScopes).toBeUndefined();
         supports = true; time += 30000; await runner.pollOnce(); expect(polls[1].projectScopes).toBe(1);
     });
@@ -192,8 +194,8 @@ describe('explicit multi-project service grants, fixture-only identities/transpo
             polls.push(value); if (reject) { reject = false; return { ok: false, error: { code: 'INVALID_REQUEST' } }; }
             return { ok: true, data: null };
         } } as unknown as ProofClient;
-        await new HTTPWorkerRunner(client, r.registration, r.transport, join(r.dir, 'legacy-worker')).pollOnce(); expect(polls[0].projectScopes).toBeUndefined();
-        supports = true; const runner = new HTTPWorkerRunner(client, r.registration, r.transport, join(r.dir, 'new-worker'));
+        await new HTTPWorkerRunner(client, r.registration, r.transport, join(r.dir, 'legacy-worker'), Date.now, undefined, join(r.dir, 'queue')).pollOnce(); expect(polls[0].projectScopes).toBeUndefined();
+        supports = true; const runner = new HTTPWorkerRunner(client, r.registration, r.transport, join(r.dir, 'new-worker'), Date.now, undefined, join(r.dir, 'queue'));
         await runner.pollOnce(); expect(polls[1].projectScopes).toBe(1);
         supports = false; reject = true; await expect(runner.pollOnce()).rejects.toThrow('INVALID_REQUEST');
         await runner.pollOnce(); expect(polls.at(-1).projectScopes).toBeUndefined();

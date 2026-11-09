@@ -36,7 +36,8 @@ export function testloopDotsCommand(raw: TestloopDotsRequest): string {
 
 const workSummary = z.object({ id: uuid, title: z.string().max(200), kind: z.string().max(60), status: z.string().max(80),
     needsReview: z.boolean(), projectID: z.string().max(200).nullable(), goalPhase: z.string().max(80).nullable() });
-const workDetail = workSummary.extend({ instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
+const executionLocation = z.object({ mode: z.string(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional() });
+const workDetail = workSummary.extend({ execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
     nextWakeAt: z.string().nullable(), finishedAt: z.string().nullable(), executionSessionId: sessionId.nullable(),
     executionOutcome: z.string().max(80).nullable(), businessVerification: z.string().max(80),
     steps: z.array(z.object({ id: z.string().max(100), title: z.string().max(500), status: z.string().max(80) })).max(10),
@@ -132,8 +133,8 @@ export function testloopWorkStatus(task: { status: string; needsReview: boolean;
     if (task.needsReview) return '执行已结束，待验收';
     if (task.goalPhase === 'reviewing') return '独立验收中';
     if (task.goalPhase === 'repairing') return '返工中';
-    const labels: Record<string, string> = { queued: '等待执行', preparing: '准备中', running: '执行中', paused: '已暂停',
-        creating: '创建执行会话', created: '会话已创建，尚未交办', canceling: '正在取消',
+    const labels: Record<string, string> = { queued: '已排队，尚未开始', preparing: '准备执行', running: '执行中', paused: '已暂停',
+        'waiting-resource': '等待执行资源', creating: '创建执行会话', created: '会话已创建，尚未交办', canceling: '正在取消',
         awaiting_user: '等待你的答复', awaiting_approval: '等待审批', blocked: '遇到阻塞', failed: '执行失败',
         completed: '已完成', succeeded: '已完成', canceled: '已取消', scheduled: '待执行', deferred: '已延后',
         waiting_event: '等待事件', unscheduled: '没有后续安排' };

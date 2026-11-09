@@ -58,3 +58,5 @@ Dot 对话离线时显示“一键恢复”，调用当前 Relay 的 `POST /v1/d
 恢复服务部署配置、独立用户服务和反代路由见 TestLoop `docs/features/personal-assistant-operations.md` 的“Dot 页面一键恢复”。宿主离线、WSL未启动或物理电脑关机时，界面显示实际连接失败；不提供远程开机能力。手机接收新版需单独发布个人 preview OTA；浏览器验证不等于真机验收。
 
 2026-11-08私网Web/宿主恢复服务及[个人preview iOS OTA](https://expo.dev/accounts/prophetwayen/projects/happy/updates/3ba69aa4-47b2-40d7-9346-21a85595fd06)已发布，runtime21，来源82509012；启动包哈希与实际manifest已回读。真机是否加载仍未验证。
+
+并行执行与排队契约、机器额度、资源声明和升级边界见 [Dot 持久队列与机器级并行任务](dot-parallel-tasks.md)。

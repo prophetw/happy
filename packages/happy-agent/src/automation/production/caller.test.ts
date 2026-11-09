@@ -61,7 +61,8 @@ describe('fixed REST caller used by the assistant execution channel', () => {
             const sessionID = created.data.sessionID;
             expect((await f.call('happy_create_task', task)).data.sessionID).toBe(sessionID);
             expect(f.rig.spawnCount).toBe(1);
-            expect((await f.call('happy_send', { requestID: 'caller-send', sessionID, text: 'Isolated fixture instruction' })).data.state).toBe('submitted');
+            expect((await f.call('happy_send', { requestID: 'caller-send', sessionID, text: 'Isolated fixture instruction' })).data.state).toBe('queued');
+            await f.rig.waitForSubmitted('', 'caller-send',()=>f.call('happy_request_status',{requestID:'caller-send'}));
             f.rig.complete(sessionID);
             expect((await f.call('happy_events', { sessionID, after_seq: 0, limit: 100 })).data.nextCursor).toBeGreaterThan(0);
             expect((await f.call('happy_result', { sessionID, turnID: 'turn1' })).data.outcome).toBe('completed');

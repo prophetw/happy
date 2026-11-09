@@ -58,7 +58,8 @@ describe('owner-selected directories: fixture-only worker, Happy identity and en
             expect(a.status).toBe(200); expect(b.status).toBe(200); const sid = a.body.data.sessionID;
             expect((await r.transport.sessions()).sessions.find((s: any) => s.id === sid)?.metadata.path).toBe(p.directory);
             expect((await request(r, token, '/requests/' + create.requestID)).body.data.sessionID).toBe(sid);
-            expect((await request(r, token, `/sessions/${sid}/messages`, 'POST', { requestID: 'send_' + p.id, text: 'fixture directory task' })).body.data.state).toBe('submitted');
+            expect((await request(r, token, `/sessions/${sid}/messages`, 'POST', { requestID: 'send_' + p.id, text: 'fixture directory task' })).body.data.state).toBe('queued');
+            await r.waitForSubmitted('', 'send_'+p.id,async()=>(await request(r,token,'/requests/send_'+p.id)).body);
             r.complete(sid, p.id); expect((await request(r, token, `/sessions/${sid}/result?turnID=${p.id}`)).body.data.outcome).toBe('completed');
         }
         expect(r.spawnCount).toBe(2); expect(r.sendCount).toBe(2);

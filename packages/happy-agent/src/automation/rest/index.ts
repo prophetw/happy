@@ -18,3 +18,6 @@ export { openapi } from './openapi';
 
 export { EncryptedCredentialProvider } from '../production/secrets';
 export type { SecretProvider } from '../production/secrets';
+
+export { TaskQueue } from './taskQueue';
+export { cleanCompletedWorkspace } from './taskWorkspaces';
