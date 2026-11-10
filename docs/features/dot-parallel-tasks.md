@@ -1,6 +1,6 @@
 # Dot 持久队列与项目级并行任务
 
-本功能需要联合升级 Happy Control gateway、机器 Worker/CLI、Dot 宿主和 App/Web。源码实现不代表线上已启用；不自动修改现有服务或调度配置，不随任务完成自动集成、push、部署或 OTA。
+本功能需要联合升级 Happy Control gateway、机器 Worker/CLI、Dot 宿主和 App/Web。2026-11-10 的自主推进调整目前为已验证源码候选，未发布。源码实现不代表线上已启用；不自动修改现有服务或调度配置，不随任务完成自动集成、push、部署或 OTA。
 
 ## 受理契约
 
@@ -16,16 +16,16 @@
 
 执行阶段为 queued、waiting-resource、preparing、running、canceling、completed、failed、cancelled；blocked 表示执行/回执证据不足，不是可自动重试的失败。宿主还保留 created、awaiting_user 和历史 canceled 拼写。业务验收独立于 Agent turn 完成。
 
-## 隔离与资源
+## 自主推进与资源（2026-11-10 源码候选）
 
 Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、Journal 和权限检查，没有引入新队列服务。工作树基于受理 create 时的 HEAD commit，保留 root projectID、grant 和目录绑定。准备阶段禁用 Git checkout hooks 和 fsmonitor，避免 create 阶段触发仓库脚本；不自动安装依赖、构建或执行交办。worktree/read-only 首版只接受授权 Git 仓库顶层目录；子目录项目明确返回 WORKTREE_REQUIRES_REPOSITORY_ROOT，避免把兄弟目录扩大进执行 cwd。路径必须规范化且 realpath 不变；每次执行校验 Git common-dir、分支及基线祖先。非 Git 只支持 legacy/integration，worktree/read-only 明确拒绝，不复制未知目录。
 
 | mode | cwd | 默认资源 |
 | --- | --- | --- |
-| legacy（省略时） | 授权原目录 | machine 共享、canonical repo 排他、session 排他 |
-| worktree | 任务独立 worktree | machine 共享、repo 共享、session 排他 |
-| read-only | 任务独立 worktree | 同 worktree，且原始权限必须为 read-only，Worker/daemon allowlist 仍须允许 |
-| integration | 授权原目录 | machine 共享、repo 排他、session 排他 |
+| legacy（省略时） | 授权原目录；可接续已有未提交改动的开发和测试 | machine/repo 共享、实际 checkout 排他、session 排他 |
+| worktree | 任务独立 worktree | machine/repo 共享、实际 checkout 排他、session 排他 |
+| read-only | 任务独立 worktree | checkout 共享；原始权限必须为 read-only，Worker/daemon allowlist 仍须允许 |
+| integration | 授权原目录；保留未提交改动 | machine/repo 共享、实际 checkout 排他、session 排他 |
 
 `resources` 为机器范围的排他名字，如 `service:relay`、`database:orders`、`port:3000`。不同项目/Dot 使用相同名字会串行；资源等待不会阻塞无冲突任务。ready FIFO，并防止后到的冲突任务饿死前面的等待者。集成任务应显式声明服务、迁移或 push 的资源；不声明资源的 shell 行为不受资源锁拦截。worktree 是文件隔离，不是权限沙箱。
 
@@ -45,9 +45,9 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 }
 ```
 
-覆盖配置的路径在 Worker 启动时转成 canonical Git common-dir / 非 Git root；同仓库别名不能获得第二份名额，别名配置冲突拒绝启动。覆盖策略也持久化并跨进程核对。机器资源保护例如 machineConcurrency=6 是独立配置。不同项目普通 create/send 无需用户手写 execution 即可并行；同项目代码写入并行须用独立 worktree/session。legacy/integration 使用原目录并在仓库内排他，机器维护、部署、共享数据库和合 main 必须明确选 integration 并声明实际 service/database/repo 资源，不能伪装为普通项目写入。锁是调度约束，不是安全沙箱。
+覆盖配置的路径在 Worker 启动时转成 canonical Git common-dir / 非 Git root；同仓库别名不能获得第二份名额，别名配置冲突拒绝启动。覆盖策略也持久化并跨进程核对。机器资源保护例如 machineConcurrency=6 是独立配置。不同项目普通 create/send 无需用户手写 execution 即可并行；同项目代码写入并行须用独立 worktree/session。默认继续原目录，保留已有改动；legacy/integration 不再要求派发时 Git status 干净。所有已知项目以 canonical repo 统计名额，写入互斥收窄到实际 checkout；同仓原目录和独立 worktree 可同时推进，同一目录的写入仍排队。服务、数据库、发布与维护按实际共享对象声明命名资源，不因同仓就默认阻止独立任务。锁是调度约束，不是安全沙箱。
 
-回执/UI 分开显示 project-limit（本项目名额）、machine-limit（机器硬上限）、resource-wait（排他资源），另保留 session_turn 等顺序/恢复原因；创建空闲 session 不占执行槽。升级时读到的旧全局排他 turn 不提前解锁，新受理到已授权旧空闲 session 的普通 turn 则按真实项目锁调度。
+回执/UI 分开显示 project-limit（本项目名额）、machine-limit（机器硬上限）、resource-wait（排他资源），另保留 session_turn 等顺序/恢复原因；创建空闲 session 不占执行槽。旧全局排他 turn 在缺乏归属证据时保留；取得原进程/turn强证据后可收窄自动租约。新受理普通交办按真实checkout调度。
 
 账本持久记录任务/request/session/worktree/branch/baseCommit/resource、dispatcher PID、真实会话 PID和派发状态。短同步事务持有内核 flock，无计时过期锁；claim 在启动前持久化，发送前另写不可自动重派标记。慢 checkout 先持久化 workspace preparing/baseCommit/preparationPID，再以异步 Git 和独立 workspace flock 创建；Git 继承锁fd，宿主死亡而 Git 尚活时不能启动第二次 checkout。它不占机器全局事务锁。create 回执尚未有会话时返回 pending 和真实任务入口；收敛到 confirmed 前不能 send，准备中断可查原回执后使用原ID恢复。调度器死亡后先查原 core/daemon 回执与完整分页消息；活会话重接，未知派发保留槽位与资源，不因 PID/租约超时重复执行。旧活跃 turn 以只读方式接管为 legacy 排他占用，完整读取到最新页；旧空闲 PID 和已完成 turn 不算永久占用。此迁移不重派任何旧任务。
 
@@ -61,13 +61,23 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 默认保留所有 worktree、分支、日志和改动。失败、取消、dirty 或停止证据不足时不清理。`cleanCompletedWorkspace` 只用于操作者明确请求的本机维护：所有关联任务 completed、Git status 完全干净、调用方提供真实进程停止证明，才允许 `git worktree remove`；不删除分支。completed 回执显示 resultCommit 和 dirty；没有新提交或仍有 dirty 不得称代码已按 commit 交付。保存目录、任务 ID 和分支即可由用户继续检查；不能重放未知副作用任务作为“恢复”。
 
-integration 在开始执行前检查授权原目录的 Git status；含暂存、未暂存或未跟踪改动时保持 waiting-resource/integration_worktree_dirty，不发送执行指令，其他独立 worktree 可继续。集中集成要作为另一个明确授权的 integration 任务排队：核验最新 main 与远端，确认集成工作目录干净，依次 merge/cherry-pick 各任务 commit；冲突保留并处理，运行组合验证。未获 push/发布授权时只交付集成分支。禁止覆盖带未提交修改的主目录、盲推 main 或把所有 completed 自动部署。
+派发不再把原目录的暂存、未暂存或未跟踪改动作为拒绝条件。`integration` 保持原请求、原会话、原 cwd，不自动 stash/reset/commit，也不替换用户文件。实际 merge/push、测试服务操作由执行 Agent 按原授权和具体文件冲突处理；派发器不通过“清空工作区”解决问题。
+
+升级时只将精确匹配旧版自动生成格式的仓库租约收窄到 checkout。托管 workspace 校验原 Git 绑定；旧会话交办另核对原授权与目录；旧 live turn 仍需真实进程所有权和原 turn/seq 证据。保留 requestID、session、dispatch 标记及全部命名资源。显式机器维护、身份变化、未知归属和被修改的租约不被盲目放宽。原队列可原地继续，不通过取消/新建任务恢复。
+
+回执 `recovery` 说明等待哪个工作目录/命名资源、能否自动继续；同 grant 可显示占用执行会话，其他 grant 仅显示资源原因，不泄露其会话身份。仅确认的停止或结束才释放实际执行租约；未知写入继续核对原请求，不自动重发。
+
+宿主临时读取失败保留最后确认的 queued/running 等执行状态；尚未确认的执行显示 observing。24小时/10000次检查是滚动观察窗口，达到后续期，不将任务改为永久 blocked。仍有原回执/会话可查的历史观察到期记录可恢复只读跟踪；从未发送且没有可观察对象的历史记录保持，不凭此复活旧任务。
+
+已保存正文的 send 若原 mutation 明确证明 not_sent，且仅因执行端/传输暂不可用而失败，宿主按原 requestID 自动重试。它重新检查原授权、原生输入身份、epoch 和权限；较新用户消息、取消、清空或撤权会拦住重试。仅创建会话的 create 不会凭空补造交办正文，unknown 写入绝不进入此重试。每轮发送持久化独立 attempt ID，只有该轮拥有者可更新结果，防止并发失败回执把另一轮正在发送的请求降成 not_sent。
+
+资源等待、状态待确认、暂时读取失败及恢复推进通过原有 HostedTaskEvent 通知 Dot。原因未变时去重，恢复后通知一次；事件 ID 继续为 task-加64位摘要，保持现有原生消费者兼容，事件仍是只读回报，不构成创建其他任务的授权。
 
 ## 集成发布顺序
 
 1. 审查并集成两仓库独立提交到各自个人 main；fetch 核对远端并保留最近记忆移动、启动清理和已有发布配置。本文不授权合并/推送/发布。
 2. 在隔离发布目录构建 happy-wire、happy-agent、CLI、宿主及 App/Web；准备所有候选产物，再选维护窗口。不能重启正在执行本任务的 Worker 来测试。
-3. 核验机器身份与 root/grant 绑定，协调保存宿主账本、Worker journal/receipts、新机器队列及 worktree。新旧版本不可混跑。V1 → V2 的一次持久迁移将历史默认机器 2 改为项目 2、机器无默认硬上限；已活跃/未知任务的原全局资源保持到确实结束。尚未执行的旧队列按新项目域调度。显式旧 registration.maxConcurrency（含 2）仍映射为机器硬上限；非默认持久额度 1/3/4 必须配置匹配的 machineConcurrency 才迁移，禁止无解释放宽。后续修改策略须停所有相关 Worker、确认没有未终态任务，以原策略打开 TaskQueue，调用 configureConcurrency(新策略)，再按新配置启动；禁止绕过 QUEUE_IN_USE。V2 密文和密钥须一起备份，旧 V1 reader 无法读取 V2，不可直接回退。
+3. 核验机器身份与 root/grant 绑定，协调保存宿主账本、Worker journal/receipts、新机器队列及 worktree。新旧版本不可混跑。V1 → V2 的一次持久迁移将历史默认机器 2 改为项目 2、机器无默认硬上限；未知任务的保守资源保持到取得真实归属/结束证据；精确匹配的已知自动租约可按上述规则原地收窄。尚未执行的旧队列按新项目域调度。显式旧 registration.maxConcurrency（含 2）仍映射为机器硬上限；非默认持久额度 1/3/4 必须配置匹配的 machineConcurrency 才迁移，禁止无解释放宽。后续修改策略须停所有相关 Worker、确认没有未终态任务，以原策略打开 TaskQueue，调用 configureConcurrency(新策略)，再按新配置启动；禁止绕过 QUEUE_IN_USE。V2 密文和密钥须一起备份，旧 V1 reader 无法读取 V2，不可直接回退。
 4. 先升级 gateway/MCP（新增 worker/authorize 与执行/取消字段），再升级已构建的 CLI/Worker，再切换宿主和 Web；手机沿既有个人 preview 流程另行授权 OTA/原生发布。旧 gateway 不支持队列权限复查时，新 Worker 保留排队而不执行，不能降级跳过授权。
 5. 用新授权的专用测试项目验证 queued/submitted/运行/取消与机器总额度，检查会话实际 cwd 和组合功能。不要重新派发历史需求。
 6. 回滚前停止受理、确认活任务状态并协调备份；旧宿主不能解析新状态，旧 Worker 不认识新队列和 worktree 授权，禁止直接覆盖账本或丢弃排队任务后降级。

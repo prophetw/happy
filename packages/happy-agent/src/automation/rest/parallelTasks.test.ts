@@ -131,7 +131,7 @@ it('adopts old live turns atomically and reduces all pages instead of treating o
     const turn=(seq:number,state:string)=>({id:'m'+seq,seq,content:{role:'session',content:{role:'agent',turn:'old-turn',ev:state==='running'?{t:'turn-start'}:{t:'turn-end',status:state}}}});
     appendFileSync(events,JSON.stringify(turn(1,'running'))+'\n');
     const a=await f.create('a');await f.send(a.sessionID,'one');await f.worker.tick();
-    expect(f.worker.queue.tasks().find(t=>t.legacy)?.state).toBe('running');expect(f.state('one')).toBe('waiting-resource');
+    expect(f.worker.queue.tasks().find(t=>t.legacy)?.state).toBe('running');expect(f.state('one')).toBe('running');
     for(let seq=2;seq<130;seq++)appendFileSync(events,JSON.stringify({id:'m'+seq,seq,content:{role:'unknown'}})+'\n');
     appendFileSync(events,JSON.stringify(turn(130,'completed'))+'\n');await f.worker.tick();
     expect(f.worker.queue.tasks().find(t=>t.legacy)?.state).toBe('completed');expect(f.state('one')).toBe('running');
@@ -144,7 +144,7 @@ it('scopes an ordinary live legacy turn to its canonical repository instead of b
     appendFileSync(join(f.root,'sessions',old.sessionID,'events'),JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'ordinary-turn',ev:{t:'turn-start'}}}})+'\n');
     const task=await f.create('new-project');await f.send(task.sessionID,'new-project-send');await f.worker.tick();
     const adopted=f.worker.queue.tasks().find(t=>t.legacy)!;
-    expect(adopted.resources).toEqual([{key:'machine',mode:'shared'},{key:'repo:'+hash(join(other,'.git')),mode:'exclusive'},{key:'session:'+old.sessionID,mode:'exclusive'}]);
+    expect(adopted.resources).toEqual([{key:'machine',mode:'shared'},{key:'repo:'+hash(join(other,'.git')),mode:'shared'},{key:'checkout:'+hash(other),mode:'exclusive'},{key:'session:'+old.sessionID,mode:'exclusive'}]);
     expect(adopted.state).toBe('running');expect(f.state('new-project-send')).toBe('running');
 });
 it('reclassifies a persisted generated legacy machine lease without changing its turn or replaying input',async()=>{
@@ -262,7 +262,7 @@ it('does not hide a legacy running turn behind a newly queued follow-up on that 
     const f=setup(),old=await f.create('old',{mode:'legacy'}),events=join(f.root,'sessions',old.sessionID,'events');
     appendFileSync(events,JSON.stringify({id:'m1',seq:1,content:{role:'session',content:{role:'agent',turn:'old-turn',ev:{t:'turn-start'}}}})+'\n');
     await f.send(old.sessionID,'follow');const a=await f.create('a'),b=await f.create('b');await f.send(a.sessionID,'one');await f.send(b.sessionID,'two');await f.worker.tick();
-    expect(f.worker.queue.tasks().filter(t=>t.legacy&&t.state==='running')).toHaveLength(1);expect(f.state('follow')).toBe('waiting-resource');expect(f.state('one')).not.toBe('running');expect(f.state('two')).not.toBe('running');expect(f.messages(old.sessionID).filter(m=>m.localId)).toHaveLength(0);
+    expect(f.worker.queue.tasks().filter(t=>t.legacy&&t.state==='running')).toHaveLength(1);expect(f.state('follow')).toBe('waiting-resource');expect(f.state('one')).toBe('running');expect(f.state('two')).toBe('queued');expect(f.messages(old.sessionID).filter(m=>m.localId)).toHaveLength(0);
 });
 it('prepares a slow actual worktree outside the global queue lock without executing checkout hooks',async()=>{
     const f=setup(),a=await f.create('a'),marker=join(f.root,'hook-ran');writeFileSync(join(f.repo,'.git/hooks/post-checkout'),'#!/bin/sh\ntouch '+marker+'\n',{mode:0o755});
@@ -289,7 +289,21 @@ it('prevents A+B resource starvation while allowing unrelated C to pass',async()
     await until(()=>f.messages(a.sessionID).length>=2);f.release('one');await until(async()=>{await f.tick();return f.state('two')==='running';});expect(f.state('three')).toBe('waiting-resource');
 });
 
-it('accepts integration work but waits for a dirty main directory without blocking independent worktrees',async()=>{
-    const f=setup(),integration=await f.create('integrate',{mode:'integration',resources:['service:fixture']}),a=await f.create('a');await f.send(integration.sessionID,'integrate-send');await f.send(a.sessionID,'one');
-    writeFileSync(join(f.repo,'user-dirty'),'preserve');await f.tick();expect(f.state('integrate-send')).toBe('waiting-resource');expect(f.worker.queue.tasks().find(t=>t.requestID==='integrate-send')?.reason).toBe('integration_worktree_dirty');expect(f.state('one')).toBe('running');expect(readFileSync(join(f.repo,'user-dirty'),'utf8')).toBe('preserve');expect(f.messages(integration.sessionID)).toHaveLength(0);
+it('uses the existing legacy mode for authorized service work with staged edits and keeps named resource exclusion', async () => {
+    const f = setup();
+    writeFileSync(join(f.repo, 'baseline'), 'existing staged work');
+    git(f.repo, 'add', 'baseline');
+    const index = readFileSync(join(f.repo, '.git', 'index'));
+    const a = await f.create('service-a', { mode: 'legacy', resources: ['service:fixture'] });
+    const b = await f.create('service-b', { mode: 'worktree', resources: ['service:fixture'] });
+    await f.send(a.sessionID, 'service-send');
+    await f.send(b.sessionID, 'other-service-send');
+    await f.tick();
+    expect(f.state('service-send')).toBe('running');
+    expect(f.state('other-service-send')).toBe('waiting-resource');
+    expect(f.worker.queue.tasks().find(t => t.requestID === 'service-send')?.resources)
+        .toContainEqual({ key: 'declared:service:fixture', mode: 'exclusive' });
+    expect(a.execution.directory).toBe(f.repo);
+    expect(readFileSync(join(f.repo, 'baseline'), 'utf8')).toBe('existing staged work');
+    expect(readFileSync(join(f.repo, '.git', 'index'))).toEqual(index);
 });

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { TaskQueue, occupiesSlot, type QueueTask } from './taskQueue';
 import { TaskScheduler, type Observation } from './taskScheduler';
-import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, assertIntegrationReady, canonicalRepository } from './taskWorkspaces';
+import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository } from './taskWorkspaces';
 import { realpathSync, statSync } from 'node:fs';
 import { AutomationControl, projectMessage, type Policy } from '../control';
 import { Journal, hash } from '../journal';
@@ -113,13 +113,30 @@ export class ScopedWorker {
                 verifyWorkspace(workspace);
                 return workspaceResources(workspace, session.id);
             }
-            return workspaceResources({ repository: canonicalRepository(directory), execution: { mode: 'legacy', resources: [] } }, session.id);
+            return workspaceResources({ repository: canonicalRepository(directory), cwd: directory, execution: { mode: 'legacy', resources: [] } }, session.id);
         } catch {
             // Unknown or changed paths retain the conservative machine lease.
             return workspaceResources();
         }
     }
     async tick() {
+        // Existing queues progress in place after upgrade. Verify the original
+        // binding before narrowing an automatically generated repository lease.
+        for (const task of this.queue.tasks().filter(t => t.workerID === this.registration.id && !t.legacy && !['completed', 'failed', 'cancelled'].includes(t.state)
+            && t.resources.some(r => r.key.startsWith('repo:')) && !t.resources.some(r => r.key.startsWith('checkout:')))) {
+            const workspace = this.queue.workspaces(task.grantID).find(w => w.id === task.workspaceID);
+            try {
+                if (workspace) { verifyWorkspace(workspace); this.queue.refineWorkspaceResources(task, workspaceResources(workspace, task.sessionID)); }
+                else if (!task.workspaceID) {
+                    const grant = await this.currentGrant(task), session = await this.localSession(task.sessionID);
+                    const project = checkBoundProjects(grant, this.registration, this.now()).find(p => p.directory === (session.metadata as any)?.path);
+                    if (!project || task.processID && task.processID !== (session.metadata as any)?.hostPid) continue;
+                    const binding = { repository: canonicalRepository(project.directory), cwd: project.directory, execution: { mode: 'legacy' as const, resources: [] } };
+                    this.queue.refineWorkspaceResources(task, workspaceResources(binding, task.sessionID), binding);
+                }
+            }
+            catch { /* Binding failures keep the existing lease and follow normal authorization handling. */ }
+        }
         // Read-only adoption of genuinely live pre-queue turns. Never resends historical
         // blocked/not_sent work and never treats idle long-lived session PIDs as leases.
         let cursor: string | undefined;
@@ -128,7 +145,7 @@ export class ScopedWorker {
             for (const session of page.sessions) {
                 if ((session.metadata as any)?.machineId !== this.registration.machineID) continue;
                 const active = this.queue.tasks().find(t => t.sessionID === session.id && occupiesSlot(t));
-                if (active && (!active.legacy || !active.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))) continue;
+                if (active && (!active.legacy || active.resources.some(r => r.key.startsWith('checkout:')) && !active.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))) continue;
                 const observed = await this.observeLegacy(session.id);
                 if (active) {
                     const pid = (observed.sourceSession.metadata as any)?.hostPid;
@@ -209,6 +226,14 @@ export class ScopedWorker {
         };
         const { live, projects } = await check();
         if (job.workerID !== this.registration.id || job.deadline < this.now()) throw new ApiError('JOB_UNAVAILABLE', 403);
+        // An authorized durable queue receipt must remain readable even while the
+        // native Agent is offline or its protocol is being repaired.
+        if (!internal && job.command.version === 1 && job.command.method === 'requests.get'
+            && typeof job.command.requestID === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(job.command.requestID)
+            && Object.keys(job.command).every(key => ['version', 'method', 'requestID'].includes(key))) {
+            const task = this.queue.tasks().find(t => t.grantID === live.id && t.requestID === job.command.requestID);
+            if (task) { await check(true); return { version: 1, ok: true, data: this.queue.receipt(task) }; }
+        }
         const command = { ...job.command };
         let workspaces = this.queue.workspaces(live.id);
         const permittedDirectory = (directory: unknown) => projects.some(p => p.directory === directory) || workspaces.some(w => w.cwd === directory && projects.some(p => p.id === w.projectID && p.directory === w.root));
@@ -298,7 +323,6 @@ export class ScopedWorker {
         }
         for (const w of workspaces.filter(w => typeof command.sessionID === 'string' && w.sessionID === command.sessionID)) {
             verifyWorkspace(w);
-            if (internal && (command.method === 'sessions.send' || launchCheck)) assertIntegrationReady(w);
             if (internal && (command.method === 'sessions.send' || launchCheck) && w.resolvedOptions) {
                 const available = await catalog();
                 let resolved;
@@ -343,7 +367,7 @@ export class ScopedWorker {
             // Importing its already-live old turn still retains global exclusion in tick().
             const session = !w && !accepted ? await this.localSession(String(command.sessionID)) : undefined;
             const project = session ? projects.find(p=>p.directory===(session.metadata as any)?.path) : undefined;
-            const binding = w ?? (project ? {repository:canonicalRepository(project.directory),execution:{mode:'legacy' as const,resources:[]}} : undefined);
+            const binding = w ?? (project ? {repository:canonicalRepository(project.directory),cwd:project.directory,execution:{mode:'legacy' as const,resources:[]}} : undefined);
             const task = this.queue.enqueue({ requestID: command.requestID, grantID: live.id, workerID: this.registration.id, sessionID: String(command.sessionID),
                 workspaceID: w?.id, authorization: hash(canonicalBody(live)), text: command.text, resources: accepted?.resources ?? workspaceResources(binding, String(command.sessionID)) });
             await check(true); return reply(this.queue.receipt(task));

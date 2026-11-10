@@ -105,12 +105,15 @@ export function verifyWorkspace(w: Workspace) {
             || git(w.cwd, ['merge-base', '--is-ancestor', w.baseCommit!, 'HEAD']) !== '') throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
     }
 }
-export function workspaceResources(w?: Pick<Workspace,'repository'|'execution'>, sessionID?: string): Resource[] {
-    // Unknown pre-queue execution remains globally exclusive. Known legacy writes
-    // exclude only their canonical repository and can run alongside other projects.
+export function workspaceResources(w?: Pick<Workspace,'repository'|'cwd'|'execution'>, sessionID?: string): Resource[] {
+    // Unknown pre-queue execution remains conservative. Known executions count
+    // project slots by repository and serialize writes only to the actual checkout.
     const result: Resource[] = [{ key: 'machine', mode: !w ? 'exclusive' : 'shared' }];
     if (w) {
-        result.push({ key: `repo:${hash(w.repository)}`, mode: ['worktree', 'read-only'].includes(w.execution.mode) ? 'shared' : 'exclusive' });
+        // Repository identity counts project slots. Only writers sharing an actual
+        // checkout exclude each other; independent worktrees can keep progressing.
+        result.push({ key: `repo:${hash(w.repository)}`, mode: 'shared' });
+        result.push({ key: `checkout:${hash(w.cwd)}`, mode: w.execution.mode === 'read-only' ? 'shared' : 'exclusive' });
         result.push(...w.execution.resources.map(key => ({ key: `declared:${key}`, mode: 'exclusive' as const })));
     }
     if (sessionID) result.push({ key: `session:${sessionID}`, mode: 'exclusive' });
@@ -136,8 +139,4 @@ export function workspaceResult(w: Workspace) {
     verifyWorkspace(w);
     if (w.repository === w.root) return {};
     return { resultCommit: git(w.cwd,['rev-parse','--verify','HEAD^{commit}']), worktreeDirty: Boolean(git(w.cwd,['status','--porcelain=v1','--untracked-files=all'])) };
-}
-
-export function assertIntegrationReady(w: Workspace) {
-    if(w.execution.mode==='integration' && w.repository!==w.root && git(w.cwd,['status','--porcelain=v1','--untracked-files=all'])) throw new ApiError('INTEGRATION_WORKTREE_DIRTY',409);
 }

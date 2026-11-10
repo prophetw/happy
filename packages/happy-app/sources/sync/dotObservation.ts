@@ -60,6 +60,7 @@ export const ObservationMemorySchema = base.extend({ action: z.literal('memory')
 export const ObservationMemoryUsageSchema = base.extend({ action: z.literal('memory'), section: z.literal('usage'), scope: memoryScope, memory: memoryMetadata,
     page: page(turnSummary.extend({ memoryRevision: z.number() })) });
 export const ObservationWorkSchema = base.extend({ action: z.literal('work'), work: z.object({ id, title: z.string(), instruction: z.string(),
+    queueReason: z.string().optional(), recovery: z.string().nullable().optional(),
     status: z.string(), needsReview: z.boolean(), goalPhase: z.string().nullable(), businessVerification: z.string(),
     executionSessionId: z.string().nullable(), executionOutcome: z.string().nullable(), reason: z.string().nullable(), result: text,
     steps: z.array(z.object({ id: z.string(), title: z.string(), status: z.string() })), startedAt: time.nullable(), finishedAt: time.nullable(),

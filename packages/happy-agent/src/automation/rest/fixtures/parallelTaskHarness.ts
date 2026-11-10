@@ -21,7 +21,7 @@ setInterval(()=>{if(current)return;const m=events().find(m=>m.localId&&!seen.has
  current=null;},10);
 },10);setTimeout(()=>process.exit(0),60000);
 `;
-export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: string) {
+export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: string, Worker = ScopedWorker) {
     const config = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
     const registration = { ...config.registration, ...(workerID ? { id: workerID } : {}) };
     const sessionsRoot = join(root, 'sessions'); mkdirSync(sessionsRoot, { recursive: true });
@@ -66,7 +66,7 @@ export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: stri
         },
     };
     const grant = (id: string) => JSON.parse(readFileSync(join(root, 'grants.json'), 'utf8'))[id];
-    const worker = new ScopedWorker(registration, transport, join(root, 'worker'), async () => grant(grantID), Date.now, undefined, async id => grant(id), join(root, 'queue'));
+    const worker = new Worker(registration, transport, join(root, 'worker'), async () => grant(grantID), Date.now, undefined, async id => grant(id), join(root, 'queue'));
     const call = (method: string, values: Record<string, unknown>) => worker.execute({ id: 'job', workerID: registration.id, grantID, deadline: Date.now() + 60000, command: { version: 1, method, ...values } }) as Promise<any>;
     return { worker, call, transport, sessions, messages, state, grant };
 }

@@ -137,8 +137,34 @@ export function testloopWorkStatus(task: { status: string; needsReview: boolean;
         'waiting-resource': '等待执行资源', creating: '创建执行会话', created: '会话已创建，尚未交办', canceling: '正在取消',
         awaiting_user: '等待你的答复', awaiting_approval: '等待审批', blocked: '遇到阻塞', failed: '执行失败',
         completed: '已完成', succeeded: '已完成', canceled: '已取消', scheduled: '待执行', deferred: '已延后',
-        waiting_event: '等待事件', unscheduled: '没有后续安排' };
+        waiting_event: '等待事件', observing: '执行状态待确认', unscheduled: '没有后续安排' };
     return labels[task.status] ?? task.status;
+}
+
+export function testloopWorkQueueReason(reason: string): string {
+    if (reason.startsWith('execution_unavailable:')) return reason.endsWith(':UNSUPPORTED_VERSION')
+        ? '执行端协议版本不匹配；交办已保留，版本匹配后自动继续。'
+        : `执行条件暂未满足（${reason.slice('execution_unavailable:'.length)}），系统会自动重新核对。`;
+    const labels: Record<string, string> = {
+        'scheduler-ready': '等待调度', 'project-limit': '等待本项目执行名额', 'machine-limit': '等待机器硬上限名额',
+        'resource-wait': '等待共享排他资源', execution_slot: '等待机器执行槽',
+        integration_worktree_dirty: '原目录有已有改动；新版会保留改动并按原请求继续，无需清理目录。',
+        INTEGRATION_WORKTREE_DIRTY: '原目录有已有改动；新版会保留改动并按原请求继续，无需清理目录。',
+        session_turn: '等待同会话前一交办结束', resource_lock: '等待排他资源', preparing_worktree: '准备独立工作目录',
+        preparation_interrupted: '准备进程中断，需原请求恢复', session_process_unknown: '执行进程状态待确认', execution_unavailable: '等待执行端恢复',
+        dispatch_receipt_unknown: '正在确认原交办是否送达，确认后自动继续；不会重复派发。',
+        external_turn_running: '执行会话还有其他轮次在运行，正在核对其结果。',
+        observation_unavailable: '暂时无法读取执行状态，系统正在自动重试；原任务没有被停止。',
+        hosted_task_unavailable: '最新执行状态暂时无法读取，系统正在自动核对原请求。',
+        WORKER_UNAVAILABLE: '执行端暂时不可用，系统正在自动重试状态查询。',
+        CONTROL_TIMEOUT: '状态查询超时，系统正在自动重试。',
+        CONTROL_READ_UNAVAILABLE: '状态查询暂时失败，系统正在自动重试。',
+        CONTROL_DISPATCH_REJECTED: '派发条件或用户指令已经变化，需要重新确认；这次交办未发送。',
+        NOT_FOUND: '尚未查到原请求回执，正在继续核对，不能据此重复派发。',
+        authorization_revoked: '执行授权已失效，需要更新授权后继续。',
+        authorization_revoked_execution_unconfirmed: '执行授权已失效，原任务是否停止仍待确认。',
+    };
+    return labels[reason] ?? reason;
 }
 
 const LimitsDisplaySchema = z.object({ config: z.object({ maxDailyLoopCalls: z.number().int().nonnegative(),

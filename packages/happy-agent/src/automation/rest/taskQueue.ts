@@ -169,11 +169,30 @@ export class TaskQueue {
             const task = s.tasks.find(t => t.id === observed.id);
             if (!task || terminalTask(task) || task.fingerprint !== observed.fingerprint || task.processID !== observed.processID || task.turnID !== observed.turnID || task.seq !== observed.seq
                 || !task.legacy || task.grantID !== 'legacy-import' || task.authorization || task.text
-                || !task.resources.some(r => r.key === 'machine' && r.mode === 'exclusive')
-                || task.resources.length !== 1 && canonicalBody(task.resources.filter(r => r.key !== 'machine')) !== canonicalBody(resources.filter(r => r.key !== 'machine'))
+                || task.resources.length !== 1 && (task.resources.some(r => r.key.startsWith('repo:') && !resources.some(next => next.key === r.key))
+                    || canonicalBody(task.resources.filter(r => r.key !== 'machine' && !r.key.startsWith('repo:') && !r.key.startsWith('checkout:')))
+                        !== canonicalBody(resources.filter(r => r.key !== 'machine' && !r.key.startsWith('repo:') && !r.key.startsWith('checkout:'))))
                 || !resources.some(r => r.key === 'machine' && r.mode === 'shared') || !resources.some(r => r.key.startsWith('repo:'))) return;
             task.resources = resources;
             task.fingerprint = taskFingerprint(task);
+        });
+    }
+    /** Upgrade only an exact old generated checkout lease. Explicit named locks,
+     * request identity and dispatch evidence are retained; no work is replayed.
+     */
+    refineWorkspaceResources(observed: QueueTask, resources: Resource[], original?: Pick<Workspace, 'repository' | 'cwd' | 'execution'>) {
+        this.transaction(s => {
+            const task = s.tasks.find(t => t.id === observed.id), stored = s.workspaces.find(w => w.id === task?.workspaceID), w = stored ?? original;
+            if (!task || !w || terminalTask(task) || task.fingerprint !== observed.fingerprint || task.legacy
+                || task.workspaceID && !stored || stored && stored.sessionID !== task.sessionID
+                || !stored && (w.execution.mode !== 'legacy' || w.execution.resources.length)) return;
+            const previous: Resource[] = [{ key: 'machine', mode: 'shared' }, { key: `repo:${hash(w.repository)}`, mode: ['worktree', 'read-only'].includes(w.execution.mode) ? 'shared' : 'exclusive' },
+                ...w.execution.resources.map(key => ({ key: `declared:${key}`, mode: 'exclusive' as const })), { key: `session:${task.sessionID}`, mode: 'exclusive' }];
+            const expected: Resource[] = [{ key: 'machine', mode: 'shared' }, { key: `repo:${hash(w.repository)}`, mode: 'shared' },
+                { key: `checkout:${hash(w.cwd)}`, mode: w.execution.mode === 'read-only' ? 'shared' : 'exclusive' },
+                ...w.execution.resources.map(key => ({ key: `declared:${key}`, mode: 'exclusive' as const })), { key: `session:${task.sessionID}`, mode: 'exclusive' }];
+            if (canonicalBody(task.resources) !== canonicalBody(previous) || canonicalBody(resources) !== canonicalBody(expected)) return;
+            task.resources = resources; task.fingerprint = taskFingerprint(task);
         });
     }
     /** Losing corroboration restores conservative exclusion without dropping declared resources. */
@@ -245,7 +264,30 @@ export class TaskQueue {
         });
     }
     receipt(t: QueueTask) {
-        const workspace = this.transaction(s => s.workspaces.find(w => w.id === t.workspaceID));
+        return this.transaction(s => {
+        t = s.tasks.find(current => current.id === t.id) ?? t;
+        const workspace = s.workspaces.find(w => w.id === t.workspaceID);
+        const active = s.tasks.filter(other => other.id !== t.id && occupiesSlot(other));
+        const blockers = active.filter(other => conflicts(t.resources, other.resources));
+        const named = t.resources.filter(r => r.key.startsWith('declared:') && blockers.some(other => conflicts([r], other.resources))).map(r => r.key.slice('declared:'.length));
+        const sameDirectory = blockers.some(other => t.resources.some(r => r.key.startsWith('checkout:') && conflicts([r], other.resources)));
+        // Only identities already visible through this grant may leave the Worker.
+        const sessions = blockers.filter(other => other.grantID === t.grantID).map(other => `/session/${other.sessionID}`).slice(0, 5);
+        let recovery: string | undefined;
+        if (t.reason === 'resource-wait' || t.reason === 'resource_lock') {
+            recovery = blockers.some(other => other.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))
+                ? '正在核对旧执行进程或等待机器维护释放资源；确认后自动继续。'
+                : sameDirectory ? '同一工作目录正在被其他任务使用；目录释放后自动继续。' : named.length
+                ? `共享资源 ${named.join('、')} 正在被使用；资源释放后自动继续。` : '正在等待较早任务释放或完成资源申请，系统会自动继续。';
+            if (sessions.length) recovery += ` 占用会话：${sessions.join('、')}`;
+        } else if (t.reason === 'project-limit') recovery = `本项目 ${workspace ? s.policy.projectOverrides[workspace.repository] ?? s.policy.projectConcurrency : s.policy.projectConcurrency} 个执行名额正在被占用或预留，前序任务推进后自动继续。`;
+        else if (t.reason === 'machine-limit') recovery = '机器配置的执行名额已用满，任务结束后自动继续。';
+        else if (t.reason === 'session_turn') recovery = '等待同一执行会话的前一轮结束，随后自动交办。';
+        else if (t.reason === 'session_process_unknown' || t.state === 'blocked') recovery = '正在核对原执行会话与原请求回执；不会重复派发，确认后自动继续。';
+        else if (t.reason === 'execution_unavailable' || t.reason === 'observation_unavailable') recovery = '执行端暂时不可用，系统正在重试原请求的状态查询。';
+        else if (t.reason?.startsWith('execution_unavailable:')) recovery = t.reason.endsWith(':UNSUPPORTED_VERSION')
+            ? '执行端协议版本不匹配，需要更新执行端；交办保持，版本匹配后自动继续。'
+            : `执行条件尚未满足（${t.reason.slice('execution_unavailable:'.length)}）；系统保留原交办并会重新核对。`;
         return { requestID: t.requestID, taskID: t.id, queueID: t.id, sessionID: t.sessionID,
             state: t.state === 'cancelled' ? 'cancelled' : t.seq !== undefined ? 'submitted' : t.state,
             executionState: t.state, executionDispatched: t.dispatched, queueReason: t.reason,
@@ -253,6 +295,7 @@ export class TaskQueue {
             seq: t.seq, messageID: t.messageID, turnID: t.turnID,
             ...(workspace ? { execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch,
                 baseCommit: workspace.baseCommit, resultCommit: t.resultCommit, dirty: t.worktreeDirty, projectID: workspace.projectID, port: workspace.port }, resources: workspace.execution.resources } : {}),
-            canCancel: !terminalTask(t), recovery: t.state === 'blocked' ? 'Inspect original receipt/process; automatic replay is disabled.' : undefined };
+            canCancel: !terminalTask(t), recovery };
+        });
     }
 }

@@ -84,6 +84,30 @@ async function render(mode: 'activity' | 'memory' | 'basis' = 'activity') {
     const click = async (name: string) => { expect(button(name), name).toBeTruthy(); await act(async () => button(name).props.onPress()); };
     return { renderer, props, button, click, text: () => JSON.stringify(renderer.toJSON()) };
 }
+
+it('explains an old dirty-directory wait without asking the user to clean their work', async () => {
+    const normal = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (session, method, query) => query.action === 'activity'
+        ? { ok: true, data: { ...base, action: 'activity', page: paged([{ ...event, kind: 'run', status: 'waiting-resource',
+            reason: 'integration_worktree_dirty', workId: turnId, turnId: null }]) } }
+        : normal(session, method, query));
+    const f = await render();
+    expect(f.text()).toContain('工作 · 等待执行资源');
+    expect(f.text()).toContain('保留改动并按原请求继续');
+    expect(f.text()).toContain('无需清理目录');
+    expect(f.text()).not.toContain('integration_worktree_dirty');
+});
+
+it('shows a temporarily unreadable running task with retry guidance instead of calling it blocked', async () => {
+    const normal = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (session, method, query) => query.action === 'activity'
+        ? { ok: true, data: { ...base, action: 'activity', page: paged([{ ...event, kind: 'run', status: 'running',
+            reason: 'WORKER_UNAVAILABLE', workId: turnId, turnId: null }]) } }
+        : normal(session, method, query));
+    const f = await render();
+    expect(f.text()).toContain('工作 · 执行中'); expect(f.text()).toContain('自动重试状态查询');
+    expect(f.text()).not.toContain('遇到阻塞'); expect(f.text()).not.toContain('WORKER_UNAVAILABLE');
+});
 it('opens the frozen context from activity and distinguishes memory locations and selection reasons', async () => {
     const f = await render(); expect(f.text()).toContain('宿主：'); expect(f.text()).toContain('对话 · 已处理');
     await f.click('查看本轮依据'); expect(f.text()).toContain('当时的职责');

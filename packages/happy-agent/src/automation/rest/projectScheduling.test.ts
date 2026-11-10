@@ -77,13 +77,13 @@ it('default policy runs five independent Git worktrees in five overlapping real 
     }
 },30000);
 
-it('ordinary legacy calls in different projects run together; same-repository worktree and legacy conflict',async()=>{
+it('ordinary projects and independent worktrees run together while the same checkout remains exclusive',async()=>{
     const f=setup();
     for(let i=0;i<5;i++) await f.start(i,'legacy'+i);
     await f.start(0,'same-legacy'); await f.start(0,'same-isolated',{mode:'worktree'});
     await f.tick();
-    expect(f.queue.tasks().filter(t=>t.state==='running')).toHaveLength(5);
-    expect(f.state('same-legacy').reason).toBe('resource-wait'); expect(f.state('same-isolated').reason).toBe('resource-wait');
+    expect(f.queue.tasks().filter(t=>t.state==='running')).toHaveLength(6);
+    expect(f.state('same-legacy').reason).toBe('project-limit'); expect(f.state('same-isolated').state).toBe('running');
     expect(f.workers[0].messages(f.state('same-legacy').sessionID)).toHaveLength(0);
 },30000);
 

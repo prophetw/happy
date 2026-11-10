@@ -6,7 +6,7 @@ import { useAuth } from '@/auth/AuthContext';
 import { storage } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { getServerUrl } from '@/sync/serverConfig';
-import { readTestloopDotsMetadata, testloopWorkStatus } from '@/sync/testloopDots';
+import { readTestloopDotsMetadata, testloopWorkStatus, testloopWorkQueueReason } from '@/sync/testloopDots';
 import { parseToken } from '@/utils/parseToken';
 import { useDotMemoryMove } from './useDotMemoryMove';
 import { ObservationOverviewSchema, ObservationResponseSchema, observationError, observationMemoryStatus, observationReasons,
@@ -20,7 +20,8 @@ const states: Record<string, string> = { queued: '等待处理', planning: '理�
     blocked: '遇到阻塞', rejected: '已拒绝', proposed: '已提出，待确认', accepted: '已接受', superseded: '已被新提案替代',
     preparing: '准备执行', running: '执行中', paused: '已暂停', awaiting_user: '等待你的答复', awaiting_approval: '等待审批',
     succeeded: '已完成', failed: '执行失败', canceled: '已取消', executing: '执行中', reviewing: '独立验收中', repairing: '返工中',
-    canceling: '取消中', completed: '执行结束', observing: '等待执行回报', creating: '创建执行会话', created: '会话已创建，尚未交办', sending: '发送交办', prepared: '准备派工' };
+    'waiting-resource': '等待执行资源', cancelled: '已取消',
+    canceling: '取消中', completed: '执行结束', observing: '执行状态待确认', creating: '创建执行会话', created: '会话已创建，尚未交办', sending: '发送交办', prepared: '准备派工' };
 function eventTitle(event: ObservationEvent) {
     if (event.kind === 'delivery') return `回报 · ${{ pending: '等待发送', accepted: '服务端已接收，待核对入库', stored_verified: '已核对入库', error: '发送错误' }[event.status] ?? event.status}`;
     if (event.kind === 'dot') return event.previousStatus ? '名称或职责已修改' : 'Dot 已创建';
@@ -120,7 +121,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
             <Text style={{ ...body, fontWeight: '500' }}>{eventTitle(event)}</Text>
             <Text style={muted}>{date(event.at)}</Text>
         </View>
-        {event.reason && <Text style={muted}>原因：{event.reason}</Text>}
+        {event.reason && <Text style={muted}>原因：{testloopWorkQueueReason(event.reason)}</Text>}
         {event.previousIdentity && <><Text style={muted}>修改前：{event.previousIdentity.name}</Text><Text selectable style={body}>{event.previousIdentity.instruction}</Text></>}
         {event.identity && <><Text style={muted}>修改后：{event.identity.name}</Text><Text selectable style={body}>{event.identity.instruction}</Text></>}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
@@ -323,7 +324,9 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
             <Text style={{ ...body, fontWeight: '600', fontSize: 16 }}>{result.work.title} · {testloopWorkStatus(result.work)}</Text>
             <Text selectable style={body}>{result.work.instruction}</Text>
             {result.work.businessVerification === 'independent_agent_report' && <Text style={muted}>已有独立执行会话提供验收报告</Text>}
-            {result.work.reason && <Text style={muted}>原因：{result.work.reason}</Text>}
+            {result.work.reason && <Text style={muted}>原因：{testloopWorkQueueReason(result.work.reason)}</Text>}
+            {result.work.queueReason && <Text style={muted}>等待原因：{testloopWorkQueueReason(result.work.queueReason)}</Text>}
+            {result.work.recovery && <Text style={muted}>{result.work.recovery}</Text>}
             <Text style={muted}>{date(result.work.startedAt)} → {date(result.work.finishedAt)}</Text>
             {result.work.steps.map(step => <Text key={step.id} style={body}>{step.title} · {states[step.status] ?? step.status}</Text>)}
             {clipped(result.work.result)}

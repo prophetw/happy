@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { signedHeaders, canonicalBody } from './auth';
 import { ProofClient } from './client';
@@ -15,6 +16,24 @@ async function setup(options: Record<string, unknown> = {}) {
 const base = '/happy-control/v1';
 const localOrigin = 'http://localhost:8989';
 const create = (r: any, grant: string, requestID = 'create1') => r.client.request('POST', '/tasks', { requestID, machineID: 'machineA', projectID: 'projectA' }, grant);
+
+it('creates and dispatches work through the real HTTP worker while preserving a dirty original checkout', async () => {
+    const r = await setup(), grant = await r.connect();
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: r.project, stdio: 'ignore' });
+    git('init', '-q'); git('config', 'user.name', 'fixture'); git('config', 'user.email', 'fixture@invalid');
+    writeFileSync(join(r.project, 'baseline'), 'original'); git('add', 'baseline'); git('commit', '-qm', 'base');
+    writeFileSync(join(r.project, 'baseline'), 'preserve staged edit'); git('add', 'baseline');
+    const index = readFileSync(join(r.project, '.git', 'index')); await r.startWorker();
+    const input = { requestID: 'dirty-create', machineID: 'machineA', projectID: 'projectA', execution: { mode: 'integration', resources: ['service:fixture'] } };
+    const created = await r.client.request('POST', '/tasks', input, grant); expect(created.ok).toBe(true);
+    const send = { requestID: 'dirty-send', text: 'continue the original work' };
+    const sent = await r.client.request('POST', `/sessions/${created.data.sessionID}/messages`, send, grant); expect(sent.ok).toBe(true);
+    await r.client.request('POST', `/sessions/${created.data.sessionID}/messages`, send, grant);
+    const end = Date.now() + 3000; while (!r.sendCount && Date.now() < end) await new Promise(done => setTimeout(done, 20));
+    expect(r.spawnCount).toBe(1); expect(r.sendCount).toBe(1);
+    expect(readFileSync(join(r.project, 'baseline'), 'utf8')).toBe('preserve staged edit');
+    expect(readFileSync(join(r.project, '.git', 'index'))).toEqual(index);
+});
 
 describe('independent approval/authentication', () => {
     it('rejects browser cookies and Happy bearer for control; denies pre-approval calls', async () => {

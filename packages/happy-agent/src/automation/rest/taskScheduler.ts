@@ -77,7 +77,7 @@ export class TaskScheduler {
                     this.queue.update(task.id, t => {
                         if (terminalTask(t) || t.state === 'canceling') return;
                         if (!t.dispatched && revoked(e)) { t.state = 'failed'; t.reason = 'authorization_revoked'; t.finishedAt = Date.now(); }
-                        else if (!t.dispatched) { const dirty=e instanceof ApiError && e.code==='INTEGRATION_WORKTREE_DIRTY'; t.state = dirty?'waiting-resource':'queued'; t.reason = dirty?'integration_worktree_dirty':'execution_unavailable'; t.notBefore=Date.now()+3000; }
+                        else if (!t.dispatched) { t.state = 'queued'; t.reason = e instanceof ApiError && /^[A-Z][A-Z0-9_]{0,95}$/.test(e.code) ? `execution_unavailable:${e.code}` : 'execution_unavailable'; t.notBefore=Date.now()+3000; }
                         else { t.state = 'blocked'; t.reason = 'dispatch_receipt_unknown'; }
                     });
                 }

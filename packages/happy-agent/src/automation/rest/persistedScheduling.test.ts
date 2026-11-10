@@ -64,7 +64,8 @@ it('uses a durable scheduling proof across the real persisted CLI unknown status
     f.trustPreviousOwnedChild(f.worker, legacy.id); f.trustPreviousOwnedChild(f.worker, queued.sessionID);
     const restarted = f.restore(); await restarted.tick(); expect(await f.cliStatus(legacy.id)).toBe('unknown');
     const retained = restarted.queue.tasks().find(task => task.id === legacy.task.id)!;
-    expect(retained.resources).toContainEqual({ key: 'machine', mode: 'shared' }); expect(retained.resources).toContainEqual({ key: 'repo:' + hash(join(f.repoA, '.git')), mode: 'exclusive' });
+    expect(retained.resources).toContainEqual({ key: 'machine', mode: 'shared' }); expect(retained.resources).toContainEqual({ key: 'repo:' + hash(join(f.repoA, '.git')), mode: 'shared' });
+    expect(retained.resources).toContainEqual({ key: 'checkout:' + hash(f.repoA), mode: 'exclusive' });
     expect(retained.id).toBe(legacy.task.id); expect(retained.processID).toBe(legacy.task.processID); expect(retained.turnID).toBe(legacy.task.turnID);
     expect(restarted.queue.tasks().find(task => task.requestID === 'other-project-send')!.state).toBe('running');
     expect(f.messages(queued.sessionID).filter(row => row.localId)).toHaveLength(1); expect(f.messages(legacy.id).filter(row => row.localId)).toHaveLength(1);
