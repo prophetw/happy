@@ -1,6 +1,6 @@
 # Dot 持久队列与项目级并行任务
 
-本功能需要联合升级 Happy Control gateway、机器 Worker/CLI、Dot 宿主和 App/Web。2026-11-10 的自主推进调整目前为已验证源码候选，未发布。源码实现不代表线上已启用；不自动修改现有服务或调度配置，不随任务完成自动集成、push、部署或 OTA。
+本功能涉及 Happy Control gateway、机器 Worker/CLI、Dot 宿主和 App/Web。2026-11-10 的自主推进调整已按授权发布到本机 Worker、Control、Dot 宿主/恢复服务和私网 Web，功能源为 Happy `dcb5150a`、TestLoop `389a939`；手机 App 的本次提示更新尚未发布 OTA。任务派发本身不自动修改服务或调度配置，不随任务完成自动集成、push、部署或 OTA。
 
 ## 受理契约
 
@@ -16,7 +16,7 @@
 
 执行阶段为 queued、waiting-resource、preparing、running、canceling、completed、failed、cancelled；blocked 表示执行/回执证据不足，不是可自动重试的失败。宿主还保留 created、awaiting_user 和历史 canceled 拼写。业务验收独立于 Agent turn 完成。
 
-## 自主推进与资源（2026-11-10 源码候选）
+## 自主推进与资源（2026-11-10）
 
 Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、Journal 和权限检查，没有引入新队列服务。工作树基于受理 create 时的 HEAD commit，保留 root projectID、grant 和目录绑定。准备阶段禁用 Git checkout hooks 和 fsmonitor，避免 create 阶段触发仓库脚本；不自动安装依赖、构建或执行交办。worktree/read-only 首版只接受授权 Git 仓库顶层目录；子目录项目明确返回 WORKTREE_REQUIRES_REPOSITORY_ROOT，避免把兄弟目录扩大进执行 cwd。路径必须规范化且 realpath 不变；每次执行校验 Git common-dir、分支及基线祖先。非 Git 只支持 legacy/integration，worktree/read-only 明确拒绝，不复制未知目录。
 
@@ -82,6 +82,6 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 5. 用新授权的专用测试项目验证 queued/submitted/运行/取消与机器总额度，检查会话实际 cwd 和组合功能。不要重新派发历史需求。
 6. 回滚前停止受理、确认活任务状态并协调备份；旧宿主不能解析新状态，旧 Worker 不认识新队列和 worktree 授权，禁止直接覆盖账本或丢弃排队任务后降级。
 
-验证结果和边界见 [实现验证记录](dot-parallel-tasks-validation.md)；真实手机接收、线上升级、付费模型、任意外部 shell 的资源遵守均不能由隔离夹具代替。
+2026-11-10 的本机发布已完成真实 MCP 独立只读任务派发、完成和测试进程停止验证；原验收任务按用户最后指示保持 failed/session_stopped、未发送，未恢复或重派。3 个 Dot 的原 session/thread、权限、输入历史与规范记忆保持，10 个既存 Happy 会话根进程的内核身份保持。源回归 201 项、固定 Worker 产物 6 项及隔离浏览器 7 组通过；生产 Web HTML/三入口 JS 与最终导出逐字节匹配，匿名浏览器通过。证据、冷备与本次边界见 [发布入口](../../DEPLOY.md#dot-自主推进派发修复2026-11-10)。既有实现验证另见 [实现验证记录](dot-parallel-tasks-validation.md)；真机、整机重启、长期稳定性与任意外部 shell 的资源遵守仍未验证。
 
 旧 goal/delegation 入口继续采用原项目级保守 guard 和预算，本轮没有改写其 DAG 规划器；它已能持久识别 queued、按原ID恢复回执。新 queue-blocked 的只读恢复有专门 scanner 条件，绝不放开历史 blocked/not_sent。queued_canceled 与旧 not_dispatched 分开：前者有真实空闲 session、明确 executionDispatched=false，不能宣称进程已停止。

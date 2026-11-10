@@ -1,5 +1,19 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 自主推进派发修复（2026-11-10）
+
+功能源 Happy `dcb5150ae25d38e1d5a40218010f3b8422fb365c`、TestLoop `389a9399525983a7cf96bf0065bc42ba54f017da`，已普通推送个人 main，并从当次 fetch 核对一致的干净独立 main 发布。取消原目录脏状态派发闸门，按实际 checkout 收窄自动资源锁，原请求持续跟踪并自动重试明确未发送的暂时故障；等待原因和恢复通过活动记录、工作详情及只读事件通知 Dot。没有新增依赖或修改项目额度，机器策略仍为项目默认 2、无隐式全机上限。
+
+用户在普通 WSL 终端执行已校验的 root 激活；维护单元 success/0，系统 Worker PID `1542929`、NRestarts=0、connected，入口 `/home/dev/.local/share/happy-automation/releases/dot-autonomous-20261110-dcb5150a`。10 个既存 Happy 会话根 PID/startTicks/cgroup 直接回查保持。机器密文/密钥、journal 与进程证明由既有独立维护器在停止段冷备，私有目录 `/var/lib/happy-automation-maintenance/20261110T033541Z-dot-autonomous-dcb5150ae25d`；未绕过当前 Agent 的 NoNewPrivs 限制。
+
+Control 镜像 `sha256:3a413943d3b17b81dca6b12dd2fea745f200871a9960b8e15cde3502fc03e42b` healthy。宿主、恢复服务和 3 个实际 MCP 挂载网关切至 `/home/dev/.local/share/testloop-releases/dot-autonomous-20261110-389a939`；scanner PID `1554856`、recovery PID `1567062`，均 active、NRestarts=0。3 个 Dot 原 session/thread、输入历史、授权、规范记忆保持；health 保留原三项 attention，scanner error=null。冷备 `/home/dev/.local/state/testloop-backups/dot-autonomous-host-20261110-389a939` 及 `-extras` 已验证，旧严格 reader 不再混读新宿主账本。
+
+私网 `/happy/` 已发布，HTML 和三入口 JS 与最终导出逐字节匹配，手机尺寸匿名登录页/未认证 Dot guard 浏览器 errors=[]。最终源回归 201 项、固定发布 Worker 6 项、隔离关键流程 7 组通过；固定 Control 镜像以实际 uid1000 通过真实 stdio MCP tools/list。生产独立只读测试会话 `cmwa65ui81lgdmm16mcfta187` 已派发，turn `01a1c3a4-4e7b-7792-a868-9a16c05aa87a` 返回精确标记并 completed，随后仅停止测试会话并独立确认 stopped；1 次真实模型调用，费用未测量。
+
+用户最后指示为“原任务保持停止”。原验收工作项 `91e4f9fa-90ba-459d-b0a1-70c4b84fb4ba` 仍为 failed/session_stopped、executionDispatched=false、sentSeq=null；原 session `cmwa0ees01dkymm16usdgxdj1` 未恢复，未取消/重派该工作项。本轮没有写 bim-server 的已有文件，也未触碰原 TestLoop 主工作区预先暂存的 DEPLOY.md。
+
+总证据 `/home/dev/code/happy-dot-autonomous-release-20261110/.e2e-artifacts/dot-autonomous-release-20261110/`，`coordination-status.json.status=deployed`；包含原任务回查、实际 MCP 挂载/生产派发、Web 字节/浏览器、进程保持及最终报告。发布前 Control 首候选文件模式造成 EACCES，已在隔离容器预检拦截并修正；另保留入口文本断言和测试 SDK 依赖定位的夹具失败，最终改用镜像真实 stdio 握手通过。线上未启用这些失败候选。手机本次 OTA、原生包、真机加载、整机重启和长期稳定性未验证。
+
 ## Dot 派发与重启会话强证明修复（2026-11-10）
 
 最终 Worker 功能源为 Happy `5ca49e93956b166189a65628a54289e80b3e5f10`，已正常推送个人 main。此前 `92599a0d` 的 legacy 锁缩域修复已实际部署，但线上仍被整机排他锁阻塞：真实 CLI 对重启后恢复的活进程返回 `unknown`，先前仅接受 `running` 的调度守卫无法缩域；该次上线不能作为问题已解决的证明。
