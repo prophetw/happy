@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 10 - Open Dots sooner",
+      "summary": "Requires the updated TestLoop host.",
+      "markdown": "- **Open Dots sooner** — see your last loaded directory while the latest work refreshes in the background.\n- **Understand waiting work** — see why a task is waiting and when Happy will automatically check again.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 9 - Move memories between Dots and your account",
       "summary": "Requires the updated TestLoop host and memory gateway.",
       "markdown": "- **Move a memory with one tap** — make a Dot memory available to all your Dots, or move an account memory into the current Dot, keeping its content and expiry.\n- **Resume interrupted moves** — recover the original request or stop while keeping existing copies; conflicting memories are never silently overwritten.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -166,5 +171,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 9 - Move memories between Dots and your account"
+  "latestTitle": "November 10 - Open Dots sooner"
 }

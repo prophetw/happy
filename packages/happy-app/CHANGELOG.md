@@ -1,3 +1,11 @@
+# November 10 - Open Dots sooner
+
+Requires the updated TestLoop host.
+
+- **Open Dots sooner** — see your last loaded directory while the latest work refreshes in the background.
+- **Understand waiting work** — see why a task is waiting and when Happy will automatically check again.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # November 9 - Move memories between Dots and your account
 
 Requires the updated TestLoop host and memory gateway.
