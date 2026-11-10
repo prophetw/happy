@@ -1,5 +1,26 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dots 打开速度修复（2026-11-10，宿主 / Web / preview iOS 已发布）
+
+已提交并普通推送个人 main。宿主功能源 `5dc3852e9912017773e5a145e93f0f6a88896bf7`；Happy 修复在保留远端主线后合入 `8a21f0c4`，App/Web发布源 `e6076e5104cc3bc98d644d5c75264d2482778db4`（包含手机更新说明）。原工作区其他任务的暂存 DEPLOY.md、CLI 和 Worker 改动保持，发布来自独立干净 checkout。
+
+- 宿主运行 `/home/dev/.local/share/testloop-releases/dots-read-20261110`。相对原 workbuddy-wait 版仅5个运行JS变化：daemon、dots-presence、dots、store、workspace-rpc。scanner PID `1615922`、recovery PID `1618294` 均 active、NRestarts=0，7个原生工具/记忆网关使用新宿主。
+- 冷备 `/home/dev/.local/state/testloop-backups/dots-read-20261110` 验证1412文件；`-extras` 保存三个Dot原生home、Happy profile、用户级记忆及旧服务文件。13个原执行会话的PID/startTicks/cgroup与执行Worker身份保持。原3个Happy session、输入历史、设置、权限和规范记忆保持；两个有历史的原生thread不变，已清空且无本轮输入的空thread按既有CLI启动规则重建，未重放旧输入。
+- 私网 Web `https://desktop-8ut4p0p.taild92624.ts.net/happy/` 已发布；HTML、三个入口JS及WASM逐字节回读一致，并核对gzip首页。旧hash资产保留，完整旧Web在证据根 `previous-web/`，没有重启Relay或执行Worker。
+- 个人 `@prophetwayen/happy`、preview环境/分支、iOS runtime21、bundle `com.prophetwayen.happy.preview`：[OTA更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/ddaae9c9-750b-4b94-b1a0-dd778bf939dd)，update `01a1c4d5-c716-705c-8ed6-67f5900b751f`。preview/production原有共同preview映射保持；两渠道实际manifest的项目、bundle、runtime、源码和更新ID一致。实际启动包10,239,684字节，SHA256 `84ccf2d3223fc81ecb6dd4188b8e5682d2843035b58c64bbd1e3906c9497448c`，下载哈希与本地最终iOS导出一致。手机是否已下载/加载未验证。
+
+线上真实加密RPC五次只读验证通过：列表263/498毫秒，三Dot详情1281/2483/658毫秒，commands/requests/outbox数量保持，真实模型0次。该样本经过本机访问实际私网Relay，不等于手机外部网络耗时。合入最新个人main后，App48项及类型/changelog检查通过；宿主此前同源码48项定向验证复用。最终固定Web导出包8组真实隔离浏览器检查通过，线上匿名登录及未认证Dots guard浏览器errors=[]、三个实际入口JS匹配。整体health保持degraded，仅原三项attention，scanner error=null；真机、整机重启和长期稳定性未验证。
+
+发布准备的首次Web构建因workspace依赖链接解析失败而拒绝，修正发布副本的本地链接后重新导出成功；失败日志保留 `web-build.log`，成功日志为 `web-build-fixed.log`，未将失败写成通过。发布期间没有清理历史回执或旧业务数据。回退须协调宿主与App/Web查询协议，并保存发布后的消息与任务；不能直接用旧冷备覆盖当前账本。
+
+证据根 `/home/dev/code/testLoop/.e2e-artifacts/dots-read-release-20261110/`：`host-manifest.json`、`cold-backup.json`、`host-activation.json`、`live-read.json`、`web-deployed.json`、`online-browser/report.json`、`ota-published.json`、`ota-served.json`、`final-readback.json`。固定导出包浏览器证据 `/home/dev/.local/share/testloop-releases/dots-read-20261110/.e2e-artifacts/dots-workspace-read/2026-11-10T09-35-40-376Z/`。
+
+| 验收节点 | 截图 |
+| --- | --- |
+| 固定发布产物的隔离工作台（非私人账号） | [查看](http://100.116.89.36:3210/img-bed/images/fdcae1de-1f3e-42ed-a156-50c8746435ee.png) |
+| 线上匿名手机尺寸登录页 | [查看](http://100.116.89.36:3210/img-bed/images/a952d407-85d2-48da-b738-ea5a475586d5.png) |
+
+
 ## Automation Worker 持久会话查询 CPU 修复（2026-11-10）
 
 CPU 修复源 `6c9128cbf612fb641d34cbccca52087a35073275`、部署入口保护源 `e43a3604d85b174590abef7a8332106db6d77c79` 已推送个人 `fork/main`。固定包从当次 fetch 一致且干净的独立 `main` 准备。线上采样定位到 `observeLegacy → automationControl.observe → readPersistedSessions`：高频单会话查询反复读取约 1.13 MB、263 条记录的全表，并逐条计算系统启动时间。现在按文件代际复用解析索引，只重查目标会话的保留期限和进程存活；启动/写入的全量读取继续保留，启动时间每次全量读取只计算一次。没有新增依赖。
