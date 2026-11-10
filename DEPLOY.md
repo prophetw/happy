@@ -1,5 +1,21 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Automation Worker 持久会话查询 CPU 修复（2026-11-10）
+
+CPU 修复源 `6c9128cbf612fb641d34cbccca52087a35073275`、部署入口保护源 `e43a3604d85b174590abef7a8332106db6d77c79` 已推送个人 `fork/main`。固定包从当次 fetch 一致且干净的独立 `main` 准备。线上采样定位到 `observeLegacy → automationControl.observe → readPersistedSessions`：高频单会话查询反复读取约 1.13 MB、263 条记录的全表，并逐条计算系统启动时间。现在按文件代际复用解析索引，只重查目标会话的保留期限和进程存活；启动/写入的全量读取继续保留，启动时间每次全量读取只计算一次。没有新增依赖。
+
+用户在普通 WSL 终端激活第二版维护包，独立维护单元 `happy-automation-maintenance-20261110T055951Z-worker-cpu-fix-e43a3604d85b.service` 为 success/0。系统 Worker PID `3008770`、active/running、NRestarts=0，实际入口为 `/home/dev/.local/share/happy-automation/releases/worker-cpu-fix-v2-20261110-e43a3604/packages/happy-cli/bin/happy-control-worker.mjs`。16 个受保护原会话根 PID/startTicks/cgroup 回查保持，注册配置 SHA256 不变；65 秒健康观察得到 3 条 connected、间隔约 30.0 秒，无 unavailable 或非预期 journal 错误。
+
+切换前后各 3 次约 6 秒的主进程采样：CPU 单核均值 **56.01% → 31.14%**，下降 **44.40%**；`/proc/<pid>/io` 的逻辑读取量 `rchar` 均值 **68,608,307 → 8,243,551 B/s**，下降 **87.98%**。两侧物理磁盘读取均为 0，不能将逻辑读取下降称为磁盘吞吐下降。线上并发负载未受控，剩余 CPU 及长期性能未验证。
+
+135 项定向回归（含 14 项新查询测试）、CLI 类型检查/构建及 18 项维护安全测试通过；固定包哈希、实际模块加载和激活预检通过。生产 MCP 独立只读会话 `cmwaahdhz1zyymm16nd96fwht`、turn `01a1c412-9b93-7ed3-8fa6-233835173d62` 返回精确标记 `WORKER_CPU_FIXED_V2_09da1113e0c7` 并 completed，随后只取消自有测试会话并确认 process=stopped。1 次真实模型输入，费用未测量；浏览器/手机、整机重启与长期稳定性未验证。
+
+首次激活失败记录保留：候选 drop-in 文件名排在旧覆盖配置之前，reload 后仍启用了旧包，维护单元 `happy-automation-maintenance-20261110T054543Z-worker-cpu-fix-6c9128cbf612.service` 为 exit-code/1；旧包重启为 PID `2775734`，再次执行旧激活脚本因 PID/invocation 已变化报 `LIVE_WORKER_CHANGED`。该次 CPU 修复没有生效，原 15 个受保护根保持，未发送派工验收。修正后在停止前拒绝排序冲突，在 reload 后启动前核对完整生效 argv，回退也核对旧入口；第二版覆盖文件名排在所有现有覆盖配置之后。未清除首次失败单元或将其记为成功。
+
+既有维护器在停止段执行冷备，私有维护目录 `/var/lib/happy-automation-maintenance/20261110T055951Z-worker-cpu-fix-e43a3604d85b`。旧包保留；普通终端的显式回退入口为 `sudo /usr/bin/python3 /var/lib/happy-automation-maintenance/20261110T055951Z-worker-cpu-fix-e43a3604d85b/rollback-release.py --launch`，核验旧 reader 可读取当前账本后仅撤回本次覆盖配置，不恢复旧账本覆盖新状态。本次未实际执行回退，也未绕过 Agent 的 NoNewPrivileges 读取 root 私有状态。
+
+证据根 `/home/dev/code/happy-worker-optimization-release-20261110/.e2e-artifacts/worker-cpu-fix-v2-20261110/`：`deployment-validation.json.status=passed`，后台 `happy-worker-cpu-fix-v2-acceptance-20261110.service` 为 success/0，包含 CPU/读取量样本、原进程保持、真实派工清理和 `first-attempt-failure.json`。诊断采样保留在同级 `worker-cpu-diagnosis-20261110/`。本次仅替换受管 Worker 固定入口。
+
 ## Automation Worker 观察与健康日志优化（2026-11-10）
 
 功能源 `608d9352d586c1f14ea97857d6bb0e073ab64dac` 已正常推送个人 `fork/main`，固定包从当次 fetch 核对一致、干净的独立 `main` 准备。增量观察普通会话历史，每页复用一次队列快照，减少任务分页中的重复进程标识更新；稳定健康日志改为每 30 秒一次，调度故障保留到实际恢复。依赖锁文件、注册配置、项目/权限、账本格式与 systemd 重试策略保持。
