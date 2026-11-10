@@ -12,6 +12,8 @@ Control 镜像 `sha256:3a413943d3b17b81dca6b12dd2fea745f200871a9960b8e15cde3502f
 
 用户最后指示为“原任务保持停止”。原验收工作项 `91e4f9fa-90ba-459d-b0a1-70c4b84fb4ba` 仍为 failed/session_stopped、executionDispatched=false、sentSeq=null；原 session `cmwa0ees01dkymm16usdgxdj1` 未恢复，未取消/重派该工作项。本轮没有写 bim-server 的已有文件，也未触碰原 TestLoop 主工作区预先暂存的 DEPLOY.md。
 
+后续回查补充：切换验收后，12:10 的明确 clear 回执 `5d37c953-0988-4309-af13-d24e8f4d16f3` 将一个 Dot 轮换到新会话；本轮部署未调用清空入口，保留该后续操作。另外一个空闲 Dot 在13244条输出均已确认送达后仍残留旧托管 CLI 的 hosted_relay_unavailable 标记。未手改错误字段，通过既有运行时控制重连后，原thread、epoch及76条输入历史保持，错误清除；证据 idle-dot-reconnect.json。不能将回查前的异常记录称为从未发生，也不能将后续清空后的现状称为3个原会话始终未变。
+
 总证据 `/home/dev/code/happy-dot-autonomous-release-20261110/.e2e-artifacts/dot-autonomous-release-20261110/`，`coordination-status.json.status=deployed`；包含原任务回查、实际 MCP 挂载/生产派发、Web 字节/浏览器、进程保持及最终报告。发布前 Control 首候选文件模式造成 EACCES，已在隔离容器预检拦截并修正；另保留入口文本断言和测试 SDK 依赖定位的夹具失败，最终改用镜像真实 stdio 握手通过。线上未启用这些失败候选。手机本次 OTA、原生包、真机加载、整机重启和长期稳定性未验证。
 
 ## Dot 派发与重启会话强证明修复（2026-11-10）
