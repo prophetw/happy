@@ -321,6 +321,19 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                 if (!active && state.status !== 'blocked') {
                     const row = state.inputs.find(r => r.status === 'queued' && (r.origin ?? 'user') === 'user') ?? state.inputs.find(r => r.status === 'queued');
                     if (row) {
+                        // A binding RPC can publish while flush() awaits Relay delivery.
+                        // Refresh again at dispatch, then recheck after the async resume.
+                        const latest = taskGateway();
+                        if (hash(latest) !== taskServersDigest && Date.now() >= refreshRetryAt) {
+                            let refreshed = false;
+                            try { await applyTaskServers(latest); refreshed = true; }
+                            catch (error) {
+                                state.error = 'hosted_mcp_refresh_failed'; persist(); refreshRetryAt = Date.now() + 30_000;
+                                console.error('[HostedDot] Failed to apply the MCP binding before dispatch', error);
+                            }
+                            if (refreshed && hash(taskGateway()) !== taskServersDigest) continue;
+                            if (stop || signal?.aborted || existsSync(controlFile) && !state.controls.includes(readPrivate(controlFile).id)) continue;
+                        }
                         row.beforeTurns = state.inputs.filter(r => r.epoch === state.epoch).flatMap(r => r.turnId ? [r.turnId] : []);
                         row.status = 'dispatching'; state.status = 'running'; persist();
                         active = client.sendTurnAndWait(row.text, { model: settings.model, effort: settings.effort, sandbox: 'read-only', approvalPolicy: 'never' }).then(() => {

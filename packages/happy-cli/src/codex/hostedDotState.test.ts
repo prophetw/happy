@@ -3,10 +3,21 @@ import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { hash, HostedDotConfig, loadHostedState, savePrivate, readPrivate, addOutput } from './hostedDotState';
+import { hash, HostedDotConfig, HostedTaskGateway, loadHostedState, savePrivate, readPrivate, addOutput } from './hostedDotState';
 import { createEnvelope } from '@slopus/happy-wire';
 const config = () => HostedDotConfig.parse({ version: 1, dotId: randomUUID(), sessionId: 'isolated', happyHome: '/tmp/happy',
     serverUrl: 'http://127.0.0.1:4567', directory: '/tmp/dot', executable: 'codex', args: [], model: 'test', provider: 'openai', instruction: 'chat', codexHome: '/tmp/codex' });
+it('accepts ordinary host-bound MCP gateways and bounded service timeouts alongside Happy and memory', () => {
+    const gateway = { version: 1, dotId: randomUUID(), sessionId: 'isolated', servers: {
+        mcp_workbuddy: { command: '/usr/bin/node', args: ['/gateway.mjs', '/assistant', 'dot', 'connection', 'digest'],
+            startup_timeout_sec: 30, tool_timeout_sec: 120, required: true, default_tools_approval_mode: 'approve' },
+    } };
+    expect(HostedTaskGateway.parse(gateway)).toEqual(gateway);
+    for (const timeout of [0, 121]) expect(() => HostedTaskGateway.parse({ ...gateway, servers: {
+        mcp_workbuddy: { ...gateway.servers.mcp_workbuddy, tool_timeout_sec: timeout },
+    } })).toThrow();
+    expect(() => HostedTaskGateway.parse({ ...gateway, servers: { arbitrary: gateway.servers.mcp_workbuddy } })).toThrow();
+});
 it('preserves input delivery state and stable output identity across process reloads', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-journal-')), file = join(dir, 'state.json'), c = config();
     try {

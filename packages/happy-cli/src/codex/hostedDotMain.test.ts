@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate } from './hostedDotState';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
-    attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), receive: null as any }));
+    attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any }));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     constructor(_: unknown, options: any) { h.options = options; }
     listModels = async () => ({ data: [{ model: 'test', displayName: 'test', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'xhigh', isDefault: true }, { model: 'alternate', displayName: 'Alternate', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high', isDefault: false }] });
@@ -27,7 +27,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     rpcHandlerManager = { registerHandler() {} };
     waitForConnection = async () => {}; updateMetadata = async () => {}; updateAgentState = async () => {};
     sendSessionDeath() {} keepAlive() {} close = async () => { clearInterval(this.timer); };
-    sendSessionProtocolMessageVerified = async (envelope: unknown, localId: string) => { h.sent.push({ localId, envelope }); };
+    sendSessionProtocolMessageVerified = async (envelope: unknown, localId: string) => { await h.flush(); h.sent.push({ localId, envelope }); };
 } }));
 import { runHostedDot } from './hostedDotMain';
 function fixture(gateway = false, imported = false) {
@@ -64,7 +64,24 @@ const emit = (method: string, params: any) => {
     if (method === 'turn/started') h.event({ type: 'task_started', thread_id: 'native-thread', turn_id: params.turn.id });
     if (method === 'turn/completed') h.event({ type: 'task_complete', thread_id: 'native-thread', turn_id: params.turn.id, status: params.turn.status });
 };
-beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockReset().mockResolvedValue({}); });
+beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.flush.mockReset().mockResolvedValue(undefined); h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockReset().mockResolvedValue({}); });
+it('refreshes a gateway published during Relay flush before dispatching the next queued user input', async () => {
+    let release!: () => void, entered = false, serversAtSecond: unknown;
+    h.flush.mockImplementationOnce(() => new Promise<void>(resolve => { entered = true; release = resolve; }));
+    h.send.mockImplementation(async (text: string) => {
+        if (text === 'second') serversAtSecond = h.resume.mock.calls.at(-1)?.[0].mcpServers;
+        emit('turn/started', { turn: { id: text } }); emit('turn/completed', { turn: { id: text, status: 'completed' } });
+        return { aborted: false };
+    });
+    const f = fixture(true);
+    try {
+        h.rows.push(row(1, 'first')); await vi.waitFor(() => expect(entered).toBe(true));
+        f.policy({}); h.rows.push(row(2, 'second'));
+        await vi.waitFor(() => expect(f.state().inputs).toHaveLength(2)); release();
+        await vi.waitFor(() => expect(f.state().inputs[1].status).toBe('completed'));
+        expect(serversAtSecond).toEqual({});
+    } finally { release?.(); await f.stop(); }
+});
 it('imports actual old conversation once, skips its processed user messages and resumes the imported thread without replay', async () => {
     h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'new' } }); emit('turn/completed', { turn: { id: 'new', status: 'completed' } }); return { aborted: false }; });
     const f = fixture(false, true);
