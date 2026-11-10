@@ -9,6 +9,15 @@ This document describes how to deploy the Happy backend (`packages/happy-server`
 日常客户端配置、直连判断与日志命令见
 [Tailscale、Shadowrocket 与 Clash Verge 使用说明](features/tailscale-access.md)。
 
+### 旧部署脚本与配置（禁止直接重放）
+
+| 文件 | 现状 |
+| --- | --- |
+| `scripts/deploy-relay.mjs` | 默认 SSH 目标仍是已退役的 `root@192.168.99.56`；未显式传 `--host` 时脚本会告警。 |
+| `deploy/relay/nginx-location.conf` | 指向 `192.168.99.55:8193` 的旧 relay-only 片段，仅供历史参考。 |
+| `deploy/automation/site-99-55/` | 99.55/99.57 旧站点自动化与验证记录；个别脚本仍可本地复用，须显式使用当前配置。 |
+| `docs/features/automation-service-access.md` | 入口已更新为当前私网地址，文首标注旧入口退役。 |
+
 | 服务 | 当前实例 | 配置 / 数据 |
 | --- | --- | --- |
 | 私网 HTTPS | Windows Tailscale Serve，节点 `desktop-8ut4p0p.taild92624.ts.net`，IP `100.116.89.36` | 后台持久代理 `http://127.0.0.1:18194`；无 AllowFunnel 配置 |

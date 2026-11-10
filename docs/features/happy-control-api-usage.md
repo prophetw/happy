@@ -1,7 +1,9 @@
 # Happy Control REST API 使用说明
 
-> 基址：`https://szsp.suitbim.com.cn:7100/happy-control/v1`
-> OpenAPI：`https://szsp.suitbim.com.cn:7100/happy-control/v1/openapi.json`
+> **入口已变更（2026-11-07）**：旧 `https://szsp.suitbim.com.cn:7100` 入口已退役（现返回 410）。本文基址与示例已更新为当前 Tailscale 私网地址 `https://desktop-8ut4p0p.taild92624.ts.net`；文中的历史实测结论来自迁移前旧入口，当前线上版本仍需重新核对。
+
+> 基址：`https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1`
+> OpenAPI：`https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1/openapi.json`
 > 线上版本：`1.7.0`（协议 1）
 >
 > 本文依据 2026-11-05 `main` 分支实现及线上实测结果整理。
@@ -85,9 +87,9 @@ Happy Control 是 Happy 的**受控自动化 REST 接口**：获授权的外部�
 ### 3.1 用户操作
 
 1. 打开并登录 Happy Web：
-   - `https://szsp.suitbim.com.cn:7100/happy/`
+   - `https://desktop-8ut4p0p.taild92624.ts.net/happy/`
 2. 进入“设置 → 账号 → 助手连接 → 为后端创建服务授权”：
-   - `https://szsp.suitbim.com.cn:7100/happy/settings/automation-service`
+   - `https://desktop-8ut4p0p.taild92624.ts.net/happy/settings/automation-service`
 3. 选择已登记的服务身份、机器、项目、操作方法和有效天数。
    - 默认只读；需要执行任务时勾选“创建任务”“追加指令”，需要停止任务时勾选“取消任务”。
    - 当前线上服务授权最长 30 天，支持小数天数。
@@ -103,7 +105,7 @@ Happy Control 是 Happy 的**受控自动化 REST 接口**：获授权的外部�
 
 | 资料 | 用途 |
 | --- | --- |
-| REST 基址 | `https://szsp.suitbim.com.cn:7100/happy-control/v1` |
+| REST 基址 | `https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1` |
 | 服务令牌 | 只放 secret provider，运行时注入 `Authorization` |
 | connectionID / grantID | 核对授权、查询自身连接 |
 | machineID、projectID 列表 | 创建任务时使用 |
@@ -134,7 +136,7 @@ Authorization: Bearer hsvc1.<connectionID>.<secret>
 ### 4.1 探活与兼容性（公开，无需令牌）
 
 ```bash
-BASE=https://szsp.suitbim.com.cn:7100/happy-control/v1
+BASE=https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1
 
 curl -sS "$BASE/compatibility"
 ```
@@ -725,9 +727,9 @@ client
 
 ## 附录 B：参考
 
-- 线上 OpenAPI：`https://szsp.suitbim.com.cn:7100/happy-control/v1/openapi.json`
-- Happy Web：`https://szsp.suitbim.com.cn:7100/happy/`
-- 服务授权创建页：`https://szsp.suitbim.com.cn:7100/happy/settings/automation-service`
-- 连接管理与撤销：`https://szsp.suitbim.com.cn:7100/happy/settings/automation`
+- 线上 OpenAPI：`https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1/openapi.json`
+- Happy Web：`https://desktop-8ut4p0p.taild92624.ts.net/happy/`
+- 服务授权创建页：`https://desktop-8ut4p0p.taild92624.ts.net/happy/settings/automation-service`
+- 连接管理与撤销：`https://desktop-8ut4p0p.taild92624.ts.net/happy/settings/automation`
 - 仓库内架构与安全边界（clever-ocean 分支）：`docs/features/automation-control.md`
 - 仓库内用户/后端接入说明（clever-ocean 分支）：`docs/features/automation-service-access.md`

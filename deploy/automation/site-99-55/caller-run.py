@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Root operator's bounded REST signer adapter. JSON stdin/stdout; no listener or shell input."""
+"""Root operator's bounded REST signer adapter. JSON stdin/stdout; no listener or shell input.
+
+LEGACY HOST: the 99.55/99.57 site was retired on 2026-11-07; this script still
+maps szsp.suitbim.com.cn to 192.168.99.57 and targets the old REST pair. Keep it
+for historical reference only; see deploy/automation/site-99-55/README.md.
+"""
 import json
 import os
 import pathlib

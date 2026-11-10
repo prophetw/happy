@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// LEGACY DEFAULT TARGET (retired 2026-11-07): the default host below is the old
+// 99.x relay server. Current Happy runs locally behind Tailscale; see DEPLOY.md
+// and docs/deployment.md. Always pass --host explicitly.
 import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
@@ -15,12 +18,13 @@ const options = {
     host: 'root@192.168.99.56', dir: '/data/code/happy-relay',
     source: path.join(homedir(), '.cache', 'happy-relay', 'release-source'),
 };
+let hostSpecified = false;
 const flags = { '--host': 'host', '--dir': 'dir', '--source': 'source', '--image': 'image', '--public-url': 'publicUrl', '--port': 'port', '--allowed-accounts': 'allowedAccounts', '--ssh-port': 'sshPort', '--identity': 'identity', '--bind-address': 'bindAddress', '--project': 'project' };
 for (let i = 2; i < process.argv.length; i++) {
     const flag = process.argv[i];
     if (flag === '--help' || flag === '-h') {
         console.log(`Usage: node scripts/deploy-relay.mjs [options]
-  --host <user@host>    SSH target or SSH-config Host (default: root@192.168.99.56)
+  --host <user@host>    SSH target or SSH-config Host (default: retired legacy root@192.168.99.56; pass explicitly)
   --dir <path>          Deployment directory (default: /data/code/happy-relay)
   --source <path>       Clean main checkout to build; default is a cached upstream clone
   --image <tag>         Deploy a prebuilt local image instead of fetching/building main
@@ -40,8 +44,10 @@ for (let i = 2; i < process.argv.length; i++) {
         continue;
     }
     if (!flags[flag] || !process.argv[i + 1]) throw new Error(`Unknown or incomplete option: ${flag}`);
+    if (flags[flag] === 'host') hostSpecified = true;
     options[flags[flag]] = process.argv[++i];
 }
+if (!hostSpecified) console.warn('WARNING: --host was not given; using the retired legacy default root@192.168.99.56. Current Happy runs locally behind Tailscale (see DEPLOY.md); pass --host explicitly to avoid deploying to a retired environment.');
 if (!/^(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.host)) throw new Error('Use a hostname or IPv4 SSH target, optionally user@host.');
 if (!/^\/[A-Za-z0-9_./-]+$/.test(options.dir)) throw new Error('Use an absolute deployment path containing letters, digits, _, -, / and .');
 if (options.port && (!/^\d+$/.test(options.port) || Number(options.port) < 1 || Number(options.port) > 65535)) throw new Error('Invalid HTTP port.');

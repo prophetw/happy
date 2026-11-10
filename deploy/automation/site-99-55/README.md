@@ -1,5 +1,9 @@
 # 99.55 REST / 99.57 HTTPS：长期服务，测试范围任务控制已验证
 
+> **历史目录（已退役，2026-11-07）**：99.55 / 99.57 的 Happy Web、Relay、Control 与旧静态路由已退役；本目录仅保留当时的自动化脚本、示例和验证记录，不代表当前发布目标。当前部署见 [DEPLOY.md](../../../DEPLOY.md) 与 [部署文档](../../../docs/deployment.md)。
+>
+> 部分脚本（如 `worker-transition.py`）仍可在本机受管 Worker 维护中复用，但必须使用当前 `/etc/happy-control/worker.json` 和显式本机路径，不要重放示例中的旧主机地址。带硬编码旧地址的 `tls-maintain.py`、`caller-run.py` 已在文件头标注。
+
 ## localhost:8989 浏览器批准 Origin 已上线（2026-11-05）
 
 已从干净发布 clone 提交并推送 `b972b31f154c39452ba9aa2bcb8e4c03034aa853` 到 `fork/main`，55 REST 切换为镜像 `sha256:8b5d095796a21363f4bd8816ec5ca78424884aa465f731d33bfc6b1f7125a61a`。host 仅新增 `additionalBrowserOrigins: ["http://localhost:8989"]`，其他身份、项目范围与配置不变；默认仍只接受固定主 Origin，不使用通配 CORS 或 Cookie。额外 Origin 的预检返回空204，实际 owner 请求继续逐个验证 Happy Bearer。

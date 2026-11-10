@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Local, fixed-role TLS maintenance. No listener, account login, remote shell or grant operations."""
+"""Local, fixed-role TLS maintenance. No listener, account login, remote shell or grant operations.
+
+LEGACY HOST: the 99.55/99.57 site was retired on 2026-11-07 and this script still
+targets 192.168.99.55:9011. Keep it for historical reference only; see
+deploy/automation/site-99-55/README.md and docs/deployment.md before running it.
+"""
 import argparse
 import datetime
 import fcntl

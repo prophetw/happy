@@ -1,5 +1,7 @@
 # Happy 服务授权：用户创建与业务后端接入
 
+> **入口已变更（2026-11-07）**：99.55 / 99.57 旧服务与旧 `https://szsp.suitbim.com.cn:7100/...` 地址已退役（现返回 410）。本文入口与示例已更新为当前 Tailscale 私网地址 `https://desktop-8ut4p0p.taild92624.ts.net`；迁移说明见[部署文档](../deployment.md#本机与-tailscale-迁移2026-11-07)。
+
 适用：业务后端通过 REST 控制获准的 Happy 机器、项目和专用会话。2026-11-04 目录选择版 REST、Web 和4090受信worker已部署，可在 `/home/dev/code` 内浏览并选择具体目录，原两个隔离项目登记保留。本文说明用户如何审查授权、后端如何调用；真实新目录授权及其后端任务仍待本人批准和验收。
 
 ## 先了解交给业务方的是什么
@@ -14,9 +16,9 @@
 
 ### 入口
 
-- Happy Web：<https://szsp.suitbim.com.cn:7100/happy/>
-- 创建服务授权：<https://szsp.suitbim.com.cn:7100/happy/settings/automation-service>
-- 管理、查看、撤销和删除连接记录：<https://szsp.suitbim.com.cn:7100/happy/settings/automation>
+- Happy Web：<https://desktop-8ut4p0p.taild92624.ts.net/happy/>
+- 创建服务授权：<https://desktop-8ut4p0p.taild92624.ts.net/happy/settings/automation-service>
+- 管理、查看、撤销和删除连接记录：<https://desktop-8ut4p0p.taild92624.ts.net/happy/settings/automation>
 
 从界面进入：**设置 → 账号 → 助手连接 → 为后端创建服务授权**。未登录时先按现有 Happy 流程登录，再重新打开创建链接；扫码登录账号和批准服务授权是两个独立步骤。
 
@@ -38,7 +40,7 @@
 
 | 资料 | 用途 |
 | --- | --- |
-| REST 基址 | `https://szsp.suitbim.com.cn:7100/happy-control/v1` |
+| REST 基址 | `https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1` |
 | 连接 ID（connectionID / grantID） | 核对授权、查询自己的连接；ID 本身不授予权限 |
 | machineID、获准的 projectID 列表 | 从批准页详情记录；每次创建任务指定列表中的一个 projectID |
 | 项目实际目录、允许的方法、会话范围 | 供业务方核对边界；当前测试项目为 `automation-test`、`automation-test-b` |
@@ -81,7 +83,7 @@
 - 保存业务任务与 `grantID / requestID / taskID / sessionID / cursor / turnID` 的映射，所有修改操作先持久化 requestID。
 - 4090Wsl2 受信 worker、机器和 relay 可用。worker 仅主动出站，业务方不需要访问 4090 的入站端口。
 
-公开接口契约：[线上 OpenAPI](https://szsp.suitbim.com.cn:7100/happy-control/v1/openapi.json)、[仓库 OpenAPI](../api/automation-control.openapi.json)。公开 `GET /compatibility` 应宣告 `serviceTokens.protocol=1`。当前部署已于2026-11-05启用 `service-token-v1` MCP，真实双跳反代、storedToken、只读及完整任务/取消/撤权联调通过；证据见仓库 `.e2e-artifacts/mcp-live-20261105T111014Z/`。
+公开接口契约：[线上 OpenAPI](https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1/openapi.json)、[仓库 OpenAPI](../api/automation-control.openapi.json)。公开 `GET /compatibility` 应宣告 `serviceTokens.protocol=1`。当前部署已于2026-11-05启用 `service-token-v1` MCP，真实双跳反代、storedToken、只读及完整任务/取消/撤权联调通过；证据见仓库 `.e2e-artifacts/mcp-live-20261105T111014Z/`。
 
 代码同时支持显式 `service-token-v1` HTTP MCP 模式：在 host 已有 `serviceTokens` 配置后加入 `mcp: { "mode": "service-token-v1" }`，客户端连接同一 origin 的 `/happy-control/mcp`。Dot 的「MCP 工具」面板可使用「Happy Control 配置示例」，预设 JSON 只保存 URL。宿主声明 `capabilities.storedToken=1` 时，首选在掩码字段填写 Token 本身（不含 `Bearer` 前缀），通过加密 `testloop-mcp-connections` RPC 传递 save `token` 字符串或明确清除时的 `null`，由宿主使用 workspace 密钥加密保存；`bearer_token_env_var: "HAPPY_CONTROL_SERVICE_TOKEN"` 仍可作为环境变量/secret provider 注入的可选兼容方式。MCP 与 REST 共用同一 grant、项目/机器/方法/会话范围和撤销/到期语义，但服务令牌不是 OAuth JWT，不能用于原 OAuth MCP。真实宿主支持、真实加密和线上反代已于2026-11-05完成专用范围联调；撤权后访问拒绝，测试凭据已清理。
 
@@ -145,7 +147,7 @@ import { serviceBackend } from './service-token-backend.mjs';
 export async function startJob({ secretProvider, machineID, projectID, jobID, text }) {
   if (!/^[A-Za-z0-9_-]{1,110}$/.test(jobID)) throw Error('INVALID_BUSINESS_JOB_ID');
   const rest = serviceBackend({
-    endpoint: 'https://szsp.suitbim.com.cn:7100/happy-control/v1',
+    endpoint: 'https://desktop-8ut4p0p.taild92624.ts.net/happy-control/v1',
     getToken: () => secretProvider.read('happy/business-service')
   });
   const createID = `${jobID}_create`;

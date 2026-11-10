@@ -1,5 +1,7 @@
 # Happy REST 自动化控制（底座已试运行，任务接入未开放）
 
+> **历史部署提示（2026-11-07）**：文中 99.55 / 99.57 部署与 `szsp.suitbim.com.cn:7100` 入口已退役；当前部署与入口见[部署文档](../deployment.md#本机与-tailscale-迁移2026-11-07)。
+
 最新验收（2026-11-04）：已在本人批准的`automation-test`有限scope中完成真实签名REST调用、一个专用Sol High会话的两轮完成结果及运行中取消实停验证；中断turn结果无终态证据，仍为unknown。当前授权到12:38:08 UTC+8失效。当前使用现有运维SSH下的固定签名adapter，专用MCP平台注册仍未配置；详见`deploy/automation/site-99-55/validation.task-2026-11-04.json`。以下试部署/fixture段落保留当时状态，不代表现在仍无worker或无获批连接。
 
 目标是让获授权的云端助手调用 REST，CLI 仅保留为内部适配。开发分支 `clever-ocean`，worktree `/home/dev/code/happy/.dev/worktree/clever-ocean`。2026-11-04已获准把固定快照试部署到99.55，并热加载99.57新路径；仅使用24小时tmpfs内部TLS，client/worker登记为空。没有真实Happy登录/grant、worker/daemon更新或MCP注册。当前服务器结果及截止清理见本文末节和 `deploy/automation/site-99-55/validation.trial-2026-11-04.json`；早期本地fixture只证明模拟边界。

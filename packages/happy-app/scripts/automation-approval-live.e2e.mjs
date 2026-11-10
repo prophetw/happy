@@ -1,10 +1,12 @@
 // Read-only live smoke: isolated anonymous contexts; never logs in or approves.
+// Default target is the current Tailscale private entry; the retired 99.57 URL
+// (https://szsp.suitbim.com.cn:7100/happy/settings/automation) now returns 410.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-const url=new URL(process.env.HAPPY_APPROVAL_UI_URL ?? 'https://szsp.suitbim.com.cn:7100/happy/settings/automation');
+const url=new URL(process.env.HAPPY_APPROVAL_UI_URL ?? 'https://desktop-8ut4p0p.taild92624.ts.net/happy/settings/automation');
 assert.equal(url.protocol,'https:');assert.equal(url.pathname,'/happy/settings/automation');assert(!url.username&&!url.password&&!url.hash);assert([...url.searchParams.keys()].every(k=>k==='connection'));
 const artifacts=path.resolve(fileURLToPath(new URL('../../../',import.meta.url)),'.e2e-artifacts',`automation-live-${new Date().toISOString().replace(/[:.]/g,'-')}`);
 await mkdir(artifacts,{recursive:true});
