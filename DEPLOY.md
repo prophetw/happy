@@ -1,5 +1,17 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Automation Worker 观察与健康日志优化（2026-11-10）
+
+功能源 `608d9352d586c1f14ea97857d6bb0e073ab64dac` 已正常推送个人 `fork/main`，固定包从当次 fetch 核对一致、干净的独立 `main` 准备。增量观察普通会话历史，每页复用一次队列快照，减少任务分页中的重复进程标识更新；稳定健康日志改为每 30 秒一次，调度故障保留到实际恢复。依赖锁文件、注册配置、项目/权限、账本格式与 systemd 重试策略保持。
+
+用户在普通 WSL 终端执行已校验的 root 激活，独立维护单元 `happy-automation-maintenance-20261110T045611Z-worker-optimization-608d9352d586.service` 为 success/0。系统 Worker PID `2247195`、active/running、NRestarts=0，入口 `/home/dev/.local/share/happy-automation/releases/worker-optimization-20261110-608d9352/packages/happy-cli/bin/happy-control-worker.mjs`；12 个受保护原会话根 PID/startTicks/cgroup 在切换后回查保持，注册文件 SHA256 不变。既有维护器在停止段冷备机器账本/密钥与 journal，私有维护目录 `/var/lib/happy-automation-maintenance/20261110T045611Z-worker-optimization-608d9352d586`；原包保留，回退入口在该目录 `rollback-release.py --launch`，会核验原 reader 可读取当前账本，不恢复旧状态覆盖新回执。
+
+89 项功能定向回归、happy-agent 类型检查/打包和 16 项维护安全测试通过；文件哈希与固定包实际模块加载通过。已部署 Worker 的 65 秒观察得到 3 条 connected，间隔约 30.2 秒，无 unavailable 或非预期 journal 错误。生产 MCP 独立只读测试会话 `cmwa8agvf1sa9mm16pfnr4bng`，turn `01a1c3da-6b36-76d0-b02e-4a68df3155a6` 返回精确标记 `WORKER_OPT_OK_a7f44e254a55` 并 completed；随后只取消自有测试会话，独立确认 process=stopped。1 次真实模型输入，费用未测量；没有向用户已有会话发送验收消息。
+
+性能边界：隔离的 24 会话 × 5 轮基准中，列表查询 125→5、消息读取 72,000→14,400、队列事务 140→25。线上两次 8.01 秒样本的主进程 CPU 为单核 44.59%→45.20%，没有观察到下降；样本负载未受控，不能声称 CPU 瓶颈已解决。浏览器/手机真机、整机重启及长期性能未验证。本轮没有发布 Web、OTA、宿主、Control 镜像或全局 CLI。
+
+证据根 `/home/dev/code/happy-worker-optimization-release-20261110/.e2e-artifacts/worker-optimization-release-20261110/`，`deployment-validation.json.status=passed`，含真实派工与清理、日志时序、CPU 样本及原会话保持结果；后台验收单元 `happy-worker-optimization-acceptance-20261110.service` 为 success/0。首轮跨包测试缺少 CLI 依赖链接和 happy-agent 本地产物，补齐后受影响的两组 38 项通过，原失败记录保留。当前 Agent 的 sudo 被 NoNewPrivileges 拒绝，激活由用户普通终端完成，未绕过该边界。
+
 ## Dot 自主推进派发修复（2026-11-10）
 
 功能源 Happy `dcb5150ae25d38e1d5a40218010f3b8422fb365c`、TestLoop `389a9399525983a7cf96bf0065bc42ba54f017da`，已普通推送个人 main，并从当次 fetch 核对一致的干净独立 main 发布。取消原目录脏状态派发闸门，按实际 checkout 收窄自动资源锁，原请求持续跟踪并自动重试明确未发送的暂时故障；等待原因和恢复通过活动记录、工作详情及只读事件通知 Dot。没有新增依赖或修改项目额度，机器策略仍为项目默认 2、无隐式全机上限。
