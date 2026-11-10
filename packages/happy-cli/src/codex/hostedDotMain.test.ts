@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
-import { readPrivate } from './hostedDotState';
+import { readPrivate, loadHostedState, HostedDotConfig } from './hostedDotState';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any }));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
@@ -30,7 +30,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     sendSessionProtocolMessageVerified = async (envelope: unknown, localId: string) => { await h.flush(); h.sent.push({ localId, envelope }); };
 } }));
 import { runHostedDot } from './hostedDotMain';
-function fixture(gateway = false, imported = false) {
+function fixture(gateway = false, imported = false, seed?: (state: any) => void) {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-loop-')), home = join(dir, 'happy'), data = join(dir, 'runtime');
     mkdirSync(home); mkdirSync(data);
     writeFileSync(join(home, 'credential-target.key'), JSON.stringify({ token: 'fixture-token', serverUrl: 'http://127.0.0.1:1234' }));
@@ -47,6 +47,7 @@ function fixture(gateway = false, imported = false) {
     const servers = { happy_fixture: { command: '/usr/bin/node', args: ['/fixture/gateway.mjs'], startup_timeout_sec: 30, tool_timeout_sec: 30, required: true, default_tools_approval_mode: 'approve' } };
     const policy = (value: unknown) => writeFileSync(join(data, 'task-gateway.json'), JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, servers: value }));
     if (gateway) policy(servers);
+    if (seed) { const initial = loadHostedState(join(data, 'state.json'), HostedDotConfig.parse(config)); seed(initial); writeFileSync(join(data, 'state.json'), JSON.stringify(initial)); }
     let controller = new AbortController(), running = runHostedDot(config, controller.signal);
     const state = () => readPrivate(join(data, 'state.json'));
     const event = (id: string, epoch = 0, overrides: any = {}) => {
@@ -310,4 +311,26 @@ it('keeps an active turn on its original settings and applies a busy edit only a
         emit('turn/completed', { turn: { id: 'busy', status: 'completed' } }); finish();
         await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(2)); expect(h.send.mock.calls[1][1].effort).toBe('high');
     } finally { finish?.(); await f.stop(); }
+});
+
+it('revokes old accepted authority synchronously before startup networking and blocks ambiguous recovery', async () => {
+    const f = fixture(false, false, state => {
+        state.threadId = 'native-thread'; state.status = 'running';
+        state.authority = { version: 1, producer: { pid: 999999, start: '1', boot: randomUUID() }, revision: 40 };
+        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'old', text: 'old', status: 'accepted', turnId: 'old-turn', beforeTurns: [] }];
+    });
+    try {
+        expect(f.state()).toMatchObject({ status: 'starting', authority: { revision: 1, producer: { pid: process.pid } } });
+        expect(h.attach).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(f.state().inputs[0].status).toBe('unknown'));
+        expect(f.state().status).toBe('blocked'); expect(h.send).not.toHaveBeenCalled();
+    } finally { await f.stop(); }
+});
+it('keeps a previous blocked journal blocked when stamping a new producer', async () => {
+    const f = fixture(false, false, state => { state.status = 'blocked'; state.error = 'hosted_input_unconfirmed'; });
+    try {
+        expect(f.state()).toMatchObject({ status: 'blocked', authority: { revision: 1, producer: { pid: process.pid } } });
+        await vi.waitFor(() => expect(h.start).toHaveBeenCalled());
+        expect(f.state().status).toBe('blocked');
+    } finally { await f.stop(); }
 });

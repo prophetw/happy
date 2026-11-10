@@ -50,6 +50,9 @@
         "default": "./dist/codex/happyMcpStdioBridge.mjs"
       }
     },
+    "./codex/hostedDotAuthority": {
+      "import": { "types": "./dist/codex/hostedDotAuthority.d.mts", "default": "./dist/codex/hostedDotAuthority.mjs" }
+    },
     "./codex/hostedDotMain": {
       "import": { "types": "./dist/codex/hostedDotMain.d.mts", "default": "./dist/codex/hostedDotMain.mjs" }
     },

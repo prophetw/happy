@@ -52,3 +52,12 @@ it('migrates effort-less config bindings, preserves explicit effort and retains 
         expect(loadHostedState(join(dir, 'new.json'), { ...c, directory: dir }).epoch).toBe(5);
     } finally { rmSync(dir, { recursive: true }); }
 });
+it('refuses to revive a journal older than the durable reset epoch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hosted-stale-')), file = join(dir, 'state.json');
+    try {
+        const c = { ...config(), directory: dir }, state = loadHostedState(file, c);
+        savePrivate(file, state); writeFileSync(join(dir, 'reset-epoch.json'), JSON.stringify({ epoch: 1 }));
+        expect(() => loadHostedState(file, c)).toThrow('hosted_epoch_stale');
+        expect(readPrivate(file).epoch).toBe(0);
+    } finally { rmSync(dir, { recursive: true }); }
+});
