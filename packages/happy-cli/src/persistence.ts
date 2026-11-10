@@ -6,7 +6,7 @@
 
 import { FileHandle } from 'node:fs/promises'
 import { readFile, writeFile, mkdir, open, unlink, rename, stat } from 'node:fs/promises'
-import { existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, linkSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, linkSync, statSync, openSync, fstatSync, closeSync } from 'node:fs'
 import { constants } from 'node:fs'
 import os from 'node:os'
 import { configuration } from '@/configuration'
@@ -463,10 +463,10 @@ function lastAliveAt(session: PersistedSession): number {
  * Records from before the boot are therefore reported as not running — which is
  * true, since nothing survives a reboot.
  */
-function isSessionProcessRunning(session: PersistedSession): boolean {
+function isSessionProcessRunning(session: PersistedSession, bootTimeMs: number): boolean {
   const pid = session.metadata?.hostPid;
   if (!Number.isSafeInteger(pid) || pid! <= 0) return false;
-  if (session.savedAt < Date.now() - os.uptime() * 1000) return false;
+  if (session.savedAt < bootTimeMs) return false;
   try {
     process.kill(pid!, 0);
     return true;
@@ -484,13 +484,14 @@ export function readPersistedSessions(): Record<string, PersistedSession> {
     if (!data?.sessions || typeof data.sessions !== 'object') return {};
 
     const now = Date.now();
+    const bootTimeMs = now - os.uptime() * 1000;
     const sessions: Record<string, PersistedSession> = {};
     for (const [id, session] of Object.entries(data.sessions)) {
       // Never drop a session that is still running: its record holds the only
       // copy of the encryption key, so dropping it makes a live session
       // permanently unreachable — the daemon can no longer re-adopt it after a
       // restart, and resume cannot find it either.
-      if (isSessionProcessRunning(session)) {
+      if (isSessionProcessRunning(session, bootTimeMs)) {
         sessions[id] = session;
         continue;
       }
@@ -501,6 +502,46 @@ export function readPersistedSessions(): Record<string, PersistedSession> {
     return sessions;
   } catch {
     return {};
+  }
+}
+
+// One parsed file generation, not a cache of process liveness or retention decisions.
+let sessionIndex: { file: string; stamp: string; sessions: Record<string, PersistedSession> } | undefined;
+
+function sessionsFileStamp(fd?: number): string {
+  const info = fd === undefined ? statSync(configuration.sessionsFile, { bigint: true }) : fstatSync(fd, { bigint: true });
+  if (!info.isFile()) throw new Error('SESSIONS_FILE_UNAVAILABLE');
+  // Atomic renames change inode; ctime detects same-size rewrites with restored mtime.
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.mode}:${info.uid}:${info.gid}:${info.nlink}`;
+}
+
+/** Targeted status lookup. Writes and startup retain the uncached full-reader path. */
+export function readPersistedSession(sessionId: string): PersistedSession | undefined {
+  let fd: number | undefined;
+  try {
+    const file = configuration.sessionsFile;
+    // Recheck read permission even on a cache hit and pin the generation being read.
+    fd = openSync(file, 'r');
+    const before = sessionsFileStamp(fd);
+    if (!sessionIndex || sessionIndex.file !== file || sessionIndex.stamp !== before) {
+      sessionIndex = undefined;
+      const data = JSON.parse(readFileSync(fd, 'utf-8')) as SessionsFile;
+      const after = sessionsFileStamp(fd);
+      if (before !== after || after !== sessionsFileStamp() || !data?.sessions || typeof data.sessions !== 'object' || Array.isArray(data.sessions)
+          || Object.values(data.sessions).some(value => value == null)) return undefined;
+      sessionIndex = { file, stamp: after, sessions: data.sessions };
+    }
+    if (!Object.hasOwn(sessionIndex.sessions, sessionId)) return undefined;
+    const session = sessionIndex.sessions[sessionId];
+    const now = Date.now(), bootTimeMs = now - os.uptime() * 1000;
+    if (!isSessionProcessRunning(session, bootTimeMs) && !(now - lastAliveAt(session) < SESSION_MAX_AGE_MS)) return undefined;
+    // Do not let callers mutate the next reader's cached key or identity metadata.
+    return structuredClone(session);
+  } catch {
+    sessionIndex = undefined;
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -526,6 +567,7 @@ function writeSessionsFile(sessions: Record<string, PersistedSession>): void {
   const tmpFile = configuration.sessionsFile + '.tmp';
   writeFileSync(tmpFile, JSON.stringify({ sessions }, null, 2), 'utf-8');
   renameSync(tmpFile, configuration.sessionsFile);
+  sessionIndex = undefined;
 }
 
 export function persistSession(sessionId: string, session: PersistedSession): void {

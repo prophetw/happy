@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   access: vi.fn(),
   persistSession: vi.fn(),
+  lookupSession: vi.fn(),
   deactivateSession: vi.fn(),
   logger: { debug: vi.fn(), debugLargeJson: vi.fn(), warn: vi.fn() },
 }));
@@ -41,6 +42,7 @@ vi.mock('@/resume/localHappyAgentAuth', () => ({ detectResumeSupport: () => ({})
 vi.mock('./happyTerminalBoot', () => ({ startHappyTerminalDaemon: vi.fn() }));
 vi.mock('@/persistence', () => ({
   readPersistedSessions: () => mocks.persisted,
+  readPersistedSession: (id: string) => { mocks.lookupSession(id); return mocks.persisted[id]; },
   persistSession: mocks.persistSession, markSessionStopped: vi.fn(), writeDaemonState: vi.fn(), readDaemonState: vi.fn(),
   acquireDaemonLock: async () => ({}), releaseDaemonLock: vi.fn(),
 }));
@@ -114,6 +116,7 @@ describe('daemon resume fallback', () => {
     expect(await mocks.handlers.automationControl({ version: 1, operation: 'status', sessionID: 'old-session' }))
       .toMatchObject({ sessionID: 'old-session', process: 'stopped' });
     expect(vi.mocked(process.kill).mock.calls).toEqual([[12344, 0], [-12344, 0]]);
+    expect(mocks.lookupSession).toHaveBeenCalledExactlyOnceWith('old-session');
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
