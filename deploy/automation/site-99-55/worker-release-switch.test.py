@@ -7,6 +7,20 @@ import unittest
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('worker_switch',pathlib.Path(__file__).with_name('worker-release-switch.py'));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SwitchSafety(unittest.TestCase):
+ def test_new_cpu_dropin_must_sort_after_the_previous_optimization_dropin(self):
+  previous='/etc/systemd/system/happy-automation-worker.service.d/zzzzzzzz-worker-optimization-608d9352d586.conf'
+  with self.assertRaisesRegex(RuntimeError,'DROPIN_ORDER_CONFLICT'):
+   m.verify_dropin_precedence('/etc/systemd/system/happy-automation-worker.service.d/zzzzzzzz-worker-cpu-fix-6c9128cbf612.conf',[previous])
+  m.verify_dropin_precedence('/etc/systemd/system/happy-automation-worker.service.d/zzzzzzzzz-worker-cpu-fix-6c9128cbf612.conf',[previous])
+ def test_effective_entry_checks_the_merged_systemd_argv_before_start(self):
+  with tempfile.TemporaryDirectory() as root:
+   switch=self.fixture(root)
+   good='{ path=/node ; argv[]=/node /new/worker --config '+str(m.CONFIG)+' ; ignore_errors=no ; }'
+   with patch.object(m,'command',return_value=good):switch.effective_entry('/new/worker')
+   with patch.object(m,'command',return_value=good.replace('/new/worker','/old/worker')):
+    with self.assertRaisesRegex(RuntimeError,'EFFECTIVE_WORKER_ENTRY_MISMATCH'):switch.effective_entry('/new/worker')
+   with patch.object(m,'command',return_value=good+good):
+    with self.assertRaisesRegex(RuntimeError,'EFFECTIVE_WORKER_ENTRY_MISMATCH'):switch.effective_entry('/new/worker')
  def test_dynamic_model_policy_follows_machine_without_adding_permission_modes(self):
   before={'version':1,'agents':[{'agent':'codex','models':['old-model'],'permissionModes':['read-only']}]}
   result=m.dynamic_model_policy(before)
@@ -46,7 +60,7 @@ class SwitchSafety(unittest.TestCase):
  def test_recovery_preserves_original_private_config_owner_and_permissions(self):
   with tempfile.TemporaryDirectory() as root:
    s=self.fixture(root);s.stop_attempted=True;(pathlib.Path(root)/'before-worker.json').write_bytes(b'fixture-only')
-   with patch.object(s,'record'),patch.object(s,'stop'),patch.object(s,'config_metadata'),patch.object(s,'capture_started'),patch.object(m,'sha',return_value='new'),patch.object(m,'atomic') as atomic,patch.object(m,'command'),patch.object(s,'ready'),patch.object(s,'changed_sessions',return_value=[]):
+   with patch.object(s,'record'),patch.object(s,'stop'),patch.object(s,'config_metadata'),patch.object(s,'effective_entry'),patch.object(s,'capture_started'),patch.object(m,'sha',return_value='new'),patch.object(m,'atomic') as atomic,patch.object(m,'command'),patch.object(s,'ready'),patch.object(s,'changed_sessions',return_value=[]):
     s.recover();atomic.assert_called_once_with(m.CONFIG,b'fixture-only',0o400,1000,1000)
  def test_same_entry_foreign_invocation_or_pid_is_never_stopped(self):
   with tempfile.TemporaryDirectory() as root:

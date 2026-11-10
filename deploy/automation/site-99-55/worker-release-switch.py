@@ -50,6 +50,13 @@ def command(args, timeout=45):
 def sha(path): return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
+def verify_dropin_precedence(candidate, previous):
+    """Later drop-in filenames win, independently of their creation time."""
+    name = pathlib.Path(candidate).name
+    if any(pathlib.Path(path).name >= name for path in previous):
+        raise RuntimeError('DROPIN_ORDER_CONFLICT')
+
+
 def atomic(path, data, mode=0o600, uid=0, gid=0, identity=None):
     fd, name = tempfile.mkstemp(prefix='.' + path.name, dir=str(path.parent))
     try:
@@ -120,6 +127,12 @@ class Switch:
         expected = [baseline, installed] if self.install_attempted else [baseline]
         if u['DropInPaths'].strip() not in expected: raise RuntimeError('UNOWNED_UNIT_DROPIN')
         return u
+
+    def effective_entry(self, entry):
+        raw = command(['systemctl', 'show', UNIT, '-p', 'ExecStart', '--value'])
+        expected = self.plan['nodeExecutable'] + ' ' + entry + ' --config ' + str(CONFIG)
+        if re.findall(r'argv\[\]=(.*?) ;', raw) != [expected]:
+            raise RuntimeError('EFFECTIVE_WORKER_ENTRY_MISMATCH')
 
     def candidate_files(self):
         root = pathlib.Path(self.plan['release'])
@@ -213,7 +226,9 @@ class Switch:
 
     def run(self):
         self.record('preflight'); self.candidate_files(); u = self.verify_base(); old = process(self.plan['oldPID']); m = metadata()
+        verify_dropin_precedence(self.dropin, self.plan.get('expectedDropInPaths', [item['path'] for item in self.plan.get('priorDropIns', [])]))
         if not old or old['startTicks'] != self.plan['oldStartTicks'] or self.plan['oldEntry'].encode() not in old['args'] or old['exe'] != self.plan['nodeExecutable'] or old['uid'] != 1000 or int(u['MainPID']) != old['pid'] or not m or m.get('pid') != old['pid']: raise RuntimeError('OLD_WORKER_IDENTITY_CHANGED')
+        self.effective_entry(self.plan['oldEntry'])
         self.config_metadata()
         if sha(CONFIG) != self.plan['oldConfigSHA256'] or os.path.lexists(str(self.dropin)): raise RuntimeError('LIVE_CONFIG_CHANGED')
         me = process(os.getpid())
@@ -231,7 +246,7 @@ class Switch:
         atomic(CONFIG, (self.root / 'candidate-worker.json').read_bytes(), self.plan['configMode'], self.plan['configUID'], self.plan['configGID'])
         self.dropin.parent.mkdir(mode=0o755, exist_ok=True); self.install_attempted = True
         atomic(self.dropin, (self.root / 'candidate-release.conf').read_bytes(), identity=self.dropin_identity); self.reconcile_dropin()
-        command(['systemctl', 'daemon-reload']); self.record('starting-new-worker'); started_us = int(time.monotonic() * 1000000);
+        command(['systemctl', 'daemon-reload']); self.effective_entry(self.plan['newEntry']); self.record('starting-new-worker'); started_us = int(time.monotonic() * 1000000);
         try: command(['systemctl', 'start', UNIT])
         finally: self.capture_started(self.plan['newEntry'], started_us)
         fresh = self.ready(self.plan['newEntry'], self.plan['oldPID']); changed = self.changed_sessions()
@@ -249,7 +264,7 @@ class Switch:
         # No credential or journal restore. Only this transaction's public registration delta is withdrawn.
         self.config_metadata()
         if sha(CONFIG) not in [self.plan['oldConfigSHA256'], self.plan['candidateConfigSHA256']]: raise RuntimeError('WORKER_CONFIG_OWNERSHIP_CHANGED')
-        atomic(CONFIG, (self.root / 'before-worker.json').read_bytes(), self.plan['configMode'], self.plan['configUID'], self.plan['configGID']); command(['systemctl', 'daemon-reload']); started_us = int(time.monotonic() * 1000000);
+        atomic(CONFIG, (self.root / 'before-worker.json').read_bytes(), self.plan['configMode'], self.plan['configUID'], self.plan['configGID']); command(['systemctl', 'daemon-reload']); self.effective_entry(self.plan['oldEntry']); started_us = int(time.monotonic() * 1000000);
         try: command(['systemctl', 'start', UNIT])
         finally: self.capture_started(self.plan['oldEntry'], started_us)
         restored = self.ready(self.plan['oldEntry'], self.plan['oldPID']); changed = self.changed_sessions()
