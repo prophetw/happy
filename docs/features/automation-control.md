@@ -368,6 +368,16 @@ Happy 使用官方 `@modelcontextprotocol/server@2.4.0` 的 SEP-2640 SkillsExten
 
 手机与Web的批准页面在本仓库 `packages/happy-app/sources/`；Expo `app.config.js` 当前 runtime=21，个人preview目标为 owner `prophetwayen`、项目 `1d018bd8-34db-4b57-a0a9-61f24671153e`、channel/environment `preview`、iOS bundle `com.prophetwayen.happy.preview`。app.config.js 缺少个人覆盖时仍会回到上游默认；preview-store/submit 不能直接照搬，发布前须按 AGENTS.md 核验。本轮改动为JS页面与适配，没有新增原生模块；这不替代实际手机runtime/连通性验收。本次未执行Expo/native/OTA构建或发布。
 
+## Worker 观察与健康日志（2026-11-10 优化版，待部署）
+
+Worker 对普通会话采用按消息序号递增的进程内观察缓存，仅保留最新 turn、输入序号与游标，不缓存消息正文。缓存最多 1,000 个会话；进程重启、会话路径/进程/密钥变化或会话序号回退时，从头重新核对历史。完整分页成功后才更新缓存，分页失败不跳过未核验消息。进程状态、所有权证明和任务授权仍实时检查，不能用缓存恢复发送或取消权限。
+
+每页会话列表复用一次队列快照，队列变更继续在原有内核锁内核验。受管任务完成分页后只查询一次本地会话，进程标识未变化时不再重复更新队列；任务结果仍核对完整消息流。本版不改变账本结构、容量、归档或 systemd 重试策略。
+
+`automation-worker` journal 事件在状态/错误码变化时立即输出，稳定状态每 30 秒输出一次心跳；轮询频率保持 250ms。调度失败会保持 `unavailable`，直到调度实际成功，不再被下一次健康轮询覆盖。停机期间不追加断线事件。日志输出异常不影响 Worker；既有部署检查仍可在 55 秒内观察到心跳。本节描述候选版本，不能作为已部署或线上性能改善的证明。
+
+定向验证入口：`packages/happy-agent` 下执行 `vitest run src/automation/rest/workerEfficiency.test.ts`。隔离基准使用 `node --import tsx src/automation/rest/fixtures/workerEfficiencyBenchmark.ts [worker.ts]`，可传入旧源码的绝对路径进行对比；只使用临时队列和模拟会话，不连接真实 Relay 或调用模型。
+
 ## 分阶段上线与撤回（待专门授权）
 
 1. 确认实际 HTTPS/反代主机、路由、证书与7100可达性；确定控制主机、OS用户、AS和平台已支持的注册方式。历史部署文档不作为现网证明。

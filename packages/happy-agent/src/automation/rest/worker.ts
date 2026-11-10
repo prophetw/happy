@@ -15,12 +15,21 @@ import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskO
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
 import { SessionProcessProofs } from './sessionProcessProofs';
+import type { DecryptedSession } from '../../api';
+
+type LegacyObservation = {
+    binding: string; sessionSeq: number; cursor: number; lastInput: number; lastTurn: number;
+    turnID?: string; outcome?: Observation['outcome'];
+};
 
 /** Independent worker-side policy check, not a trusted copy of the caller's scope. */
 export class ScopedWorker {
     readonly queue: TaskQueue;
     readonly scheduler: TaskScheduler;
     readonly processProofs: SessionProcessProofs;
+    // Only reduced message evidence is cached. Process status and ownership are always fresh.
+    // A new worker reconstructs history; no ledger migration or replay rights are introduced.
+    private readonly legacyObservations = new Map<string, LegacyObservation>();
     constructor(private registration: WorkerRegistration, private transport: Transport, private directory: string,
         private authorize: (jobID: string) => Promise<Connection>, private now = Date.now,
         private canonicalDirectory: (path: string) => string = realpathSync,
@@ -85,11 +94,16 @@ export class ScopedWorker {
         const sessionOwnerVerified = process === 'running' || this.processProofs.verify(session);
         return { sessionOwnerVerified, dispatchable: process === 'unknown' && sessionOwnerVerified };
     }
-    private async observeLegacy(sessionID: string): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
-        const session = await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
+    private async observeLegacy(sessionID: string, listedSession?: DecryptedSession): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
+        const session = listedSession ?? await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
         if (!machine) throw new ApiError('MACHINE_UNAVAILABLE', 503);
         const process = await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID });
-        let cursor = 0, turnID: string | undefined, outcome: Observation['outcome'], lastInput = 0, lastTurn = 0;
+        const metadata = session.metadata as { machineId?: unknown; hostPid?: unknown; path?: unknown } | null;
+        const binding = hash(canonicalBody({ machineID: metadata?.machineId, pid: metadata?.hostPid, path: metadata?.path,
+            encryption: session.encryption ? { variant: session.encryption.variant, key: Buffer.from(session.encryption.key).toString('base64') } : undefined }));
+        const previous = this.legacyObservations.get(sessionID);
+        const cached = previous?.binding === binding && !(session.seq < previous.sessionSeq) ? previous : undefined;
+        let { cursor = 0, turnID, outcome, lastInput = 0, lastTurn = 0 } = cached ?? {};
         for (let n = 0; n < 10000; n++) {
             const page = await this.transport.messages(session, cursor, 100);
             for (const raw of page.messages) {
@@ -98,7 +112,14 @@ export class ScopedWorker {
                 if (m.kind === 'turn' && 'turnID' in m && 'state' in m) { lastTurn = raw.seq; turnID = m.turnID; outcome = m.state as Observation['outcome']; }
             }
             const next = page.messages.at(-1)?.seq ?? cursor;
-            if (!page.hasMore) { const pendingInput = lastInput > lastTurn, state = String(process.process ?? 'unknown'); return { process: state, cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session, ...this.schedulingProof(session, state) }; }
+            if (!page.hasMore) {
+                // Publish only complete scans. A failed page must not discard unseen evidence.
+                this.legacyObservations.delete(sessionID);
+                this.legacyObservations.set(sessionID, { binding, sessionSeq: session.seq, cursor: next, turnID, outcome, lastInput, lastTurn });
+                if (this.legacyObservations.size > 1000) this.legacyObservations.delete(this.legacyObservations.keys().next().value!);
+                const pendingInput = lastInput > lastTurn, state = String(process.process ?? 'unknown');
+                return { process: state, cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session, ...this.schedulingProof(session, state) };
+            }
             if (next <= cursor) throw new ApiError('INVALID_CURSOR'); cursor = next;
         }
         throw new ApiError('OBSERVATION_PAGE_LIMIT');
@@ -142,11 +163,15 @@ export class ScopedWorker {
         let cursor: string | undefined;
         do {
             const page = await this.transport.sessions(cursor);
+            // One read per page, rather than a synchronous flock/decrypt for every session.
+            // Mutations below still revalidate their own binding in the queue transaction.
+            const activeBySession = new Map<string, QueueTask>();
+            for (const task of this.queue.tasks()) if (occupiesSlot(task) && !activeBySession.has(task.sessionID)) activeBySession.set(task.sessionID, task);
             for (const session of page.sessions) {
                 if ((session.metadata as any)?.machineId !== this.registration.machineID) continue;
-                const active = this.queue.tasks().find(t => t.sessionID === session.id && occupiesSlot(t));
+                const active = activeBySession.get(session.id);
                 if (active && (!active.legacy || active.resources.some(r => r.key.startsWith('checkout:')) && !active.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))) continue;
-                const observed = await this.observeLegacy(session.id);
+                const observed = await this.observeLegacy(session.id, session);
                 if (active) {
                     const pid = (observed.sourceSession.metadata as any)?.hostPid;
                     if (observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && (observed.outcome === 'running' || observed.pendingInput) && Number.isInteger(pid) && pid > 0 && pid === active.processID
@@ -159,8 +184,9 @@ export class ScopedWorker {
                 if (observed.outcome !== 'running' && !observed.pendingInput || observed.process === 'stopped') continue;
                 const pid = (observed.sourceSession.metadata as any)?.hostPid;
                 const knownOwner = observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && Number.isInteger(pid) && pid > 0;
-                this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`), workerID: this.registration.id, grantID: 'legacy-import', sessionID: session.id,
+                const adopted = this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`), workerID: this.registration.id, grantID: 'legacy-import', sessionID: session.id,
                     authorization: '', text: '', resources: knownOwner ? this.legacyResources(observed.sourceSession) : workspaceResources(), legacy: true, seq: observed.seq, turnID: observed.turnID, processID: Number.isInteger(pid) && pid > 0 ? pid : undefined });
+                activeBySession.set(session.id, adopted);
             }
             if (page.nextCursor === cursor) throw new ApiError('INVALID_CURSOR'); cursor = page.nextCursor ?? undefined;
         } while (cursor);
@@ -186,8 +212,6 @@ export class ScopedWorker {
             const reply = await run(t, { version: 1, method: 'sessions.status', sessionID: t.sessionID, cursor, limit: 100 });
             if (!reply.ok) throw new ApiError(reply.error?.code ?? 'OBSERVATION_UNAVAILABLE', 503);
             const data = reply.data;
-            const local = await this.localSession(t.sessionID);
-            this.queue.update(t.id, current => { current.processID = (local.metadata as any)?.hostPid; });
             process = data.process;
             if (sentSeq === undefined && t.dispatched) {
                 // Core requests.get reconciles the stable localId over every page.
@@ -202,7 +226,12 @@ export class ScopedWorker {
                     if (message.turnID === turnID) outcome = message.state;
                 }
             }
-            if (!data.hasMore) { const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID); return { ...(workspace && outcome && outcome !== 'running' ? workspaceResult(workspace) : {}), process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome, externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID), ...this.schedulingProof(local, process) }; }
+            if (!data.hasMore) {
+                const local = await this.localSession(t.sessionID), processID = (local.metadata as any)?.hostPid;
+                if (t.processID !== processID) this.queue.update(t.id, current => { current.processID = processID; });
+                const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID);
+                return { ...(workspace && outcome && outcome !== 'running' ? workspaceResult(workspace) : {}), process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome, externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID), ...this.schedulingProof(local, process) };
+            }
             if (data.nextCursor <= cursor) throw new ApiError('INVALID_CURSOR');
             cursor = data.nextCursor;
         }
@@ -461,21 +490,36 @@ export class HTTPWorkerRunner {
     async run(signal: AbortSignal, intervalMs: number, report: (event: { state: string; code?: string }) => void) {
         const active = new Set<Promise<void>>();
         let schedulerWork: Promise<void> | undefined;
-        let lastScheduled = 0;
-        const notify = (event: { state: string; code?: string }) => { try { report(event); } catch { /* Observability must not break the worker supervisor. */ } };
-        const unavailable = (error: unknown) => notify({ state: 'unavailable', code: error instanceof ApiError ? error.code : 'WORKER_CHANNEL_UNAVAILABLE' });
+        let lastScheduled = -Infinity;
+        let lastEvent: string | undefined, lastReportedAt = -Infinity;
+        let channelObserved = false, channelFailure: string | undefined, schedulerFailure: string | undefined;
+        const errorCode = (error: unknown) => error instanceof ApiError ? error.code : 'WORKER_CHANNEL_UNAVAILABLE';
+        const notify = () => {
+            if (!channelObserved || signal.aborted) return;
+            const code = channelFailure ?? schedulerFailure;
+            const event = code ? { state: 'unavailable', code } : { state: 'connected' };
+            const key = JSON.stringify(event), now = this.now();
+            // Keep a heartbeat within the existing 55s readiness window without logging every poll.
+            if (key === lastEvent && now >= lastReportedAt && now - lastReportedAt < 30000) return;
+            try { report(event); lastEvent = key; lastReportedAt = now; } catch { /* Observability must not break the worker supervisor. */ }
+        };
+        const unavailable = (error: unknown) => { channelObserved = true; channelFailure = errorCode(error); notify(); };
         try {
             while (!signal.aborted) {
                 try {
                     // Keep presence and receipt queries alive during a slow spawn; bounded concurrency.
                     const job = await this.poll(active.size >= 4);
+                    channelObserved = true; channelFailure = undefined;
                     // Observation/preparation must not starve gateway presence or receipt RPCs.
-                    if (!schedulerWork && Date.now() - lastScheduled >= 1000) { lastScheduled = Date.now(); schedulerWork = this.worker.tick().catch(unavailable).finally(() => { schedulerWork = undefined; }); }
+                    if (!schedulerWork && this.now() - lastScheduled >= 1000) {
+                        lastScheduled = this.now();
+                        schedulerWork = this.worker.tick().then(() => { schedulerFailure = undefined; notify(); }, error => { schedulerFailure = errorCode(error); notify(); }).finally(() => { schedulerWork = undefined; });
+                    }
                     if (job && !signal.aborted) {
                         const work = this.handleJob(job).catch(unavailable).finally(() => active.delete(work));
                         active.add(work);
                     }
-                    notify({ state: 'connected' });
+                    notify();
                 } catch (error) { unavailable(error); }
                 await new Promise<void>(resolve => { const timer = setTimeout(done, intervalMs); function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); } signal.addEventListener('abort', done, { once: true }); if (signal.aborted) done(); });
             }
