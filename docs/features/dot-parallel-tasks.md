@@ -18,7 +18,9 @@
 
 ## 自主推进与资源（2026-11-10）
 
-Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、Journal 和权限检查，没有引入新队列服务。工作树基于受理 create 时的 HEAD commit，保留 root projectID、grant 和目录绑定。准备阶段禁用 Git checkout hooks 和 fsmonitor，避免 create 阶段触发仓库脚本；不自动安装依赖、构建或执行交办。worktree/read-only 首版只接受授权 Git 仓库顶层目录；子目录项目明确返回 WORKTREE_REQUIRES_REPOSITORY_ROOT，避免把兄弟目录扩大进执行 cwd。路径必须规范化且 realpath 不变；每次执行校验 Git common-dir、分支及基线祖先。非 Git 只支持 legacy/integration，worktree/read-only 明确拒绝，不复制未知目录。
+Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、Journal 和权限检查，没有引入新队列服务。工作树基于受理 create 时的 HEAD commit，保留 root projectID、grant 和目录绑定。准备阶段禁用 Git checkout hooks 和 fsmonitor，避免 create 阶段触发仓库脚本；不自动安装依赖、构建或执行交办。worktree/read-only 首版只接受授权 Git 仓库顶层目录；子目录项目明确返回 WORKTREE_REQUIRES_REPOSITORY_ROOT，避免把兄弟目录扩大进执行 cwd。路径必须规范化且 realpath 不变；每次执行校验 Git common-dir、基线祖先和当前分支。
+
+分配的分支名（`dot-task/<workspaceID>`）只是创建时的名字，不是分支锁：任务可以按自己的要求在仓库内新建、改名或切换分支并在那里提交，只要记录的 `baseCommit` 仍是 HEAD 的祖先，交付内容就仍然可达。`execution.branch` 始终报告创建时的分配名，`workspaceBranch()` 才返回实际检出的分支，避免把审阅者引到任务已经离开的分支。两种切换会被拒绝为 WORKTREE_BINDING_CHANGED：detached HEAD（没有任何可 fetch/审阅的分支），以及切到 root 检出目录当前所在的分支（只有 `checkout -f -B` 能绕过 Git 自身的占用保护，此时等于改写用户分支，不能静默继续）。改动背景见 2026-11-10 的 Console 修复会话：任务在 worktree 内 `git switch -c fix/console-tag-thumbnail-crash` 完成后，旧校验把每次观察都判为 403，任务只能停在「执行中 + 原始错误码」直到进程结束。
 
 | mode | cwd | 默认资源 |
 | --- | --- | --- |

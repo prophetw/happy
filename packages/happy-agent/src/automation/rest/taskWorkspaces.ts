@@ -11,6 +11,8 @@ const git = (cwd: string, args: string[]) => execFileSync('git', ['-c','core.hoo
     encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
 }).trim();
+/** A query whose non-zero exit is itself an answer, e.g. a detached HEAD. */
+const gitOptional = (cwd: string, args: string[]) => { try { return git(cwd, args); } catch { return null; } };
 
 export function canonicalRepository(root: string): string {
     if (realpathSync(root) !== root) throw new ApiError('PROJECT_PATH_CHANGED',403);
@@ -96,14 +98,26 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
         throw e;
     } finally {closeSync(fd);}
 }
-export function verifyWorkspace(w: Workspace) {
+/** The workspace must stay the same checkout of the same repository, started from the
+ * recorded baseline. A task may create, rename or switch to any branch of that repository
+ * — the assigned `branch` is only the creation name, not a lock — provided the recorded
+ * `baseCommit` stays an ancestor of HEAD, so everything it delivers remains reachable from
+ * the assigned history. A detached HEAD is rejected: nothing can be fetched or reviewed.
+ * The branch the root checkout itself has checked out is also rejected, so a forced
+ * `checkout -f -B <rootBranch>` inside the worktree cannot rewrite the user's branch and
+ * keep progressing unnoticed. Returns the branch actually checked out.
+ */
+export function verifyWorkspace(w: Workspace): { branch: string } | null {
     if (realpathSync(w.root) !== w.root || realpathSync(w.cwd) !== w.cwd) throw new ApiError('PROJECT_PATH_CHANGED', 403);
     if (canonicalRepository(w.root) !== w.repository) throw new ApiError('WORKTREE_BINDING_CHANGED',403);
-    if (w.branch) {
-        const common = realpathSync(resolve(w.cwd, git(w.cwd, ['rev-parse', '--git-common-dir'])));
-        if (common !== w.repository || git(w.cwd, ['symbolic-ref', '--short', 'HEAD']) !== w.branch
-            || git(w.cwd, ['merge-base', '--is-ancestor', w.baseCommit!, 'HEAD']) !== '') throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
-    }
+    if (!w.branch) return null;
+    const common = realpathSync(resolve(w.cwd, git(w.cwd, ['rev-parse', '--git-common-dir'])));
+    if (common !== w.repository) throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
+    const branch = gitOptional(w.cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (branch === null || branch === gitOptional(w.root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
+        || gitOptional(w.cwd, ['merge-base', '--is-ancestor', w.baseCommit!, 'HEAD']) === null)
+        throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
+    return { branch };
 }
 export function workspaceResources(w?: Pick<Workspace,'repository'|'cwd'|'execution'>, sessionID?: string): Resource[] {
     // Unknown pre-queue execution remains conservative. Known executions count
@@ -130,9 +144,17 @@ export function cleanCompletedWorkspace(queue: TaskQueue, id: string, processSto
         verifyWorkspace(workspace);
         if (git(workspace.cwd, ['status', '--porcelain=v1', '--untracked-files=all'])) throw new ApiError('WORKTREE_DIRTY');
         if (!processStopped()) throw new ApiError('WORKTREE_PROCESS_UNCONFIRMED');
+        const worktreeBranch = workspaceBranch(workspace);
         git(workspace.root, ['worktree', 'remove', workspace.cwd]);
-        return { branch: workspace.branch, baseCommit: workspace.baseCommit, retained: true };
+        return { branch: workspace.branch, worktreeBranch, baseCommit: workspace.baseCommit, retained: true };
     });
+}
+
+/** The assigned branch is the creation name, not necessarily the checked-out one. Report
+ * both so a reviewer is not sent to a branch the task already moved away from.
+ */
+export function workspaceBranch(w: Workspace) {
+    return w.branch ? gitOptional(w.cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']) : null;
 }
 
 export function workspaceResult(w: Workspace) {
