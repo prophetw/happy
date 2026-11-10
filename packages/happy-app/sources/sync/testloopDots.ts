@@ -127,6 +127,19 @@ export function projectTestloopDotsMessages(messages: readonly WorkspaceMessage[
     return { snapshot: received.at(-1)?.snapshot ?? null, receipts, deletions, details, pendingRequest: pending };
 }
 
+/** Read snapshots update views, while only durable messages can confirm mutations. */
+export function mergeDotsWorkspaceRead(history: ReturnType<typeof projectTestloopDotsMessages>, live?: TestloopDotsSnapshot) {
+    const prior = history.snapshot;
+    if (!live?.ok || prior && (prior.revision > live.revision
+        || prior.revision === live.revision && (prior.workbench?.revision ?? -1) > (live.workbench?.revision ?? -1)
+        || prior.revision === live.revision && (prior.workbench?.revision ?? -1) === (live.workbench?.revision ?? -1)
+            && (prior.workbench?.asOf ?? '') > (live.workbench?.asOf ?? ''))) return history;
+    const details = { ...history.details };
+    const view = live.workbench;
+    if (view?.detail) details[view.detail.dotId] = { data: view.detail, asOf: view.asOf };
+    return { ...history, snapshot: live, details };
+}
+
 export function testloopWorkStatus(task: { status: string; needsReview: boolean; goalPhase?: string | null }) {
     const stopped: Record<string, string> = { paused: '已暂停', canceled: '已取消', failed: '执行失败', blocked: '遇到阻塞' };
     if (stopped[task.status]) return stopped[task.status];

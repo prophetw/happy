@@ -130,6 +130,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {action('可用连接与项目', () => setManagingConnections(true), false, !wide)}
         </View>
         <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
+            {data.refreshing && <Text style={body}>正在刷新工作与记忆…</Text>}
             {data.pending && !data.pending.timedOut && <ActivityIndicator />}
             {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
             {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}

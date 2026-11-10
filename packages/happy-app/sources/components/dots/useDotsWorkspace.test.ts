@@ -14,7 +14,7 @@ const clearRequest = { schemaVersion: 1 as const, requestId: clearId, action: 'c
 const deleteRequest = { schemaVersion: 1 as const, requestId: deleteId, action: 'delete' as const, dotId };
 const mocks = vi.hoisted(() => ({
     messages: [] as any[], values: [] as any[], sendMessage: vi.fn(), ensureSessionReady: vi.fn(),
-    archive: vi.fn(), updateIdentity: vi.fn(),
+    archive: vi.fn(), updateIdentity: vi.fn(), read: vi.fn(), loaded: false, token: 'token',
 }));
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => listId }));
@@ -22,13 +22,13 @@ vi.mock('@react-navigation/native', async () => {
     const module = await import('react'); return { useFocusEffect: (callback: () => void) => module.useEffect(callback, [callback]) };
 });
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({
-    credentials: { token: 'token', secret: 'secret' }, isAuthenticated: true,
+    credentials: { token: mocks.token, secret: 'secret' }, isAuthenticated: true,
 }) }));
 vi.mock('@/hooks/useSessionVisibility', () => ({ useSessionVisibility: vi.fn() }));
 vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://test.invalid' }));
 vi.mock('@/sync/storage', () => ({
     useRealtimeStatus: () => 'connected',
-    useSessionMessages: () => ({ messages: mocks.messages, isLoaded: false }),
+    useSessionMessages: () => ({ messages: mocks.messages, isLoaded: mocks.loaded }),
     storage: { getState: () => ({ sessions: {
         'workspace-session': { id: 'workspace-session', active: true, metadata: { testloopDots: {
             schemaVersion: 1, kind: 'workspace', workspaceId,
@@ -39,10 +39,12 @@ vi.mock('@/sync/storage', () => ({
     } }) },
 }));
 vi.mock('@/sync/sync', () => ({ sync: {
-    getCredentials: () => ({ token: 'token', secret: 'secret' }),
+    getCredentials: () => ({ token: mocks.token, secret: 'secret' }),
     sendMessage: mocks.sendMessage, ensureSessionReady: mocks.ensureSessionReady,
 } }));
 vi.mock('@/sync/ops', () => ({ sessionArchiveTestloopDot: mocks.archive, sessionUpdateDotIdentity: mocks.updateIdentity }));
+
+vi.mock('@/sync/dotsWorkspaceRead', () => ({ readDotsWorkspace: mocks.read }));
 
 import { useDotsWorkspace } from './useDotsWorkspace';
 
@@ -63,6 +65,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
     mocks.messages = [];
+    mocks.loaded = false; mocks.token = 'token';
+    mocks.read.mockReset().mockRejectedValue(new Error('offline'));
     mocks.values = [];
     mocks.sendMessage.mockReset().mockResolvedValue(true);
     mocks.ensureSessionReady.mockReset().mockResolvedValue(undefined);
@@ -155,5 +159,62 @@ it('shares one in-flight archive attempt by dotId across workspace observers', a
     expect(mocks.values[1].archivePending).toBe(false);
     expect(mocks.values[0].archiveError).toBeNull();
     expect(mocks.values[1].archiveError).toBeNull();
+    await act(async () => renderer.unmount());
+});
+
+
+it('opens with a read RPC instead of a chat command, without waiting for chat history', async () => {
+    mocks.read.mockResolvedValue({ schemaVersion: 1, workspaceId, revision: 1, requestId: listId, ok: true, dots: [dot] });
+    const renderer = await render();
+    expect(mocks.read).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
+    await act(async () => renderer.unmount());
+});
+
+it('keeps cached directory and mutations usable during a slow refresh and retains it on read failure', async () => {
+    let reject!: (error: Error) => void;
+    mocks.messages = [receipt(listId, 1, [dot])];
+    mocks.read.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    const renderer = await render();
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
+    expect(mocks.values[0].refreshing).toBe(true);
+    expect(mocks.values[0].pending).toBeNull();
+    await act(async () => reject(new Error('offline')));
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
+    expect(mocks.values[0].refreshing).toBe(false);
+    expect(mocks.values[0].error).toContain('刷新');
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('does not let a late read resurrect a Dot removed by a newer mutation receipt', async () => {
+    let finish!: (value: unknown) => void;
+    mocks.read.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    mocks.messages = [receipt(listId, 1, [dot])];
+    const renderer = await render();
+    await act(async () => { await mocks.values[0].submit(deleteRequest); });
+    mocks.messages = [command(deleteRequest), receipt(deleteId, 2, [], { deletedDot: { id: dotId, sessionId: dot.sessionId } })];
+    await update(renderer);
+    await act(async () => finish({ schemaVersion: 1, workspaceId, revision: 1, requestId: listId, ok: true, dots: [dot] }));
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([]);
+    expect(mocks.values[0].notice).toContain('已删除');
+    await act(async () => renderer.unmount());
+});
+
+
+it('deduplicates refreshes and ignores an old account response after credentials change', async () => {
+    let finish!: (value: unknown) => void;
+    mocks.read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const renderer = await render();
+    await act(async () => { void mocks.values[0].refresh(); void mocks.values[0].refresh(); });
+    expect(mocks.read).toHaveBeenCalledTimes(1);
+    mocks.token = 'different-account'; mocks.messages = [];
+    mocks.read.mockResolvedValue({ schemaVersion: 1, workspaceId, revision: 2, requestId: listId, ok: true, dots: [] });
+    await update(renderer);
+    await act(async () => finish({ schemaVersion: 1, workspaceId, revision: 1, requestId: listId, ok: true, dots: [dot] }));
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([]);
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });

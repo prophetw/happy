@@ -153,7 +153,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 <Text accessibilityRole="header" style={s.title}>Dots</Text><Text style={s.muted}>你的长期助理与正在推进的工作。</Text>
             </View><Pressable accessibilityRole="button" accessibilityLabel="新建 Dot" disabled={!data.ready || Boolean(data.pending)} onPress={() => { setModel('gpt-6.1-sol'); setEffort('xhigh'); setCreating(true); }}
                 style={[s.button, { backgroundColor: '#6650b7', opacity: data.ready && !data.pending ? 1 : 0.5 }]}><Text style={{ color: '#fff', fontWeight: '600' }}>＋ 新建 Dot</Text></Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={Boolean(data.pending)} onPress={() => data.retry()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={Boolean(data.pending) || data.refreshing} onPress={() => data.retry()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="连接与授权" onPress={() => setManagingConnections(true)} style={s.button}><Text style={s.muted}>连接与授权</Text></Pressable>
             </View>
             {limits && <Text style={s.muted}>{limits}</Text>}
@@ -162,6 +162,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 <Pressable accessibilityRole="button" accessibilityLabel="重试本地归档" disabled={data.archivePending} onPress={() => data.retryArchive()} style={s.button}>
                     <Text style={s.muted}>{data.archivePending ? '正在归档…' : '重试本地归档'}</Text></Pressable></View>}
             {data.notice && <Text accessibilityLiveRegion="polite" style={s.muted}>{data.notice}</Text>}
+            {data.refreshing && <View style={s.row}><ActivityIndicator /><Text style={s.muted}>正在刷新{snapshot ? '，当前显示上次读取的内容' : ' Dots 列表'}…</Text></View>}
             {data.pending && <View style={s.row}>{!data.pending.timedOut && <ActivityIndicator />}
                 <Text style={s.muted}>等待后台回执{data.pending.request.action === 'create' ? `：创建「${data.pending.request.name}」`
                     : data.pending.request.action === 'update' ? `：更新「${data.pending.request.name}」`
@@ -221,7 +222,8 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                             <Text style={{ color: '#c43c32', fontWeight: '600' }}>{deleteConfirming ? '等待确认…' : '删除 Dot'}</Text>
                         </Pressable>
                     </View>}
-                    {data.pending && <View style={{ gap: 10 }}>
+                    {data.refreshing && <View style={s.row}><ActivityIndicator /><Text style={s.muted}>正在刷新{snapshot ? '，当前显示上次读取的内容' : ' Dots 列表'}…</Text></View>}
+            {data.pending && <View style={{ gap: 10 }}>
                         <Text accessibilityLiveRegion="polite" style={s.muted}>正在等待后台回执，当前显示上次读取的配置；收到回执后可保存修改。</Text>
                         {data.pending.timedOut && <Pressable accessibilityRole="button" accessibilityLabel="重试编辑表单刷新" onPress={() => data.retry()} style={s.button}>
                             <Text style={s.muted}>重试刷新</Text></Pressable>}

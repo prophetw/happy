@@ -6,14 +6,16 @@ import { useSessionVisibility } from '@/hooks/useSessionVisibility';
 import { storage, useRealtimeStatus, useSessionMessages } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { sessionArchiveTestloopDot, sessionUpdateDotIdentity } from '@/sync/ops';
+import { readDotsWorkspace } from '@/sync/dotsWorkspaceRead';
 import { getServerUrl } from '@/sync/serverConfig';
-import { retiredDotSessionIds, projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, type TestloopDotsRequest } from '@/sync/testloopDots';
+import { retiredDotSessionIds, projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, mergeDotsWorkspaceRead, type TestloopDotsSnapshot, type TestloopDotsRequest } from '@/sync/testloopDots';
 
 type Pending = { request: TestloopDotsRequest; attempt: number; timedOut: boolean };
 type Deletion = { requestId: string; revision: number; id: string; sessionId: string };
 
-// A workspace and an open Dot can observe the same durable receipt together.
-// Share the actual attempt so they cannot archive one session twice.
+// Cache only bounded views, keyed by credentials, relay, workspace and detail.
+const readResults = new Map<string, TestloopDotsSnapshot>();
+// A workspace and an open Dot must share one durable receipt archive attempt.
 const archiveAttempts = new Map<string, Promise<void>>();
 
 /** Deletion receipts the latest projection confirms: the target is gone from the current list. */
@@ -37,7 +39,14 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     const [readyScope, setReadyScope] = React.useState<object | null>(null);
     const [reload, setReload] = React.useState(0);
     const { messages, isLoaded } = useSessionMessages(sessionId);
-    const raw = React.useMemo(() => projectTestloopDotsMessages(messages, workspaceId), [messages, workspaceId]);
+    const history = React.useMemo(() => projectTestloopDotsMessages(messages, workspaceId), [messages, workspaceId]);
+    const readKey = JSON.stringify([server, token, secret, sessionId, workspaceId, detailDotId]);
+    const [live, setLive] = React.useState<{ key: string; snapshot: TestloopDotsSnapshot } | null>(null);
+    const raw = React.useMemo(() => mergeDotsWorkspaceRead(history, live?.key === readKey ? live.snapshot : readResults.get(readKey)), [history, live, readKey]);
+    const [refreshing, setRefreshing] = React.useState(false);
+    const [readError, setReadError] = React.useState<string | null>(null);
+    const readAttempt = React.useRef(0), recovered = React.useRef(false);
+    const inFlightRead = React.useRef<{ epoch: number; promise: Promise<void> } | null>(null);
     const [pending, setPending] = React.useState<Pending | null>(null);
     const [error, setError] = React.useState<string | null>(null);
     const [notice, setNotice] = React.useState<string | null>(null);
@@ -61,7 +70,8 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
 
     useFocusEffect(React.useCallback(() => {
         const epoch = ++generation.current;
-        initialized.current = false; pendingId.current = null;
+        initialized.current = false; recovered.current = false; pendingId.current = null;
+        readAttempt.current++; inFlightRead.current = null; setRefreshing(false); setReadError(null);
         setReadyScope(null); setPending(null); setError(null); setNotice(null); setArchiveErrors({});
         if (active && sameAccount()) void sync.ensureSessionReady(sessionId).then(() => {
             if (epoch !== generation.current || !mounted.current) return;
@@ -78,6 +88,7 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     useSessionVisibility(sessionId, active && ready, Boolean(detailDotId), realtime);
     const submit = React.useCallback(async (request: TestloopDotsRequest) => {
         if (!validBinding() || !active) return;
+        readAttempt.current++; inFlightRead.current = null; setRefreshing(false); setReadError(null);
         const epoch = generation.current;
         const current = () => mounted.current && generation.current === epoch && validBinding();
         if (request.action === 'delete') requestedDeletions.current.add(request.requestId);
@@ -104,20 +115,45 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
             }
         }
     }, [sessionId, validBinding, active]);
-    const refresh = React.useCallback(() => submit(detailDotId
-        ? { schemaVersion: 1, requestId: randomUUID(), action: 'inspect', dotId: detailDotId }
-        : { schemaVersion: 1, requestId: randomUUID(), action: 'list' }), [submit, detailDotId]);
+    const refresh = React.useCallback((): Promise<void> => {
+        if (!validBinding() || !active) return Promise.resolve();
+        const epoch = generation.current;
+        if (inFlightRead.current?.epoch === epoch) return inFlightRead.current.promise;
+        const attempt = ++readAttempt.current;
+        const current = () => mounted.current && generation.current === epoch && readAttempt.current === attempt && validBinding();
+        setRefreshing(true); setReadError(null);
+        const request = { schemaVersion: 1 as const, workspaceId, requestId: randomUUID(),
+            ...(detailDotId ? { action: 'inspect' as const, dotId: detailDotId } : { action: 'list' as const }) };
+        const promise = readDotsWorkspace(sessionId, request).then(snapshot => {
+            if (!current()) return;
+            readResults.delete(readKey); readResults.set(readKey, snapshot);
+            if (readResults.size > 16) readResults.delete(readResults.keys().next().value!);
+            setLive({ key: readKey, snapshot });
+        }).catch(() => {
+            if (current()) setReadError('暂时无法刷新工作台，当前保留上次读取的内容；请检查连接与宿主版本后重试。');
+        }).finally(() => {
+            if (current()) { inFlightRead.current = null; setRefreshing(false); }
+        });
+        inFlightRead.current = { epoch, promise };
+        return promise;
+    }, [sessionId, workspaceId, detailDotId, readKey, active, validBinding]);
 
     React.useEffect(() => {
-        if (!ready || !active || !isLoaded || initialized.current) return;
+        if (!ready || !active || initialized.current) return;
         initialized.current = true;
-        if (raw.pendingRequest) {
-            if (raw.pendingRequest.action === 'delete') requestedDeletions.current.add(raw.pendingRequest.requestId);
-            pendingId.current = raw.pendingRequest.requestId;
-            setPending({ request: raw.pendingRequest, attempt: 0, timedOut: true });
+        void refresh();
+    }, [ready, active, refresh]);
+    React.useEffect(() => {
+        if (!ready || !active || !isLoaded || recovered.current) return;
+        recovered.current = true;
+        const request = history.pendingRequest;
+        if (request && !['list', 'inspect'].includes(request.action) && !pendingId.current) {
+            if (request.action === 'delete') requestedDeletions.current.add(request.requestId);
+            pendingId.current = request.requestId;
+            setPending({ request, attempt: 0, timedOut: true });
             setError('上次请求尚无处理回执，可以重试同一请求核对结果。');
-        } else void refresh();
-    }, [ready, active, isLoaded, raw.pendingRequest, raw, refresh]);
+        }
+    }, [ready, active, isLoaded, history.pendingRequest]);
 
     const confirmedDeletions = React.useMemo(() => confirmedDeletionsOf(raw), [raw]);
 
@@ -257,7 +293,7 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         return () => clearTimeout(timer);
     }, [pending?.request.requestId, pending?.attempt, pending?.timedOut]);
 
-    return { ready, projection: ready ? raw : null, pending: ready ? pending : null, error, notice: ready ? notice : null,
+    return { ready, projection: ready ? raw : null, pending: ready ? pending : null, refreshing: ready && refreshing, error: error ?? (ready ? readError : null), notice: ready ? notice : null,
         archiveError: ready ? Object.values(archiveErrors)[0] ?? null : null,
         archivePending: ready && archivePendingIds.length > 0,
         submit, refresh, retryArchive,
