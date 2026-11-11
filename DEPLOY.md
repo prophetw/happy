@@ -1,5 +1,40 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## 宿主授权快照竞争修复（2026-11-11，已部署）
+
+功能源 Happy `ab205e624dbe76a24328b111bc541f0633e812f3`、TestLoop
+`066cd313b59ccf9e556fce65717b1349116d6e78` 已普通推送各自个人 main。
+发布来自当次 fetch 一致、干净的独立 main clone；保留最新 clear fence 和项目内部派发边界。
+Happy 仅替换原受信路径的正式 authority 模块及其新 hash chunk，原 hosted producer、
+全局 CLI/daemon、执行 Worker、Control、Relay、Web/OTA 保持；没有修改 Dot 配置或执行 SQLite 迁移。
+
+宿主和恢复服务使用 `/home/dev/.local/share/testloop-releases/hosted-authority-race-20261111-066cd31`，
+PID 1184793 / 1184812，均 active、NRestarts=0；九个原生网关均来自新宿主。
+三 Dot ready/error=null，两个有输入历史的 thread、所有原 Relay session、epoch、
+75 条输入值/状态、权限和规范记忆保持。空 inputs 的 Dot 按原 CLI 规则轮换空 thread。
+14 个原执行根和 Worker（合计 15 个）PID/startTicks/cgroup 保持；125 条操作和 65 个工作项
+无新增、没有换 ID 重派或取消原业务。事故 Dot 原有 hosted_relay_unavailable 在重连后清除，
+这不等于原业务已经恢复或重新派发。
+
+正式 Happy CLI 构建及内联 agent 检查通过；Happy 定向 78 项、生命周期边界 22 项，
+TestLoop 合并主线后 164 项及固定构建同字节套件 148 项通过（两组有重叠，不累加）。
+两仓相关类型检查通过。线上正式 authority 模块 60 次新鲜只读校验、文件哈希、服务、
+原请求和受保护进程核验通过。health 仍 degraded，仅原三项 attention。未用真实任务取消/重派验收，
+未验证手机、浏览器或长期负载下竞争耗尽率。
+
+冷备 `/home/dev/.local/state/testloop-backups/hosted-authority-race-20261111` 已校验，`-extras`
+保存 native homes、用户记忆与原服务文件。旧宿主和旧 authority 文件保留，回退须先停写、
+验证旧 reader 可读当前状态，恢复模块和原 unit；不得用冷备覆盖上线后的新账本。
+证据 `/home/dev/.local/state/hosted-authority-release-20261111/` 中保留 manifest、
+cold-backup、preflight、activation、input-order-proof 和 final-verification。
+
+首次独立激活单元因两个验收断言失败退出 1，新服务本身已成功运行，未再次停启：
+断言使用对键序敏感的 JSON.stringify 哈希，重启解析重排了 18 行对象键序；
+已验证冷备每行匹配原 preflight 哈希，当前输入逐字段/状态完全一致，最终只读验收通过。
+原 failed 单元与 activation-failure.json 保留，没有覆盖为成功。TestLoop 首次构建的本地
+.pnpm 链接缺失也保留失败日志，补齐既有依赖链接后正式构建与类型检查通过。
+
+
 ## Dots 打开速度修复（2026-11-10，宿主 / Web / preview iOS 已发布）
 
 已提交并普通推送个人 main。宿主功能源 `5dc3852e9912017773e5a145e93f0f6a88896bf7`；Happy 修复在保留远端主线后合入 `8a21f0c4`，App/Web发布源 `e6076e5104cc3bc98d644d5c75264d2482778db4`（包含手机更新说明）。原工作区其他任务的暂存 DEPLOY.md、CLI 和 Worker 改动保持，发布来自独立干净 checkout。
