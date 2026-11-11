@@ -89,7 +89,8 @@
     "bundle:webapp": "node scripts/bundle-webapp.cjs",
     "build:capability": "sh scripts/build-capability.sh",
     "test:capability-lifetime": "node scripts/test-capability-parent-lifetime.cjs",
-    "build": "pnpm --filter happy-agent build && shx rm -rf dist && tsc --noEmit && pkgroll",
+    "build": "pnpm --filter happy-agent build && shx rm -rf dist && tsc --noEmit && pkgroll && node scripts/verify-agent-bundle.mjs",
+    "test:package": "node --test scripts/verify-agent-bundle.test.mjs",
     "test": "pnpm run build && vitest run --project unit",
     "test:integration": "pnpm run build && vitest run --project integration-empty --project integration-plan-mode --project integration-authenticated",
     "cli:install": "node scripts/install-local.cjs",
@@ -133,10 +134,10 @@
     "tmp": "^0.2.5",
     "tweetnacl": "^1.0.3",
     "ws": "^8.19.0",
-    "zod": "^4.0.0",
-    "happy-agent": "workspace:*"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "happy-agent": "workspace:*",
     "@eslint/compat": "^1",
     "@slopus/happy-wire": "workspace:*",
     "@types/inquirer": "^9.0.9",
@@ -159,3 +160,4 @@
   },
   "packageManager": "pnpm@10.11.0"
 }
+

@@ -5,17 +5,21 @@ on:
     branches: [ main ]
     paths:
       - 'packages/happy-cli/**'
+      - 'packages/happy-agent/**'
       - 'packages/happy-server/**'
       - 'packages/happy-server-self-host/**'
       - 'packages/happy-wire/**'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/cli-smoke-test.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'packages/happy-cli/**'
+      - 'packages/happy-agent/**'
       - 'packages/happy-server/**'
       - 'packages/happy-server-self-host/**'
       - 'packages/happy-wire/**'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/cli-smoke-test.yml'
   workflow_dispatch:
 
@@ -23,6 +27,7 @@ jobs:
   smoke-test-linux:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node-version: [20, 24]
 
@@ -44,6 +49,7 @@ jobs:
 
     - name: Build packages
       run: |
+        pnpm --filter happy --fail-if-no-match test:package
         pnpm --filter @slopus/happy-wire --fail-if-no-match build
         pnpm --filter happy --fail-if-no-match build
 
@@ -72,6 +78,10 @@ jobs:
         HAPPY_PACKAGE_FILE=$(ls packages/happy-cli/*.tgz)
         SERVER_PACKAGE_FILE=$(ls packages/happy-server-self-host/*.tgz)
         npm install -g "./$WIRE_PACKAGE_FILE" "./$SERVER_PACKAGE_FILE" "./$HAPPY_PACKAGE_FILE"
+
+    - name: Test installed automation and lifecycle imports
+      timeout-minutes: 2
+      run: node packages/happy-cli/scripts/smoke-installed-package.mjs "$(npm root -g)/happy"
 
     - name: Test binary execution
       run: |
@@ -127,6 +137,7 @@ jobs:
   smoke-test-windows:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         node-version: [20, 24]
 
@@ -148,6 +159,7 @@ jobs:
 
     - name: Build packages
       run: |
+        pnpm --filter happy --fail-if-no-match test:package
         pnpm --filter @slopus/happy-wire --fail-if-no-match build
         pnpm --filter happy --fail-if-no-match build
 
@@ -160,6 +172,10 @@ jobs:
       shell: cmd
       run: |
         for %%w in (packages\happy-wire\*.tgz) do for %%f in (packages\happy-cli\*.tgz) do npm install -g "%%w" "%%f"
+
+    - name: Test installed automation and lifecycle imports
+      timeout-minutes: 2
+      run: node packages/happy-cli/scripts/smoke-installed-package.mjs "$(npm root -g)/happy"
 
     - name: Debug npm global installation structure
       shell: cmd
@@ -271,3 +287,4 @@ jobs:
         echo Smoke test passed on Windows!
 
 # We don't need a smoke test for macOS because most contributors are developing on macOS.
+
