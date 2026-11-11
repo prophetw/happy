@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { hash, HostedDotConfig, hostedProducerIdentity } from './hostedDotState';
+import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
 import { HOSTED_INPUT_AUTHORITY_VERSION, readHostedInputAuthority } from './hostedDotAuthority';
 const hooks = vi.hoisted(() => ({ onRead: undefined as undefined | (() => void) }));
 vi.mock('node:fs', async importOriginal => {
@@ -68,7 +69,7 @@ it('preserves legacy empty IDs and rejects reordered user sequence and newer res
     writeFileSync(join(f.config.directory, 'reset-epoch.json'), JSON.stringify({ epoch: 1 })); expect(f.read).toThrow();
 });
 
-it.each(['state.json', 'config.json'])('rejects an atomic %s replacement during snapshot reading', target => {
+it.each(['state.json', 'config.json'])('retries state replacement but rejects config replacement during snapshot reading (%s)', target => {
     const f = fixture(), path = join(f.config.directory, target);
     let reads = 0;
     hooks.onRead = () => {
@@ -77,5 +78,65 @@ it.each(['state.json', 'config.json'])('rejects an atomic %s replacement during 
         const replacement = path + '.replacement';
         writeFileSync(replacement, readFileSync(path)); renameSync(replacement, path);
     };
+    if (target === 'config.json') expect(f.read).toThrow('hosted_authority_file_changed');
+    else expect(f.read().epoch).toBe(0);
+});
+
+it('bounds persistent real atomic output replacement and recovers after several writes', () => {
+    const f = fixture(), path = join(f.config.directory, 'state.json');
+    const publish = createHostedAuthorityPublisher(path, f.state, hostedProducerIdentity());
+    let writes = 0, reads = 0;
+    hooks.onRead = () => {
+        if (++reads % 4 !== 3 || writes >= 2) return;
+        f.state.outputs = [{ localId: 'output-' + ++writes, envelope: { text: 'output' }, sent: false }];
+        publish(); // production fsync + rename writer, not a mocked race error
+    };
+    expect(f.read().revision).toBe(3);
+});
+it('exhausts persistent output churn without accepting an unstable snapshot', () => {
+    const f = fixture(), path = join(f.config.directory, 'state.json');
+    let writes = 0;
+    hooks.onRead = () => {
+        const tmp = path + '.tmp';
+        writeFileSync(tmp, JSON.stringify({ ...f.state, outputs: [++writes] })); renameSync(tmp, path);
+    };
     expect(f.read).toThrow('hosted_authority_file_changed');
+    expect(writes).toBe(16); // config + state data/EOF reads across exactly four attempts
+});
+it.each([
+    (s: any) => s.epoch++,
+    (s: any) => s.authority.producer.pid++,
+    (s: any) => s.authority.producer.start = '999999',
+    (s: any) => s.authority.producer.boot = randomUUID(),
+    (s: any) => s.inputs[0].permissionMode = 'read-only',
+    (s: any) => s.status = 'stopped',
+])('rejects authority changes across an output race %s', mutate => {
+    const f = fixture(), path = join(f.config.directory, 'state.json');
+    let reads = 0;
+    hooks.onRead = () => {
+        if (++reads !== 3) return;
+        mutate(f.state);
+        const tmp = path + '.tmp'; writeFileSync(tmp, JSON.stringify(f.state)); renameSync(tmp, path);
+    };
+    expect(f.read).toThrow('hosted_authority_snapshot_changed');
+});
+
+it.each(['symlink', 'reset', 'config', 'in-place'])('fails closed for %s during a state race', kind => {
+    const f = fixture(), path = join(f.config.directory, 'state.json');
+    let reads = 0;
+    hooks.onRead = () => {
+        if (++reads !== 3) return;
+        if (kind === 'symlink') {
+            const target = path + '.target'; writeFileSync(target, JSON.stringify(f.state));
+            rmSync(path); symlinkSync(target, path);
+        } else if (kind === 'reset') {
+            writeFileSync(join(f.config.directory, 'reset-epoch.json'), JSON.stringify({ epoch: 1 }));
+        } else if (kind === 'config') {
+            const configPath = join(f.config.directory, 'config.json'), tmp = configPath + '.tmp';
+            writeFileSync(tmp, JSON.stringify({ ...f.config, sessionId: 'foreign' })); renameSync(tmp, configPath);
+        } else {
+            f.state.inputs[0].permissionMode = 'read-only'; f.save();
+        }
+    };
+    expect(f.read).toThrow();
 });

@@ -26,7 +26,7 @@ function same(a: ReturnType<typeof stamp>, b: ReturnType<typeof stamp>): boolean
 function unchanged(file: string, before: ReturnType<typeof stamp>): void {
     if (!same(before, stamp(file))) throw new Error('hosted_authority_file_changed');
 }
-function readBounded(file: string) {
+function readBounded(file: string, deferPathCheck = false) {
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
         const stat = fstatSync(fd, { bigint: true }), limit = BigInt(HOSTED_STATE_MAX_BYTES);
@@ -35,8 +35,13 @@ function readBounded(file: string) {
         let size = 0, n: number;
         while (size < bytes.length && (n = readSync(fd, bytes, size, bytes.length - size, null)) > 0) size += n;
         if (BigInt(size) !== stat.size) throw new Error('hosted_authority_file_changed');
-        if (!same(stat, fstatSync(fd, { bigint: true }))) throw new Error('hosted_authority_file_changed');
-        unchanged(file, stat);
+        const after = fstatSync(fd, { bigint: true });
+        // rename-over unlinks the open old inode, legitimately changing ctime.
+        // Only that exact transition may retain its immutable descriptor bytes.
+        const detached = deferPathCheck && stat.nlink === 1n && after.nlink === 0n
+            && stat.dev === after.dev && stat.ino === after.ino && stat.size === after.size && stat.mtimeNs === after.mtimeNs;
+        if (!same(stat, after) && !detached) throw new Error('hosted_authority_file_changed');
+        if (!deferPathCheck) unchanged(file, stat);
         return { value: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))) as unknown, stamp: stat };
     } finally { closeSync(fd); }
 }
@@ -47,15 +52,16 @@ function assertNotClearing(directory: string) {
  * This token is not a lifetime authorization: callers must verify producer liveness
  * and re-read immediately before each guarded operation. No recovery defaults apply.
  */
-export function readHostedInputAuthority(expected: { directory: string; dotId: string; sessionId: string }): HostedInputAuthority {
+function readSnapshot(expected: { directory: string; dotId: string; sessionId: string }, observe: (value: unknown, revision: number) => void): HostedInputAuthority {
     if (!expected || typeof expected.directory !== 'string' || !isAbsolute(expected.directory)
         || realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
     assertNotClearing(expected.directory);
+    const directoryStamp = stamp(expected.directory);
     const configFile = join(expected.directory, 'config.json'), stateFile = join(expected.directory, 'state.json');
     const configRead = readBounded(configFile), config = HostedDotConfig.parse(configRead.value);
     if (config.dotId !== expected.dotId || config.sessionId !== expected.sessionId || config.directory !== expected.directory)
         throw new Error('hosted_authority_binding_changed');
-    const stateRead = readBounded(stateFile), state = Journal.parse(stateRead.value);
+    const stateRead = readBounded(stateFile, true), state = Journal.parse(stateRead.value);
     const floorFile = join(expected.directory, 'reset-epoch.json');
     let floorRead: ReturnType<typeof readBounded> | undefined;
     try {
@@ -79,9 +85,43 @@ export function readHostedInputAuthority(expected: { directory: string; dotId: s
         try { stamp(floorFile); throw new Error('hosted_authority_epoch_changed'); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
-    unchanged(configFile, configRead.stamp); unchanged(stateFile, stateRead.stamp);
+    unchanged(configFile, configRead.stamp);
+    // Compare only authorization semantics across attempts, never output/log fields.
+    // revision advances on every persistence, including output acknowledgements.
+    observe({ config, epoch: state.epoch, producer: state.authority.producer, status: state.status, inputs }, state.authority.revision);
+    const currentDirectory = stamp(expected.directory);
+    if (!currentDirectory.isDirectory() || currentDirectory.dev !== directoryStamp.dev || currentDirectory.ino !== directoryStamp.ino)
+        throw new Error('hosted_authority_directory_invalid');
+    const currentState = stamp(stateFile);
+    if (!currentState.isFile()) throw new Error('hosted_authority_file_invalid');
+    if (!same(stateRead.stamp, currentState)) {
+        if (currentState.dev !== stateRead.stamp.dev || currentState.ino !== stateRead.stamp.ino) throw new StateSnapshotRace();
+        throw new Error('hosted_authority_file_changed');
+    }
     if (realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
     assertNotClearing(expected.directory);
     return { version: 1, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch,
         revision: state.authority.revision, producer: state.authority.producer, status: state.status, inputs };
+}
+
+// Only atomic state pathname replacement is recoverable. Descriptor mutation,
+// config/reset changes, invalid bytes, missing files and links remain fail closed.
+class StateSnapshotRace extends Error {
+    constructor() { super('hosted_authority_file_changed'); }
+}
+export function readHostedInputAuthority(expected: { directory: string; dotId: string; sessionId: string }): HostedInputAuthority {
+    let baseline: string | undefined;
+    let revision = 0;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+            return readSnapshot(expected, (value, currentRevision) => {
+                const identity = JSON.stringify(value);
+                if (currentRevision < revision || baseline !== undefined && baseline !== identity) throw new Error('hosted_authority_snapshot_changed');
+                baseline = identity; revision = currentRevision;
+            });
+        } catch (error) {
+            if (!(error instanceof StateSnapshotRace) || attempt === 3) throw error;
+        }
+    }
+    throw new Error('hosted_authority_file_changed');
 }
