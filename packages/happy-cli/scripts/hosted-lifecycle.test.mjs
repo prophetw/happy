@@ -58,6 +58,47 @@ test('an unacknowledged stop is never silently erased by start', t=>{
   const f=fixture(t);f.initialize();writeFileSync(join(f.directory,'control.json'),JSON.stringify({id:'lost',action:'stop'}));
   assert.throws(f.start,/control_pending/);
 });
+test('stop on an already-stopped journal durably acknowledges each request and permits restart', async t=>{
+  const f=fixture(t), state=f.initialize();state.status='stopped';state.threadId='existing-thread';
+  state.inputs=[{seq:1,id:'old-input',epoch:0,delivery:'queue',text:'preserve',status:'completed',turnId:'old-turn'}];f.save(state);
+  await api.stopHostedDot({...f.b,requestId:'first'});
+  await api.stopHostedDot({...f.b,requestId:'first'});
+  await api.stopHostedDot({...f.b,requestId:'second'});
+  const saved=JSON.parse(readFileSync(join(f.directory,'state.json'),'utf8'));
+  assert.deepEqual(saved.controls,['first','second']);assert.deepEqual(saved.inputs,state.inputs);assert.equal(saved.threadId,'existing-thread');
+  assert.equal(f.start().running,true);await waitFor(()=>f.status().status==='ready');
+  await api.stopHostedDot({...f.b,requestId:'third'});
+});
+test('stop before first launch leaves no unconsumable control or synthetic journal',async t=>{
+  const f=fixture(t);await api.stopHostedDot({...f.b,requestId:'never-started'});
+  assert.equal(existsSync(join(f.directory,'control.json')),false);assert.equal(existsSync(join(f.directory,'state.json')),false);
+  assert.equal(f.start().running,true);await waitFor(()=>f.status().status==='ready');await api.stopHostedDot({...f.b,requestId:'finish'});
+});
+test('producer exit before control consumption is acknowledged without changing input outcomes',async t=>{
+  const f=fixture(t),state=f.initialize();state.inputs=[{seq:1,id:'uncertain',epoch:0,delivery:'queue',text:'do not replay',status:'unknown'}];f.save(state);
+  writeFileSync(f.entrypoint,'setTimeout(()=>process.exit(0),100);');f.start();
+  await api.stopHostedDot({...f.b,requestId:'exit-race'});
+  assert.equal(f.status().running,false);assert.ok(f.status().controls.includes('exit-race'));
+  const saved=JSON.parse(readFileSync(join(f.directory,'state.json'),'utf8'));assert.deepEqual(saved.inputs,state.inputs);assert.equal(saved.status,state.status);
+});
+test('acknowledging a stopped blocked journal never clears recovery guards',async t=>{
+  const f=fixture(t),state=f.initialize();state.status='blocked';state.error='hosted_bootstrap_unconfirmed';f.save(state);
+  await api.stopHostedDot({...f.b,requestId:'blocked-stop'});
+  assert.equal(f.status().status,'blocked');assert.equal(f.status().error,state.error);assert.throws(f.start,/recovery_blocked/);
+});
+test('a stale same-id stop can be completed only after the runtime lock is free',async t=>{
+  const {openSync,closeSync}=await import('node:fs'),{spawnSync}=await import('node:child_process');
+  const f=fixture(t);f.initialize();const file=join(f.directory,'control.json');writeFileSync(file,JSON.stringify({id:'stale',action:'stop'}));
+  const fd=openSync(join(f.directory,'runtime.lock'),'a');assert.equal(spawnSync('flock',['--exclusive','--nonblock','3'],{stdio:['ignore','pipe','pipe',fd]}).status,0);
+  try {await assert.rejects(api.stopHostedDot({...f.b,requestId:'stale'}),/lock_busy/);assert.ok(!f.status().controls.includes('stale'));}
+  finally {closeSync(fd);}
+  await api.stopHostedDot({...f.b,requestId:'stale'});assert.ok(f.status().controls.includes('stale'));
+});
+test('delete on an already-stopped Dot remains a permanent launch fence',async t=>{
+  const f=fixture(t);f.initialize();await api.stopHostedDot({...f.b,requestId:'delete-stopped',action:'delete'});
+  assert.throws(f.start,/deleted/);assert.deepEqual(JSON.parse(readFileSync(join(f.directory,'control.json'),'utf8')),{id:'delete-stopped',action:'delete'});
+  await assert.rejects(api.stopHostedDot({...f.b,requestId:'delete-stopped',action:'stop'}),/request_conflict/);
+});
 for(const status of ['dispatching','accepted','unknown'])test(`recover never replays ${status}`,t=>{
   const f=fixture(t),state=f.initialize();state.status='blocked';state.error='hosted_start_or_recovery_failed';state.inputs=[{seq:1,id:'input',epoch:0,text:'offline',status}];f.save(state);
   const before=readFileSync(join(f.directory,'state.json'));assert.equal(api.recoverHostedDot(f.b).recovered,false);assert.deepEqual(readFileSync(join(f.directory,'state.json')),before);assert.throws(f.start,/recovery_blocked/);
@@ -128,3 +169,4 @@ test('a lifecycle clear fence immediately revokes the public input authority',t=
   const authority=require(join(built,'hostedDotAuthority.cjs'));assert.equal(authority.readHostedInputAuthority(f.b).status,'running');
   writeFileSync(join(f.directory,'lifecycle-clear.json'),JSON.stringify(f.clear()));assert.throws(()=>authority.readHostedInputAuthority(f.b),/clear_pending/);
 });
+

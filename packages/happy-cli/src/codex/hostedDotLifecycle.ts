@@ -199,7 +199,36 @@ export async function stopHostedDot(raw: HostedDotBinding & { requestId: string;
         const deadline = Date.now() + timeoutMs;
         for (;;) {
             const status = statusHostedDot(b);
-            if (!status.running) { const quiescent = lock(join(b.directory, 'runtime.lock'), 0); quiescent(); return; }
+            if (!status.running) {
+                // A producer may exit before consuming the control (including an
+                // already-stopped producer). Complete only this stop while both
+                // launch and runtime are fenced; do not manufacture input/turn
+                // outcomes or clear a blocked journal to make restart succeed.
+                const releaseLaunch = lock(join(b.directory, 'launch.lock'));
+                try {
+                    const quiescent = lock(join(b.directory, 'runtime.lock'), 0);
+                    try {
+                        if (!statusHostedDot(b).running) {
+                            const file = join(b.directory, 'control.json');
+                            const control = z.strictObject({ id: z.string(), action: z.enum(['stop', 'delete']) }).parse(read(file));
+                            if (control.id !== requestId || control.action !== action) throw Error('hosted_lifecycle_request_conflict');
+                            if (action === 'stop') {
+                                const state = journalFor(b, configFor(b));
+                                if (state && !state.controls.includes(requestId)) {
+                                    write(join(b.directory, 'state.json'), { ...state, controls: [...state.controls, requestId] });
+                                } else if (!state) {
+                                    // Before first launch there is no journal in
+                                    // which to acknowledge a stop. No producer can
+                                    // run under these locks; remove only this stop.
+                                    rmSync(file); syncDirectory(b.directory);
+                                }
+                            }
+                            // Delete remains a durable fence, never restartable.
+                            return;
+                        }
+                    } finally { quiescent(); }
+                } finally { releaseLaunch(); }
+            }
             if (Date.now() >= deadline) throw Error('hosted_lifecycle_stop_unconfirmed');
             await new Promise(done => setTimeout(done, 50));
         }
@@ -250,3 +279,4 @@ export function clearHostedDot(raw: ClearRequest) {
         } finally { releaseRuntime(); }
     } finally { release(); }
 }
+

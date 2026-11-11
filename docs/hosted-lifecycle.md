@@ -38,3 +38,22 @@ node packages/happy-cli/scripts/hosted-lifecycle.test.mjs
 ```
 
 测试涵盖重复启动、正常停止/超时、控制冲突、未知输入、退避、PID 复用、活跃 producer 与 owner 矛盾、孤立 runtime lock、clear fence、清理重试、权限边界、symlink 和保留 auth/memory。
+
+
+## 2026-11-12：停止回执与终态派发快照修复
+
+本次不需要升级 Relay 或手机 App，也不改 TestLoop 账本；更新 Happy CLI 源码构建后，按维护窗口使目标 Dot 的实际 entrypoint 使用新产物。不要仅凭仓库 HEAD 判断运行中的进程已经更新。
+
+- 对已经停止的 Dot 调用 `stopHostedDot`，在 launch/runtime 锁下复查静止后，确认该 stop 控制。返回成功不会再留下一条永远无法消费的 pending stop。无首次 journal 的情况仅移除当前 stop；delete 仍保留永久启动隔离。锁尚未释放时仍失败，不伪造停止成功。
+- 持久化前，将 `completed/failed/interrupted` 输入的 `beforeTurns` 历史数组压缩为空数组。空数组仍是原 v1 格式的“曾派发”标记；原 thread、turnId、输入正文、状态、权限及回执全部保留。`queued/dispatching/accepted/unknown` 快照不变，不因此重发或推断成功。
+- 该修改消除历史 turn ID 每轮累积导致的平方增长，并在正常启动的首次持久化时处理可读取的旧 journal。它不删除输出或事件，不提高 32 MiB/输入条数/事件条数限制，不声称无限期容量。已经超过读取上限的 journal 仍 fail closed，需要另行在停写冷备后的受控恢复，不能直接清空文件。
+
+### 本地验收
+
+1. 停写后冷备，核对实际 Happy entrypoint/module 构建；独立测试 Dot 先验证，再逐个切换。
+2. 对正常停止、重复停止（同 requestId 与新 requestId）、启动前未有 journal、进程在 stop 前退出分别验证 stop/start；delete 后 start 仍必须被拒。
+3. 使用有已完成历史输入的测试 Dot，记录 thread/turn/seq；更新并重启，确认原 thread 恢复、没有重派，已终态 `beforeTurns=[]`，未决快照原样。
+4. 在隔离数据上验证大量已完成输入的 journal 增长趋于线性；未知结果、运行中输入和失败落盘的 fail-stop 必须继续生效。
+5. 源码测试：`pnpm exec vitest run --config vitest.hosted-authority.config.ts`；生命周期离线测试按本文现有 build/test 命令运行。离线 fixture 不代表真实 Relay/模型已验收。
+
+v1 数据格式不变。回退到旧构建仍能识别空数组派发标记，但旧代码会重新累积快照。回退前先停写并保留最新账本，不使用旧备份覆盖后续输入。

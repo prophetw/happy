@@ -334,3 +334,21 @@ it('keeps a previous blocked journal blocked when stamping a new producer', asyn
         expect(f.state().status).toBe('blocked');
     } finally { await f.stop(); }
 });
+
+
+it('compacts settled legacy snapshots at startup without replacing the original nonempty thread', async () => {
+    const f = fixture(false, false, state => {
+        state.threadId = 'native-thread'; state.status = 'ready'; state.afterSeq = 1;
+        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'old', text: 'old', status: 'completed',
+            turnId: 'old-turn', beforeTurns: ['earlier-turn'] }];
+    });
+    try {
+        expect(f.state().inputs[0].beforeTurns).toEqual([]);
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.resume).toHaveBeenCalled(); expect(h.start).not.toHaveBeenCalled(); expect(h.send).not.toHaveBeenCalled();
+        await f.restart();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(f.state().threadId).toBe('native-thread'); expect(h.start).not.toHaveBeenCalled();
+        expect(h.send).not.toHaveBeenCalled(); expect(f.state().inputs[0].turnId).toBe('old-turn');
+    } finally { await f.stop(); }
+});

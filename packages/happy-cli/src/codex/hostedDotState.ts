@@ -35,6 +35,17 @@ export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.op
     inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(50000),
     controls: z.array(z.string()).default([]) });
 export type HostedState = z.infer<typeof HostedDotJournal>;
+/** Dispatch snapshots are recovery evidence only while an input is unresolved.
+ * Keep an empty array for settled inputs: its presence is the v1-compatible
+ * durable "was dispatched" marker used to avoid replacing a nonempty thread.
+ * Never discard queued/dispatching/accepted/unknown evidence or any receipts.
+ */
+export function compactSettledDispatchSnapshots(state: HostedState): void {
+    for (const row of state.inputs) {
+        if (['completed', 'failed', 'interrupted'].includes(row.status) && row.beforeTurns?.length)
+            row.beforeTurns = [];
+    }
+}
 export function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function readPrivate(file: string): any {
     const stat = lstatSync(file);
@@ -70,3 +81,4 @@ export function addOutput(state: HostedState, envelope: SessionEnvelope): void {
 export const HostedTaskGateway = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string(), servers: z.record(z.string().regex(/^(?:(?:happy|mcp)_[A-Za-z0-9_-]+|dot_memory)$/),
     z.strictObject({ command: z.string().startsWith('/'), args: z.array(z.string()).max(16), startup_timeout_sec: z.literal(30), tool_timeout_sec: z.number().int().min(1).max(120), required: z.literal(true), default_tools_approval_mode: z.literal('approve') })) });
 export const HostedTaskEvent = z.strictObject({ version: z.literal(1), id: z.string().regex(/^task-[a-f0-9]{64}$/), dotId: z.string().uuid(), sessionId: z.string(), epoch: z.number().int().nonnegative(), createdAt: z.string().datetime(), text: z.string().min(1).max(18000) });
+
