@@ -27,13 +27,14 @@ export function hostedProducerIdentity(): z.infer<typeof HostedAuthorityMetadata
         start: stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[19],
         boot: readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() });
 }
-const State = z.object({ authority: HostedAuthorityMetadata.optional(), version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),
+/** @internal Full journal validation shared by Happy-owned lifecycle operations. */
+export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.optional(), version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),
     threadId: z.string().nullable(), creating: z.boolean(), afterSeq: z.number().int().nonnegative(),
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
     bootstrap: z.object({ stage: z.enum(['injecting', 'applied']), threadId: z.string() }).optional(),
     inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(50000),
     controls: z.array(z.string()).default([]) });
-export type HostedState = z.infer<typeof State>;
+export type HostedState = z.infer<typeof HostedDotJournal>;
 export function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function readPrivate(file: string): any {
     const stat = lstatSync(file);
@@ -48,7 +49,7 @@ export function savePrivate(file: string, value: unknown): void {
 }
 export function loadHostedState(file: string, config: HostedDotConfig): HostedState {
     const binding = hash(config);
-    const state = existsSync(file) ? State.parse(readPrivate(file)) : State.parse({ version: 1, binding, epoch: existsSync(config.directory + '/reset-epoch.json') ? z.object({ epoch: z.number().int().nonnegative() }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch : 0, threadId: null,
+    const state = existsSync(file) ? HostedDotJournal.parse(readPrivate(file)) : HostedDotJournal.parse({ version: 1, binding, epoch: existsSync(config.directory + '/reset-epoch.json') ? z.object({ epoch: z.number().int().nonnegative() }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch : 0, threadId: null,
         creating: false, afterSeq: config.bootstrap?.afterSeq ?? 0, status: 'starting', error: null, inputs: [], outputs: [] });
     if (state.binding !== binding) {
         const { effort, ...legacy } = config;

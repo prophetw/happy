@@ -40,6 +40,9 @@ function readBounded(file: string) {
         return { value: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))) as unknown, stamp: stat };
     } finally { closeSync(fd); }
 }
+function assertNotClearing(directory: string) {
+    if (lstatSync(join(directory, 'lifecycle-clear.json'), { throwIfNoEntry: false })) throw new Error('hosted_authority_clear_pending');
+}
 /** Read-only, synchronous, fresh snapshot. Throws on unavailable or invalid authority.
  * This token is not a lifetime authorization: callers must verify producer liveness
  * and re-read immediately before each guarded operation. No recovery defaults apply.
@@ -47,6 +50,7 @@ function readBounded(file: string) {
 export function readHostedInputAuthority(expected: { directory: string; dotId: string; sessionId: string }): HostedInputAuthority {
     if (!expected || typeof expected.directory !== 'string' || !isAbsolute(expected.directory)
         || realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
+    assertNotClearing(expected.directory);
     const configFile = join(expected.directory, 'config.json'), stateFile = join(expected.directory, 'state.json');
     const configRead = readBounded(configFile), config = HostedDotConfig.parse(configRead.value);
     if (config.dotId !== expected.dotId || config.sessionId !== expected.sessionId || config.directory !== expected.directory)
@@ -77,6 +81,7 @@ export function readHostedInputAuthority(expected: { directory: string; dotId: s
     }
     unchanged(configFile, configRead.stamp); unchanged(stateFile, stateRead.stamp);
     if (realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
+    assertNotClearing(expected.directory);
     return { version: 1, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch,
         revision: state.authority.revision, producer: state.authority.producer, status: state.status, inputs };
 }

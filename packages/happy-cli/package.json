@@ -61,6 +61,16 @@
         "types": "./dist/daemon/automationMain.d.mts",
         "default": "./dist/daemon/automationMain.mjs"
       }
+    },
+    "./codex/hostedDotLifecycle": {
+      "require": {
+        "types": "./dist/codex/hostedDotLifecycle.d.cts",
+        "default": "./dist/codex/hostedDotLifecycle.cjs"
+      },
+      "import": {
+        "types": "./dist/codex/hostedDotLifecycle.d.mts",
+        "default": "./dist/codex/hostedDotLifecycle.mjs"
+      }
     }
   },
   "files": [
