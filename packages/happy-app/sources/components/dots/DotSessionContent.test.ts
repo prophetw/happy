@@ -140,6 +140,44 @@ it('carries user-level scope explicitly into the existing edit and forget conver
     await act(async () => renderer.unmount());
 });
 
+it('lets a new memory pick its kind instead of always saving a preference', async () => {
+    let request: { text: string } | null = null;
+    let renderer!: ReturnType<typeof create>;
+    const props = { session: { id: 'dot-session', presence: 'online', metadata: { codexThreadId: 'native-thread' } } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        children: (value: any) => { request = value; return React.createElement('Composer'); } };
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    const panel = renderer.root.findByType('ObservationPanel');
+    await act(async () => panel.props.onAddMemory('user'));
+    expect(renderer.root.findAllByType('Pressable').some((node: any) => node.props.accessibilityLabel === '记忆类型：事实')).toBe(true);
+    const pressed = async (label: string) => { const node = renderer.root.findAllByType('Pressable').find((item: any) => item.props.accessibilityLabel === label)!;
+        await act(async () => node.props.onPress()); };
+    await pressed('记忆类型：事实');
+    const inputs = renderer.root.findAllByType('TextInput') as any[];
+    const input = (label: string) => inputs.find(node => node.props.accessibilityLabel === label)!;
+    await act(async () => input('记忆名称').props.onChangeText('交付节奏'));
+    await act(async () => input('记忆内容').props.onChangeText('每周三提交'));
+    await act(async () => input('记忆有效期').props.onChangeText('2099-01-01T00:00:00Z'));
+    await pressed('带入对话');
+    expect(request!.text).toContain('保存为 fact');
+    expect(request!.text).toContain('交付节奏');
+    expect(request!.text).toContain('每周三提交');
+    await act(async () => renderer.unmount());
+});
+
+it('explains why a memory cannot be added before the workspace projection is ready', async () => {
+    mocks.data = { ready: false };
+    let renderer!: ReturnType<typeof create>;
+    const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        children: () => React.createElement('Composer') };
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    const panel = renderer.root.findByType('ObservationPanel');
+    await act(async () => panel.props.onAddMemory('dot'));
+    expect(JSON.stringify(renderer.toJSON())).toContain('工作台数据还没就绪');
+    await act(async () => renderer.unmount());
+});
+
 it('shows queue/resource/location state and routes targeted cancellation through the existing user composer',async()=>{
     const task={id:'11111111-1111-4111-8111-111111111111',title:'隔离代码任务',kind:'delegate',status:'queued',needsReview:false,projectID:'project',goalPhase:null,
         instruction:'写入独立文件',runId:null,reason:null,nextWakeAt:null,finishedAt:null,executionSessionId:'actual-session',executionOutcome:null,businessVerification:'unverified',steps:[],result:null,resultTruncated:false,

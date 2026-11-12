@@ -154,7 +154,7 @@ it('clears observations while backgrounded and reloads on return without polling
 it('routes same-key user memories and every edit/forget action to the selected scope', async () => {
     const f = await render('memory');
     await f.click('用户级记忆');
-    expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'memories', scope: 'user' });
+    expect(mocks.rpc.mock.calls.some(call => call[2].action === 'memories' && call[2].scope === 'user')).toBe(true);
     await f.click('查看记忆：偏好');
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'memory', scope: 'user', keyDigest });
     await f.click('编辑这条记忆');
@@ -164,6 +164,20 @@ it('routes same-key user memories and every edit/forget action to the selected s
     await f.click('Dot级记忆');
     await f.click('添加记忆');
     expect(f.props.onAddMemory).toHaveBeenCalledWith('dot');
+});
+it('reads counts from the list reply and keeps work items out of the memory page', async () => {
+    const normal = mocks.rpc.getMockImplementation()!;
+    const { action: _action, ...facts } = overview() as any;
+    mocks.rpc.mockImplementation(async (session, method, query) => {
+        if (query.action !== 'memories') return normal(session, method, query);
+        return { ok: true, data: { ...(response(query) as any), summary: { ...facts, taskTotal: 7,
+            tasks: [{ id: turnId, title: '不应出现在记忆页的工作', status: 'running', needsReview: false, goalPhase: null }] } } };
+    });
+    const f = await render('memory');
+    expect(f.text()).toContain('宿主：'); expect(f.text()).toContain('记忆共 ');
+    expect(f.text()).not.toContain('不应出现在记忆页的工作');
+    expect(f.text()).not.toContain('7 项工作');
+    expect(mocks.rpc.mock.calls.some(call => call[2].action === 'overview')).toBe(false);
 });
 it('does not display Dot memories as user memories when authentication is unavailable', async () => {
     const normal = mocks.rpc.getMockImplementation()!;
@@ -198,8 +212,9 @@ it('moves from the native list in one press, checks both layers and distinguishe
     expect(moves.map(item => item.action)).toEqual(['prepare', 'move']);
     expect(moves[1]).toEqual({ schemaVersion: 1, action: 'move', dotId, keyDigest, sourceScope: 'dot', sourceRevision: 2,
         targetRevision: 0, requestID: moves[0].requestID });
-    for (const scope of ['dot', 'user']) for (const action of ['overview', 'memories']) {
-        expect(mocks.rpc.mock.calls.some(call => call[2].action === action && call[2].scope === scope)).toBe(true);
+    // Both layers are re-read, and no separate overview call is issued for the facts.
+    for (const scope of ['dot', 'user']) {
+        expect(mocks.rpc.mock.calls.some(call => call[2].action === 'memories' && call[2].scope === scope)).toBe(true);
     }
     expect(f.text()).toContain('已在本地移至用户级'); expect(f.text()).toContain('索引中'); expect(f.text()).toContain('远端清理中');
     expect(f.button('查看记忆：偏好')).toBeUndefined();

@@ -11,6 +11,7 @@ import { sync } from '@/sync/sync';
 import type { Session } from '@/sync/storageTypes';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
 import { testloopWorkStatus, testloopWorkQueueReason, type TestloopDotsMetadata } from '@/sync/testloopDots';
+import { kindLabel } from '@/sync/dotMemoryKinds';
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 import { DotObservationPanel } from './DotObservationPanel';
@@ -113,19 +114,21 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             mode={(wide ? sideTab : tab) === 'memory' ? 'memory' : (wide ? sideTab : tab) === 'basis' ? 'basis' : 'activity'}
             presence={session.presence} onExecution={id => void openExecution(id)}
             onEditMemory={(key, version, scope = 'dot') => {
-                if (!data.ready || !own) return;
+                if (!data.ready || !own) { setNotice('工作台数据还没就绪，稍后再编辑这条记忆。'); return; }
                 setMemoryEdit({ scope, key, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
                     kind: version.kind, json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
             }} onForgetMemory={(key, scope = 'dot') => {
-                if (data.ready && own) toConversation(`请忘记${scope === 'user' ? '用户级（所有 Dot 共享）' : '当前 Dot 的个人'}记忆 ${JSON.stringify(key)}，${directMemory ? '直接执行并告知结果' : '先展示变更供我确认'}。`);
+                if (!data.ready || !own) { setNotice('工作台数据还没就绪，稍后再处理这条记忆。'); return; }
+                toConversation(`请忘记${scope === 'user' ? '用户级（所有 Dot 共享）' : '当前 Dot 的个人'}记忆 ${JSON.stringify(key)}，${directMemory ? '直接执行并告知结果' : '先展示变更供我确认'}。`);
             }} onAddMemory={(scope = 'dot') => {
-                if (data.ready && own) setMemoryEdit({ scope, key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
+                if (!data.ready || !own) { setNotice('工作台数据还没就绪，稍后再添加记忆。'); return; }
+                setMemoryEdit({ scope, key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
             }} />
     </>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {wide && (['activity', 'work', 'memory', 'basis'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
-            {(wide ? sideTab : tab) === 'work' && action('刷新工作与记忆', () => { data.retry(); }, Boolean(data.pending), !wide)}
+            {(wide ? sideTab : tab) === 'work' && action('刷新工作项', () => { data.retry(); }, Boolean(data.pending), !wide)}
             {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming, !wide)}
             {action('可用连接与项目', () => setManagingConnections(true), false, !wide)}
         </View>
@@ -136,7 +139,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}
             {(wide ? sideTab : tab) !== 'work' ? observationPanel : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
                     <Text style={heading}>工作项 · {detail.taskTotal}</Text>
-                    <Text style={muted}>不同授权项目默认可同时执行；同项目默认最多 2 项，独立代码任务使用工作树。机器硬上限与共享资源可能让任务等待，具体见排队原因。</Text>
+                    <Text style={muted}>不同项目可以同时执行，同一项目默认最多 2 项，其余按排队顺序开始。</Text>
                     {detail.tasks.map(task => <Pressable key={task.id} accessibilityRole="button" accessibilityLabel={`查看工作项：${task.title}`} onPress={() => setTaskId(task.id)} style={{ gap: 6, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                         <Text style={body}>{task.title}</Text><Text style={muted}>{testloopWorkStatus(task)}{task.projectID ? ` · ${task.projectID}` : ''}</Text>
                     </Pressable>)}
@@ -181,6 +184,16 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         {memoryEdit && data.ready && own && sheet(memoryEdit.key ? '修改记忆' : '添加记忆', () => setMemoryEdit(null), <>
             <Text style={muted}>范围：{memoryEdit.scope === 'user' ? '用户级 · 所有Dot共享' : 'Dot级 · 当前Dot私有'}</Text>
             <Text style={muted}>名称</Text><TextInput accessibilityLabel="记忆名称" value={memoryEdit.key} editable={!memoryEdit.existing} onChangeText={key => setMemoryEdit(previous => previous && ({ ...previous, key }))} maxLength={200} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
+            <Text style={muted}>类型{memoryEdit.existing ? '（创建后固定）' : ''}</Text>
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                {(['fact', 'preference', 'commitment'] as const).map(item => <Pressable key={item} accessibilityRole="button"
+                    accessibilityLabel={`记忆类型：${kindLabel(item)}`} accessibilityState={{ selected: memoryEdit.kind === item }}
+                    disabled={memoryEdit.existing} onPress={() => setMemoryEdit(previous => previous && ({ ...previous, kind: item }))}
+                    style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 10, borderWidth: 1,
+                        borderColor: memoryEdit.kind === item ? colors.surfaceHigh : colors.divider,
+                        backgroundColor: memoryEdit.kind === item ? colors.surfaceHigh : 'transparent', opacity: memoryEdit.existing ? 0.6 : 1 }}>
+                    <Text style={{ color: colors.text, fontSize: 13 }}>{kindLabel(item)}</Text></Pressable>)}
+            </View>
             <Text style={muted}>{memoryEdit.json ? 'JSON 内容' : '内容'}</Text><TextInput accessibilityLabel="记忆内容" value={memoryEdit.text} maxLength={4096} onChangeText={text => setMemoryEdit(previous => previous && ({ ...previous, text }))} multiline style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, minHeight: 120, padding: 12, borderRadius: 10, textAlignVertical: 'top' }} />
             <Text style={muted}>有效期（ISO 时间，留空表示不设到期）</Text><TextInput accessibilityLabel="记忆有效期" value={memoryEdit.expiresAt ?? ''} onChangeText={expiresAt => setMemoryEdit(previous => previous && ({ ...previous, expiresAt: expiresAt || null }))} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
             {error && <Text accessibilityRole="alert" style={body}>{error}</Text>}

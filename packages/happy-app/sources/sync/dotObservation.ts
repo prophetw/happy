@@ -14,27 +14,33 @@ const memoryStatus = z.enum(['effective', 'unconfirmed', 'expired', 'deleted']);
 const base = z.object({ schemaVersion: z.literal(1), dotId: id, asOf: time, snapshotId: hash });
 const page = <T extends z.ZodTypeAny>(row: T) => z.object({ items: z.array(row).max(20), total: z.number().int().nonnegative(),
     offset: z.number().int().nonnegative(), nextOffset: z.number().int().nonnegative().nullable() });
-export const ObservationOverviewSchema = base.extend({ action: z.literal('overview'), scope: memoryScope, dot: identity.extend({ id, createdAt: time }),
+const summaryShape = {
+    dot: identity.extend({ id, createdAt: time }),
     host: z.object({ status: z.enum(['stopped', 'healthy', 'unhealthy']), heartbeatAt: time.nullable(), error: z.string().nullable() }),
-    channel: z.object({ lastSuccessAt: time.nullable(), error: z.string().nullable() }), processing: z.boolean(), taskTotal: z.number().int().nonnegative(),
+    channel: z.object({ lastSuccessAt: time.nullable(), error: z.string().nullable() }), processing: z.boolean(),
+    taskTotal: z.number().int().nonnegative(),
     tasks: z.array(z.object({ id, title: z.string(), status: z.string(), needsReview: z.boolean(), goalPhase: z.string().nullable() })).max(5),
     memory: z.object({ total: z.number().int().nonnegative(), access: z.array(z.enum(['read', 'write', 'forget'])), counts: z.object({ effective: z.number(), unconfirmed: z.number(), expired: z.number(), deleted: z.number() }) }).nullable(),
     retention: z.object({ startedAt: time.nullable(), retainedFrom: time.nullable(), droppedEvents: z.number(), eventLimit: z.number(),
         selectionTurnLimit: z.number(), selectionTurns: z.array(id).max(20) }),
-});
+};
+// Hosts that predate the combined reply omit `summary`; the panel then still reads `overview` once.
+export const ObservationSummarySchema = z.object(summaryShape);
+const summary = ObservationSummarySchema.optional();
+export const ObservationOverviewSchema = base.extend({ action: z.literal('overview'), scope: memoryScope, ...summaryShape });
 const event = z.object({ sequence: z.number().int().positive(), id: z.string(), at: time,
     kind: z.enum(['dot', 'turn', 'run', 'memory', 'memory-proposal', 'delivery']), entityId: z.string(), status: z.string(), previousStatus: z.string().nullable(),
     reason: z.string().nullable(), workId: id.nullable(), turnId: id.nullable(), keyDigest: hash.nullable(), label: z.string().nullable(),
     identity: identity.optional(), previousIdentity: identity.optional() });
-export const ObservationActivitySchema = base.extend({ action: z.literal('activity'), page: page(event) });
-export const ObservationMemoriesSchema = base.extend({ action: z.literal('memories'), scope: memoryScope, page: page(z.object({
+export const ObservationActivitySchema = base.extend({ action: z.literal('activity'), summary, page: page(event) });
+export const ObservationMemoriesSchema = base.extend({ action: z.literal('memories'), scope: memoryScope, summary, page: page(z.object({
     keyDigest: hash, key: z.string().nullable(), revision: z.number(), status: memoryStatus, kind: z.string().optional(),
     preview: text.optional(), source: z.string().optional(), expiresAt: time.nullable().optional(), deletedAt: time.optional(),
 })) });
 const turnBase = base.extend({ turnId: id });
 const turnSummary = z.object({ id, seq: z.number(), createdAt: time, status: z.string(), source: z.enum(['user', 'execution-result']),
     trigger: text, contextAvailable: z.boolean(), error: z.string().nullable() });
-export const ObservationTurnsSchema = base.extend({ action: z.literal('turns'), page: page(turnSummary) });
+export const ObservationTurnsSchema = base.extend({ action: z.literal('turns'), summary, page: page(turnSummary) });
 export const ObservationTurnSchema = turnBase.extend({ action: z.literal('turn'), section: z.literal('overview'), turn: turnSummary.extend({
     reply: text, frozenAt: time.nullable(), identity: identity.nullable(), decisionKind: z.string().nullable(), decision: text, inputDigest: hash.nullable(),
     calls: z.array(z.object({ id, reservedAt: time, finishedAt: time.nullable(), elapsedMs: z.number().nullable(),
@@ -70,6 +76,7 @@ export const ObservationResponseSchema = z.union([ObservationOverviewSchema, Obs
     ObservationSelectionSchema, ObservationMemorySchema, ObservationMemoryUsageSchema, ObservationWorkSchema]);
 export type ObservationResponse = z.infer<typeof ObservationResponseSchema>;
 export type ObservationOverview = z.infer<typeof ObservationOverviewSchema>;
+export type ObservationSummary = z.infer<typeof ObservationSummarySchema>;
 export type ObservationEvent = z.infer<typeof event>;
 export type ObservationMemoryVersion = z.infer<typeof ObservationMemorySchema>['page']['items'][number];
 export type ObservationRequest = { dotId: string; offset?: number; limit?: number; snapshotId?: string } & (
