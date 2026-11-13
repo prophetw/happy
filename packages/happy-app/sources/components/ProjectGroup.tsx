@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { ProjectGroupData, ProjectWorkspaceGroup, useSessionGitStatus } from '@/sync/storage';
+import { ProjectGroupData, ProjectWorkspaceGroup, storage, useLocalSetting, useSessionGitStatus } from '@/sync/storage';
 import { CompactSessionRow } from './ActiveSessionsGroupCompact';
 import { Avatar } from './Avatar';
 import { requestHomeDockFocus } from './homeDockFocus';
@@ -38,7 +38,7 @@ export const ProjectGroup = React.memo(({ project, selectedSessionId }: ProjectG
     const styles = stylesheet;
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, styles.section]}>
             {project.workspaces.map((workspace) => (
                 <WorkspaceSection
                     key={workspace.id || 'primary'}
@@ -61,6 +61,7 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
     const router = useRouter();
     const firstSession = workspace.sessions[0];
     const worktreeName = workspace.name ?? (workspace.id || null);
+    const worktreeOriginalName = workspace.id.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace.id;
 
     // The branch line belongs to the checkout, so it reads from the live git
     // status the daemon reports, through the workspace's own name, down to the
@@ -69,6 +70,21 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
     const branchName = worktreeName
         ?? gitStatus?.branch
         ?? 'main';
+    const primary = workspace.id === '';
+    const title = primary ? project.name : worktreeOriginalName ?? project.name;
+    const branchLabel = primary ? branchName : null;
+    const isWorktree = workspace.id !== '';
+    const collapsedWorktreeIds = useLocalSetting('collapsedWorktreeIds');
+    const collapsed = isWorktree && collapsedWorktreeIds.includes(workspace.id);
+    const toggleWorkspace = React.useCallback(() => {
+        if (!isWorktree) return;
+        const current = storage.getState().localSettings.collapsedWorktreeIds;
+        storage.getState().applyLocalSettings({
+            collapsedWorktreeIds: current.includes(workspace.id)
+                ? current.filter(id => id !== workspace.id)
+                : [...current, workspace.id],
+        });
+    }, [isWorktree, workspace.id]);
     const liveInsertions = gitStatus?.unstagedLinesAdded ?? 0;
     const liveDeletions = gitStatus?.unstagedLinesRemoved ?? 0;
     const changes = liveInsertions > 0 || liveDeletions > 0
@@ -108,18 +124,18 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
     }, [firstSession, router]);
 
     return (
-        <View style={styles.section}>
+        <View style={primary ? undefined : styles.nestedWorkspace}>
             <View style={styles.header}>
                 {firstSession && (
                     <Avatar id={firstSession.avatarId} size={HEADER_AVATAR_SIZE} flavor={null} imageUrl={firstSession.projectAvatarUri} thumbhash={firstSession.projectAvatarThumbhash} />
                 )}
                 <View style={styles.headerText}>
                     <Text style={styles.title} numberOfLines={1}>
-                        {project.name}
+                        {title}
                     </Text>
                     <View style={styles.branchLine}>
                         <Text style={styles.branchText} numberOfLines={1}>
-                            {branchName}
+                            {branchLabel}
                         </Text>
                         <GitLineChanges changes={changes} />
                     </View>
@@ -129,6 +145,18 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
                         <Ionicons name="chatbubble-outline" size={10} color={theme.colors.textSecondary} />
                         <Text style={styles.sessionCountText}>{workspace.sessions.length}</Text>
                     </View>
+                )}
+                {isWorktree && (
+                    <Pressable
+                        onPress={toggleWorkspace}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={title}
+                        accessibilityState={{ expanded: !collapsed }}
+                        style={styles.toggleButton}
+                    >
+                        <Ionicons name={collapsed ? 'chevron-forward' : 'chevron-down'} size={14} color={theme.colors.textSecondary} />
+                    </Pressable>
                 )}
                 <Pressable
                     onPress={handleNewSession}
@@ -141,16 +169,18 @@ const WorkspaceSection = React.memo(({ project, workspace, selectedSessionId }: 
                 </Pressable>
             </View>
 
-            <View style={styles.workspaceCard}>
-                {workspace.sessions.map((session, index) => (
-                    <CompactSessionRow
-                        key={session.id}
-                        session={session}
-                        selected={session.id === selectedSessionId}
-                        showBorder={index < workspace.sessions.length - 1}
-                    />
-                ))}
-            </View>
+            {!collapsed && (
+                <View style={styles.workspaceCard}>
+                    {workspace.sessions.map((session, index) => (
+                        <CompactSessionRow
+                            key={session.id}
+                            session={session}
+                            selected={session.id === selectedSessionId}
+                            showBorder={index < workspace.sessions.length - 1}
+                        />
+                    ))}
+                </View>
+            )}
         </View>
     );
 });
@@ -167,6 +197,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: Platform.select({ web: 1, default: 0 }),
         borderColor: theme.colors.divider,
         overflow: Platform.select({ web: 'hidden', default: 'visible' }),
+    },
+    nestedWorkspace: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.divider,
+        marginTop: 8,
+        marginLeft: 12,
     },
     // Pulled toward the screen edges: the "+" sits so its center shares an x
     // with the status dot inside the card rows below (see
@@ -205,6 +241,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 16,
         color: theme.colors.textSecondary,
         ...Typography.default('regular'),
+    },
+    toggleButton: {
+        width: 20,
+        height: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     // Filled like the composer's resting send button so it reads as a control,
     // not an ornament.

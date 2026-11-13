@@ -211,6 +211,8 @@ try {
     pass('Keyboard selection creates a real session on the selected Windows machine and directory');
 
     const dotTasks = [];
+    const main = await createSession(machines[0], '/code/dot-parent', 'Main checkout');
+    initial.push(main);
     for (const [hash, displayTitle] of [['a'.repeat(64), '修复 Dot 任务标题'], ['b'.repeat(64), '核对 Dot 验收结果']]) {
         const task = await createSession(machines[0], `/state/happy-control/worktrees/${hash}`, displayTitle, {
             summary: undefined,
@@ -242,6 +244,22 @@ try {
     await firstTask.click();
     await page.waitForURL(`**/session/${dotTasks[0].id}`, { timeout: 45_000 });
     pass('Phone project list groups readable Dot tasks by origin and preserves creation and navigation targets');
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`${webOrigin}/`, { waitUntil: 'domcontentloaded' });
+    await page.getByText('dot-parent', { exact: true }).first().waitFor({ timeout: 45_000 });
+    assert.equal(await page.getByText('dot-parent', { exact: true }).count(), 1,
+        'Primary checkout and nested worktrees share one project heading');
+    const taskText = page.getByText('修复 Dot 任务标题', { exact: true });
+    assert.equal(await taskText.count(), 1, 'Task title appears only on its session row');
+    const worktreeToggle = page.getByRole('button', { name: 'a'.repeat(64), exact: true });
+    await worktreeToggle.click();
+    assert.equal(await taskText.count(), 0, 'Collapsed worktree hides its session row');
+    await page.screenshot({ path: path.join(artifacts, 'dot-task-worktree-collapsed-desktop.png'), fullPage: true });
+    await worktreeToggle.click();
+    assert.equal(await taskText.count(), 1, 'Expanding restores the same session row');
+    await page.screenshot({ path: path.join(artifacts, 'dot-task-project-grouping-desktop.png'), fullPage: true });
+    pass('Desktop keeps the original project list and folds individual worktrees');
 
     archivedClient.updateMetadata(metadata => ({ ...metadata, lifecycleState: 'archived' }));
     await waitFor(() => archivedClient.getMetadata()?.lifecycleState === 'archived', 'archive metadata acknowledgement');

@@ -1,5 +1,13 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 任务命名与项目分组 P0（2026-11-13，已部署）
+
+功能提交 `8ca54cde97d3fa2917bc403dbb78fba701fa21a3` 已推送个人 `fork/main`，从最新远端 main 独立提交，未带入其他工作区改动。Control、Worker/CLI、宿主和私网 Web 已切换；固定 Worker 包 `/home/dev/.local/share/happy-automation/releases/p0-task-title-20261113`，Control 镜像 `sha256:e5532ee3e2b281e079a88a799be546aac4699e3049b0cf9d334fb743c669abbf`。真实只读任务验证标题、可信 origin、完成回执和测试会话停止；固定 Web 手机分组与线上资源核验通过。健康仅保留原三项 attention。
+
+preview OTA 更新组 `fd277973-51d7-40e4-aaa4-a76334af1fcb`，iOS/Android 均 runtime 21；preview/production manifest 与启动包 SHA256 `2662320e09bb09ae89d07afb55273ab5de3702642e73f81c0e6157e3cf73437b` 已核对，真机加载未验证。初次项目权限及 environment 参数失败未产生更新。宿主三次失败/回退、Web base path 修正、备份和最终验收证据统一保存在 `/home/dev/.local/state/happy-dot-p0-20261113/`。详见 TestLoop DEPLOY.md 同日期条目。
+
+桌面 Web 最终在同一项目卡内呈现主目录及从属 worktree，worktree 于主干下缩进并可独立折叠/展开，主目录不折叠；折叠标题使用 worktree 原名，任务标题仅保留在任务行，不再重复。折叠偏好保存在本机。8989 和私网 Web 均已更新，实际折叠/展开与 mobile 浏览器验收通过，未为桌面调整重新发布 OTA。
+
 ## Hosted Dot 无变化持久化跳过（2026-11-13，已部署）
 
 功能源 `e3f67eb2a9c9735e432657a800242484d5ede10b` 已普通推送个人 main。

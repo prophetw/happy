@@ -25,6 +25,7 @@ export const LocalSettingsSchema = z.object({
     // Projects showing every workspace rather than the first few - keyed by project id
     expandedProjects: z.record(z.string(), z.boolean()).describe('Projects showing all workspaces instead of the first few'),
     collapsedMachineIds: z.array(z.string().nullable()).describe('Collapsed device groups in the Web session sidebar'),
+    collapsedWorktreeIds: z.array(z.string()).describe('Collapsed worktrees in the desktop project list'),
     // Boxes ticked on the "Link your computer" checklist - keyed by step id
     linkComputerChecklist: z.record(z.string(), z.boolean()).describe('Ticked steps on the link-your-computer checklist'),
 });
@@ -58,6 +59,7 @@ export const localSettingsDefaults: LocalSettings = {
     acknowledgedCliVersions: {},
     expandedProjects: {},
     collapsedMachineIds: [],
+    collapsedWorktreeIds: [],
     linkComputerChecklist: {},
 };
 Object.freeze(localSettingsDefaults);
