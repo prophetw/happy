@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate, loadHostedState, HostedDotConfig } from './hostedDotState';
+import * as sessionProtocolMapper from './utils/sessionProtocolMapper';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any }));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
@@ -351,4 +352,144 @@ it('compacts settled legacy snapshots at startup without replacing the original 
         expect(f.state().threadId).toBe('native-thread'); expect(h.start).not.toHaveBeenCalled();
         expect(h.send).not.toHaveBeenCalled(); expect(f.state().inputs[0].turnId).toBe('old-turn');
     } finally { await f.stop(); }
+});
+
+
+it('persists a text delta and its ACK without rewriting the journal for timing, ignored or duplicate events', async () => {
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        const start = { type: 'task_started', thread_id: 'native-thread', turn_id: 'delta-turn' };
+        h.event(start);
+        await vi.waitFor(() => expect(f.state().outputs.every((o: any) => o.sent)).toBe(true));
+        const before = f.state();
+        h.options.onNotification('item/agentMessage/delta', { threadId: 'native-thread', turnId: 'delta-turn', itemId: 'item', delta: 'answer' });
+        h.event({ type: 'token_speed_output_delta', kind: 'text' });
+        h.event({ type: 'ignored-event' });
+        h.event(start); // The stable turn-start output already exists and is confirmed.
+        expect(f.state()).toEqual(before);
+        h.event({ type: 'agent_message_delta', thread_id: 'native-thread', turn_id: 'delta-turn', item_id: 'item', delta: 'answer' });
+        const written = f.state();
+        expect(written.authority.revision).toBe(before.authority.revision + 1);
+        expect(written.outputs).toHaveLength(before.outputs.length + 1);
+        expect(written.outputs.at(-1).sent).toBe(false);
+        await vi.waitFor(() => expect(f.state().outputs.at(-1).sent).toBe(true));
+        expect(f.state().authority.revision).toBe(before.authority.revision + 2);
+        expect(h.sent.filter((o: any) => o.localId === written.outputs.at(-1).localId)).toHaveLength(1);
+    } finally { await f.stop(); }
+});
+
+it('durably accepts and completes input before returning from lifecycle notifications', async () => {
+    let finish!: () => void;
+    h.send.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.receive.onMessage(row(1, 'isolated lifecycle input'));
+        expect(f.state()).toMatchObject({ afterSeq: 1, inputs: [{ id: '1', status: 'queued' }] });
+        await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+        const before = f.state();
+        expect(before.inputs[0].status).toBe('dispatching');
+        h.options.onNotification('turn/started', { threadId: 'native-thread', turn: { id: 'lifecycle-turn' } });
+        const accepted = f.state();
+        expect(accepted.inputs[0]).toMatchObject({ status: 'accepted', turnId: 'lifecycle-turn' });
+        expect(accepted.authority.revision).toBe(before.authority.revision + 1);
+        h.options.onNotification('turn/started', { threadId: 'native-thread', turn: { id: 'lifecycle-turn' } });
+        expect(f.state()).toEqual(accepted);
+        h.options.onNotification('turn/completed', { threadId: 'native-thread', turn: { id: 'lifecycle-turn', status: 'completed' } });
+        const completed = f.state();
+        expect(completed.inputs[0].status).toBe('completed');
+        expect(completed.authority.revision).toBe(accepted.authority.revision + 1);
+        h.options.onNotification('turn/completed', { threadId: 'native-thread', turn: { id: 'lifecycle-turn', status: 'completed' } });
+        expect(f.state()).toEqual(completed);
+        finish();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+    } finally { finish?.(); await f.stop(); }
+});
+
+it.each(['failed', 'interrupted'] as const)('persists %s abort state even when the initial event produces no new output', async (status) => {
+    let finish!: () => void;
+    h.send.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.receive.onMessage(row(1, 'isolated abort input'));
+        await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+        h.options.onNotification('turn/started', { threadId: 'native-thread', turn: { id: 'abort-turn' } });
+        const before = f.state();
+        h.event({ type: 'turn_aborted', status });
+        const aborted = f.state();
+        expect(aborted.authority.revision).toBeGreaterThan(before.authority.revision);
+        expect(aborted.inputs[0].status).toBe(status === 'failed' ? 'unknown' : 'interrupted');
+        if (status === 'failed') {
+            expect(aborted).toMatchObject({ status: 'blocked', error: 'hosted_native_transport_lost' });
+            expect(aborted.inputs[0].error).toBe('hosted_native_transport_lost');
+            expect(aborted.outputs.at(-1).sent).toBe(false);
+        }
+        finish();
+    } finally { finish?.(); await f.stop(); }
+});
+
+
+it('persists a model error output even when no input matches the completed turn', async () => {
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        const before = f.state();
+        h.options.onNotification('turn/completed', { threadId: 'native-thread', turn: {
+            id: 'unmatched-turn', status: 'failed', error: { message: 'isolated failure' },
+        } });
+        const failed = f.state();
+        expect(failed.inputs).toEqual(before.inputs);
+        expect(failed.outputs).toHaveLength(before.outputs.length + 1);
+        expect(failed.outputs.at(-1)).toMatchObject({ sent: false, envelope: { ev: { t: 'service' } } });
+        expect(failed.authority.revision).toBe(before.authority.revision + 1);
+    } finally { await f.stop(); }
+});
+
+
+it('persists a recovered binding error without waiting for an unrelated notification or message', async () => {
+    const f = fixture(true, false, state => {
+        state.threadId = 'native-thread'; state.afterSeq = 1;
+        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'old', text: 'settled', status: 'completed', turnId: 'old-turn', beforeTurns: [] }];
+    });
+    const now = Date.now.bind(Date);
+    let restoreClock: (() => void) | undefined;
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.resume.mockRejectedValueOnce(new Error('isolated binding refresh failure'));
+        f.policy({});
+        await vi.waitFor(() => expect(f.state().error).toBe('hosted_mcp_refresh_failed'));
+        const before = f.state(), calls = h.resume.mock.calls.length;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => now() + 31_000);
+        restoreClock = () => { clock.mockRestore(); };
+        await vi.waitFor(() => expect(h.resume).toHaveBeenCalledTimes(calls + 1));
+        expect(f.state().error).toBeNull();
+        expect(f.state().authority.revision).toBe(before.authority.revision + 1);
+        expect(f.state().inputs).toEqual(before.inputs);
+        expect(h.send).not.toHaveBeenCalled(); expect(h.sent).toHaveLength(0);
+    } finally { restoreClock?.(); await f.stop(); }
+});
+
+
+it('durably blocks immediately when mapping an ordinary abort fails without accepted input', async () => {
+    const f = fixture();
+    let restoreMapper: (() => void) | undefined;
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(f.state().inputs).toHaveLength(0);
+        const mapper = vi.spyOn(sessionProtocolMapper, 'mapCodexMcpMessageToSessionEnvelopes')
+            .mockImplementationOnce(() => { throw new Error('isolated abort mapper failure'); });
+        restoreMapper = () => { mapper.mockRestore(); };
+        const failure = expect(f.running).rejects.toThrow('hosted_event_persistence_failed');
+        h.event({ type: 'turn_aborted' });
+        // Read the durable journal before yielding to the main loop's failure handler.
+        expect(f.state()).toMatchObject({ status: 'blocked', error: 'hosted_event_persistence_failed' });
+        restoreMapper();
+        await failure;
+    } finally {
+        restoreMapper?.();
+        try { await f.stop(); }
+        catch (error) { expect(error).toMatchObject({ message: 'hosted_event_persistence_failed' }); }
+    }
 });

@@ -24,12 +24,14 @@ it('preserves input delivery state and stable output identity across process rel
         const state = loadHostedState(file, c);
         state.inputs.push({ epoch: 0, id: 'm1', seq: 7, text: 'identical text', status: 'dispatching', delivery: 'queue', beforeTurns: ['old'] });
         const envelope = createEnvelope('agent', { t: 'text', text: 'answer' }, { id: 'native-item' });
-        addOutput(state, envelope); addOutput(state, envelope); savePrivate(file, state);
+        expect(addOutput(state, envelope)).toBe(true); expect(addOutput(state, envelope)).toBe(false); savePrivate(file, state);
         const recovered = loadHostedState(file, c);
         expect(recovered.outputs).toHaveLength(1); expect(recovered.outputs[0].sent).toBe(false);
         expect(recovered.inputs[0].status).toBe('dispatching');
         expect(() => loadHostedState(file, { ...c, sessionId: 'different' })).toThrow('hosted_binding_changed');
-        recovered.epoch++; addOutput(recovered, envelope); expect(recovered.outputs).toHaveLength(2);
+        recovered.outputs[0].sent = true;
+        expect(addOutput(recovered, envelope)).toBe(false); expect(recovered.outputs[0].sent).toBe(true);
+        recovered.epoch++; expect(addOutput(recovered, envelope)).toBe(true); expect(recovered.outputs).toHaveLength(2);
     } finally { rmSync(dir, { recursive: true }); }
 });
 it('rejects reserved identity environment variables and non-file state', () => {

@@ -72,10 +72,13 @@ export function loadHostedState(file: string, config: HostedDotConfig): HostedSt
     if (state.bootstrap?.stage === 'injecting') throw new Error('hosted_bootstrap_unconfirmed');
     return state;
 }
-export function addOutput(state: HostedState, envelope: SessionEnvelope): void {
+/** Returns whether a new durable output was queued; duplicate receipts stay unchanged. */
+export function addOutput(state: HostedState, envelope: SessionEnvelope): boolean {
     const localId = `hosted:${state.epoch}:${envelope.id}`;
     const existing = state.outputs.find(o => o.localId === localId);
-    if (!existing) state.outputs.push({ localId, envelope, sent: false });
+    if (existing) return false;
+    state.outputs.push({ localId, envelope, sent: false });
+    return true;
 }
 
 export const HostedTaskGateway = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string(), servers: z.record(z.string().regex(/^(?:(?:happy|mcp)_[A-Za-z0-9_-]+|dot_memory)$/),

@@ -108,7 +108,9 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     const publish = (event: Record<string, unknown>) => {
         const mapped = mapCodexMcpMessageToSessionEnvelopes({ thread_id: state.threadId, ...event }, mapping);
         Object.assign(mapping, mapped);
-        for (const envelope of mapped.envelopes) addOutput(state, envelope);
+        let changed = false;
+        for (const envelope of mapped.envelopes) if (addOutput(state, envelope)) changed = true;
+        return changed;
     };
     const endTurn = (turn: string, status: 'completed' | 'failed' | 'interrupted') => {
         mapping.currentTurnId = turn;
@@ -170,25 +172,27 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             onNotification: (method, p) => {
                 try {
                     if (p.threadId && p.threadId !== state.threadId) return;
+                    let changed = false;
                     if (method === 'turn/started') {
                         const row = state.inputs.find(r => r.status === 'dispatching');
-                        if (row) { row.turnId = p.turn.id; row.status = 'accepted'; }
+                        if (row) { row.turnId = p.turn.id; row.status = 'accepted'; changed = true; }
                     }
                     if (method === 'turn/completed') {
                         const status = p.turn.status === 'completed' ? 'completed' : p.turn.status === 'failed' ? 'failed' : 'interrupted';
                         terminalTurns.set(p.turn.id, status);
                         for (const row of state.inputs.filter(r => r.turnId === p.turn.id && r.status === 'accepted')) {
-                            row.status = status;
+                            row.status = status; changed = true;
                             if (p.turn.error) row.error = String(p.turn.error.message ?? p.turn.error.codexErrorInfo ?? 'hosted_model_failed').slice(0, 2000);
                         }
-                        if (p.turn.error) addOutput(state, createEnvelope('agent', { t: 'service', text: '模型执行失败：' + String(p.turn.error.message ?? p.turn.error.codexErrorInfo ?? '未知错误').slice(0, 1000) + '；没有切换模型或自动重试。' }));
+                        if (p.turn.error && addOutput(state, createEnvelope('agent', { t: 'service', text: '模型执行失败：' + String(p.turn.error.message ?? p.turn.error.codexErrorInfo ?? '未知错误').slice(0, 1000) + '；没有切换模型或自动重试。' }))) changed = true;
                     }
-                    persist();
+                    // Timing/unrelated notifications do not change the durable journal.
+                    if (changed) persist();
                 } catch { eventError = true; state.status = 'blocked'; state.error = 'hosted_event_persistence_failed'; }
             } });
         client.setApprovalHandler(async () => 'denied');
         client.setEventHandler(event => {
-            try { if (!(event.type === 'turn_aborted' && event.status === 'failed')) publish(event); persist(); } catch { eventError = true; state.status = 'blocked'; state.error = 'hosted_event_persistence_failed'; }
+            try { if (!(event.type === 'turn_aborted' && event.status === 'failed') && publish(event)) persist(); } catch { eventError = true; state.status = 'blocked'; state.error = 'hosted_event_persistence_failed'; }
             if (event.type === 'turn_aborted' && event.status === 'failed') {
                 transportLost = true;
                 for (const row of state.inputs.filter(r => r.status === 'accepted')) { row.status = 'unknown'; row.error = 'hosted_native_transport_lost'; }
@@ -268,7 +272,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                 await metadata();
             }
             taskServers = next; taskServersDigest = hash(next);
-            if (state.error === 'hosted_mcp_refresh_failed') state.error = null;
+            if (state.error === 'hosted_mcp_refresh_failed') { state.error = null; persist(); }
             await ensureMemoryPolicy();
         };
         while (!stop && !signal?.aborted) {
