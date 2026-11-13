@@ -1519,6 +1519,12 @@ export const storage = create<StorageState>()((set, get) => {
             delete drafts[sessionId];
             saveSessionDrafts(drafts);
             saveRigComposerDraft(sessionId, null);
+            // Composer images live outside MMKV (files on native, IndexedDB on
+            // web). Loaded lazily so this store stays importable in the tests
+            // and on platforms without those modules.
+            void import('@/sync/composerAttachmentFiles')
+                .then(({ forgetComposerAttachments }) => forgetComposerAttachments(sessionId))
+                .catch((error) => console.warn('Failed to clear composer attachments of a deleted session', error));
 
             const lastMessageSentAt = loadSessionLastMessageSentAt();
             delete lastMessageSentAt[sessionId];

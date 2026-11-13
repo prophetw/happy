@@ -372,8 +372,18 @@ export function resetVoiceLocalCounters() {
     mmkv.delete(VOICE_MESSAGE_COUNT_KEY);
 }
 
-export function clearPersistence() {
+export async function clearPersistence(): Promise<void> {
     mmkv.clearAll();
+    // Composer images are stored outside MMKV (files on native, IndexedDB on
+    // web). Awaited because logout reloads immediately: a fire-and-forget
+    // delete would usually be cut off halfway. Imported lazily so this module
+    // stays free of platform file modules.
+    try {
+        const { clearAllComposerAttachments } = await import('@/sync/composerAttachmentFiles');
+        await clearAllComposerAttachments();
+    } catch (error) {
+        console.warn('Failed to clear composer attachments', error);
+    }
 }
 
 /** Relay-owned caches are separate from local preferences and unsent drafts. */

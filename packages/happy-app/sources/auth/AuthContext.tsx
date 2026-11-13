@@ -56,7 +56,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
                 console.log('Failed to unregister push token during logout:', error);
             }
         }
-        clearPersistence();
+        await clearPersistence();
         const removed = await TokenStorage.removeCredentials();
         if (options?.beforeReload) {
             if (!removed) throw new Error('Failed to clear authentication tokens');

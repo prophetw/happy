@@ -914,16 +914,21 @@ export function SessionViewLoaded({
     const resumeCommandBlock = session ? getResumeCommandBlock(session) : null;
 
     // Attachment availability is capability-driven by the active session. There
-    // is nothing to attach to before the chat exists.
-    const { selectedImages, attachImages, removeImage, clearImages, addImages } = useImagePicker();
+    // is nothing to attach to before the chat exists. The session id also makes
+    // the strip durable: a reload or a switch to another chat restores it.
+    const { selectedImages, attachImages, removeImage, clearImages, addImages } = useImagePicker({ persistKey: sessionId });
     const canUseAttachments = !!session && (isRigMetadataV1(session.metadata)
         ? rigCanUseAttachments(session.metadata)
         : supportsImageAttachmentsForFlavor(session.metadata?.flavor));
     React.useEffect(() => {
-        if (!canUseAttachments && selectedImages.length > 0) {
+        // Only a session that exists and says it cannot take pictures clears
+        // the strip. Before the session arrives the capabilities are simply
+        // unknown, and treating that as "unsupported" would delete a restored
+        // draft before it could be shown.
+        if (session && !canUseAttachments && selectedImages.length > 0) {
             clearImages();
         }
-    }, [canUseAttachments, selectedImages.length, clearImages]);
+    }, [session, canUseAttachments, selectedImages.length, clearImages]);
 
     // ChatComposer owns the message state + useDraft subscription. We only
     // hold an imperative handle so handleSend can read the live text and

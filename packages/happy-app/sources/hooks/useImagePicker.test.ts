@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
     getImageAsync: vi.fn(),
     alert: vi.fn(),
     setSelectedImages: vi.fn(),
+    persistComposerAttachment: vi.fn(),
+    loadComposerAttachments: vi.fn(),
+    forgetComposerAttachment: vi.fn(),
+    forgetComposerAttachments: vi.fn(),
 }));
 
 // Exercise the picker callback and its state update without native UI modules.
@@ -59,6 +63,13 @@ vi.mock('@/utils/thumbhash', () => ({
     generateThumbhash: mocks.generateThumbhash,
 }));
 
+vi.mock('@/sync/composerAttachmentFiles', () => ({
+    persistComposerAttachment: mocks.persistComposerAttachment,
+    loadComposerAttachments: mocks.loadComposerAttachments,
+    forgetComposerAttachment: mocks.forgetComposerAttachment,
+    forgetComposerAttachments: mocks.forgetComposerAttachments,
+}));
+
 import { MAX_FILE_SIZE, normalizePickedAssetForUpload, readImageDataUri, useImagePicker } from './useImagePicker';
 import type { AttachmentPreview } from './useImagePicker';
 
@@ -79,6 +90,10 @@ beforeEach(() => {
     mocks.requestMediaLibraryPermissionsAsync.mockResolvedValue({ status: 'granted' });
     mocks.launchImageLibraryAsync.mockResolvedValue({ canceled: false, assets: [photo] });
     mocks.generateThumbhash.mockResolvedValue('thumbhash');
+    mocks.persistComposerAttachment.mockImplementation(async (_key: string, preview: AttachmentPreview) => preview);
+    mocks.loadComposerAttachments.mockResolvedValue([]);
+    mocks.forgetComposerAttachment.mockResolvedValue(undefined);
+    mocks.forgetComposerAttachments.mockResolvedValue(undefined);
 });
 
 describe('normalizePickedAssetForUpload', () => {
@@ -399,5 +414,73 @@ describe('useImagePicker pasting', () => {
             expect(mocks.writeAsStringAsync).not.toHaveBeenCalled();
             expect(mocks.setSelectedImages).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('useImagePicker draft persistence', () => {
+    const restoredImage: AttachmentPreview = {
+        id: 'stored-1',
+        uri: 'file:///documents/composer-attachments/session-1/stored-1.png',
+        width: 1200,
+        height: 800,
+        mimeType: 'image/png',
+        size: 1_234,
+        name: 'stored.png',
+        thumbhash: 'thumbhash',
+    };
+
+    it('restores the session strip on mount', async () => {
+        mocks.loadComposerAttachments.mockResolvedValue([restoredImage]);
+
+        useImagePicker({ persistKey: 'session-1' });
+
+        expect(mocks.loadComposerAttachments).toHaveBeenCalledExactlyOnceWith('session-1');
+        await vi.waitFor(() => expect(mocks.setSelectedImages).toHaveBeenCalledOnce());
+        expect(mocks.setSelectedImages.mock.calls[0][0]([])).toEqual([restoredImage]);
+    });
+
+    it('stores a picked image under the session', async () => {
+        await useImagePicker({ persistKey: 'session-1' }).pickImages();
+
+        await vi.waitFor(() => expect(mocks.persistComposerAttachment).toHaveBeenCalledOnce());
+        expect(mocks.persistComposerAttachment).toHaveBeenCalledWith(
+            'session-1',
+            expect.objectContaining({ uri: 'file:///test/normalized.jpg' }),
+        );
+    });
+
+    it('stores a pasted image under the session', async () => {
+        mocks.hasImageAsync.mockResolvedValue(true);
+        mocks.getImageAsync.mockResolvedValue({ data: 'data:image/png;base64,QUJD', size: { width: 1200, height: 800 } });
+
+        await useImagePicker({ persistKey: 'session-1' }).pasteImages();
+
+        await vi.waitFor(() => expect(mocks.persistComposerAttachment).toHaveBeenCalledOnce());
+        expect(mocks.persistComposerAttachment).toHaveBeenCalledWith(
+            'session-1',
+            expect.objectContaining({ mimeType: 'image/jpeg' }),
+        );
+    });
+
+    it('keeps the strip in memory only when no session key is given', async () => {
+        await useImagePicker().pickImages();
+        useImagePicker().removeImage('any');
+        useImagePicker().clearImages();
+
+        expect(mocks.persistComposerAttachment).not.toHaveBeenCalled();
+        expect(mocks.forgetComposerAttachment).not.toHaveBeenCalled();
+        expect(mocks.forgetComposerAttachments).not.toHaveBeenCalled();
+    });
+
+    it('forgets an image from the session store when it is removed', () => {
+        useImagePicker({ persistKey: 'session-1' }).removeImage('stored-1');
+
+        expect(mocks.forgetComposerAttachment).toHaveBeenCalledExactlyOnceWith('session-1', 'stored-1');
+    });
+
+    it('forgets the whole session strip when it is cleared', () => {
+        useImagePicker({ persistKey: 'session-1' }).clearImages();
+
+        expect(mocks.forgetComposerAttachments).toHaveBeenCalledExactlyOnceWith('session-1');
     });
 });

@@ -17,6 +17,12 @@ import { Modal } from '@/modal';
 import { generateThumbhash } from '@/utils/thumbhash';
 import { t } from '@/text';
 import type { AttachmentPreview } from '@/sync/attachmentTypes';
+import {
+    forgetComposerAttachment,
+    forgetComposerAttachments,
+    loadComposerAttachments,
+    persistComposerAttachment,
+} from '@/sync/composerAttachmentFiles';
 
 export const MAX_IMAGES_PER_MESSAGE = 20;
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -35,6 +41,16 @@ type UseImagePickerResult = {
     removeImage: (id: string) => void;
     clearImages: () => void;
     addImages: (images: AttachmentPreview[]) => void;
+};
+
+export type UseImagePickerOptions = {
+    /**
+     * Persist the strip under this key (a session id) and restore it on mount.
+     * Omitted or null keeps the old memory-only behavior, which is what the
+     * new-session composer wants: its own draft store deliberately carries no
+     * image URIs between screens.
+     */
+    persistKey?: string | null;
 };
 
 /** Splits `data:image/png;base64,AAAA` into its type and its bytes. */
@@ -145,13 +161,104 @@ async function previewForAsset(asset: ImagePicker.ImagePickerAsset): Promise<Att
     };
 }
 
-export function useImagePicker(): UseImagePickerResult {
+/** Current picks first; restored ones fill in behind them. */
+function mergeAttachmentPreviews(
+    current: readonly AttachmentPreview[],
+    restored: readonly AttachmentPreview[],
+): AttachmentPreview[] {
+    const seen = new Set(current.map((preview) => preview.id));
+    return [...current, ...restored.filter((preview) => !seen.has(preview.id))];
+}
+
+export function useImagePicker(options: UseImagePickerOptions = {}): UseImagePickerResult {
+    const persistKey = options.persistKey ?? null;
     const [selectedImages, setSelectedImages] = useState<AttachmentPreview[]>([]);
-    // Ref tracks current count to avoid stale closures on rapid taps.
+    // Ref tracks the live list for callbacks that outlive a render: the count
+    // limit, and whether a saved image is still wanted after its copy lands.
+    const selectedImagesRef = useRef<AttachmentPreview[]>([]);
     const selectedCountRef = useRef(0);
+    const persistKeyRef = useRef<string | null>(persistKey);
+    persistKeyRef.current = persistKey;
     useEffect(() => {
+        selectedImagesRef.current = selectedImages;
         selectedCountRef.current = selectedImages.length;
     }, [selectedImages]);
+
+    /**
+     * Copies newly picked images to the session's durable store. The preview
+     * then swaps to the stored URI (the copy, on native), so sending keeps
+     * working after the picker's cache is reclaimed. If the image was removed
+     * while its copy was being written, the copy is thrown away with it.
+     */
+    const persistPreviews = useCallback((previews: AttachmentPreview[]) => {
+        const key = persistKeyRef.current;
+        if (!key) return;
+        for (const preview of previews) {
+            void persistComposerAttachment(key, preview)
+                .then((saved) => {
+                    if (saved.uri === preview.uri) return;
+                    if (!selectedImagesRef.current.some((image) => image.id === saved.id)) {
+                        void forgetComposerAttachment(key, saved.id);
+                        return;
+                    }
+                    setSelectedImages(prev => prev.map(image => image.id === saved.id
+                        ? { ...image, uri: saved.uri }
+                        : image));
+                })
+                .catch((error) => console.warn('Failed to persist composer attachment', error));
+        }
+    }, []);
+
+    // Restore the strip for a session, and move picks across the one moment a
+    // chat's key can appear: a chat being started has no id, then the machine
+    // answers and the same composer adopts what was picked for it.
+    const loadedPersistKeyRef = useRef<string | null | undefined>(undefined);
+    useEffect(() => {
+        const key = persistKey;
+        const previous = loadedPersistKeyRef.current;
+        loadedPersistKeyRef.current = key;
+
+        if (!key) {
+            if (previous !== undefined) {
+                selectedImagesRef.current = [];
+                selectedCountRef.current = 0;
+                setSelectedImages([]);
+            }
+            return;
+        }
+
+        // A different persisted session is a different strip; drop it before
+        // filling in the new one. A null previous key means adoption instead.
+        // An equal key arrives when React re-runs an effect (StrictMode): the
+        // strip is already in place, and the load below then merges to nothing.
+        const changed = key !== previous;
+        if (changed && previous) {
+            selectedImagesRef.current = [];
+            selectedCountRef.current = 0;
+            setSelectedImages([]);
+        }
+        const adopting = changed && previous === null ? selectedImagesRef.current : [];
+
+        let cancelled = false;
+        void (async () => {
+            if (adopting.length > 0) {
+                const saved = await Promise.all(
+                    adopting.map((preview) => persistComposerAttachment(key, preview)),
+                );
+                if (cancelled) return;
+                setSelectedImages(prev => prev.map(image => (
+                    saved.find((candidate) => candidate.id === image.id) ?? image
+                )));
+            }
+            const restored = await loadComposerAttachments(key);
+            if (cancelled || restored.length === 0) return;
+            setSelectedImages(prev => mergeAttachmentPreviews(prev, restored));
+        })().catch((error) => console.warn('Failed to restore composer attachments', error));
+
+        return () => {
+            cancelled = true;
+        };
+    }, [persistKey]);
 
     const requestPermission = useCallback(async (): Promise<boolean> => {
         if (Platform.OS === 'web') return true;
@@ -202,9 +309,15 @@ export function useImagePicker(): UseImagePickerResult {
         }
 
         if (previews.length > 0) {
+            // Keep the live list ahead of the render: a copy that lands before
+            // React commits must still see these images as wanted.
+            const next = [...selectedImagesRef.current, ...previews].slice(0, MAX_IMAGES_PER_MESSAGE);
+            selectedImagesRef.current = next;
+            selectedCountRef.current = next.length;
+            persistPreviews(previews);
             setSelectedImages(prev => [...prev, ...previews].slice(0, MAX_IMAGES_PER_MESSAGE));
         }
-    }, [requestPermission]);
+    }, [persistPreviews, requestPermission]);
 
     /**
      * Attaches the image on the clipboard.
@@ -283,11 +396,19 @@ export function useImagePicker(): UseImagePickerResult {
         } as ImagePicker.ImagePickerAsset);
         if (!preview) return false;
 
+        const room = MAX_IMAGES_PER_MESSAGE - selectedImagesRef.current.length;
+        if (room > 0) {
+            // Keep the live list ahead of the render, as picking does; a copy
+            // that lands early must not look like a removal.
+            selectedImagesRef.current = [...selectedImagesRef.current, preview];
+            selectedCountRef.current = selectedImagesRef.current.length;
+            persistPreviews([preview]);
+        }
         setSelectedImages(prev => (
             prev.length >= MAX_IMAGES_PER_MESSAGE ? prev : [...prev, preview]
         ));
         return true;
-    }, []);
+    }, [persistPreviews]);
 
     /**
      * What the add button does: asks, every time, whether to paste or to pick.
@@ -315,20 +436,44 @@ export function useImagePicker(): UseImagePickerResult {
     }, [pasteImages, pickImages]);
 
     const removeImage = useCallback((id: string) => {
+        // Drop from the live list first: a copy still being written must not
+        // put the image back after this removal.
+        selectedImagesRef.current = selectedImagesRef.current.filter(img => img.id !== id);
+        selectedCountRef.current = selectedImagesRef.current.length;
         setSelectedImages(prev => prev.filter(img => img.id !== id));
+        const key = persistKeyRef.current;
+        if (key) {
+            void forgetComposerAttachment(key, id)
+                .catch((error) => console.warn('Failed to forget composer attachment', error));
+        }
     }, []);
 
     const clearImages = useCallback(() => {
+        selectedImagesRef.current = [];
+        selectedCountRef.current = 0;
         setSelectedImages([]);
+        const key = persistKeyRef.current;
+        if (key) {
+            void forgetComposerAttachments(key)
+                .catch((error) => console.warn('Failed to clear composer attachments', error));
+        }
     }, []);
 
     const addImages = useCallback((images: AttachmentPreview[]) => {
+        const remaining = MAX_IMAGES_PER_MESSAGE - selectedCountRef.current;
+        if (remaining <= 0) return;
+        const accepted = images.slice(0, remaining);
+        // Keep the live list ahead of the render: a copy that lands before
+        // React commits must still see these images as wanted.
+        selectedImagesRef.current = [...selectedImagesRef.current, ...accepted];
+        selectedCountRef.current = selectedImagesRef.current.length;
+        persistPreviews(accepted);
         setSelectedImages(prev => {
-            const remaining = MAX_IMAGES_PER_MESSAGE - prev.length;
-            if (remaining <= 0) return prev;
-            return [...prev, ...images.slice(0, remaining)];
+            const room = MAX_IMAGES_PER_MESSAGE - prev.length;
+            if (room <= 0) return prev;
+            return [...prev, ...images.slice(0, room)];
         });
-    }, []);
+    }, [persistPreviews]);
 
     return { selectedImages, pickImages, pasteImages, attachImages, removeImage, clearImages, addImages };
 }
