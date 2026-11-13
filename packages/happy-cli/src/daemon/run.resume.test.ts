@@ -193,6 +193,28 @@ describe('daemon resume fallback', () => {
     );
   });
 
+  it('keeps explicit Happy Task display fields while removing their ambient copies', async () => {
+    await boot();
+    const result = await mocks.handlers.spawnSession({ directory: '/project', agent: 'claude', environmentVariables: {
+      HAPPY_TASK_ID: 'task-a', HAPPY_TASK_ROOT: '/project', HAPPY_TASK_TITLE: '可读任务',
+    } });
+    expect(result).toEqual({ type: 'success', sessionId: 'old-session' });
+    expect(mocks.spawn.mock.calls[0][1].env).toMatchObject({
+      HAPPY_TASK_ID: 'task-a', HAPPY_TASK_ROOT: '/project', HAPPY_TASK_TITLE: '可读任务',
+    });
+  });
+
+  it('restores Happy Task display metadata through the same resumed session environment', async () => {
+    const happyTask = { schemaVersion: 1 as const, taskId: 'task-a', origin: { path: '/project' }, displayTitle: '可读任务' };
+    await boot();
+    expect(await mocks.handlers.resumeSession('old-session', { fallback: { ...fallback, metadata: { ...metadata, happyTask } } }))
+      .toEqual({ type: 'success', sessionId: 'old-session' });
+    expect(mocks.spawn.mock.calls[0][1].env).toMatchObject({
+      HAPPY_RECONNECT_SESSION_ID: 'old-session',
+      HAPPY_TASK_ID: 'task-a', HAPPY_TASK_ROOT: '/project', HAPPY_TASK_TITLE: '可读任务',
+    });
+  });
+
   it.each(['claude', 'codex'])('refreshes a missing %s provider ID from server metadata', async (flavor) => {
     await boot();
     const complete = flavor === 'codex'

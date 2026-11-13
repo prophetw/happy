@@ -112,6 +112,10 @@ class Logger {
             // Drop usage, not generally useful for debugging
             continue
           }
+          if (key === 'displayTitle' || key === 'HAPPY_TASK_TITLE') {
+            result[key] = '[REDACTED]'
+            continue
+          }
           result[key] = truncateStrings(value)
         }
         return result

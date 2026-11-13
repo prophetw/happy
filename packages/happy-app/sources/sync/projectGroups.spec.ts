@@ -19,6 +19,8 @@ function session(options: {
     machineId?: string;
     path?: string;
     homeDir?: string;
+    happyTask?: { originPath: string; displayTitle: string; taskId?: string };
+    summary?: string;
 }): Session {
     const active = options.active ?? true;
     return {
@@ -34,6 +36,13 @@ function session(options: {
             host: 'localhost',
             machineId: options.machineId ?? 'machine-1',
             client: { id: 'rig', name: 'Rig', version: 'test' },
+            ...(options.happyTask ? { happyTask: {
+                schemaVersion: 1 as const,
+                taskId: options.happyTask.taskId ?? options.id,
+                origin: { path: options.happyTask.originPath },
+                displayTitle: options.happyTask.displayTitle,
+            } } : {}),
+            ...(options.summary ? { summary: { text: options.summary, updatedAt: 1 } } : {}),
             ...(options.projectId === undefined ? {} : {
                 project: { id: options.projectId, kind: 'regular', name: options.projectName ?? 'Repo' },
             }),
@@ -198,6 +207,36 @@ describe('buildPathProjectGroups', () => {
         ], toRow, isActive, 'happy');
 
         expect(groups.map(group => group.name)).toEqual(['happy', 'website']);
+    });
+
+    it('groups external Happy Control worktrees by origin with readable task names', () => {
+        const groups = buildPathProjectGroups([
+            session({ id: 'task-a', path: '/state/worktrees/hash-a', happyTask: { originPath: '/projects/happy', displayTitle: '修复任务标题' } }),
+            session({ id: 'main', path: '/projects/happy' }),
+            session({ id: 'task-b', path: '/state/worktrees/hash-b', summary: '用户重命名', happyTask: { originPath: '/projects/happy', displayTitle: '初始标题' } }),
+        ], toRow, isActive, 'happy');
+
+        expect(groups).toHaveLength(1);
+        expect(groups[0]).toMatchObject({
+            name: 'happy',
+            workspaces: [
+                { id: '', name: null, sessions: [{ id: 'main' }] },
+                { id: '/state/worktrees/hash-a', name: '修复任务标题' },
+                { id: '/state/worktrees/hash-b', name: '用户重命名' },
+            ],
+        });
+    });
+
+    it('keeps same-directory Happy Control work in the primary checkout and old hashes unchanged', () => {
+        const groups = buildPathProjectGroups([
+            session({ id: 'legacy-task', path: '/projects/happy', happyTask: { originPath: '/projects/happy', displayTitle: '原目录任务' } }),
+            session({ id: 'old-task', path: '/state/worktrees/old-hash' }),
+        ], toRow, isActive, 'happy');
+
+        expect(groups).toHaveLength(2);
+        expect(groups[0].workspaces).toHaveLength(1);
+        expect(groups[0].workspaces[0]).toMatchObject({ id: '', name: null });
+        expect(groups[1]).toMatchObject({ name: 'old-hash', workspaces: [{ id: '', name: null }] });
     });
 });
 

@@ -77,13 +77,14 @@ export function toFlatSessionRow(session: SessionRowData): FlatSessionRowData {
         };
     }
     const path = session.path?.trim() || '';
-    const worktree = isWorktreePath(path);
-    const projectPath = worktree ? getRepoPath(path) : path;
+    const originPath = session.originPath?.trim() || null;
+    const worktree = originPath ? originPath !== path : isWorktreePath(path);
+    const projectPath = originPath ?? (worktree ? getRepoPath(path) : path);
     return {
         session,
         projectName: session.projectName
             ?? projectPath.split(/[\\/]/).filter(Boolean).at(-1)
             ?? '',
-        workspaceName: session.workspaceName ?? (worktree ? getWorktreeName(path) : null),
+        workspaceName: session.workspaceName ?? (originPath ? (worktree ? session.name : null) : worktree ? getWorktreeName(path) : null),
     };
 }

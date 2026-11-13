@@ -162,6 +162,8 @@ export interface SessionRowData {
     // machines count as online: better an unshaded row than a wrongly dead one.
     machineOffline: boolean;
     path: string | null;
+    /** Original project directory for a Happy Control task; actual cwd remains in path. */
+    originPath?: string | null;
     homeDir: string | null;
     completedTodosCount: number;
     totalTodosCount: number;
@@ -239,6 +241,7 @@ function buildSessionRowData(
         machineName: machine?.metadata?.displayName || machine?.metadata?.host || session.metadata?.host || null,
         machineOffline: machine ? !isMachineOnline(machine) : false,
         path: session.metadata?.path ?? null,
+        originPath: session.metadata?.happyTask?.origin.path ?? null,
         homeDir: session.metadata?.homeDir ?? null,
         completedTodosCount: session.todos?.filter(todo => todo.status === 'completed').length ?? 0,
         totalTodosCount: session.todos?.length ?? 0,

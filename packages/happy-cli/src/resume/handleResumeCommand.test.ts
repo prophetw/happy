@@ -192,7 +192,10 @@ describe('formatResumeHelp', () => {
 
 describe('handleResumeCommand', () => {
     it('resumes from local persisted encryption data without legacy agent.key auth', async () => {
-        const session = createReconnectableSession();
+        const base = createReconnectableSession();
+        const session = { ...base, metadata: { ...base.metadata,
+            happyTask: { schemaVersion: 1 as const, taskId: 'task-a', origin: { path: '/tmp/repo' }, displayTitle: '可读任务' },
+        } };
         mocks.mockResolveLocalReconnectableSession.mockResolvedValue(session);
         for (const key of SESSION_SCOPED_ENV_KEYS) {
             vi.stubEnv(key, `stale-${key}`);
@@ -212,6 +215,7 @@ describe('handleResumeCommand', () => {
                 HAPPY_RECONNECT_SEQ: '42',
                 HAPPY_RECONNECT_METADATA_VERSION: '7',
                 HAPPY_RECONNECT_AGENT_STATE_VERSION: '9',
+                HAPPY_TASK_ID: 'task-a', HAPPY_TASK_ROOT: '/tmp/repo', HAPPY_TASK_TITLE: '可读任务',
             }),
         });
         const spawnedEnv = mocks.mockSpawnHappyCLI.mock.calls[0][1].env;

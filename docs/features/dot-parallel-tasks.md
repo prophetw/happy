@@ -9,10 +9,12 @@
 创建示例（保持用户原 permissionMode，不能因并行提高权限）：
 
 ```json
-{"requestID":"task-A-create","machineID":"approved-machine","projectID":"approved-project","execution":{"mode":"worktree","resources":[]}}
+{"requestID":"task-A-create","machineID":"approved-machine","projectID":"approved-project","title":"修复会话列表标题","execution":{"mode":"worktree","resources":[]}}
 ```
 
 收到 confirmed 和真实 sessionID 后，另用 `happy_send` 发送完整需求、验收条件、允许修改的文件，以及“在任务分支提交并报告 commit，集成另行授权”。回执未知时先 `happy_request_status` 查询原 requestID；禁止换 ID 重派。相同 ID/内容返回原记录，内容冲突拒绝。
+
+create 的可选 `title` 是去空白后1–200字的初始展示标题，不代替 send 正文，也不改变权限、worktree/branch ID 或执行资源；它属于该 create 的幂等负载。Worker 只从已授权项目派生 origin root，在创建调用内将标题、root 和任务 ID 传给 CLI，写入加密会话的 `happyTask` 元数据，不改变 Worker 队列持久结构。App/Web 据此把外部 worktree 归到原项目下，以实际执行 path 区分工作区；现有 summary/change_title 重命名优先于初始标题。真实 `metadata.path` 始终是执行 cwd，resume/reconnect 保留该扩展。缺少此元数据的旧会话仍按原路径显示，不猜测或迁移其归属。该展示能力不改变下述保留和清理策略。
 
 执行阶段为 queued、waiting-resource、preparing、running、canceling、completed、failed、cancelled；blocked 表示执行/回执证据不足，不是可自动重试的失败。宿主还保留 created、awaiting_user 和历史 canceled 拼写。业务验收独立于 Agent turn 完成。
 

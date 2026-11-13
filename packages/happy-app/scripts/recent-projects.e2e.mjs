@@ -135,8 +135,8 @@ try {
         if (!location.protocol.startsWith('http')) return;
         window.__HAPPY_CONFIG__ = { serverUrl, disableAnalytics: true };
         localStorage.setItem('auth_credentials', JSON.stringify({ token, secret }));
-        const key = 'mmkv.default' + String.fromCharCode(92) + 'settings';
-        if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ settings: { preferredLanguage: 'zh-Hans', sessionListGrouping: 'project' }, version: null }));
+        const prefix = 'mmkv.default' + String.fromCharCode(92, 92);
+        if (!localStorage.getItem(prefix + 'settings')) localStorage.setItem(prefix + 'settings', JSON.stringify({ settings: { preferredLanguage: 'zh-Hans', sessionListGrouping: 'project' }, version: null }));
     }, { serverUrl, token, secret: Buffer.from(secret).toString('base64') });
     page = await context.newPage();
     page.on('pageerror', error => failures.push(`Page: ${error.message}`));
@@ -209,6 +209,39 @@ try {
     assert.equal(spawns[0].machineId, machines[1].id);
     assert.equal(spawns[0].directory, 'D:\\code\\happy');
     pass('Keyboard selection creates a real session on the selected Windows machine and directory');
+
+    const dotTasks = [];
+    for (const [hash, displayTitle] of [['a'.repeat(64), '修复 Dot 任务标题'], ['b'.repeat(64), '核对 Dot 验收结果']]) {
+        const task = await createSession(machines[0], `/state/happy-control/worktrees/${hash}`, displayTitle, {
+            summary: undefined,
+            happyTask: { schemaVersion: 1, taskId: hash, origin: { path: '/code/dot-parent' }, displayTitle },
+        });
+        dotTasks.push(task); initial.push(task);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${webOrigin}/settings/appearance`, { waitUntil: 'domcontentloaded' });
+    const grouping = page.getByText(/^(分组|Grouping)$/);
+    await grouping.waitFor({ timeout: 45_000 });
+    if (await page.getByText(/^(平铺列表|Flat List)$/).count()) await grouping.click();
+    await page.goto(`${webOrigin}/`, { waitUntil: 'domcontentloaded' });
+    const firstTask = page.getByRole('button', { name: '修复 Dot 任务标题', exact: true });
+    await firstTask.waitFor({ timeout: 45_000 });
+    assert.equal(await page.getByRole('button', { name: '核对 Dot 验收结果', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'dot-parent', exact: true }).count(), 1);
+    for (const hash of ['a'.repeat(64), 'b'.repeat(64)]) {
+        assert.equal(await page.getByRole('button', { name: hash, exact: true }).count(), 0);
+    }
+    await page.screenshot({ path: path.join(artifacts, 'dot-task-project-grouping.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Create workspace in dot-parent', exact: true }).click();
+    await page.waitForURL('**/new', { timeout: 15_000 });
+    assert.equal(await page.evaluate(() => {
+        const key = 'mmkv.default' + String.fromCharCode(92) + 'new-session-draft-v1';
+        return JSON.parse(localStorage.getItem(key)).selectedPath;
+    }), '/code/dot-parent', 'A task-only project creates the next workspace from its origin');
+    await page.goto(`${webOrigin}/`, { waitUntil: 'domcontentloaded' });
+    await firstTask.click();
+    await page.waitForURL(`**/session/${dotTasks[0].id}`, { timeout: 45_000 });
+    pass('Phone project list groups readable Dot tasks by origin and preserves creation and navigation targets');
 
     archivedClient.updateMetadata(metadata => ({ ...metadata, lifecycleState: 'archived' }));
     await waitFor(() => archivedClient.getMetadata()?.lifecycleState === 'archived', 'archive metadata acknowledgement');

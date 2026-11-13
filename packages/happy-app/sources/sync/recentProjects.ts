@@ -81,10 +81,11 @@ export function recentProjectsFromSessions(sessions: readonly Session[], choices
         const projectId = metadata.project?.id || undefined;
         if (metadata.workspace && !projectId) continue;
         const sessionPath = metadata.path.trim();
+        const taskOrigin = metadata.happyTask?.origin.path ?? null;
         const portablePath = sessionPath.replace(/\\/g, '/');
-        const path = metadata.workspace ? null : isWorktreePath(portablePath)
+        const path = taskOrigin ?? (metadata.workspace ? null : isWorktreePath(portablePath)
             ? sessionPath.slice(0, getRepoPath(portablePath).length)
-            : sessionPath;
+            : sessionPath);
         projects.push({
             machineId: choice.id,
             path,

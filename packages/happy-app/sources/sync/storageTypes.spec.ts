@@ -22,6 +22,14 @@ describe('MetadataSchema', () => {
         }
     });
 
+    it('retains valid Happy Task display metadata and drops only a malformed extension', () => {
+        const happyTask = { schemaVersion: 1 as const, taskId: 'task-a', origin: { path: '/projects/happy' }, displayTitle: '修复任务标题' };
+        expect(MetadataSchema.parse({ ...rigMetadataFixture, happyTask }).happyTask).toEqual(happyTask);
+        const parsed = MetadataSchema.parse({ ...rigMetadataFixture, happyTask: { ...happyTask, displayTitle: '' } });
+        expect(parsed.happyTask).toBeUndefined();
+        expect(parsed.path).toBe(rigMetadataFixture.path);
+    });
+
     it('preserves archive lifecycle metadata', () => {
         const metadata = MetadataSchema.parse({
             path: '/tmp/project',

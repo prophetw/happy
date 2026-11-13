@@ -164,8 +164,12 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
 });
 
 it('passes only fixed task-local environment keys without changing launch permissions', async()=>{
-    const s=setup(),environment={TMPDIR:'/fixture/task-temp',HAPPY_TASK_ID:'task-a',HAPPY_TASK_PORT:'20001'};
+    const s=setup(),environment={TMPDIR:'/fixture/task-temp',HAPPY_TASK_ID:'task-a',HAPPY_TASK_PORT:'20001',HAPPY_TASK_ROOT:'/fixture',HAPPY_TASK_TITLE:'可读任务'};
     expect(await s.control({...create,taskEnvironment:environment})).toMatchObject({state:'confirmed'});
     expect(s.spawn.mock.calls[0]).toEqual(['/fixture',{agent:'codex',model:'gpt-6.1-sol',permissionMode:'default',effort:'high'},environment]);
+    expect(await s.control({...create,taskEnvironment:{...environment,HAPPY_TASK_TITLE:'另一标题'}})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
+    expect(s.spawn).toHaveBeenCalledTimes(1);
+    for(const file of readdirSync(s.directory))expect(readFileSync(join(s.directory,file),'utf8')).not.toContain('可读任务');
     const rejected=setup();expect(await rejected.control({...create,taskEnvironment:{NODE_OPTIONS:'--require /untrusted'}})).toMatchObject({errorCode:'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE'});expect(rejected.spawn).not.toHaveBeenCalled();
+    const invalid=setup();expect(await invalid.control({...create,taskEnvironment:{HAPPY_TASK_ID:'task-a',HAPPY_TASK_ROOT:'relative',HAPPY_TASK_TITLE:'标题'}})).toMatchObject({errorCode:'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE'});expect(invalid.spawn).not.toHaveBeenCalled();
 });

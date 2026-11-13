@@ -10,7 +10,7 @@ import { ControlError, type Transport } from '../relay';
 import { canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { projectResponse } from './projection';
-import { ApiError, cancelSchema, sendSchema, checkBoundProjects, type Connection, type WorkerRegistration } from './schema';
+import { ApiError, cancelSchema, sendSchema, checkBoundProjects, taskTitleSchema, type Connection, type WorkerRegistration } from './schema';
 import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
@@ -294,7 +294,8 @@ export class ScopedWorker {
             rpc: async (m, input) => {
                 await check(['create','cancel'].includes(String(input.operation))); if (m.id !== live.machineID || (input.directory !== undefined && !permittedDirectory(input.directory))) throw new ApiError('SCOPE_DENIED', 403);
                 const workspace = input.operation === 'create' ? workspaces.find(w => w.id === hash(`${live.id}\n${input.requestID}`) && w.cwd === input.directory) : undefined;
-                return this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) });
+                return this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port),
+                    ...(taskTitle ? { HAPPY_TASK_TITLE: taskTitle, HAPPY_TASK_ROOT: workspace.root } : {}) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) });
             },
         };
         // Map reconciliation localIds back into the core's stable logical requestID space.
@@ -337,16 +338,17 @@ export class ScopedWorker {
                 catch (error) { if (error instanceof OptionsDenied) throw new ApiError('OPTION_DENIED', 403); throw error; }
             }
         }
-        let workspace;
+        let workspace, taskTitle: string | undefined;
         if (command.method === 'tasks.create') {
             if (typeof command.requestID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(command.requestID)) throw new ApiError('INVALID_REQUEST');
             const execution = command.execution as { mode?: string } | undefined;
             if (execution?.mode === 'read-only' && (command.options as any)?.permissionMode !== 'read-only') throw new ApiError('OPTION_DENIED', 403);
             const project = projects.find(p => p.directory === command.directory)!;
+            taskTitle = taskTitleSchema.optional().parse(command.title);
             workspace = await prepareWorkspace(this.queue, { requestID: String(command.requestID), grantID: live.id, projectID: project.id,
-                root: project.directory, execution: command.execution, options: command.options }, async()=>{await check(true);});
+                root: project.directory, ...(taskTitle ? { title: taskTitle } : {}), execution: command.execution, options: command.options }, async()=>{await check(true);});
             await check(); verifyWorkspace(workspace);
-            command.directory = workspace.cwd; delete command.execution;
+            command.directory = workspace.cwd; delete command.execution; delete command.title;
             workspaces = this.queue.workspaces(live.id);
             if (!policy.machines[0].directories.includes(workspace.cwd)) policy.machines[0].directories.push(workspace.cwd);
         }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFlatSessionRows } from './flatSessionList';
+import { buildFlatSessionRows, toFlatSessionRow } from './flatSessionList';
 import type { SessionListViewItem, SessionRowData } from '@/sync/storage';
 
 function row(overrides: Partial<SessionRowData> & { id: string }): SessionRowData {
@@ -146,6 +146,15 @@ describe('buildFlatSessionRows', () => {
         ], { sortByActivity: false });
 
         expect(rows.map((r) => r.session.id)).toEqual(['newer', 'older-but-active-recently']);
+    });
+
+    it('uses origin and readable title for an archived Happy Control task', () => {
+        const result = toFlatSessionRow(row({
+            id: 'archived-task', name: '可读任务', archived: true,
+            path: '/state/worktrees/hash-a', originPath: '/repo/happy',
+        }));
+
+        expect(result).toMatchObject({ projectName: 'happy', workspaceName: '可读任务' });
     });
 
     it('ignores archived rows and headings, which stay a separate tail', () => {

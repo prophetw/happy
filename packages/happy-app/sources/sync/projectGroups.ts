@@ -49,10 +49,14 @@ export function buildPathProjectGroups(
         if (testloopDotsKind(session)) continue;
         const machineId = session.metadata?.machineId ?? null;
         const sessionPath = session.metadata?.path?.trim() || '';
-        const worktree = isWorktreePath(sessionPath);
-        const projectPath = worktree ? getRepoPath(sessionPath) : sessionPath;
-        const workspaceId = worktree ? sessionPath : '';
-        const workspaceName = worktree ? getWorktreeName(sessionPath) : null;
+        const happyTask = session.metadata?.happyTask;
+        const taskOrigin = sessionPath && happyTask ? happyTask.origin.path : null;
+        const worktree = taskOrigin ? taskOrigin !== sessionPath : isWorktreePath(sessionPath);
+        const projectPath = taskOrigin ?? (worktree ? getRepoPath(sessionPath) : sessionPath);
+        const workspaceId = taskOrigin ? (worktree ? sessionPath : '') : worktree ? sessionPath : '';
+        const workspaceName = taskOrigin
+            ? worktree ? session.metadata?.summary?.text ?? happyTask?.displayTitle ?? pathProjectName(sessionPath, session.metadata?.homeDir) : null
+            : worktree ? getWorktreeName(sessionPath) : null;
         const key = JSON.stringify([machineId, projectPath]);
         let group = projects.get(key);
         if (!group) {

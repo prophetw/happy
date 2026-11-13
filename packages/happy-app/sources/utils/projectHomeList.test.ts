@@ -502,6 +502,11 @@ describe('workspaceOrigin', () => {
             .toEqual({ machineId: 'machine-a', projectId: null, path: '/repo' });
     });
 
+    it('sends a Happy Control task back to its origin instead of the hash checkout', () => {
+        expect(workspaceOrigin(row({ id: 'a', path: '/state/worktrees/hash', originPath: '/repo' })))
+            .toEqual({ machineId: 'machine-a', projectId: null, path: '/repo' });
+    });
+
     it('has nowhere to create without a machine or a place', () => {
         expect(workspaceOrigin(row({ id: 'a', path: '/repo', machineId: null }))).toBeNull();
         expect(workspaceOrigin(row({ id: 'a', path: null }))).toBeNull();

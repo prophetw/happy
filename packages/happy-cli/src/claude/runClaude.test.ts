@@ -117,6 +117,7 @@ async function startRemoteRunClaudeHarness(opts: {
     metadata?: Record<string, unknown>;
     updateAgentState?: ReturnType<typeof vi.fn>;
     registerHandler?: ReturnType<typeof vi.fn>;
+    startedBy?: 'daemon' | 'terminal';
 } = {}) {
     let metadata = opts.metadata ?? {
         claudeSessionId: 'claude-session-1',
@@ -175,6 +176,7 @@ async function startRemoteRunClaudeHarness(opts: {
     } as any, {
         startingMode: 'remote',
         shouldStartDaemon: false,
+        startedBy: opts.startedBy,
     });
 
     await vi.waitFor(() => {
@@ -843,6 +845,23 @@ describe('runClaude remote JSONL scanner', () => {
         }));
         expect(harness.loopOptions.model).toBeUndefined();
         await harness.finish();
+    });
+
+    it('publishes Happy Task display metadata on the independent Claude entry', async () => {
+        vi.stubEnv('HAPPY_TASK_ID', 'task-a');
+        vi.stubEnv('HAPPY_TASK_ROOT', '/project');
+        vi.stubEnv('HAPPY_TASK_TITLE', '可读任务');
+        try {
+            const harness = await startRemoteRunClaudeHarness({ startedBy: 'daemon' });
+            expect(harness.api.getOrCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+                metadata: expect.objectContaining({ happyTask: {
+                    schemaVersion: 1, taskId: 'task-a', origin: { path: '/project' }, displayTitle: '可读任务',
+                } }),
+            }));
+            await harness.finish();
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it('clears a fixed model when the app selects the host default', async () => {

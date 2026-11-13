@@ -141,9 +141,13 @@ export function createAutomationControl(deps: Dependencies) {
             } else if (Object.values(parsed.data).some(v => v !== undefined)) return { version: 1, errorCode: 'OPTION_DENIED' };
             // Fixed key order: idempotency is stable regardless of caller JSON order.
             const requested = { agent: parsed.data.agent, model: parsed.data.model, permissionMode: parsed.data.permissionMode, effort: parsed.data.effort };
-            const fingerprint = digest(JSON.stringify({ operation, directory, sessionID, options: requested }));
             const environment = req.taskEnvironment as Record<string, unknown> | undefined;
-            if (environment && (typeof environment !== 'object' || Array.isArray(environment) || Object.entries(environment).some(([k,v]) => !['TMPDIR','TMP','TEMP','HAPPY_TASK_ID','HAPPY_TASK_PORT'].includes(k) || typeof v !== 'string' || v.length > 4096))) throw new Error('INVALID_REQUEST');
+            if (environment && (typeof environment !== 'object' || Array.isArray(environment) || Object.entries(environment).some(([k,v]) => !['TMPDIR','TMP','TEMP','HAPPY_TASK_ID','HAPPY_TASK_PORT','HAPPY_TASK_ROOT','HAPPY_TASK_TITLE'].includes(k) || typeof v !== 'string' || v.length > 4096))) throw new Error('INVALID_REQUEST');
+            const taskTitle = environment?.HAPPY_TASK_TITLE as string | undefined, taskRoot = environment?.HAPPY_TASK_ROOT as string | undefined;
+            if ((taskTitle !== undefined || taskRoot !== undefined)
+                && (!taskTitle || taskTitle.trim() !== taskTitle || taskTitle.length > 200 || !taskRoot?.startsWith('/') || !environment?.HAPPY_TASK_ID)) throw new Error('INVALID_REQUEST');
+            const fingerprint = digest(JSON.stringify({ operation, directory, sessionID, options: requested,
+                ...(taskTitle ? { task: { title: taskTitle, root: taskRoot } } : {}) }));
             const previous = read(requestID);
             if (previous) return previous.fingerprint === fingerprint ? view(previous) : { version: 1, errorCode: 'REQUEST_ID_CONFLICT' };
             const receipt: Receipt = { version: 1, requestID, fingerprint, operation, state: 'pending', sessionID,

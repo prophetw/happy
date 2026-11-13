@@ -169,7 +169,7 @@ export function workspaceOrigin(session: SessionRowData): WorkspaceOrigin | null
     if (session.projectId) {
         return { machineId: session.machineId, projectId: session.projectId, path: null };
     }
-    const path = session.path?.trim() || '';
+    const path = (session.originPath ?? session.path)?.trim() || '';
     if (!path) return null;
     return {
         machineId: session.machineId,

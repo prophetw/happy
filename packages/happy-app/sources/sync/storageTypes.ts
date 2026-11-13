@@ -156,6 +156,13 @@ export const MetadataSchema = z.object({
         text: z.string(),
         updatedAt: z.number()
     }).optional(),
+    /** Happy Control task display metadata; the actual execution path stays in `path`. */
+    happyTask: z.object({
+        schemaVersion: z.literal(1),
+        taskId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+        origin: z.object({ path: z.string().trim().min(1).max(4096) }).strict(),
+        displayTitle: z.string().trim().min(1).max(200),
+    }).strict().optional().catch(undefined),
     /**
      * When the session last did something a person would call activity: the
      * newest visible user message, visible agent text, or user-facing question.

@@ -110,6 +110,19 @@ describe('where a Happy Agent session may be started', () => {
         expect(places.map((p) => p.path)).toEqual(['~']);
     });
 
+    it('offers a Happy Control task origin rather than its temporary execution directory', () => {
+        const places = collectSessionPlaces({
+            machineIds: [CLI],
+            sessions: [session({
+                machineId: CLI,
+                path: '/state/worktrees/hash-a',
+                happyTask: { schemaVersion: 1, taskId: 'a', origin: { path: '/home/steve/projects/happy' }, displayTitle: '任务 A' },
+            })],
+        });
+
+        expect(places).toEqual([{ key: '/home/steve/projects/happy', name: '/home/steve/projects/happy', path: '/home/steve/projects/happy' }]);
+    });
+
     it('keeps a workspace out of the project list, since it is a checkout inside one', () => {
         const places = collectSessionPlaces({
             machineIds: [RIG],

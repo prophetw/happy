@@ -357,6 +357,13 @@ export type Metadata = {
     text: string,
     updatedAt: number
   },
+  /** Trusted Happy Control task display and origin metadata. */
+  happyTask?: {
+    schemaVersion: 1,
+    taskId: string,
+    origin: { path: string },
+    displayTitle: string
+  },
   machineId?: string,
   gitBranch?: string,
   claudeSessionId?: string, // Claude Code session ID

@@ -100,6 +100,7 @@ export function getSessionName(session: Session): string {
     if (session.metadata?.summary) {
         return session.metadata.summary.text;
     }
+    if (session.metadata?.happyTask) return session.metadata.happyTask.displayTitle;
     return t('session.newChat');
 }
 

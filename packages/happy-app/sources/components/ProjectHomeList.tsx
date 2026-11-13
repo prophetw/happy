@@ -670,6 +670,7 @@ function sameDrawnSession(a: SessionRowData, b: SessionRowData): boolean {
         && a.name === b.name
         && a.machineId === b.machineId
         && a.path === b.path
+        && a.originPath === b.originPath
         && a.projectId === b.projectId
         && a.gitBranch === b.gitBranch
         && a.gitChangedFiles === b.gitChangedFiles

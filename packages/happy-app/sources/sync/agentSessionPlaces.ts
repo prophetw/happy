@@ -100,7 +100,7 @@ export function collectSessionPlaces(options: {
     for (const session of options.sessions) {
         const metadata = session.metadata;
         if (metadata?.bot) continue;
-        const path = metadata?.path?.trim();
+        const path = (metadata?.happyTask?.origin.path ?? metadata?.path)?.trim();
         if (path === undefined || path.length === 0) continue;
         if (metadata?.machineId !== undefined && !machineIds.has(metadata.machineId)) continue;
         if (isArchived(session)) continue;

@@ -71,7 +71,8 @@ export type Connection = Omit<Scope, 'projectID'> & {
 };
 export const approvalSchema = z.object({ digest: z.string().length(64), challenge: identifier, credentialMode: z.literal('service-token-v1').optional(), scopeVersion: z.union([z.literal(2), z.literal(3)]).optional() }).strict();
 export const mutationSchema = z.object({ requestID: identifier }).strict();
-export const createTaskSchema = mutationSchema.extend({ machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional(), execution: executionSchema.optional() }).strict();
+export const taskTitleSchema = z.string().trim().min(1).max(200);
+export const createTaskSchema = mutationSchema.extend({ machineID: identifier, projectID: identifier, title: taskTitleSchema.optional(), options: taskOptionsSchema.optional(), execution: executionSchema.optional() }).strict();
 export const cancelSchema = mutationSchema.extend({ sendRequestID: identifier.optional() }).strict();
 export const sendSchema = mutationSchema.extend({ text: z.string().min(1).max(100000) }).strict();
 export const taskOptionsQuerySchema = z.object({ machineID: identifier }).strict();

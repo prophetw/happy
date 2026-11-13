@@ -51,7 +51,7 @@ async function workspaceLock(directory: string, id: string): Promise<number> {
 }
 
 /** Fixed committed baseline; no dependency links, dist copies, stash or main mutations. */
-export async function prepareWorkspace(queue: TaskQueue, input: { requestID: string; grantID: string; projectID: string; root: string; execution?: unknown; options?: unknown }, authorize: () => Promise<void> = async()=>{}): Promise<Workspace> {
+export async function prepareWorkspace(queue: TaskQueue, input: { requestID: string; grantID: string; projectID: string; root: string; title?: string; execution?: unknown; options?: unknown }, authorize: () => Promise<void> = async()=>{}): Promise<Workspace> {
     const execution = executionSchema.parse(input.execution ?? {}), id = hash(`${input.grantID}\n${input.requestID}`);
     const fingerprint = hash(canonicalBody({ ...input, execution }));
     let workspace = queue.workspaces(input.grantID).find(w=>w.id===id);

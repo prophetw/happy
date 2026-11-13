@@ -123,6 +123,7 @@ export function formatResumeHelp(): string {
 }
 
 function buildReconnectEnv(session: ReconnectableHappySession): NodeJS.ProcessEnv {
+    const happyTask = session.metadata.happyTask;
     return buildSessionChildEnvironment(process.env, {
         HAPPY_RECONNECT_SESSION_ID: session.id,
         HAPPY_RECONNECT_ENCRYPTION_KEY: encodeBase64(session.encryptionKey),
@@ -130,6 +131,11 @@ function buildReconnectEnv(session: ReconnectableHappySession): NodeJS.ProcessEn
         HAPPY_RECONNECT_SEQ: String(session.seq),
         HAPPY_RECONNECT_METADATA_VERSION: String(session.metadataVersion),
         HAPPY_RECONNECT_AGENT_STATE_VERSION: String(session.agentStateVersion),
+        ...(happyTask ? {
+            HAPPY_TASK_ID: happyTask.taskId,
+            HAPPY_TASK_ROOT: happyTask.origin.path,
+            HAPPY_TASK_TITLE: happyTask.displayTitle,
+        } : {}),
     });
 }
 

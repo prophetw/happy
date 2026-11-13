@@ -207,6 +207,20 @@ describe('loopback REST → worker → existing core/daemon', () => {
         await expect(callControlTool(r.client, grant, 'happy_send', { sessionID: first.sessionID, requestID: 'bad', text: 'x', shell: 'arbitrary' })).rejects.toThrow();
         expect(Object.keys(toolContracts).some(n => /shell|fetch|exec/.test(n))).toBe(false);
     });
+    it('carries a bounded task title through MCP and Worker metadata without changing create identity', async () => {
+        const r = await setup(), grant = await r.connect(); await r.startWorker();
+        const calls: any[] = [], rpc = r.transport.rpc;
+        r.transport.rpc = async (machine: any, input: any) => { if (input.operation === 'create') calls.push(input); return rpc(machine, input); };
+        const input = { requestID: 'titled', machineID: 'machineA', projectID: 'projectA', title: '  修复 Dot 标题  ' };
+        const first = await callControlTool(r.client, grant, 'happy_create_task', input);
+        expect(first.ok).toBe(true);
+        expect(calls[0].taskEnvironment).toMatchObject({ HAPPY_TASK_TITLE: '修复 Dot 标题', HAPPY_TASK_ROOT: r.project });
+        await r.restartGateway(); await r.startWorker();
+        expect((await callControlTool(r.client, grant, 'happy_create_task', input)).data.sessionID).toBe(first.data.sessionID);
+        expect((await callControlTool(r.client, grant, 'happy_create_task', { ...input, title: '不同标题' })).error.code).toBe('REQUEST_ID_CONFLICT');
+        expect(r.spawnCount).toBe(1);
+        await expect(callControlTool(r.client, grant, 'happy_create_task', { ...input, requestID: 'too-long', title: 'x'.repeat(201) })).rejects.toThrow();
+    });
     it('keeps relay ciphertext opaque and keys/credentials/instructions out of disk and audit', async () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker(); const sid = (await create(r, grant)).data.sessionID;
         await r.client.request('POST', `/sessions/${sid}/messages`, { requestID: 'secret_test', text: 'fixture-private-instruction' }, grant);

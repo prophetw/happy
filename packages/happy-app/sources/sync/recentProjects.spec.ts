@@ -71,6 +71,20 @@ describe('durable recent projects', () => {
         expect(history).toEqual([project({ machineId: 'cli', lastUsedAt: 10 })]);
     });
 
+    it('learns Happy Control task origin instead of exposing each temporary hash directory', () => {
+        const history = recentProjectsFromSessions([
+            session({ machineId: 'linux', path: '/state/worktrees/hash-a', happyTask: {
+                schemaVersion: 1, taskId: 'a', origin: { path: '/code/happy' }, displayTitle: '任务 A',
+            } }, 10),
+            session({ machineId: 'linux', path: '/state/worktrees/hash-b', happyTask: {
+                schemaVersion: 1, taskId: 'b', origin: { path: '/code/happy' }, displayTitle: '任务 B',
+            } }, 20),
+        ], [choice('linux')]);
+
+        expect(history).toEqual([project({ lastUsedAt: 20 })]);
+        expect(history[0].projectId).toBeUndefined();
+    });
+
     it('keeps catalog-only projects by identity and replaces that row when the main path becomes known', () => {
         const history = recentProjectsFromSessions([
             session({ machineId: 'linux', path: '/workspace', project: { id: 'p', name: 'happy' }, workspace: { id: 'w' } }),

@@ -297,7 +297,7 @@ export function createGateway(options: GatewayOptions) {
         const c = active(req, 'tasks.create'), body = createTaskSchema.parse(req.body);
         if (body.machineID !== c.machineID || !scopeProjectIDs(c).includes(body.projectID)) throw new ApiError('SCOPE_DENIED', 403);
         const result = await invoke(c, { method: 'tasks.create', requestID: body.requestID, machineID: c.machineID, projectID: body.projectID,
-            ...(body.options ? { options: body.options } : {}), ...(body.execution ? { execution: body.execution } : {}) }, true);
+            ...(body.title ? { title: body.title } : {}), ...(body.options ? { options: body.options } : {}), ...(body.execution ? { execution: body.execution } : {}) }, true);
         return reply.code(result?.ok ? 200 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
     });
     for (const [suffix, methodName] of [['messages', 'sessions.send'], ['cancel', 'sessions.cancel']] as const) {

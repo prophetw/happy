@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SandboxConfig } from '@/persistence';
-import { createSessionMetadata } from './createSessionMetadata';
+import { createSessionMetadata, happyTaskMetadataFromEnvironment } from './createSessionMetadata';
 
 vi.mock('node:child_process', () => ({
     execSync: vi.fn(),
@@ -115,6 +115,24 @@ describe('createSessionMetadata', () => {
         });
 
         expect(metadata.isSideChat).toBeUndefined();
+    });
+
+    it('maps only complete, bounded task environment metadata', () => {
+        const environment = { HAPPY_TASK_ID: 'task-a', HAPPY_TASK_ROOT: '/project', HAPPY_TASK_TITLE: ' 可读任务 ' };
+        const happyTask = { schemaVersion: 1 as const, taskId: 'task-a', origin: { path: '/project' }, displayTitle: '可读任务' };
+        expect(happyTaskMetadataFromEnvironment(environment)).toEqual(happyTask);
+        expect(happyTaskMetadataFromEnvironment({ ...environment, HAPPY_TASK_ROOT: 'relative' })).toBeUndefined();
+        expect(happyTaskMetadataFromEnvironment({ HAPPY_TASK_ID: 'task-a' })).toBeUndefined();
+
+        vi.stubEnv('HAPPY_TASK_ID', 'task-a'); vi.stubEnv('HAPPY_TASK_ROOT', '/project'); vi.stubEnv('HAPPY_TASK_TITLE', '可读任务');
+        try {
+            expect(createSessionMetadata({ flavor: 'codex', machineId: 'machine-task', startedBy: 'daemon' }).metadata.happyTask).toEqual(happyTask);
+            expect(createSessionMetadata({ flavor: 'codex', machineId: 'machine-terminal', startedBy: 'terminal' }).metadata.happyTask).toBeUndefined();
+            vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', 'session-a');
+            expect(createSessionMetadata({ flavor: 'codex', machineId: 'machine-resume', startedBy: 'terminal' }).metadata.happyTask).toEqual(happyTask);
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it('sets metadata.gitBranch when a git branch is detected', () => {

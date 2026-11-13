@@ -54,6 +54,15 @@ export interface SessionMetadataResult {
     metadata: Metadata;
 }
 
+/** Only the daemon's fixed task environment can supply this display extension. */
+export function happyTaskMetadataFromEnvironment(env: NodeJS.ProcessEnv = process.env): Metadata['happyTask'] {
+    const taskId = env.HAPPY_TASK_ID, originPath = env.HAPPY_TASK_ROOT, displayTitle = env.HAPPY_TASK_TITLE?.trim();
+    if (!taskId || !/^[A-Za-z0-9_-]{1,128}$/.test(taskId)
+        || !originPath || !originPath.startsWith('/') || originPath.length > 4096
+        || !displayTitle || displayTitle.length > 200) return undefined;
+    return { schemaVersion: 1, taskId, origin: { path: originPath }, displayTitle };
+}
+
 function getGitBranch(cwd: string): string | undefined {
     try {
         const branch = execSync('git rev-parse --abbrev-ref HEAD', {
@@ -94,6 +103,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
     };
     const cwd = process.cwd();
     const gitBranch = getGitBranch(cwd);
+    const happyTask = opts.startedBy === 'daemon' || process.env.HAPPY_RECONNECT_SESSION_ID ? happyTaskMetadataFromEnvironment() : undefined;
 
     const metadata: Metadata = {
         path: cwd,
@@ -113,6 +123,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         flavor: opts.flavor,
         sandbox: opts.sandbox?.enabled ? opts.sandbox : null,
         dangerouslySkipPermissions: opts.dangerouslySkipPermissions ?? null,
+        ...(happyTask ? { happyTask } : {}),
         ...(gitBranch ? { gitBranch } : {}),
         ...(opts.parentSessionId ? { parentSessionId: opts.parentSessionId } : {}),
         ...(opts.forkedFromMessageId ? { forkedFromMessageId: opts.forkedFromMessageId } : {}),

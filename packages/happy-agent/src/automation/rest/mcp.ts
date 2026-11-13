@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { hash } from '../journal';
 import type { ControlClient } from './client';
-import { ApiError, identifier, scopeSchema } from './schema';
+import { ApiError, identifier, scopeSchema, taskTitleSchema } from './schema';
 import { executionSchema } from './execution';
 import { taskOptionsSchema } from './options';
 import { loadControlSkills } from './skills';
@@ -16,7 +16,7 @@ export const toolContracts = {
     happy_machines: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/machines', query: true },
     happy_projects: { method: 'GET', schema: z.object({}).strict(), route: (_: any) => '/projects' },
     happy_sessions: { method: 'GET', schema: z.object(page).strict(), route: (_: any) => '/sessions', query: true },
-    happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier, options: taskOptionsSchema.optional(), execution: executionSchema.optional() }).strict(), route: (_: any) => '/tasks' },
+    happy_create_task: { method: 'POST', schema: z.object({ requestID: identifier, machineID: identifier, projectID: identifier, title: taskTitleSchema.optional(), options: taskOptionsSchema.optional(), execution: executionSchema.optional() }).strict(), route: (_: any) => '/tasks' },
     happy_options: { method: 'GET', schema: z.object({ machineID: identifier }).strict(), route: (_: any) => '/options', query: true },
     happy_send: { method: 'POST', schema: z.object({ sessionID: identifier, requestID: identifier, text: z.string().min(1).max(100000) }).strict(), route: (a: any) => `/sessions/${a.sessionID}/messages`, omit: 'sessionID' },
     happy_status: { method: 'GET', schema: z.object(events).strict(), route: (a: any) => `/sessions/${a.sessionID}/status`, query: true, omit: 'sessionID' },

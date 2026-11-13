@@ -40,6 +40,7 @@ import { getProjectPath } from './utils/path';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RawJSONLinesSchema, type RawJSONLines } from './types';
+import { happyTaskMetadataFromEnvironment } from '@/utils/createSessionMetadata';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -129,6 +130,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const forkedFromSessionId = process.env.HAPPY_FORKED_FROM_SESSION_ID;
     const forkedFromMessageId = process.env.HAPPY_FORKED_FROM_MESSAGE_ID;
     const isSideChat = process.env.HAPPY_SIDE_CHAT === '1';
+    const happyTask = options.startedBy === 'daemon' || process.env.HAPPY_RECONNECT_SESSION_ID ? happyTaskMetadataFromEnvironment() : undefined;
 
     const modelCatalog = await discoverClaudeModels(workingDirectory);
     let metadata: Metadata = {
@@ -158,6 +160,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         } : {}),
         sandbox: sandboxConfig?.enabled ? sandboxConfig : null,
         dangerouslySkipPermissions,
+        ...(happyTask ? { happyTask } : {}),
         ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),
         ...(forkedFromMessageId ? { forkedFromMessageId } : {}),
         ...(isSideChat ? { isSideChat: true } : {}),
