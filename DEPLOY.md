@@ -1,5 +1,46 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Hosted Dot 无变化持久化跳过（2026-11-13，已部署）
+
+功能源 `e3f67eb2a9c9735e432657a800242484d5ede10b` 已普通推送个人 main。
+未改变 journal 的通知和重复输出不再触发持久化；输入接收、输出、ACK、结束与错误状态的
+必要落盘保留。构建来自当次核验干净且与 fork/main 一致的独立 main clone。
+沿用线上 Happy SQLite 兼容补丁，补丁 SHA256
+`677d405cee63f28a8d4c6fbff17305abaa04c1c952e3c9a39097f71d277a5eb3`；
+该补丁尚未合入 main，本次没有切换 storage marker、迁移或压缩数据库。
+
+正式产物位于 `/home/dev/.local/share/happy-releases/dot-noop-20261113-e3f67eb2a`。
+原受信入口 `/home/dev/.local/share/happy-releases/full-chain-20261112-e2327a617/packages/happy-cli/bin/happy-hosted-dot.mjs`
+通过原子替换包装文件加载新目录的 `dist/codex/hostedDotMain.mjs`，Main SHA256 为
+`fa4fdf23711d63a3bd2b8b287dc50fb831798f0837040ed04e9464045ebdd720`。
+旧目录其他正式模块保持原样；本次只滚动更新四个空闲 hosted producer。
+
+09:04（UTC+8）只读验收：四个 producer 的 PID、启动标记与新产物摘要匹配，均 ready、
+pending=0、unsent=0、error=null。四个原 thread、epoch、绑定、222 条输入及 32,217 条原输出
+按原 ID 逐行摘要保持，控制回执保留、游标不回退；每个 Dot 另有一条已确认的新输出。
+旧 producer 及其直属原生子进程退出已核验。TestLoop assistant/recovery 与执行 Worker
+维持原 PID，含业务执行根在内的 45 个受保护进程身份不变。
+
+CLI 正式类型检查、pkgroll 构建及 68 文件 bundle 验证通过；本轮定向测试 72 项通过，
+SQLite 补丁环境覆盖 90 项、生命周期测试 29 项通过。补丁环境首轮的一项失败由测试启动
+目录缺少 tsx 依赖造成，正确目录复验相关 7 项通过；原失败日志保留。未发送测试业务输入、
+调用真实模型或进行浏览器、整机重启与长期运行验证。
+
+独立维护单元 `happy-dot-noop-release-20261113-attempt2.service` 已成功完成，
+`RemainAfterExit=yes`、`KillMode=process`。其中仍承载三个 producer，须保留，不能作为
+已结束临时任务整组清理；后续自动拉起仍由现有 TestLoop scanner 负责。
+首次激活因 `hosted_storage_file_invalid` 失败并恢复旧入口，首个停止请求随后正常完成，
+旧版本已重新启动后才进行第二次激活。该错误具体触发文件未确定。
+第二次另遇一次 `hosted_lifecycle_stop_unconfirmed`，通过同一停止请求回执、旧进程退出
+及新版本启动证据确认接管，没有重发该停止请求。两次诊断均保留。
+
+私有证据根 `/home/dev/.local/state/dot-journal-noop-release-20261113/` 保存构建清单、
+激活状态、最终逐行回查、原入口及 `attempt-1/` 失败记录。`backup/` 是经校验的四库
+一致性在线备份；配置等旁文件是逐文件快照，不宣称跨文件原子冷备。回退仅在核验当前
+状态与旧 reader 兼容后恢复入口并受控重启，不得用备份覆盖上线后的账本。
+原两仓其他暂存/未提交改动保持，真实样本与基准报告不入 Git；全局 CLI/daemon、
+执行 Worker、Control、Relay、Web 和手机版本未更新。
+
 ## 宿主授权快照竞争修复（2026-11-11，已部署）
 
 功能源 Happy `ab205e624dbe76a24328b111bc541f0633e812f3`、TestLoop
