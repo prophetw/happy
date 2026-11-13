@@ -8,6 +8,26 @@ import { dotsMcpError, requestDotsMcp, type DotsMcpMutation, type DotsMcpView } 
 const httpExample = JSON.stringify({ url: 'https://example.com/mcp' }, null, 2);
 const happyControlExample = JSON.stringify({ url: 'https://example.com/happy-control/mcp' }, null, 2);
 const stdioExample = JSON.stringify({ command: 'node', args: ['/absolute/path/server.mjs'], env_vars: ['MY_MCP_TOKEN'] }, null, 2);
+type SelectionMutation = Extract<DotsMcpMutation, { action: 'bind' | 'bind-projects' }>;
+type SelectionDraft = Record<string, Record<string, { selected: boolean; projectIDs: string[] }>>;
+const sameIDs = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
+
+/** Only explicit clicks create drafts. Plan against the last acknowledged revision. */
+function nextSelectionMutation(view: DotsMcpView, drafts: SelectionDraft): SelectionMutation | undefined {
+    for (const [dotId, connections] of Object.entries(drafts)) {
+        const dot = view.dots.find(item => item.id === dotId);
+        if (!dot) throw new Error('mcp_scope_denied');
+        for (const [connectionID, draft] of Object.entries(connections)) {
+            if (!view.connections.some(item => item.id === connectionID)) throw new Error('mcp_scope_denied');
+            if (dot.connectionIDs.includes(connectionID) !== draft.selected) return { action: 'bind', dotId,
+                connectionIDs: draft.selected ? [...dot.connectionIDs, connectionID] : dot.connectionIDs.filter(id => id !== connectionID) };
+            if (draft.selected && !sameIDs(dot.projectBindings?.[connectionID] ?? [], draft.projectIDs)) {
+                return { action: 'bind-projects', dotId, connectionID, projectIDs: draft.projectIDs };
+            }
+        }
+    }
+}
+
 export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string; dotId?: string; current: () => boolean }) {
     const { theme } = useUnistyles();
     const [view, setView] = React.useState<DotsMcpView | null>(null), [busy, setBusy] = React.useState(false);
@@ -15,30 +35,63 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
     const [editing, setEditing] = React.useState<string | null>(null), [name, setName] = React.useState('');
     const [raw, setRaw] = React.useState(httpExample), [form, setForm] = React.useState(false);
     const [token, setToken] = React.useState(''), [clearToken, setClearToken] = React.useState(false), [storedToken, setStoredToken] = React.useState(false);
-    const epoch = React.useRef(0), inFlight = React.useRef(false);
-    const run = React.useCallback(async (mutation?: DotsMcpMutation, revision?: number, projects?: { connectionID: string; projectIDs: string[] }) => {
-        if (inFlight.current || !current()) return;
-        const version = epoch.current; inFlight.current = true; setBusy(true); setError(null); setNotice(null);
+    const [drafts, setDrafts] = React.useState<SelectionDraft>({}), [needsRefresh, setNeedsRefresh] = React.useState(false);
+    const desired = React.useRef<SelectionDraft>({}), confirmed = React.useRef<DotsMcpView | null>(null);
+    const requiresReconciliation = React.useRef(false);
+    const epoch = React.useRef(0), inFlight = React.useRef(false), savingSelection = React.useRef(false);
+    const run = React.useCallback(async (mutation?: DotsMcpMutation, revision?: number, selection = false) => {
+        if (inFlight.current || !current() || (requiresReconciliation.current && (mutation || selection))) return;
+        const version = epoch.current; inFlight.current = true; savingSelection.current = selection;
+        setBusy(true); setError(null); setNotice(null);
+        const accept = (result: DotsMcpView) => { confirmed.current = result; setView(result); };
         try {
             await sync.ensureSessionReady(sessionId);
             if (version !== epoch.current || !current()) return;
-            let result = await requestDotsMcp(sessionId, mutation ? { ...mutation, revision: revision!, requestId: randomUUID() } : { action: 'list' });
-            if (version !== epoch.current || !current()) return;
-            setView(result);
-            // Binding must exist before the existing project RPC can accept selections.
-            // Capture only the projects shown at the explicit click; never select on refresh.
-            if (mutation?.action === 'bind' && projects?.projectIDs.length) {
-                result = await requestDotsMcp(sessionId, { action: 'bind-projects', dotId: mutation.dotId,
-                    connectionID: projects.connectionID, projectIDs: projects.projectIDs,
-                    revision: result.revision, requestId: randomUUID() });
+            if (selection) {
+                // One in-flight write. Re-plan after each ACK so later clicks supersede
+                // unsent work, including cancelling a parent before any project grant.
+                while (confirmed.current) {
+                    const next = nextSelectionMutation(confirmed.current, desired.current);
+                    if (!next) break;
+                    const result = await requestDotsMcp(sessionId, { ...next, revision: confirmed.current.revision, requestId: randomUUID() });
+                    if (version !== epoch.current || !current()) return;
+                    const dot = result.dots.find(item => item.id === next.dotId);
+                    if (result.revision <= confirmed.current.revision || !dot || (next.action === 'bind' && !sameIDs(dot.connectionIDs, next.connectionIDs))
+                        || (next.action === 'bind-projects' && !sameIDs(dot.projectBindings?.[next.connectionID] ?? [], next.projectIDs))) {
+                        throw new Error('mcp_response_unconfirmed');
+                    }
+                    accept(result);
+                }
+                desired.current = {}; setDrafts({}); setNotice('已保存。');
+            } else {
+                const result = await requestDotsMcp(sessionId, mutation ? { ...mutation, revision: revision!, requestId: randomUUID() } : { action: 'list' });
                 if (version !== epoch.current || !current()) return;
-                setView(result);
+                accept(result); requiresReconciliation.current = false; setNeedsRefresh(false);
+                if (mutation) { setNotice(mutation.action === 'check' ? '检查完成，请查看连接状态。' : '已保存。'); setForm(false); setRaw(httpExample); setName(''); setEditing(null); setToken(''); setClearToken(false); setStoredToken(false); }
             }
-            if (mutation) { setNotice(mutation.action === 'check' ? '检查完成，请查看连接状态。' : '已保存。'); setForm(false); setRaw(httpExample); setName(''); setEditing(null); setToken(''); setClearToken(false); setStoredToken(false); }
-        } catch (failure) { if (version === epoch.current && current()) { setError(dotsMcpError(failure)); setToken(''); } }
-        finally { if (version === epoch.current) { inFlight.current = false; setBusy(false); } }
+        } catch (failure) {
+            if (version === epoch.current && current()) {
+                // An unconfirmed write may already have committed. Never retry it or
+                // submit further edits with a guessed revision; a read must reconcile it.
+                if (failure instanceof Error && ['mcp_transport_unconfirmed', 'mcp_response_unconfirmed', 'mcp_revision_changed'].includes(failure.message)) { requiresReconciliation.current = true; setNeedsRefresh(true); }
+                desired.current = {}; setDrafts({}); setError(dotsMcpError(failure)); setToken('');
+            }
+        } finally { if (version === epoch.current) { inFlight.current = false; savingSelection.current = false; setBusy(false); } }
     }, [current, sessionId]);
-    React.useEffect(() => { void run(); return () => { epoch.current++; }; }, [run]);
+    React.useEffect(() => {
+        desired.current = {}; setDrafts({}); confirmed.current = null; setView(null);
+        inFlight.current = false; savingSelection.current = false; setBusy(false); requiresReconciliation.current = false; setNeedsRefresh(false);
+        void run();
+        return () => { epoch.current++; };
+    }, [run]);
+    const select = (targetDot: string, connectionID: string, selected: boolean, projectIDs: string[]) => {
+        if (!current() || requiresReconciliation.current || (inFlight.current && !savingSelection.current)) return;
+        desired.current = { ...desired.current, [targetDot]: { ...desired.current[targetDot], [connectionID]: { selected, projectIDs } } };
+        setDrafts(desired.current); setNotice(null); setError(null);
+        if (!inFlight.current) void run(undefined, undefined, true);
+    };
+    const selectionPending = Object.keys(drafts).length > 0;
+    const selectionDisabled = needsRefresh || (busy && !selectionPending);
     React.useEffect(() => {
         const clear = () => setToken('');
         const subscription = AppState.addEventListener('change', state => { if (state !== 'active') clear(); });
@@ -51,12 +104,24 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
     const muted = { color: theme.colors.textSecondary, fontSize: 13, lineHeight: 20 };
     const input = { color: theme.colors.text, borderColor: theme.colors.divider, borderWidth: 1, padding: 12, borderRadius: 8 };
     const button = (label: string, action: () => void) => <Pressable key={label} accessibilityRole="button" accessibilityLabel={label}
-        onPress={action} disabled={busy} style={{ padding: 12, borderRadius: 8, minHeight: 44, backgroundColor: theme.colors.surfaceHigh, opacity: busy ? 0.5 : 1 }}><Text style={text}>{label}</Text></Pressable>;
-    const dots = view?.dots.filter(dot => !dotId || dot.id === dotId) ?? [];
+        onPress={action} disabled={busy || (needsRefresh && label !== '刷新 MCP 连接')} style={{ padding: 12, borderRadius: 8, minHeight: 44, backgroundColor: theme.colors.surfaceHigh, opacity: busy ? 0.5 : 1 }}><Text style={text}>{label}</Text></Pressable>;
+    const dots = (view?.dots.filter(dot => !dotId || dot.id === dotId) ?? []).map(dot => {
+        const choices = drafts[dot.id];
+        if (!choices) return dot;
+        let connectionIDs = dot.connectionIDs;
+        const projectBindings = { ...dot.projectBindings };
+        for (const [id, choice] of Object.entries(choices)) {
+            connectionIDs = choice.selected ? [...connectionIDs.filter(item => item !== id), id] : connectionIDs.filter(item => item !== id);
+            projectBindings[id] = choice.selected ? choice.projectIDs : [];
+        }
+        return { ...dot, connectionIDs, projectBindings };
+    });
     return <View style={{ gap: 12 }}>
         <Text accessibilityRole="header" style={{ ...text, fontSize: 19, fontWeight: '600' }}>MCP 工具</Text>
         <Text style={muted}>Dot 可直接发现并调用已授权服务的工具。支持 Streamable HTTP 和本地 stdio；新 Dot 默认不启用。授权服务即允许 Dot 在你的请求范围内使用其工具。</Text>
         {busy && <ActivityIndicator />}{error && <Text accessibilityRole="alert" style={{ ...text, color: '#b04b36' }}>{error}</Text>}
+        {selectionPending && <Text accessibilityLiveRegion="polite" style={text}>正在保存选择（勾选为待保存状态）</Text>}
+        {needsRefresh && <Text style={muted}>保存结果待核对，请刷新 MCP 连接后继续修改。</Text>}
         {notice && <Text accessibilityLiveRegion="polite" style={text}>{notice}</Text>}
         {button('刷新 MCP 连接', () => void run())}
         {view && button('添加 MCP 服务', () => { setForm(true); setEditing(null); setName(''); setRaw(httpExample); setError(null); setToken(''); setClearToken(false); setStoredToken(false); })}
@@ -97,10 +162,9 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
                 {button(`删除 MCP：${connection.name}`, () => mutate({ action: 'delete', connectionID: connection.id }))}
             </View>
             {dots.map(dot => { const selected = dot.connectionIDs.includes(connection.id); return <View key={dot.id}><Pressable accessibilityRole="checkbox"
-                accessibilityLabel={`为 ${dot.name} 启用 MCP ${connection.name}`} accessibilityState={{ checked: selected, disabled: busy }}
-                aria-checked={selected} disabled={busy} onPress={() => void run({ action: 'bind', dotId: dot.id,
-                    connectionIDs: selected ? dot.connectionIDs.filter(id => id !== connection.id) : [...dot.connectionIDs, connection.id] }, view!.revision,
-                    !selected && connection.control ? { connectionID: connection.id, projectIDs: connection.control.projects.map(project => project.id) } : undefined)} style={{ padding: 12, minHeight: 44 }}>
+                accessibilityLabel={`为 ${dot.name} 启用 MCP ${connection.name}`} accessibilityState={{ checked: selected, disabled: selectionDisabled }}
+                aria-checked={selected} disabled={selectionDisabled} onPress={() => select(dot.id, connection.id, !selected,
+                    !selected ? connection.control?.projects.map(project => project.id) ?? [] : [])} style={{ padding: 12, minHeight: 44 }}>
                 <Text style={text}>{selected ? '☑' : '☐'} {dot.name}</Text>
             </Pressable>
                 {selected && connection.control && <View style={{ gap: 6, paddingLeft: 12 }}>
@@ -109,9 +173,8 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
                         const projects = dot.projectBindings?.[connection.id] ?? [];
                         const checked = projects.includes(project.id);
                         return <Pressable key={project.id} accessibilityRole="checkbox" accessibilityLabel={`为 ${dot.name} 启用项目 ${project.id}`}
-                            accessibilityState={{ checked, disabled: busy }} aria-checked={checked} disabled={busy}
-                            onPress={() => mutate({ action: 'bind-projects', dotId: dot.id, connectionID: connection.id,
-                                projectIDs: checked ? projects.filter(id => id !== project.id) : [...projects, project.id] })} style={{ padding: 12, minHeight: 44 }}>
+                            accessibilityState={{ checked, disabled: selectionDisabled }} aria-checked={checked} disabled={selectionDisabled}
+                            onPress={() => select(dot.id, connection.id, true, checked ? projects.filter(id => id !== project.id) : [...projects, project.id])} style={{ padding: 12, minHeight: 44 }}>
                             <Text style={text}>{checked ? '☑' : '☐'} {project.directory}</Text>
                         </Pressable>;
                     })}

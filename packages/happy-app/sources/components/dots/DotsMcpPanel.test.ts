@@ -31,7 +31,22 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 afterEach(() => act(() => renderers.splice(0).forEach(renderer => renderer.unmount())));
-beforeEach(() => { mocks.background = null; mocks.ready.mockReset(); mocks.ready.mockResolvedValue(undefined); mocks.rpc.mockReset(); mocks.rpc.mockResolvedValue({ ok: true, data: view() }); });
+function mockView(initial: any) {
+    let data = structuredClone(initial);
+    mocks.rpc.mockImplementation(async (_session, _method, request) => {
+        const dot = data.dots.find((item: any) => item.id === request.dotId);
+        if (request.action === 'bind') {
+            dot.connectionIDs = request.connectionIDs;
+            for (const id of Object.keys(dot.projectBindings ?? {})) if (!dot.connectionIDs.includes(id)) delete dot.projectBindings[id];
+        } else if (request.action === 'bind-projects') {
+            dot.projectBindings ??= {}; dot.projectBindings[request.connectionID] = request.projectIDs;
+        }
+        if (request.action !== 'list') data.revision++;
+        return { ok: true, data: structuredClone(data) };
+    });
+}
+beforeEach(() => { mocks.background = null; mocks.ready.mockReset(); mocks.ready.mockResolvedValue(undefined); mocks.rpc.mockReset(); mockView(view()); });
+
 async function render(dot?: string) {
     let renderer!: ReturnType<typeof create>; let authorized = true;
     await act(async () => { renderer = create(React.createElement(DotsMcpPanel, { sessionId: 'workspace', dotId: dot, current: () => authorized })); });
@@ -47,7 +62,7 @@ it('requires explicit project selection for Happy background execution', async (
         connections: [{ ...base.connections[0], control: { grantID: 'fixture-grant', machineID: 'machine', expiresAt: Date.now() + 60000,
             methods: ['tasks.create'], projects: [{ id: 'a', directory: '/fixture/a' }, { id: 'b', directory: '/fixture/b' }] } }],
         dots: [{ ...base.dots[0], connectionIDs: ['facts'], projectBindings: {} }] };
-    mocks.rpc.mockResolvedValue({ ok: true, data });
+    mockView(data);
     const f = await render(dotId);
     expect(f.button('为 Dot A 启用项目 a').props.accessibilityState.checked).toBe(false);
     expect(f.button('为 Dot A 启用项目 b').props.accessibilityState.checked).toBe(false);
@@ -67,7 +82,7 @@ it('preserves other selected projects when changing a Happy project checkbox', a
     const data = { ...base, connections: [{ ...base.connections[0], control: { grantID: 'fixture-grant', machineID: 'machine',
         expiresAt: Date.now() + 60000, methods: [], projects: [{ id: 'a', directory: '/fixture/a' }, { id: 'b', directory: '/fixture/b' }] } }],
         dots: [{ ...base.dots[0], connectionIDs: ['facts'], projectBindings: { facts: ['a', 'b'] } }] };
-    mocks.rpc.mockResolvedValue({ ok: true, data }); const f = await render(dotId);
+    mockView(data); const f = await render(dotId);
     await f.click('为 Dot A 启用项目 a');
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'bind-projects', dotId, projectIDs: ['b'] });
 });
@@ -208,13 +223,13 @@ it('keeps truthful connection-only state when project saving fails and never ret
     expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(1);
 });
 
-it('locks interaction while binding and selects only the click snapshot after the response', async () => {
+it('shows a pending selection while binding and selects only the click snapshot after the response', async () => {
     const { data } = projectFixture(); const f = await render(dotId);
     const backend = mocks.rpc.getMockImplementation()!;
     let finish!: () => void;
     mocks.rpc.mockImplementationOnce(async (...args) => { await new Promise<void>(resolve => { finish = resolve; }); return backend(...args); });
     await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
-    expect(f.button('为 Dot A 启用 MCP first').props.disabled).toBe(true);
+    expect(f.button('为 Dot A 启用 MCP first').props.disabled).toBe(false);
     data.connections[0].control.projects.push({ id: 'future', directory: '/fixture/future' });
     await act(async () => finish());
     expect(data.dots[0].projectBindings.first).toEqual(['a', 'b']);
@@ -224,5 +239,101 @@ it('does not save project selections after losing scope during the parent RPC', 
     projectFixture(); const f = await render(dotId); const backend = mocks.rpc.getMockImplementation()!;
     mocks.rpc.mockImplementationOnce(async (...args) => { const reply = await backend(...args); f.revoke(); return reply; });
     await f.click('为 Dot A 启用 MCP first');
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(0);
+});
+
+it('shows pending parent and children before a slow RPC, and coalesces cancellation before project grant', async () => {
+    const { data } = projectFixture(); const f = await render(dotId);
+    const backend = mocks.rpc.getMockImplementation()!;
+    let finish!: () => void;
+    mocks.rpc.mockImplementationOnce(async (...args) => { await new Promise<void>(resolve => { finish = resolve; }); return backend(...args); });
+    await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
+    expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(true);
+    expect(f.button('为 Dot A 启用项目 a').props.accessibilityState.checked).toBe(true);
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('正在保存选择');
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('已保存。');
+    await f.click('为 Dot A 启用 MCP first');
+    expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(false);
+    await act(async () => finish());
+    expect(data.dots[0].connectionIDs).toEqual(['second']);
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(0);
+});
+it('uses the latest individual selection after a slow parent acknowledgement', async () => {
+    const { data } = projectFixture(); const f = await render(dotId); const backend = mocks.rpc.getMockImplementation()!;
+    let finish!: () => void;
+    mocks.rpc.mockImplementationOnce(async (...args) => { await new Promise<void>(resolve => { finish = resolve; }); return backend(...args); });
+    await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
+    await f.click('为 Dot A 启用项目 a');
+    expect(f.button('为 Dot A 启用项目 a').props.accessibilityState.checked).toBe(false);
+    await act(async () => finish());
+    expect(data.dots[0].projectBindings).toEqual({ second: ['a'], first: ['b'] });
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects').map(call => call[2].projectIDs)).toEqual([['b']]);
+});
+
+it('serializes slow project writes and keeps a later cancellation and another group isolated', async () => {
+    const { data } = projectFixture(); const f = await render(dotId);
+    await f.click('为 Dot A 启用 MCP first');
+    const backend = mocks.rpc.getMockImplementation()!; let finish!: () => void;
+    mocks.rpc.mockImplementationOnce(async (...args) => { await new Promise<void>(resolve => { finish = resolve; }); return backend(...args); });
+    await act(async () => f.button('为 Dot A 启用项目 a').props.onPress());
+    const sent = mocks.rpc.mock.calls.length;
+    await f.click('为 Dot A 启用项目 b');
+    // Only one write may be in flight, so responses cannot overtake each other.
+    expect(mocks.rpc).toHaveBeenCalledTimes(sent);
+    expect(f.button('为 Dot A 启用项目 b').props.accessibilityState.checked).toBe(false);
+    await act(async () => finish());
+    expect(data.dots[0].projectBindings).toEqual({ first: [], second: ['a'] });
+    expect(data.dots[0].connectionIDs).toContain('first');
+});
+it('coalesces rapid parent on/off/on into the final selection', async () => {
+    const { data } = projectFixture(); const f = await render(dotId); const backend = mocks.rpc.getMockImplementation()!;
+    let finish!: () => void;
+    mocks.rpc.mockImplementationOnce(async (...args) => { await new Promise<void>(resolve => { finish = resolve; }); return backend(...args); });
+    await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
+    await f.click('为 Dot A 启用 MCP first'); await f.click('为 Dot A 启用 MCP first');
+    await act(async () => finish());
+    expect(data.dots[0].projectBindings.first).toEqual(['a', 'b']);
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action !== 'list').map(call => call[2].action)).toEqual(['bind', 'bind-projects']);
+});
+it('rolls back a rejected parent draft and never displays saved success', async () => {
+    projectFixture(); const f = await render(dotId);
+    mocks.rpc.mockResolvedValueOnce({ ok: false, error: 'mcp_scope_denied' });
+    await f.click('为 Dot A 启用 MCP first');
+    expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(false);
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('已保存。');
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('超出当前连接授权范围');
+});
+it('reconciles an unknown committed write by reading, never by replaying or continuing queued edits', async () => {
+    const { data } = projectFixture(); const f = await render(dotId); const backend = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementationOnce(async (...args) => { await backend(...args); throw Error('lost ack'); });
+    await f.click('为 Dot A 启用 MCP first');
+    expect(data.dots[0].connectionIDs).toContain('first');
+    expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(false);
+    expect(f.button('为 Dot A 启用 MCP first').props.disabled).toBe(true);
+    const sent = mocks.rpc.mock.calls.length;
+    await f.click('为 Dot A 启用 MCP first');
+    expect(mocks.rpc).toHaveBeenCalledTimes(sent);
+    await f.click('刷新 MCP 连接');
+    expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(true);
+    expect(f.button('为 Dot A 启用项目 a').props.accessibilityState.checked).toBe(false);
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action !== 'list')).toHaveLength(1);
+});
+it('renders the pending selection even while session preparation has not resolved', async () => {
+    projectFixture(); const f = await render(dotId); let finish!: () => void;
+    mocks.ready.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const sent = mocks.rpc.mock.calls.length;
+    await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
+    expect(f.button('为 Dot A 启用项目 a').props.accessibilityState.checked).toBe(true);
+    expect(mocks.rpc).toHaveBeenCalledTimes(sent);
+    await act(async () => finish());
+});
+it('ignores an old selection response after changing session scope', async () => {
+    projectFixture(); const f = await render(dotId); const backend = mocks.rpc.getMockImplementation()!;
+    let finish!: () => void;
+    mocks.rpc.mockImplementationOnce(async (...args) => { await new Promise<void>(resolve => { finish = resolve; }); return backend(...args); });
+    await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
+    await act(async () => f.renderer.update(React.createElement(DotsMcpPanel, { sessionId: 'different-workspace', dotId, current: () => true })));
+    await act(async () => finish());
+    expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(false);
     expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(0);
 });
