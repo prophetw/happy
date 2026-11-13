@@ -16,15 +16,24 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
     const [raw, setRaw] = React.useState(httpExample), [form, setForm] = React.useState(false);
     const [token, setToken] = React.useState(''), [clearToken, setClearToken] = React.useState(false), [storedToken, setStoredToken] = React.useState(false);
     const epoch = React.useRef(0), inFlight = React.useRef(false);
-    const run = React.useCallback(async (mutation?: DotsMcpMutation, revision?: number) => {
+    const run = React.useCallback(async (mutation?: DotsMcpMutation, revision?: number, projects?: { connectionID: string; projectIDs: string[] }) => {
         if (inFlight.current || !current()) return;
         const version = epoch.current; inFlight.current = true; setBusy(true); setError(null); setNotice(null);
         try {
             await sync.ensureSessionReady(sessionId);
             if (version !== epoch.current || !current()) return;
-            const result = await requestDotsMcp(sessionId, mutation ? { ...mutation, revision: revision!, requestId: randomUUID() } : { action: 'list' });
+            let result = await requestDotsMcp(sessionId, mutation ? { ...mutation, revision: revision!, requestId: randomUUID() } : { action: 'list' });
             if (version !== epoch.current || !current()) return;
             setView(result);
+            // Binding must exist before the existing project RPC can accept selections.
+            // Capture only the projects shown at the explicit click; never select on refresh.
+            if (mutation?.action === 'bind' && projects?.projectIDs.length) {
+                result = await requestDotsMcp(sessionId, { action: 'bind-projects', dotId: mutation.dotId,
+                    connectionID: projects.connectionID, projectIDs: projects.projectIDs,
+                    revision: result.revision, requestId: randomUUID() });
+                if (version !== epoch.current || !current()) return;
+                setView(result);
+            }
             if (mutation) { setNotice(mutation.action === 'check' ? '检查完成，请查看连接状态。' : '已保存。'); setForm(false); setRaw(httpExample); setName(''); setEditing(null); setToken(''); setClearToken(false); setStoredToken(false); }
         } catch (failure) { if (version === epoch.current && current()) { setError(dotsMcpError(failure)); setToken(''); } }
         finally { if (version === epoch.current) { inFlight.current = false; setBusy(false); } }
@@ -89,12 +98,13 @@ export function DotsMcpPanel({ sessionId, dotId, current }: { sessionId: string;
             </View>
             {dots.map(dot => { const selected = dot.connectionIDs.includes(connection.id); return <View key={dot.id}><Pressable accessibilityRole="checkbox"
                 accessibilityLabel={`为 ${dot.name} 启用 MCP ${connection.name}`} accessibilityState={{ checked: selected, disabled: busy }}
-                aria-checked={selected} disabled={busy} onPress={() => mutate({ action: 'bind', dotId: dot.id,
-                    connectionIDs: selected ? dot.connectionIDs.filter(id => id !== connection.id) : [...dot.connectionIDs, connection.id] })} style={{ padding: 12, minHeight: 44 }}>
+                aria-checked={selected} disabled={busy} onPress={() => void run({ action: 'bind', dotId: dot.id,
+                    connectionIDs: selected ? dot.connectionIDs.filter(id => id !== connection.id) : [...dot.connectionIDs, connection.id] }, view!.revision,
+                    !selected && connection.control ? { connectionID: connection.id, projectIDs: connection.control.projects.map(project => project.id) } : undefined)} style={{ padding: 12, minHeight: 44 }}>
                 <Text style={text}>{selected ? '☑' : '☐'} {dot.name}</Text>
             </Pressable>
                 {selected && connection.control && <View style={{ gap: 6, paddingLeft: 12 }}>
-                    <Text style={muted}>选择允许后台执行的项目（默认不启用）</Text>
+                    <Text style={muted}>勾选上方连接时将选中当前全部项目，可逐项调整；新 Dot 默认不启用后台执行</Text>
                     {connection.control.projects.map(project => {
                         const projects = dot.projectBindings?.[connection.id] ?? [];
                         const checked = projects.includes(project.id);
