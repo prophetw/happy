@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { TaskQueue, occupiesSlot, type QueueTask } from './taskQueue';
 import { TaskScheduler, type Observation } from './taskScheduler';
-import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository } from './taskWorkspaces';
+import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository, withWorkspaceAccess } from './taskWorkspaces';
 import { realpathSync, statSync } from 'node:fs';
 import { AutomationControl, projectMessage, type Policy } from '../control';
 import { Journal, hash } from '../journal';
@@ -47,7 +47,7 @@ export class ScopedWorker {
             projectConcurrency: registration.projectConcurrency ?? 2,
             machineConcurrency: registration.machineConcurrency === undefined ? registration.maxConcurrency ?? null : registration.machineConcurrency,
             projectOverrides,
-        });
+        }, { machineID: registration.machineID });
         this.processProofs = processProofs ?? new SessionProcessProofs(join(this.queue.directory, 'session-process-proofs'), registration.machineID);
         const run = (t: QueueTask, command: Record<string, unknown>, launchCheck = false) => this.run({ id: t.id, workerID: registration.id, grantID: t.grantID,
             command, deadline: this.now() + 60000 }, () => this.currentGrant(t), true, launchCheck);
@@ -290,12 +290,19 @@ export class ScopedWorker {
                 return { ...page, sessions: page.sessions.filter(s => { const m = s.metadata as any; return m?.machineId === live.machineID && permittedDirectory(m?.path); }) };
             },
             messages: async (s, cursor, limit) => { await check(); assertSession(s); return this.transport.messages(s, cursor, limit); },
-            send: async (s, id, text) => { await check(true); assertSession(s); return this.transport.send(s, remoteID(id), text); },
+            send: async (s, id, text) => {
+                await check(true); assertSession(s);
+                const w = workspaces.find(w => w.sessionID === s.id);
+                const send = () => this.transport.send(s, remoteID(id), text);
+                return w ? withWorkspaceAccess(this.queue,w.id,send) : send();
+            },
             rpc: async (m, input) => {
                 await check(['create','cancel'].includes(String(input.operation))); if (m.id !== live.machineID || (input.directory !== undefined && !permittedDirectory(input.directory))) throw new ApiError('SCOPE_DENIED', 403);
                 const workspace = input.operation === 'create' ? workspaces.find(w => w.id === hash(`${live.id}\n${input.requestID}`) && w.cwd === input.directory) : undefined;
-                return this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port),
+                const call = () => this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port),
                     ...(taskTitle ? { HAPPY_TASK_TITLE: taskTitle, HAPPY_TASK_ROOT: workspace.root } : {}) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) });
+                const used = workspace ?? (typeof input.sessionID==='string'?workspaces.find(w => w.sessionID === input.sessionID):undefined);
+                return used ? withWorkspaceAccess(this.queue,used.id,call) : call();
             },
         };
         // Map reconciliation localIds back into the core's stable logical requestID space.
@@ -424,12 +431,16 @@ export class ScopedWorker {
         await check(true);
         workspace ??= command.method === 'requests.get' ? workspaces.find(w=>w.id===hash(`${live.id}\n${command.requestID}`)) : undefined;
         if (workspace && (result as any)?.data?.sessionID) {
-            this.queue.transaction(s => { const w = s.workspaces.find(w => w.id === workspace!.id)!; w.sessionID = (result as any).data.sessionID; if ((result as any).data.options) w.resolvedOptions = (result as any).data.options; });
-            if ((result as any).data.process === 'running') {
+            workspace=this.queue.transaction(s => { const w = s.workspaces.find(w => w.id === workspace!.id)!;
+                if(!w.retirement){w.sessionID = (result as any).data.sessionID; if ((result as any).data.options) w.resolvedOptions = (result as any).data.options;}
+                return w;
+            });
+            if (!workspace.retirement && (result as any).data.process === 'running') {
                 // A corroboration cache failure cannot replace a confirmed create receipt.
                 try { this.processProofs.recordRunning(await this.localSession((result as any).data.sessionID), 'running'); } catch { /* Missing proof keeps later recovery conservative. */ }
             }
-            return { ...(result as any), data: { ...(result as any).data, execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch, baseCommit: workspace.baseCommit, projectID: workspace.projectID, port: workspace.port } } };
+            return { ...(result as any), data: { ...(result as any).data, execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch, baseCommit: workspace.baseCommit, projectID: workspace.projectID, port: workspace.port,
+                workspaceState:workspace.retirement?.phase??'active',retainedRef:workspace.retirement?.retainedRef,retainedCommit:workspace.retirement?.retainedCommit } } };
         }
         return result;
     }

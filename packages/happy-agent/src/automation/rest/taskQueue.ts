@@ -1,4 +1,4 @@
-import { constants, closeSync, fstatSync, openSync, writeFileSync, fsyncSync } from 'node:fs';
+import { constants, closeSync, fstatSync, lstatSync, openSync, readdirSync, writeFileSync, fsyncSync } from 'node:fs';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -15,6 +15,8 @@ export { executionSchema } from './execution';
 import type { Execution } from './execution';
 export type Resource = { key: string; mode: 'shared' | 'exclusive' };
 export type Workspace = { id: string; grantID: string; projectID: string; root: string; cwd: string;
+    managedBy?: { machineID: string; uid: number };
+    retirement?: { operationID: string; phase: 'retiring' | 'retired'; retainedRef: string; retainedCommit: string };
     repository: string; stage?: 'preparing' | 'ready'; preparationPID?: number; preparationError?: string; branch?: string; baseCommit?: string; execution: Execution; fingerprint: string;
     sessionID?: string; options?: Record<string, unknown>; resolvedOptions?: unknown; temporaryDirectory: string; port: number };
 export type QueueTask = { id: string; requestID: string; grantID: string; workerID: string; sessionID: string; workspaceID?: string;
@@ -32,6 +34,8 @@ const taskSchema = z.object({ id: digest, requestID: identifier, grantID: identi
     seq: z.number().int().nonnegative().optional(), messageID: z.string().optional(), turnID: z.string().optional(), cursor: z.number().int().nonnegative(),
     notBefore: z.number().nonnegative().optional(), resultCommit: z.string().regex(/^[a-f0-9]{40,64}$/).optional(), worktreeDirty: z.boolean().optional(), ownerPID: z.number().int().positive().optional(), processID: z.number().int().positive().optional(), legacy: z.boolean().optional(), createdAt: z.number().nonnegative(), finishedAt: z.number().nonnegative().optional() }).strict();
 const workspaceSchema = z.object({ id: digest, grantID: identifier, projectID: identifier, root: z.string().startsWith('/'), cwd: z.string().startsWith('/'), repository: z.string().startsWith('/'),
+    managedBy: z.object({ machineID: identifier, uid: z.number().int().nonnegative() }).strict().optional(),
+    retirement: z.object({ operationID: identifier, phase: z.enum(['retiring','retired']), retainedRef: z.string().max(256), retainedCommit: z.string().regex(/^[a-f0-9]{40,64}$/) }).strict().optional(),
     stage: z.enum(['preparing','ready']).optional(), preparationPID: z.number().int().positive().optional(), preparationError: z.string().optional(), branch: z.string().optional(), baseCommit: z.string().optional(), execution: executionSchema, fingerprint: digest, sessionID: identifier.optional(),
     options: z.record(z.string(),z.json()).optional(), resolvedOptions: z.json().optional(), temporaryDirectory: z.string().startsWith('/'), port: z.number().int().min(20000).max(60000) }).strict();
 const cancellationSchema = z.object({ requestID: identifier, grantID: identifier, sessionID: identifier, sendRequestID: identifier.optional(), fingerprint: digest, taskIDs: z.array(digest).max(1000) }).strict();
@@ -52,20 +56,26 @@ export class TaskQueue {
     readonly policy: ConcurrencyPolicy;
     /** Compatibility for explicit old callers; absent machine limit has no artificial ceiling. */
     get maxConcurrency() { return this.policy.machineConcurrency ?? Infinity; }
-    constructor(readonly directory: string, policy: Partial<ConcurrencyPolicy> | number = {}) {
+    constructor(readonly directory: string, policy: Partial<ConcurrencyPolicy> | number = {},
+        readonly access: { machineID?: string; readOnly?: boolean } = {}) {
         this.policy = normalizeConcurrency(policy);
-        this.store = new MetadataStore(directory, 64 * 1024 * 1024);
-        this.transaction(() => undefined);
+        this.store = new MetadataStore(directory, 64 * 1024 * 1024, !access.readOnly);
+        if (!access.readOnly) this.transaction(() => undefined);
     }
-    transaction<T>(fn: (s: State) => T): T {
+    transaction<T>(fn: (s: State) => T, readOnly = false): T {
+        if(this.access.readOnly&&!readOnly)throw new ApiError('QUEUE_READ_ONLY',503);
+        readOnly ||= Boolean(this.access.readOnly);
         privateDirectory(this.directory);
-        const fd = openSync(join(this.directory, '.queue-lock'), constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+        const fd = openSync(join(this.directory, '.queue-lock'), (readOnly ? constants.O_RDONLY : constants.O_CREAT | constants.O_RDWR) | constants.O_NOFOLLOW, 0o600);
         try {
             const stat = fstatSync(fd);
             if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new ApiError('QUEUE_UNAVAILABLE', 503);
             // No async work in this critical section. Contention waits in the kernel, with a bound.
-            if (spawnSync('flock', ['--exclusive', '--timeout', '5', '3'], { stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 6000 }).status !== 0) throw new ApiError('QUEUE_UNAVAILABLE', 503);
+            if (spawnSync('flock', [readOnly ? '--shared' : '--exclusive', '--timeout', '5', '3'], { stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 6000 }).status !== 0) throw new ApiError('QUEUE_UNAVAILABLE', 503);
             const stored = this.store.get<{ sealed: string }>('queue');
+            if(!stored&&lstatSync(join(this.directory,hash('queue')+'.json'),{throwIfNoEntry:false}))throw new ApiError('QUEUE_CORRUPT',503);
+            if (readOnly && !stored) throw new ApiError('QUEUE_NOT_INITIALIZED',503);
+            if(!stored&&readdirSync(this.directory).some(name=>name!=='.queue-lock'))throw new ApiError('QUEUE_RECOVERY_REQUIRED',503);
             const key = this.payloadKey(!stored);
             let saved: unknown = null;
             if (stored) {
@@ -76,6 +86,7 @@ export class TaskQueue {
                     saved = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)),decipher.final()]).toString('utf8'));
                 } catch { throw new ApiError('QUEUE_CORRUPT', 503); }
             }
+            if(stored&&(saved===null||typeof saved!=='object'))throw new ApiError('QUEUE_CORRUPT',503);
             let migrated = false;
             let state: State;
             if (saved && (saved as {version?:number}).version === 1) {
@@ -102,9 +113,10 @@ export class TaskQueue {
             if (canonicalBody(state.policy) !== canonicalBody(this.policy)) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
             if (new Set(state.tasks.map(t => t.id)).size !== state.tasks.length || new Set(state.workspaces.map(w => w.id)).size !== state.workspaces.length
                 || new Set(state.tasks.map(t => t.order)).size !== state.tasks.length || state.tasks.some(t => t.id !== hash(`${t.grantID}\n${t.requestID}`) || t.fingerprint !== taskFingerprint(t) || t.order >= state.nextOrder)) throw new ApiError('QUEUE_CORRUPT', 503);
-            const before = JSON.stringify(state);
+            const before = readOnly ? '' : JSON.stringify(state);
             state.cancellations ??= [];
             const result = fn(state);
+            if (readOnly) { key.fill(0); return structuredClone(result); }
             if (!saved || migrated || JSON.stringify(state) !== before) {
                 // Migration and cancellation also write through this boundary. Never persist
                 // a ledger which the next process would reject, even when an enqueue is bypassed.
@@ -138,8 +150,8 @@ export class TaskQueue {
         // Call only with all workers stopped, then construct with the new configuration.
     }
     noteScheduler(workerID: string) { this.transaction(s=>{s.schedulers[workerID]={lastSeen:Date.now()};}); }
-    tasks() { return this.transaction(s => s.tasks); }
-    workspaces(grantID: string) { return this.transaction(s => s.workspaces.filter(w => w.grantID === grantID)); }
+    tasks() { return this.transaction(s => s.tasks,true); }
+    workspaces(grantID: string) { return this.transaction(s => s.workspaces.filter(w => w.grantID === grantID),true); }
     update(id: string, fn: (t: QueueTask) => void) { return this.transaction(s => { const t = s.tasks.find(t => t.id === id); if (!t) throw new ApiError('NOT_FOUND', 404); fn(t); return t; }); }
     enqueue(input: Omit<QueueTask, 'id' | 'fingerprint' | 'order' | 'state' | 'dispatched' | 'cursor' | 'createdAt'>) {
         const fingerprint = taskFingerprint(input), id = hash(`${input.grantID}\n${input.requestID}`);
@@ -147,6 +159,7 @@ export class TaskQueue {
             if (s.workspaces.some(w => w.id === id) || s.cancellations.some(c => c.grantID === input.grantID && c.requestID === input.requestID)) throw new ApiError('REQUEST_ID_CONFLICT', 409);
             const previous = s.tasks.find(t => t.id === id);
             if (previous) { if (previous.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409); return previous; }
+            if (s.workspaces.find(w => w.id === input.workspaceID)?.retirement) throw new ApiError('WORKSPACE_RETIRED',409);
             const task: QueueTask = { ...input, id, fingerprint, order: s.nextOrder++, state: 'queued', reason: 'scheduler-ready', dispatched: false, cursor: 0, createdAt: Date.now() };
             if (s.tasks.length >= 1000 || Buffer.byteLength(JSON.stringify(s)) + Buffer.byteLength(JSON.stringify(task)) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED', 503);
             s.tasks.push(task); return task;
@@ -294,8 +307,10 @@ export class TaskQueue {
             ...(t.dispatched && ['failed','cancelled'].includes(t.state)?{process:'stopped'}:{}),
             seq: t.seq, messageID: t.messageID, turnID: t.turnID,
             ...(workspace ? { execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch,
-                baseCommit: workspace.baseCommit, resultCommit: t.resultCommit, dirty: t.worktreeDirty, projectID: workspace.projectID, port: workspace.port }, resources: workspace.execution.resources } : {}),
+                baseCommit: workspace.baseCommit, resultCommit: t.resultCommit, dirty: t.worktreeDirty, projectID: workspace.projectID, port: workspace.port,
+                workspaceState: workspace.retirement?.phase ?? 'active', retainedRef: workspace.retirement?.retainedRef,
+                retainedCommit: workspace.retirement?.retainedCommit }, resources: workspace.execution.resources } : {}),
             canCancel: !terminalTask(t), recovery };
-        });
+        },true);
     }
 }

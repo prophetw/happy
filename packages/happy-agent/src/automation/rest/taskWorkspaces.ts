@@ -24,10 +24,10 @@ export function canonicalRepository(root: string): string {
  * The per-workspace flock is inherited by Git, so parent death cannot permit
  * a second checkout while the original Git process is still running.
  */
-async function gitAsync(cwd: string, args: string[], lockFD?: number): Promise<string> {
+export async function workspaceGit(cwd: string, args: string[], lockFD?: number): Promise<string> {
     return new Promise((resolve, reject) => {
-        const child = spawn('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C',cwd,...args], { stdio: lockFD === undefined ? ['ignore','pipe','pipe'] : ['ignore','pipe','pipe',lockFD],
-            detached: true, env: {...process.env,GIT_TERMINAL_PROMPT:'0'} });
+        const child = spawn('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false','-C',cwd,...args], { stdio: lockFD === undefined ? ['ignore','pipe','pipe'] : ['ignore','pipe','pipe',lockFD],
+            detached: true, env: {...Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_'))),GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0',GIT_NO_LAZY_FETCH:'1'} });
         let output = '', bytes = 0, timedOut = false;
         child.stdout?.on('data', data => { bytes += data.length; if (bytes <= 1024*1024) output += data; });
         child.stderr?.on('data', data => { bytes += data.length; });
@@ -36,7 +36,8 @@ async function gitAsync(cwd: string, args: string[], lockFD?: number): Promise<s
         child.once('close', code => { clearTimeout(timer); code === 0 && !timedOut && bytes <= 1024*1024 ? resolve(output.trim()) : reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
     });
 }
-async function workspaceLock(directory: string, id: string): Promise<number> {
+export async function workspaceLock(directory: string, id: string): Promise<number> {
+    if (!/^[a-f0-9]{64}$/.test(id)) throw new ApiError('WORKTREE_NOT_MANAGED');
     const locks = join(directory,'workspace-locks'); privateDirectory(locks,true);
     const fd = openSync(join(locks,id),constants.O_CREAT|constants.O_RDWR|constants.O_NOFOLLOW,0o600);
     try {
@@ -49,12 +50,27 @@ async function workspaceLock(directory: string, id: string): Promise<number> {
         return fd;
     } catch(e) {closeSync(fd);throw e;}
 }
+const gitAsync = workspaceGit;
+export async function withWorkspaceAccess<T>(queue: TaskQueue, id: string, action: () => Promise<T>): Promise<T> {
+    const fd = await workspaceLock(queue.directory,id);
+    try {
+        const w = queue.transaction(s => s.workspaces.find(w => w.id === id),true);
+        if (!w) throw new ApiError('WORKTREE_NOT_MANAGED');
+        if(w.retirement)throw new ApiError(w.retirement.phase==='retired'?'WORKSPACE_RETIRED':'WORKSPACE_RETIRING',409);
+        // The caller verified the checkout before entering the transport. The lease
+        // prevents an owner retirement between that verification and the RPC; no
+        // extra Git traversal is added to each worker status poll.
+        if(realpathSync(w.cwd)!==w.cwd)throw new ApiError('PROJECT_PATH_CHANGED',403);
+        return await action();
+    } finally { closeSync(fd); }
+}
 
 /** Fixed committed baseline; no dependency links, dist copies, stash or main mutations. */
 export async function prepareWorkspace(queue: TaskQueue, input: { requestID: string; grantID: string; projectID: string; root: string; title?: string; execution?: unknown; options?: unknown }, authorize: () => Promise<void> = async()=>{}): Promise<Workspace> {
     const execution = executionSchema.parse(input.execution ?? {}), id = hash(`${input.grantID}\n${input.requestID}`);
     const fingerprint = hash(canonicalBody({ ...input, execution }));
     let workspace = queue.workspaces(input.grantID).find(w=>w.id===id);
+    if (workspace?.retirement) throw new ApiError('WORKSPACE_RETIRED',409);
     if (workspace && workspace.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT',409);
     if (!workspace) {
         if (realpathSync(input.root) !== input.root) throw new ApiError('PROJECT_PATH_CHANGED',403);
@@ -71,6 +87,7 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
             if(prior){if(prior.fingerprint!==fingerprint)throw new ApiError('REQUEST_ID_CONFLICT',409);return prior;}
             const port=20000+s.workspaces.length;if(port>60000)throw new ApiError('TASK_PORT_RANGE_EXHAUSTED');
             const value: Workspace={id,fingerprint,grantID:input.grantID,projectID:input.projectID,root:input.root,repository,
+                ...(queue.access.machineID ? { managedBy: { machineID: queue.access.machineID, uid: process.getuid!() } } : {}),
                 cwd:baseCommit?join(queue.directory,'worktrees',id):input.root,branch:baseCommit?`dot-task/${id}`:undefined,baseCommit,execution,
                 options:input.options as Record<string,unknown>|undefined,temporaryDirectory:join(queue.directory,'temporary',id),port,stage:'preparing',preparationPID:process.pid};
             s.workspaces.push(value);return value;
@@ -108,6 +125,7 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
  * keep progressing unnoticed. Returns the branch actually checked out.
  */
 export function verifyWorkspace(w: Workspace): { branch: string } | null {
+    if (w.retirement) throw new ApiError(w.retirement.phase === 'retired' ? 'WORKSPACE_RETIRED' : 'WORKSPACE_RETIRING',409);
     if (realpathSync(w.root) !== w.root || realpathSync(w.cwd) !== w.cwd) throw new ApiError('PROJECT_PATH_CHANGED', 403);
     if (canonicalRepository(w.root) !== w.repository) throw new ApiError('WORKTREE_BINDING_CHANGED',403);
     if (!w.branch) return null;
@@ -134,20 +152,9 @@ export function workspaceResources(w?: Pick<Workspace,'repository'|'cwd'|'execut
     return result;
 }
 
-/** Explicit cleanup only. Failed/cancelled/dirty worktrees and every branch are retained. */
-export function cleanCompletedWorkspace(queue: TaskQueue, id: string, processStopped: () => boolean = () => false) {
-    return queue.transaction(s => {
-        const workspace = s.workspaces.find(w => w.id === id);
-        if (!workspace?.branch) throw new ApiError('WORKTREE_NOT_MANAGED');
-        const tasks = s.tasks.filter(t => t.workspaceID === id);
-        if (!tasks.length || tasks.some(t => t.state !== 'completed')) throw new ApiError('WORKTREE_IN_USE');
-        verifyWorkspace(workspace);
-        if (git(workspace.cwd, ['status', '--porcelain=v1', '--untracked-files=all'])) throw new ApiError('WORKTREE_DIRTY');
-        if (!processStopped()) throw new ApiError('WORKTREE_PROCESS_UNCONFIRMED');
-        const worktreeBranch = workspaceBranch(workspace);
-        git(workspace.root, ['worktree', 'remove', workspace.cwd]);
-        return { branch: workspace.branch, worktreeBranch, baseCommit: workspace.baseCommit, retained: true };
-    });
+/** @deprecated A boolean process callback is not disposition or retirement authority. */
+export function cleanCompletedWorkspace(_queue: TaskQueue, _id: string, _processStopped: () => boolean = () => false): never {
+    throw new ApiError('WORKTREE_LIFECYCLE_POLICY_REQUIRED',403);
 }
 
 /** The assigned branch is the creation name, not necessarily the checked-out one. Report

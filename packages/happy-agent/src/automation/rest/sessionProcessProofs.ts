@@ -10,6 +10,7 @@ export const LinuxProcessIdentitySchema = z.object({
     pid: z.number().int().positive(), uid: z.number().int().nonnegative(),
     bootID: z.string().uuid(), startTicks: z.string().regex(/^\d{1,32}$/),
     cwd: absolute, cgroup: z.string().min(1).max(4096),
+    processGroup: z.number().int().positive().optional(),
 }).strict();
 export type LinuxProcessIdentity = z.infer<typeof LinuxProcessIdentitySchema>;
 const proofSchema = z.object({ version: z.literal(1), machineID: identifier, sessionID: identifier,
@@ -35,11 +36,22 @@ export function readLinuxProcess(pid: number): LinuxProcessIdentity | null {
         if (before[19] !== after[19] || ['Z', 'X'].includes(after[0]) || statSync(root).uid !== uid
             || readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() !== bootID
             || realpathSync(readlinkSync(`${root}/cwd`)) !== cwd || readFileSync(`${root}/cgroup`, 'utf8') !== cgroup) return null;
-        return LinuxProcessIdentitySchema.parse({ pid, uid, bootID, startTicks: after[19], cwd, cgroup });
+        return LinuxProcessIdentitySchema.parse({ pid, uid, bootID, startTicks: after[19], cwd, cgroup, processGroup: Number(after[2]) });
     } catch { return null; }
 }
 const sameIdentity = (a: LinuxProcessIdentity, b: LinuxProcessIdentity) =>
-    a.pid === b.pid && a.uid === b.uid && a.bootID === b.bootID && a.startTicks === b.startTicks && a.cwd === b.cwd && a.cgroup === b.cgroup;
+    a.pid === b.pid && a.uid === b.uid && a.bootID === b.bootID && a.startTicks === b.startTicks && a.cwd === b.cwd && a.cgroup === b.cgroup
+        && (a.processGroup === undefined || b.processGroup === undefined || a.processGroup === b.processGroup);
+
+/** Read-only mapping, not a stop assertion. Legacy proofs without a process group remain unknown. */
+export function retirementProcessProof(directory: string, machineID: string, sessionID: string, workspace: {cwd:string;repository:string}) {
+    try {
+        const proof=proofSchema.parse(new MetadataStore(directory,1024*1024,false).get(`session:${sessionID}`));
+        if(proof.machineID!==machineID||proof.sessionID!==sessionID||proof.directory!==workspace.cwd||proof.repository!==workspace.repository
+            ||proof.identity.uid!==process.getuid?.()||!proof.identity.processGroup)return null;
+        return proof.identity;
+    } catch {return null;}
+}
 
 /** Machine-local corroboration, never a grant, running-status override, or kill right. */
 export class SessionProcessProofs {
@@ -71,7 +83,8 @@ export class SessionProcessProofs {
             if (prior !== null) {
                 const saved = proofSchema.parse(prior);
                 if (saved.machineID === this.machineID && saved.sessionID === session.id && saved.directory === target.directory
-                    && saved.repository === target.repository && sameIdentity(saved.identity, target.identity)) return true;
+                    && saved.repository === target.repository && sameIdentity(saved.identity, target.identity)
+                    && (saved.identity.processGroup !== undefined || target.identity.processGroup === undefined)) return true;
             }
             this.store.set(key, proofSchema.parse({ version: 1, machineID: this.machineID, sessionID: session.id, ...target, recordedAt: Date.now(), source }));
             return true;

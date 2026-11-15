@@ -86,7 +86,7 @@ describe('durable machine queue with actual Git worktrees and session processes'
     it('rechecks revoked grants before running, retains dirty/failed worktrees, and validates concurrency',async()=>{
         const f=setup(),a=await f.create('a');await f.send(a.sessionID,'one');const g=JSON.parse(readFileSync(join(f.root,'grants.json'),'utf8'));g['grant-a'].state='revoked';writeFileSync(join(f.root,'grants.json'),JSON.stringify(g));
         await f.tick();expect(f.state('one')).toBe('failed');expect(f.messages(a.sessionID)).toHaveLength(0);
-        writeFileSync(join(a.execution.directory,'dirty'),'keep');expect(()=>cleanCompletedWorkspace(f.worker.queue, f.worker.queue.workspaces('grant-a')[0].id)).toThrow('WORKTREE_IN_USE');
+        writeFileSync(join(a.execution.directory,'dirty'),'keep');expect(()=>cleanCompletedWorkspace(f.worker.queue, f.worker.queue.workspaces('grant-a')[0].id)).toThrow('WORKTREE_LIFECYCLE_POLICY_REQUIRED');
         expect(readFileSync(join(a.execution.directory,'dirty'),'utf8')).toBe('keep');expect(()=>new TaskQueue(join(f.root,'bad'),0)).toThrow('INVALID_CONCURRENCY');expect(()=>new TaskQueue(join(f.root,'invalid'),1.5)).toThrow('INVALID_CONCURRENCY');expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CONFIGURATION_CHANGED');
     });
     it('holds a single cross-Dot/process ceiling and reconnects running processes after real scheduler SIGKILL',async()=>{
@@ -218,9 +218,9 @@ it('rejects subdirectory and symlink worktree authorization, preserves dirty com
     config.registration.projects[0].directory=f.repo;grants['grant-a'].projectDirectory=f.repo;writeFileSync(join(f.root,'config.json'),JSON.stringify(config));writeFileSync(join(f.root,'grants.json'),JSON.stringify(grants));
     const fresh=fixtureWorker(f.root),a:any=await fresh.call('tasks.create',{requestID:'clean',projectID:'project',machineID:'machine',execution:{mode:'worktree'}});await fresh.call('sessions.send',{requestID:'one',sessionID:a.data.sessionID,text:'one.txt'});await fresh.worker.scheduler.tick();
     await until(()=>f.messages(a.data.sessionID).length>=2);f.release('one');await until(async()=>{await fresh.worker.scheduler.tick();return f.state('one')==='completed';});
-    const w=f.worker.queue.workspaces('grant-a').find(w=>w.sessionID===a.data.sessionID)!;writeFileSync(join(w.cwd,'dirty'),'preserve');expect(()=>cleanCompletedWorkspace(f.worker.queue,w.id)).toThrow('WORKTREE_DIRTY');
-    expect(readFileSync(join(w.cwd,'dirty'),'utf8')).toBe('preserve');rmSync(join(w.cwd,'dirty'));expect(()=>cleanCompletedWorkspace(f.worker.queue,w.id)).toThrow('WORKTREE_PROCESS_UNCONFIRMED');
-    const pid=f.sessions().find(s=>s.id===a.data.sessionID).metadata.hostPid;process.kill(-pid,'SIGTERM');const stopped=()=>{try{process.kill(pid,0);return false;}catch(e){if((e as any).code!=='ESRCH')return false;}try{process.kill(-pid,0);return false;}catch(e){return (e as any).code==='ESRCH';}};await until(stopped);cleanCompletedWorkspace(f.worker.queue,w.id,stopped);expect(existsSync(w.cwd)).toBe(false);expect(git(f.repo,'rev-parse',w.branch!)).toBeTruthy();
+    const w=f.worker.queue.workspaces('grant-a').find(w=>w.sessionID===a.data.sessionID)!;writeFileSync(join(w.cwd,'dirty'),'preserve');expect(()=>cleanCompletedWorkspace(f.worker.queue,w.id)).toThrow('WORKTREE_LIFECYCLE_POLICY_REQUIRED');
+    expect(readFileSync(join(w.cwd,'dirty'),'utf8')).toBe('preserve');rmSync(join(w.cwd,'dirty'));expect(()=>cleanCompletedWorkspace(f.worker.queue,w.id)).toThrow('WORKTREE_LIFECYCLE_POLICY_REQUIRED');
+    const pid=f.sessions().find(s=>s.id===a.data.sessionID).metadata.hostPid;process.kill(-pid,'SIGTERM');const stopped=()=>{try{process.kill(pid,0);return false;}catch(e){if((e as any).code!=='ESRCH')return false;}try{process.kill(-pid,0);return false;}catch(e){return (e as any).code==='ESRCH';}};await until(stopped);expect(()=>cleanCompletedWorkspace(f.worker.queue,w.id,stopped)).toThrow('WORKTREE_LIFECYCLE_POLICY_REQUIRED');expect(existsSync(w.cwd)).toBe(true);expect(git(f.repo,'rev-parse',w.branch!)).toBeTruthy();
 });
 it('authenticates durable payloads, refuses corrupt state, and reconfigures only an idle machine',()=>{
     const f=setup(), queue=f.worker.queue;

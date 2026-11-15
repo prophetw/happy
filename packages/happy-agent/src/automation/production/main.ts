@@ -2,6 +2,10 @@ import { readProductionConfig } from './config';
 import { startHost } from './host';
 
 export async function productionMain(argv: string[], boot = startHost) {
+    if (argv[0] === 'workspaces') {
+        const { workspaceMain } = await import('./workspaces');
+        await workspaceMain(argv.slice(1)); return;
+    }
     let host: Awaited<ReturnType<typeof startHost>> | undefined;
     let closing = false, shutdownRequested = false;
     const shutdown = () => {

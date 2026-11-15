@@ -21,5 +21,7 @@ export type { SecretProvider } from '../production/secrets';
 
 export { TaskQueue } from './taskQueue';
 export { cleanCompletedWorkspace } from './taskWorkspaces';
+export { WorkspaceLifecycle, workspacePolicySchema } from './workspaceLifecycle';
+export type { WorkspacePolicy, WorkspacePlan, ActivityProbe } from './workspaceLifecycle';
 export { SessionProcessProofs, readLinuxProcess, LinuxProcessIdentitySchema } from './sessionProcessProofs';
 export type { LinuxProcessIdentity } from './sessionProcessProofs';
