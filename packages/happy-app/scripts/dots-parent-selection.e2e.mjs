@@ -73,7 +73,7 @@ try {
             response.end('<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:system-ui}#root{width:100%;max-width:960px;min-height:100%;margin:0 auto;padding:16px}</style><div id="root"></div><script src="/bundle.js"></script></html>');
         }
     });
-    await new Promise(resolve => server.listen(20080, '127.0.0.1', resolve));
+    await new Promise(resolve => server.listen(Number(process.env.DOTS_FIXTURE_PORT ?? '20080'), '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${server.address().port}`;
     browser = await chromium.launch({ headless: true });
     for (const profile of [{name:'desktop',width:1280,height:1000},{name:'mobile',width:390,height:844}]) {

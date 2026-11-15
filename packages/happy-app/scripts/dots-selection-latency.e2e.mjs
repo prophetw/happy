@@ -78,8 +78,8 @@ try {
         else if(req.url==='/favicon.ico'){res.statusCode=204;res.end();}
         else{res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;font-family:system-ui}#root{max-width:900px;margin:auto;padding:16px}</style><div id="root"></div><script src="/bundle.js"></script></html>');}
     });
-    await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(20080,'127.0.0.1',resolve);});
-    const origin='http://127.0.0.1:20080';
+    await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(Number(process.env.DOTS_FIXTURE_PORT ?? '20080'),'127.0.0.1',resolve);});
+    const origin=`http://127.0.0.1:${server.address().port}`;
     browser=await chromium.launch({headless:true});
     for(const profile of [{name:'desktop',width:1280,height:1000},{name:'mobile',width:390,height:844}]){
         const context=await browser.newContext({viewport:{width:profile.width,height:profile.height},serviceWorkers:'block'});

@@ -337,3 +337,25 @@ it('ignores an old selection response after changing session scope', async () =>
     expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(false);
     expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(0);
 });
+
+it.each(['bind', 'bind-projects'])('stops after a duplicate-ID %s acknowledgement instead of confirming a missing selection', async action => {
+    projectFixture(); const f = await render(dotId); const backend = mocks.rpc.getMockImplementation()!;
+    let corrupted = false;
+    mocks.rpc.mockImplementation(async (...args) => {
+        const result = await backend(...args);
+        if (!corrupted && args[2].action === action) {
+            corrupted = true;
+            if (action === 'bind') result.data.dots[0].connectionIDs = ['second', 'second'];
+            else result.data.dots[0].projectBindings.first = ['a', 'a'];
+        }
+        return result;
+    });
+    await f.click('为 Dot A 启用 MCP first');
+    const writes = mocks.rpc.mock.calls.filter(call => call[2].action !== 'list');
+    expect(writes).toHaveLength(action === 'bind' ? 1 : 2);
+    expect(f.button('为 Dot A 启用 MCP first').props.disabled).toBe(true);
+    expect(JSON.stringify(f.renderer.toJSON())).toContain('保存结果待核对');
+    expect(JSON.stringify(f.renderer.toJSON())).not.toContain('已保存。');
+    await f.click('为 Dot A 启用 MCP first');
+    expect(mocks.rpc.mock.calls.filter(call => call[2].action !== 'list')).toHaveLength(writes.length);
+});

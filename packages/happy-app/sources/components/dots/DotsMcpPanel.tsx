@@ -10,7 +10,7 @@ const happyControlExample = JSON.stringify({ url: 'https://example.com/happy-con
 const stdioExample = JSON.stringify({ command: 'node', args: ['/absolute/path/server.mjs'], env_vars: ['MY_MCP_TOKEN'] }, null, 2);
 type SelectionMutation = Extract<DotsMcpMutation, { action: 'bind' | 'bind-projects' }>;
 type SelectionDraft = Record<string, Record<string, { selected: boolean; projectIDs: string[] }>>;
-const sameIDs = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
+const sameIDs = (a: string[], b: string[]) => a.length === b.length && new Set(a).size === a.length && new Set(b).size === b.length && a.every(id => b.includes(id));
 
 /** Only explicit clicks create drafts. Plan against the last acknowledged revision. */
 function nextSelectionMutation(view: DotsMcpView, drafts: SelectionDraft): SelectionMutation | undefined {
