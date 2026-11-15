@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 11 - More relevant Dot memories",
+      "summary": "Requires the updated TestLoop host.",
+      "markdown": "- **Use relevant memories** — leave unrelated memories out of the background for your current question.\n- **Understand skipped memories** — see when a memory was unrelated to that question.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 10 - Open Dots sooner",
       "summary": "Requires the updated TestLoop host.",
       "markdown": "- **Open Dots sooner** — see your last loaded directory while the latest work refreshes in the background.\n- **Understand waiting work** — see why a task is waiting and when Happy will automatically check again.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -171,5 +176,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 10 - Open Dots sooner"
+  "latestTitle": "November 11 - More relevant Dot memories"
 }

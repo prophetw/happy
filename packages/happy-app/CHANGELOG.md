@@ -1,3 +1,11 @@
+# November 11 - More relevant Dot memories
+
+Requires the updated TestLoop host.
+
+- **Use relevant memories** — leave unrelated memories out of the background for your current question.
+- **Understand skipped memories** — see when a memory was unrelated to that question.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # November 10 - Open Dots sooner
 
 Requires the updated TestLoop host.

@@ -2,12 +2,27 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('./apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
-import { ObservationMemoriesSchema, ObservationResponseSchema, ObservationSelectionSchema, observationError, requestDotObservation } from './dotObservation';
+import { ObservationMemoriesSchema, ObservationResponseSchema, ObservationSelectionSchema, observationError, observationReasons, requestDotObservation } from './dotObservation';
 
 const dotId = '22222222-2222-4222-8222-222222222222', turnId = '33333333-3333-4333-8333-333333333333';
 const hash = 'sha256:' + 'a'.repeat(64);
 const base = { schemaVersion: 1, dotId, snapshotId: hash, asOf: '2026-11-05T00:00:00Z' };
 describe('Dot observation protocol', () => {
+    it.each([1, 2, 3])('reads memory selection policy %i without losing the recorded reason', async version => {
+        const reason = version === 3 ? 'unrelated' : 'entry_limit';
+        mocks.rpc.mockResolvedValueOnce({ ok: true, data: { ...base, action: 'turn', section: 'selection', turnId,
+            available: true, policy: { version, asOf: base.asOf, enabled: true, maxEntries: 10, maxBytes: 8192 },
+            page: { items: [{ keyDigest: hash, key: '饮食偏好', revision: 1, reason }], total: 1, offset: 0, nextOffset: null } } });
+        const result = await requestDotObservation('workspace', { dotId, action: 'turn', turnId, section: 'selection' }, ObservationSelectionSchema);
+        expect(result.policy?.version).toBe(version);
+        expect(result.page.items[0].reason).toBe(reason);
+        if (version === 3) expect(observationReasons[result.page.items[0].reason]).toBe('与本轮问题无关');
+    });
+    it('continues rejecting unknown memory selection reasons', () => {
+        expect(ObservationSelectionSchema.safeParse({ ...base, action: 'turn', section: 'selection', turnId,
+            available: true, policy: null, page: { items: [{ keyDigest: hash, key: null, revision: 1, reason: 'unknown_reason' }],
+                total: 1, offset: 0, nextOffset: null } }).success).toBe(false);
+    });
     it('uses the encrypted read-only RPC and retains pagination identity', async () => {
         mocks.rpc.mockResolvedValueOnce({ ok: true, data: { ...base, action: 'memories', page: { items: [], total: 0, offset: 10, nextOffset: null } } });
         const result = await requestDotObservation('workspace', { dotId, action: 'memories', offset: 10, snapshotId: hash }, ObservationMemoriesSchema);

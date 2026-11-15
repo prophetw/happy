@@ -115,6 +115,20 @@ it('opens the frozen context from activity and distinguishes memory locations an
     await f.click('记忆选择原因'); expect(f.text()).toContain('达到条数上限');
     expect(mocks.rpc.mock.calls.every(call => call[1] === 'testloop-dot-observation')).toBe(true);
 });
+it('explains a v3 unrelated memory in the frozen selection details', async () => {
+    const normal = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (session, method, query) => query.action === 'turn' && query.section === 'selection'
+        ? { ok: true, data: { ...base, action: 'turn', section: 'selection', turnId, available: true,
+            policy: { version: 3, asOf: at, enabled: true, maxEntries: 10, maxBytes: 8192 },
+            page: paged([{ keyDigest, key: '饮食偏好', revision: 1, reason: 'unrelated' }]) } }
+        : normal(session, method, query));
+    const f = await render();
+    await f.click('查看本轮依据');
+    await f.click('记忆选择原因');
+    expect(f.text()).toContain('饮食偏好');
+    expect(f.text()).toContain('与本轮问题无关');
+    expect(f.text()).not.toContain('观察数据格式无法确认');
+});
 it('shows versions, links actual historical usage and keeps editing in the existing conversation flow', async () => {
     const f = await render('memory'); await f.click('查看记忆：偏好'); expect(f.text()).toContain('旧版'); expect(f.text()).toContain('新版');
     await f.click('编辑这条记忆'); expect(f.props.onEditMemory).toHaveBeenCalledWith('偏好', expect.objectContaining({ revision: 2, value: '新版' }), 'dot');

@@ -7,7 +7,7 @@ const time = z.string().datetime({ offset: true });
 const identity = z.object({ name: z.string().max(80), instruction: z.string().max(2000) });
 export const observationMemoryStatus = { effective: '有效', unconfirmed: '待确认', expired: '已过期', deleted: '已忘记' };
 export const observationReasons = { included: '已带入有效背景', unconfirmed: '未确认', expired: '已过期', deleted: '已忘记',
-    entry_limit: '达到条数上限', byte_limit: '达到字节上限', disabled: '未启用记忆背景' };
+    unrelated: '与本轮问题无关', entry_limit: '达到条数上限', byte_limit: '达到字节上限', disabled: '未启用记忆背景' };
 export type MemoryScope = 'dot' | 'user';
 const memoryScope = z.enum(['dot', 'user']).default('dot');
 const memoryStatus = z.enum(['effective', 'unconfirmed', 'expired', 'deleted']);
@@ -58,7 +58,7 @@ export const ObservationInputMemorySchema = turnBase.extend({ action: z.literal(
     })) });
 export const ObservationSelectionSchema = turnBase.extend({ action: z.literal('turn'), section: z.literal('selection'), available: z.boolean(),
     policy: z.object({ version: z.number(), asOf: time, enabled: z.boolean(), maxEntries: z.number(), maxBytes: z.number() }).nullable(),
-    page: page(z.object({ keyDigest: hash, key: z.string().nullable(), revision: z.number(), reason: z.enum(['included', 'unconfirmed', 'expired', 'deleted', 'entry_limit', 'byte_limit', 'disabled']) })) });
+    page: page(z.object({ keyDigest: hash, key: z.string().nullable(), revision: z.number(), reason: z.enum(['included', 'unconfirmed', 'expired', 'deleted', 'unrelated', 'entry_limit', 'byte_limit', 'disabled']) })) });
 const memoryMetadata = z.object({ keyDigest: hash, key: z.string().nullable(), status: memoryStatus, revision: z.number(), deletedAt: time.nullable() });
 export const ObservationMemorySchema = base.extend({ action: z.literal('memory'), section: z.literal('versions'), scope: memoryScope, memory: memoryMetadata,
     page: page(z.object({ revision: z.number(), action: z.enum(['remember', 'confirm']), kind: z.string(), value: z.unknown(), source: z.string(),
