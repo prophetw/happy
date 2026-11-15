@@ -1,5 +1,20 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## 99.57 公网双前门（2026-11-14，已部署）
+
+> 本节为 2026-11-14 的部署与验收记录；不代表之后的源码集成已重新部署或复验服务。
+
+在私网 Tailscale 之上新增 99.57 公网反向代理，99.57 不运行 Happy 服务；两条前门均到本机同一 gateway / Relay：
+
+- Tailscale：`https://desktop-8ut4p0p.taild92624.ts.net/...` → `127.0.0.1:18194`
+- 公网：`https://szsp.suitbim.com.cn:7100/...` → `10.240.30.32:18194`
+
+本机 gateway 同时监听 `127.0.0.1:18194` 与 `10.240.30.32:18194`；99.57 nginx 保留 `/home-relay/`、`/happy/`、`/happy-control/` 路径反代；Relay `RELAY_PUBLIC_URL` 改为公网；Web 切换为保留的 `bdb246abeaf6` 公网构建；Control `additionalBrowserOrigins` 增加公网 origin，并保留 Tailscale origin 进 CORS 列表。Tailscale Serve 未改。
+
+已验证：两边 `/home-relay/health` 200、WSS 101 + Engine.IO open；`/happy/` 与 Control compatibility 200；公网 TLS / gzip；Playwright 手机尺寸首屏无 Console / Page / 失败请求；99.57 BIM 根 200；Relay 窗口内 0 4xx / 5xx；收紧白名单后用本机 CLI token 对公网与 Tailscale `/v1/account/profile` 均 200。
+
+待办 / 限制：`10.240.30.32` 为 DHCP，需保留地址；`HAPPY_ALLOWED_ACCOUNT_IDS` 已收紧到当前账号；本机 gateway nginx 已加来源 allowlist（仅 `127.0.0.1`、`10.240.30.32`、`100.116.89.36`、`192.168.99.57`）；Windows 防火墙 99.57 专用规则仍待管理员补，命令见部署手册；手机 App 需手动切公网地址，Tailscale 可手动回退，无自动 failover；`RELAY_PUBLIC_URL` 与 Web 构建为单值；公网仍暴露 Relay / Control，Control 建议按需收回 tailnet-only。备份与回滚见 `docs/deployment.md#9957-公网双前门2026-11-14`。
+
 ## Dot 任务命名与项目分组 P0（2026-11-13，已部署）
 
 功能提交 `8ca54cde97d3fa2917bc403dbb78fba701fa21a3` 已推送个人 `fork/main`，从最新远端 main 独立提交，未带入其他工作区改动。Control、Worker/CLI、宿主和私网 Web 已切换；固定 Worker 包 `/home/dev/.local/share/happy-automation/releases/p0-task-title-20261113`，Control 镜像 `sha256:e5532ee3e2b281e079a88a799be546aac4699e3049b0cf9d334fb743c669abbf`。真实只读任务验证标题、可信 origin、完成回执和测试会话停止；固定 Web 手机分组与线上资源核验通过。健康仅保留原三项 attention。

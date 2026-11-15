@@ -2,6 +2,66 @@
 
 This document describes how to deploy the Happy backend (`packages/happy-server`) and the infrastructure it expects.
 
+## 99.57 公网双前门（2026-11-14）
+
+> 本节为 2026-11-14 的部署与验收记录；不代表之后的源码集成已重新部署或复验服务。
+
+在 2026-11-07 私网 Tailscale 迁移之上，新增 99.57 公网反向代理。99.57 不运行 Happy 服务；
+两条前门最终都到本机同一个 gateway / Relay：
+
+| 前门 | 入口 | 后端 |
+| --- | --- | --- |
+| Tailscale（仅 tailnet） | `https://desktop-8ut4p0p.taild92624.ts.net/...` | `127.0.0.1:18194` |
+| 公网 99.57 | `https://szsp.suitbim.com.cn:7100/...` | `10.240.30.32:18194` |
+
+- 本机 `happy-local/config/nginx.conf` 同时监听 `127.0.0.1:18194` 和 `10.240.30.32:18194`；
+  保留 loopback 监听，Tailscale Serve 配置不变。
+- 本机 gateway 已加来源 allowlist：只允许 `127.0.0.1`、`10.240.30.32`、`100.116.89.36`、
+  `192.168.99.57`，其余 `deny all`；Windows 防火墙 99.57 专用规则仍建议作为纵深防御。
+- 99.57 `bim-nginx-1.30` 的 7100 server 将 `/home-relay/`、`/happy/`、`/happy-control/`
+  保留路径反代到 `http://10.240.30.32:18194`；WebSocket 使用已有 `$connection_upgrade`。
+- Relay `.env.relay` 的 `RELAY_PUBLIC_URL` 改为
+  `https://szsp.suitbim.com.cn:7100/home-relay`；附件 canonical URL 统一走公网。
+- Web 使用保留的 `bdb246abeaf6` 公网构建（JS 已注入公网 `/home-relay`），替换本机 `web/`；
+  旧 Web 保留为 `web.bak-dual-20261114T110133`。
+- Control `host.json` 的 `additionalBrowserOrigins` 增加
+  `https://szsp.suitbim.com.cn:7100`，并把 Tailscale origin 也加入该列表，保证双前门 Web
+  的 CORS；`origin` / `relayURL` 仍为 Tailscale。
+
+已验证（2026-11-14）：
+
+- 公网与 Tailscale `/home-relay/health` 均 200；两边 WSS 均返回 101 并收到 Engine.IO open。
+- 公网与 Tailscale `/happy/` 均 200；Playwright 手机尺寸首屏无 Console / Page / 失败请求，
+  公网页面内 `/home-relay/health` 返回 200。
+- 公网与 Tailscale Origin 的 `/happy-control/v1/compatibility` 均 200。
+- 收紧 `HAPPY_ALLOWED_ACCOUNT_IDS` 后，用本机 CLI token 对公网与 Tailscale
+  `/v1/account/profile` 均返回 200；当前账号未被误伤，Relay 未出现 403。
+- 99.57 BIM 根 `/` 仍 200；Relay 请求 2xx、0 4xx / 5xx（发布窗口内）。
+- 公网 TLS 在不用 `-k` 的情况下校验通过；gzip 静态响应正常。
+
+限制与待办：
+
+- `10.240.30.32` 当前为 DHCP；需要 DHCP 保留或稳定地址，否则本机 gateway 重启或
+  99.57 上游会失效。
+- 本机 Windows 防火墙的 99.57 专用入站规则因当前进程无管理员权限未添加；gateway nginx
+  已先做来源 allowlist。建议仍用管理员 PowerShell 执行下方命令作为纵深防御。
+  Private / Public 防火墙配置文件关闭，Domain 开启。
+- 手机 App 需手动把服务器地址切到公网；Tailscale 地址仍可手动回退，App 没有自动 failover。
+- `RELAY_PUBLIC_URL` 与 Web 构建均为单值；公网不可用时 Tailscale 路径的文字同步仍可用，
+  但附件 canonical URL 仍指公网。
+- 99.57 公网暴露 Relay / Control；`HAPPY_ALLOWED_ACCOUNT_IDS` 已收紧到当前账号
+  （见 `.env.relay`），公网匿名账号无法注册；Control 仍建议按需收回 tailnet-only。
+
+回滚备份：本机 `nginx.conf.bak-dual-20261114T110133`、`host.json.bak-dual-*`、
+`.env.relay.bak-dual-*`；99.57 `http.nginx.1.30.1.prod.conf.bak-dual-20261114T110133`；
+Web `web.bak-dual-20261114T110133`。
+
+```powershell
+New-NetFirewallRule -DisplayName "Happy gateway 18194 from 99.57" -Direction Inbound `
+  -Action Allow -Protocol TCP -LocalAddress 10.240.30.32 -LocalPort 18194 `
+  -RemoteAddress 192.168.99.57
+```
+
 ## 本机与 Tailscale 迁移（2026-11-07）
 
 **基础设施、数据与在线客户端切流已验证；已补充未登录浏览器与用户手机首屏验证。** 99.55 / 99.57
