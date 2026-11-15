@@ -86,8 +86,17 @@ export type ObservationRequest = { dotId: string; offset?: number; limit?: numbe
 
 export async function requestDotObservation<T extends ObservationResponse>(sessionId: string, request: ObservationRequest, schema: z.ZodType<T>): Promise<T> {
     let reply: unknown;
-    try { reply = await apiSocket.sessionRPC(sessionId, 'testloop-dot-observation', { schemaVersion: 1, ...request }); }
-    catch { throw new Error('observation_transport_unconfirmed'); }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        reply = await Promise.race([
+            apiSocket.sessionRPC(sessionId, 'testloop-dot-observation', { schemaVersion: 1, ...request }),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('observation_timeout')), 10000); }),
+        ]);
+    } catch (error) {
+        // The socket RPC ack timeout is 50s; a slow user-scope read must not hold the panel that long.
+        if (error instanceof Error && error.message === 'observation_timeout') throw error;
+        throw new Error('observation_transport_unconfirmed');
+    } finally { clearTimeout(timer); }
     const envelope = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), data: z.unknown() }),
         z.object({ ok: z.literal(false), error: z.string().regex(/^observation_[a-z_]+$/) })]).safeParse(reply);
     if (!envelope.success) throw new Error('observation_invalid_response');
@@ -110,6 +119,7 @@ export function observationError(error: unknown) {
         observation_user_memory_unavailable: '用户级记忆暂不可用，请核对宿主账号认证、服务器连接和记忆授权后重试。',
         observation_workspace_not_authorized: '当前工作台授权不可用，请返回重新打开。',
         observation_transport_unconfirmed: '未收到观察数据，请检查连接及宿主是否支持观察台，然后刷新。',
+        observation_timeout: '读取观察数据超时，请刷新重试。',
         observation_invalid_response: '观察数据格式无法确认，请核对宿主版本后刷新。',
     } as Record<string, string>)[code] ?? '暂时无法读取观察数据，请刷新重试。';
 }

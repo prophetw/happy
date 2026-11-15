@@ -50,6 +50,36 @@ describe('Dot observation protocol', () => {
         await expect(requestDotObservation('workspace', { dotId, action: 'memories' }, ObservationMemoriesSchema)).rejects.toThrow('observation_transport_unconfirmed');
         expect(observationError(new Error('observation_transport_unconfirmed'))).toContain('宿主是否支持观察台');
     });
+    it('limits UI waiting to ten seconds without accepting a late RPC result', async () => {
+        vi.useFakeTimers();
+        try {
+            let resolve!: (value: unknown) => void;
+            mocks.rpc.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+            const request = requestDotObservation('workspace', { dotId, action: 'memories' }, ObservationMemoriesSchema);
+            const rejected = expect(request).rejects.toThrow('observation_timeout');
+            await vi.advanceTimersByTimeAsync(9999);
+            expect(vi.getTimerCount()).toBe(1);
+            await vi.advanceTimersByTimeAsync(1);
+            await rejected;
+            resolve({ ok: true, data: { ...base, action: 'memories', page: { items: [], total: 0, offset: 0, nextOffset: null } } });
+            await Promise.resolve();
+            expect(vi.getTimerCount()).toBe(0);
+            expect(observationError(new Error('observation_timeout'))).toContain('超时');
+        } finally { vi.useRealTimers(); }
+    });
+    it.each(['resolve', 'reject'])('clears the observation deadline after RPC %s', async outcome => {
+        vi.useFakeTimers();
+        try {
+            if (outcome === 'resolve') {
+                mocks.rpc.mockResolvedValueOnce({ ok: true, data: { ...base, action: 'memories', page: { items: [], total: 0, offset: 0, nextOffset: null } } });
+                await requestDotObservation('workspace', { dotId, action: 'memories' }, ObservationMemoriesSchema);
+            } else {
+                mocks.rpc.mockRejectedValueOnce(new Error('offline'));
+                await expect(requestDotObservation('workspace', { dotId, action: 'memories' }, ObservationMemoriesSchema)).rejects.toThrow('observation_transport_unconfirmed');
+            }
+            expect(vi.getTimerCount()).toBe(0);
+        } finally { vi.useRealTimers(); }
+    });
     it('decodes the actual host fixture when supplied by the backend integration run', () => {
         const file = process.env.TESTLOOP_DOT_OBSERVATION_FIXTURE;
         if (!file) return;
