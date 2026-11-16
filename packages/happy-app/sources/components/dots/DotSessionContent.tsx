@@ -144,7 +144,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                         <Text style={body}>{task.title}</Text><Text style={muted}>{testloopWorkStatus(task)}{task.projectID ? ` · ${task.projectID}` : ''}</Text>
                     </Pressable>)}
                     {!detail.tasks.length && <Text style={muted}>这个 Dot 还没有可查看的工作项。在对话中交办即可。</Text>}
-                    {detail.taskTotal > detail.tasks.length && <Text style={muted}>当前展示最近 {detail.tasks.length} 项，其余工作可在对话中按名称或编号查询。</Text>}
+                    {detail.taskTotal > detail.tasks.length && <Text style={muted}>当前展示 {detail.tasks.length} 项，其余工作可在对话中按名称或编号查询。</Text>}
                 </>}
             {view && <Text style={muted}>更新于 {new Date(view.asOf).toLocaleString()}</Text>}
         </ScrollView>

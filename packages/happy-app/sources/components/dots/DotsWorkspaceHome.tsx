@@ -186,12 +186,12 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 <View style={[s.attention, { width: compact ? '100%' : 280 }]}><Text style={s.heading}>需要你处理</Text>
                     {unavailable && <Text accessibilityRole="alert" style={s.muted}>部分助理的工作项暂时无法读取，请进入对应对话核对或刷新重试。</Text>}
                     {!snapshot?.workbench ? <Text style={s.muted}>{snapshot ? '当前宿主尚未提供任务概览，请升级宿主后刷新。' : '正在读取工作进展…'}</Text>
-                        : !attention.length ? !unavailable && <Text style={s.muted}>最近工作项中没有待处理事项。</Text> : attention.map(task => <Pressable key={`${task.dot.id}:${task.id}`} accessibilityRole="button"
+                        : !attention.length ? !unavailable && <Text style={s.muted}>当前展示的工作项中没有待处理事项。</Text> : attention.map(task => <Pressable key={`${task.dot.id}:${task.id}`} accessibilityRole="button"
                             accessibilityLabel={`查看 ${task.dot.name} 的工作：${task.title}`} disabled={opening !== null} onPress={() => void openDot(task.dot)}
                             style={{ gap: 5, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }}>
                             <Text style={{ color: theme.colors.text, lineHeight: 22 }}>{task.title}</Text><Text style={s.muted}>{task.dot.name} · {testloopWorkStatus(task)}</Text>
                         </Pressable>)}
-                    {snapshot?.workbench && <Text style={[s.muted, { fontSize: 11 }]}>各 Dot 最近 5 项工作 · 更新于 {new Date(snapshot.workbench.asOf).toLocaleString()}</Text>}
+                    {snapshot?.workbench && <Text style={[s.muted, { fontSize: 11 }]}>各 Dot 最多展示 5 项工作 · 更新于 {new Date(snapshot.workbench.asOf).toLocaleString()}</Text>}
                 </View>
             </View>
         </ScrollView>
