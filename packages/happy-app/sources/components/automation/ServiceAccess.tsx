@@ -64,6 +64,7 @@ export function ServiceTokenDelivery({ consent, api, disabled = false }: { conse
 /** Uses only operator-registered service identities and worker scopes; existing sessions default denied. */
 export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; onCreated: (id: string) => void; sourceID?: string }) {
     const [options, setOptions] = React.useState<ServiceConnectionOptions | null>(null), [clientID, setClient] = React.useState(''), [workerID, setWorker] = React.useState(''), [projectIDs, setProjects] = React.useState<string[]>([]);
+    const [name, setName] = React.useState('');
     const [methods, setMethods] = React.useState<string[]>([]), [days, setDays] = React.useState('30'), [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false), [submitted, setSubmitted] = React.useState(false);
     const [original, setOriginal] = React.useState<AutomationConsent | null>(null);
     const generation = React.useRef(0), attempted = React.useRef(false), selectionVersion = React.useRef(0);
@@ -76,6 +77,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         const version = ++generation.current;
         attempted.current = false;
         setOptions(null); setOriginal(null); setClient(''); setWorker(''); setProjects([]); setMethods([]); setDays('30');
+        setName('');
         setError(''); setBusy(false); setSubmitted(false); setCustomDirectories([]); setCustomPath(''); setClock(Date.now()); invalidateSelection();
         void (async () => {
             if (sourceID === undefined) {
@@ -124,6 +126,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
                     }
                 }
                 setOptions(value); setOriginal(previous); setClient(previous.clientID); setWorker(previous.workerID); setProjects(restoredProjects);
+                setName(previous.name ?? '');
                 setCustomDirectories(restoredDirectories); setMethods([...previous.methods]); setDays(String(originalDays));
             } catch {
                 if (version === generation.current) { setOptions(null); setOriginal(null); setError(t('settings.automation.serviceEditLoadFailed')); }
@@ -150,7 +153,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         try {
             let next: AutomationConsent;
             try {
-                next = await api.createService({ clientID, workerID, machineID: worker.machineID,
+                next = await api.createService({ clientID, workerID, machineID: worker.machineID, ...(name.trim() ? { name: name.trim() } : {}),
                     ...(requiresDirectorySelection && verified ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID } : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() }),
                     methods, sessionIDs: original ? [...original.sessionIDs] : [], ...(original?.options !== undefined ? { options: original.options } : {}), expiresInMs: duration });
             } catch (error) {
@@ -201,6 +204,9 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
         {options && <>
             {original && <Text style={styles.secondary}>{t('settings.automation.serviceEditNotice')}</Text>}
+            <Text style={styles.title}>连接名称（可选）</Text>
+            <TextInput accessibilityLabel="连接名称" placeholder="例如：内容团队后端" value={name} onChangeText={setName} editable={!submitted} maxLength={80} style={styles.input} />
+            <Text style={styles.secondary}>仅用于在“连接记录”中区分多条授权，不影响权限范围；留空时显示服务身份名称。</Text>
             <Text style={styles.title}>服务身份</Text>
             {options.clients.map(c => <Choice key={c.id} label={c.name} selected={clientID === c.id} disabled={submitted} onPress={() => { setClient(c.id); invalidateSelection(); }} />)}
             <Text style={styles.title}>机器 / Worker</Text>

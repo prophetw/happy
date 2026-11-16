@@ -40,13 +40,16 @@ export const serviceTokensConfigSchema = z.object({ clients: z.array(serviceClie
     maxGrantMs: z.number().int().min(1000).max(MAX_SERVICE_GRANT_MS).default(MAX_SERVICE_GRANT_MS) }).strict();
 export type ServiceTokensConfig = z.input<typeof serviceTokensConfigSchema>;
 const serviceDurationMs = z.number().int().positive();
+/** Owner-written display label. Cosmetic only: never part of scope checks or the approval digest. */
+export const connectionLabelSchema = z.string().trim().min(1).max(80);
+export const connectionLabelUpdateSchema = z.object({ name: z.string().trim().max(80) }).strict();
 export const serviceConnectionSchema = z.union([
-    scopeSchema.extend({ clientID: identifier }).strict(),
-    multiProjectScopeSchema.extend({ clientID: identifier }).strict(),
-    directoryScopeSchema.extend({ clientID: identifier, selectionID: identifier }).strict(),
-    scopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, expiresInMs: serviceDurationMs }).strict(),
-    multiProjectScopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, expiresInMs: serviceDurationMs }).strict(),
-    directoryScopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, selectionID: identifier, expiresInMs: serviceDurationMs }).strict(),
+    scopeSchema.extend({ clientID: identifier, name: connectionLabelSchema.optional() }).strict(),
+    multiProjectScopeSchema.extend({ clientID: identifier, name: connectionLabelSchema.optional() }).strict(),
+    directoryScopeSchema.extend({ clientID: identifier, selectionID: identifier, name: connectionLabelSchema.optional() }).strict(),
+    scopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, expiresInMs: serviceDurationMs, name: connectionLabelSchema.optional() }).strict(),
+    multiProjectScopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, expiresInMs: serviceDurationMs, name: connectionLabelSchema.optional() }).strict(),
+    directoryScopeSchema.omit({ expiresAt: true }).extend({ clientID: identifier, selectionID: identifier, expiresInMs: serviceDurationMs, name: connectionLabelSchema.optional() }).strict(),
 ]);
 export type WorkerRegistration = Registration & {
     machineID: string; projects: { id: string; directory: string; sessionIDs: string[] }[];
@@ -62,6 +65,8 @@ export type Connection = Omit<Scope, 'projectID'> & {
     projectID?: string; projectDirectory?: string;
     scopeVersion?: 2 | 3; projectIDs?: string[]; projects?: { id: string; directory: string }[];
     id: string; clientID: string; userID: string; clientName: string; clientFingerprint: string; workerFingerprint: string;
+    /** Owner-editable display label shown in the connection list; absent = use clientName. */
+    name?: string;
     externalIdentity?: ExternalIdentity;
     credentialMode?: 'service-token-v1';
     /** Owner-approved launch-option subset. Absent = worker allowlist only. */
