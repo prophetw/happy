@@ -1,4 +1,5 @@
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
+import { createHostedAdmission } from './hostedDotAdmission';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 /** Headless Happy host: one Relay consumer, native thread, and durable delivery journal. */
@@ -41,7 +42,11 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     const file = join(dir, 'state.json');
     let state: ReturnType<typeof loadHostedState>;
     let producer: ReturnType<typeof hostedProducerIdentity>;
-    try { state = loadHostedState(file, config); producer = hostedProducerIdentity(); } catch (error) { closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop); throw error; }
+    let admission: ReturnType<typeof createHostedAdmission>;
+    try {
+        state = loadHostedState(file, config); producer = hostedProducerIdentity();
+        admission = createHostedAdmission({ directory: dir, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch }, producer);
+    } catch (error) { closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop); throw error; }
     const publishAuthority = createHostedAuthorityPublisher(file, state, producer);
     const persist = () => {
         try { compactSettledDispatchSnapshots(state); publishAuthority(); } catch (error) { stop = true; eventError = true; throw error; }
@@ -276,6 +281,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             await ensureMemoryPolicy();
         };
         while (!stop && !signal?.aborted) {
+            admission.permits(Boolean(active));
             if (!active && state.status !== 'blocked') {
                 const next = taskGateway();
                 if (hash(next) !== taskServersDigest && Date.now() >= refreshRetryAt) {
@@ -318,7 +324,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             }
             try {
                 await flush();
-                if (active && state.status !== 'blocked') {
+                if (active && state.status !== 'blocked' && admission.permits(true)) {
                     const row = state.inputs.find(r => r.status === 'queued' && r.delivery === 'steer');
                     const running = state.inputs.find(r => r.status === 'accepted');
                     if (row && running?.turnId) {
@@ -330,7 +336,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                         persist();
                     }
                 }
-                if (!active && state.status !== 'blocked') {
+                if (!active && state.status !== 'blocked' && admission.permits(false)) {
                     const row = state.inputs.find(r => r.status === 'queued' && (r.origin ?? 'user') === 'user') ?? state.inputs.find(r => r.status === 'queued');
                     if (row) {
                         // A binding RPC can publish while flush() awaits Relay delivery.
@@ -346,6 +352,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                             if (refreshed && hash(taskGateway()) !== taskServersDigest) continue;
                             if (stop || signal?.aborted || existsSync(controlFile) && !state.controls.includes(readPrivate(controlFile).id)) continue;
                         }
+                        if (!admission.permits(false)) continue;
                         row.beforeTurns = state.inputs.filter(r => r.epoch === state.epoch).flatMap(r => r.turnId ? [r.turnId] : []);
                         row.status = 'dispatching'; state.status = 'running'; persist();
                         active = client.sendTurnAndWait(row.text, { model: settings.model, effort: settings.effort, sandbox: 'read-only', approvalPolicy: 'never' }).then(() => {
@@ -371,7 +378,9 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     } finally {
         clearInterval(heartbeat);
         try { session?.sendSessionDeath(); await session?.close(); await client?.disconnect(); } finally {
-            closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop);
+            try { admission.stopped(); } finally {
+                closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop);
+            }
         }
     }
 }

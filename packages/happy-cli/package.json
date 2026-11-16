@@ -62,6 +62,10 @@
         "default": "./dist/daemon/automationMain.mjs"
       }
     },
+    "./codex/hostedDotAdmission": {
+      "require": { "types": "./dist/codex/hostedDotAdmission.d.cts", "default": "./dist/codex/hostedDotAdmission.cjs" },
+      "import": { "types": "./dist/codex/hostedDotAdmission.d.mts", "default": "./dist/codex/hostedDotAdmission.mjs" }
+    },
     "./codex/hostedDotLifecycle": {
       "require": {
         "types": "./dist/codex/hostedDotLifecycle.d.cts",

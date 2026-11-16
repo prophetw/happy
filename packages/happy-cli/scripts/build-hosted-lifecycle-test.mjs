@@ -7,7 +7,7 @@ import ts from 'typescript';
 const require = createRequire(import.meta.url);
 const output = resolve(process.argv[2] ?? '.hosted-lifecycle-test');
 mkdirSync(output, { recursive: true });
-for (const name of ['hostedDotState', 'hostedDotLifecycle', 'hostedDotAuthority', 'hostedDotAuthorityPublisher']) {
+for (const name of ['hostedDotState', 'hostedDotLifecycle', 'hostedDotAuthority', 'hostedDotAuthorityPublisher', 'hostedDotAdmission']) {
   const source = readFileSync(new URL('../src/codex/' + name + '.ts', import.meta.url), 'utf8');
   const result = ts.transpileModule(source, { fileName: name+'.ts', reportDiagnostics: true,
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } });
