@@ -17,6 +17,15 @@ import type { Job } from './gateway';
 import { SessionProcessProofs } from './sessionProcessProofs';
 import type { DecryptedSession } from '../../api';
 
+/**
+ * Queue lease pins grant identity only. Owner in-place edits (renewal, scope,
+ * display name) must not fail closed queued work; revocation and live scope are
+ * still enforced by authorizeGrant/checkBoundProjects on every execution.
+ */
+const leaseFingerprint = (c: Connection) => hash(canonicalBody({ id: c.id, clientID: c.clientID, userID: c.userID,
+    workerID: c.workerID, machineID: c.machineID, clientFingerprint: c.clientFingerprint,
+    workerFingerprint: c.workerFingerprint, credentialMode: c.credentialMode }));
+
 type LegacyObservation = {
     binding: string; sessionSeq: number; cursor: number; lastInput: number; lastTurn: number;
     turnID?: string; outcome?: Observation['outcome'];
@@ -195,7 +204,8 @@ export class ScopedWorker {
     private async currentGrant(t: QueueTask) {
         if (!this.authorizeGrant) throw new ApiError('QUEUE_AUTHORITY_UNAVAILABLE', 503);
         const live = await this.authorizeGrant(t.grantID);
-        if (hash(canonicalBody(live)) !== t.authorization) throw new ApiError('GRANT_REVOKED', 403);
+        // Accept the pre-edit full-body lease for tasks enqueued before identity leases.
+        if (t.authorization !== leaseFingerprint(live) && t.authorization !== hash(canonicalBody(live))) throw new ApiError('GRANT_REVOKED', 403);
         if (!t.workspaceID && t.resources.some(r=>r.key.startsWith('repo:'))) {
             const session=await this.localSession(t.sessionID);
             const project=checkBoundProjects(live,this.registration,this.now()).find(p=>p.directory===(session.metadata as any)?.path);
@@ -407,7 +417,7 @@ export class ScopedWorker {
             const project = session ? projects.find(p=>p.directory===(session.metadata as any)?.path) : undefined;
             const binding = w ?? (project ? {repository:canonicalRepository(project.directory),cwd:project.directory,execution:{mode:'legacy' as const,resources:[]}} : undefined);
             const task = this.queue.enqueue({ requestID: command.requestID, grantID: live.id, workerID: this.registration.id, sessionID: String(command.sessionID),
-                workspaceID: w?.id, authorization: hash(canonicalBody(live)), text: command.text, resources: accepted?.resources ?? workspaceResources(binding, String(command.sessionID)) });
+                workspaceID: w?.id, authorization: leaseFingerprint(live), text: command.text, resources: accepted?.resources ?? workspaceResources(binding, String(command.sessionID)) });
             await check(true); return reply(this.queue.receipt(task));
         }
         if (!internal && command.method === 'sessions.cancel') {

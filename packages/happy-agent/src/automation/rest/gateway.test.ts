@@ -126,7 +126,7 @@ describe('independent approval/authentication', () => {
         } });
         expect(preflight.statusCode).toBe(204); expect(preflight.body).toBe('');
         expect(preflight.headers).toMatchObject({ 'access-control-allow-origin': localOrigin, vary: 'Origin',
-            'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'Authorization, Content-Type' });
+            'access-control-allow-methods': 'GET, POST, PATCH, DELETE', 'access-control-allow-headers': 'Authorization, Content-Type' });
         expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
         expect(ownerCalls).toBe(0); expect(r.gateway.grants.get(pending.data.id).state).toBe('pending');
         const compatibility = await r.gateway.app.inject({ method: 'GET', url: `${base}/compatibility`, headers: { origin: localOrigin } });

@@ -46,6 +46,50 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   expect((await r.ownerRequest(`/connections/${c.id}`,'PATCH',{name:''})).body.data.name).toBeUndefined();
   expect((await r.ownerRequest(`/connections/${c.id}/consent`)).body.data.digest).toBe(c.digest);
  });
+ it('renews and expands an approved service grant in place without changing the delivered token',async()=>{
+  const r=await setup({multipleProjects:true,serviceTokens:{clients,maxGrantMs:3600000}});
+  const c=await pending(r,{expiresAt:r.gatewayOptions.now()+600000});await approve(r,c);const token=await issue(r,c);await r.startWorker();
+  const edited=await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{expiresInMs:1800000,scopeVersion:2,projectIDs:['projectB','projectA'],name:'续期后的后端'});
+  expect(edited.status).toBe(200);expect(edited.body.data.id).toBe(c.id);
+  expect(edited.body.data.expiresAt).toBeGreaterThan(c.expiresAt);
+  expect(edited.body.data.projectIDs).toEqual(['projectA','projectB']);
+  expect(edited.body.data.name).toBe('续期后的后端');
+  expect((await request(r,token,'/projects')).body.data.projects).toEqual([{projectID:'projectA',directory:r.project},{projectID:'projectB',directory:r.projectB}]);
+  expect((await request(r,token,'/machines')).status).toBe(200);
+  const consent=await r.ownerRequest(`/connections/${c.id}/consent`);
+  expect(consent.body.data.expiresAt).toBe(edited.body.data.expiresAt);
+  expect(consent.body.data.serviceToken.expiresAt).toBe(edited.body.data.expiresAt);
+  expect((await r.ownerRequest(`/connections/${c.id}/service-token`,'POST')).body.error.code).toBe('SERVICE_TOKEN_ALREADY_ISSUED');
+  const created=await request(r,token,'/tasks','POST',{requestID:'inplace_b',machineID:'machineA',projectID:'projectB'});
+  expect(created.body.data.state).toBe('confirmed');
+  const narrowed=await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{methods:['machines.list']});
+  expect(narrowed.status).toBe(200);
+  expect((await request(r,token,'/tasks','POST',{requestID:'inplace_denied',machineID:'machineA',projectID:'projectA'})).body.error.code).toBe('SCOPE_DENIED');
+ });
+ it('rejects in-place edits for pending, cross-user, non-service, empty and over-cap requests',async()=>{
+  const r=await setup(),c=await pending(r);
+  expect((await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{expiresInMs:60000})).body.error.code).toBe('CONNECTION_NOT_APPROVED');
+  expect((await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{expiresInMs:60000},'B')).status).toBe(404);
+  const signed=await r.client.request('POST','/connections',{workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],expiresAt:Date.now()+60000});
+  expect((await r.ownerRequest(`/connections/${signed.data.id}/edit`,'POST',{expiresInMs:60000})).body.error.code).toBe('SERVICE_TOKEN_MODE_REQUIRED');
+  expect((await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{})).status).toBe(400);
+  await approve(r,c);
+  expect((await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{expiresInMs:MAX_SERVICE_GRANT_MS+1000})).body.error.code).toBe('SCOPE_DENIED');
+ });
+ it('edits a directory-scoped grant in place with a fresh worker-verified selection',async()=>{
+  const r=await setup({multipleProjects:true,directorySelection:true});await r.startWorker();
+  const resolve=async(directories:string[])=>(await r.ownerRequest('/service-connections/resolve-directories','POST',{clientID:'serviceA',workerID:'worker',machineID:'machineA',directories})).body.data;
+  const selection=await resolve([r.projectB]);
+  const created=await r.ownerRequest('/service-connections','POST',{clientID:'serviceA',workerID:'worker',machineID:'machineA',methods:['machines.list'],sessionIDs:[],expiresInMs:60000,scopeVersion:3,projectIDs:selection.projects.map((p:any)=>p.id),projects:selection.projects,selectionID:selection.selectionID});
+  expect(created.status).toBe(200);const c=created.body.data;
+  const consent=await r.ownerRequest(`/connections/${c.id}/consent`);
+  expect((await r.ownerRequest(`/connections/${c.id}/approve`,'POST',{digest:consent.body.data.digest,challenge:consent.body.data.challenge,credentialMode:'service-token-v1',scopeVersion:3})).status).toBe(200);
+  const token=await issue(r,c);
+  const next=await resolve([r.project,r.projectB]);
+  const edited=await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{scopeVersion:3,projectIDs:next.projects.map((p:any)=>p.id),projects:next.projects,selectionID:next.selectionID});
+  expect(edited.status).toBe(200);expect(edited.body.data.projects).toHaveLength(2);
+  expect((await request(r,token,'/projects')).body.data.projects).toHaveLength(2);
+ });
  it('keeps the configured service duration cap and original signed expiry contract',async()=>{
   const serverNow=Date.now(),r=await setup({clock:()=>serverNow,serviceTokens:{clients,maxGrantMs:60000}});
   const base={clientID:'serviceA',workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],sessionIDs:[]};

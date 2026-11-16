@@ -43,6 +43,19 @@ const serviceDurationMs = z.number().int().positive();
 /** Owner-written display label. Cosmetic only: never part of scope checks or the approval digest. */
 export const connectionLabelSchema = z.string().trim().min(1).max(80);
 export const connectionLabelUpdateSchema = z.object({ name: z.string().trim().max(80) }).strict();
+/** In-place owner renewal/scope edit of an approved service grant. The delivered bearer stays valid. */
+export const connectionEditSchema = z.object({
+    name: z.string().trim().max(80).optional(),
+    expiresInMs: z.number().int().positive().optional(),
+    methods: z.array(method).min(1).max(16).refine(a => new Set(a).size === a.length).optional(),
+    sessionIDs: z.array(identifier).max(100).optional(),
+    options: connectionOptionsSchema.optional(),
+    projectID: identifier.optional(),
+    scopeVersion: z.union([z.literal(2), z.literal(3)]).optional(),
+    projectIDs: z.array(identifier).min(1).max(MAX_SCOPE_PROJECTS).refine(ids => new Set(ids).size === ids.length).optional(),
+    projects: selectedProjectsSchema.optional(),
+    selectionID: identifier.optional(),
+}).strict().refine(body => Object.values(body).some(value => value !== undefined));
 export const serviceConnectionSchema = z.union([
     scopeSchema.extend({ clientID: identifier, name: connectionLabelSchema.optional() }).strict(),
     multiProjectScopeSchema.extend({ clientID: identifier, name: connectionLabelSchema.optional() }).strict(),

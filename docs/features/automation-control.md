@@ -162,7 +162,8 @@ canonical path绑定不等于inode固定或OS文件沙箱；同一路径下内�
 3. 原批准页显示服务令牌模式、服务身份指纹、机器、项目 realpath、精确方法、会话范围及到期。`POST /connections/{id}/approve` 除原 digest/challenge 外必须明确带 `credentialMode: "service-token-v1"`；旧批准页缺少模式确认返回 426，不会默默批准新凭据类型。原签名批准 body 不变。
 4. 本人明确点击“生成服务访问令牌”，`POST /connections/{id}/service-token` 仅在该 owner 的已批准服务连接中成功一次。凭据含 256-bit CSPRNG 随机秘密；单个持久原子 claim 只保存 SHA-256 摘要与非秘密绑定、发行时间及原到期时间。完整令牌只在该次 HTTPS/no-store 响应交付，没有可读回明文的 GET。
 5. 页面默认隐藏凭据，明确点击才显示/复制；不写 localStorage、sessionStorage、URL、导航参数或日志。账号/API切换、路由失焦、进入后台和卸载清除页面凭据，迟到响应及旧复制/显示 handler 不能恢复；明确复制后的外部剪贴板内容不由页面托管。
-6. 交付丢包/超时不能证明未发行，重复发行返回 `SERVICE_TOKEN_ALREADY_ISSUED`。本版轮换可从旧服务连接进入“编辑并重新授权”：旧配置仅用于预填，创建新的 pending grant 成功后撤销旧连接，用户再次审查精确 digest/challenge 并交付新令牌。目录选择必须重新核实，旧 options/sessionIDs 显式保留且不得超出现行白名单；不静默补发、不自动续期，也不延长旧 grant。用户的接收后端通过其安全渠道/secret provider 托管，不把令牌发到聊天、URL 或提交代码。
+6. 交付丢包/超时不能证明未发行，重复发行返回 `SERVICE_TOKEN_ALREADY_ISSUED`。已批准连接支持 owner 原地续期与范围编辑：`POST /connections/{id}/edit` 接受可选 `name`、`expiresInMs`（服务端时钟解析，受服务时长上限约束）、`methods`、`sessionIDs`、`options` 及一种 scope 形态（`projectID`、`scopeVersion=2 + projectIDs`、或 `scopeVersion=3 + projectIDs/projects + 新 selectionID`），worker/machine/client 不变；结果按执行时同样的 `checkScopeProjects` 与 options 白名单重新校验并冻结项目绑定，到期变更同步到令牌记录，**已交付的 bearer 继续有效**。仅 approved 服务连接可编辑；pending/revoked/expired 或签名助手连接返回 409/403。目录范围编辑与创建一样需要两分钟内的 worker 核实 selectionID。worker 队列租约只绑定 grant 身份字段（id/client/user/worker/machine/指纹/credentialMode），不再因续期、改名或范围编辑误杀排队任务；执行时仍逐次 `active`/`checkBoundProjects` 校验。
+   需要换一枚新令牌时，从旧服务连接进入“编辑并重新授权”：旧配置仅用于预填，创建新的 pending grant 成功后撤销旧连接，用户再次审查精确 digest/challenge 并交付新令牌。目录选择必须重新核实，旧 options/sessionIDs 显式保留且不得超出现行白名单；不静默补发、不自动续期。用户的接收后端通过其安全渠道/secret provider 托管，不把令牌发到聊天、URL 或提交代码。
 
 ### 后端调用与停止语义
 
@@ -219,6 +220,7 @@ Worker 重启后，旧 daemon 会话的 CLI `status.process` 仍可能是 `unkno
 | `GET /connections`、`GET /connections/:id/consent` | 同站点 owner 身份；审查连接 |
 | `POST /connections/:id/approve`、`DELETE /connections/:id` | owner 批准/撤权；digest/challenge 防替换和重复批准；撤权保留历史 |
 | `PATCH /connections/:id` | owner 仅修改连接记录的显示名称（1..80 字符，空值清除）；不改变 scope，不进入 digest，不重新批准 |
+| `POST /connections/:id/edit` | owner 原地续期/编辑已批准服务连接（时长、项目、方法、会话、options、名称）；已交付令牌保持有效，仅 approved 服务连接可用 |
 | `DELETE /connections/:id/record` | owner 永久删除记录；先撤权并结束等待 job，再清服务令牌摘要和连接，不删除任务/会话/intent/journal |
 | `GET /capabilities` | machines.list；实际探测 worker/daemon core 能力 |
 | `GET /machines`、`GET /sessions` | machines.list / sessions.list；cursor/limit 分页 |

@@ -41,6 +41,12 @@ export class ServiceTokens {
         if (!this.store.claim(`service-token:${id}`, record)) throw new ApiError('SERVICE_TOKEN_ALREADY_ISSUED', 409);
         return { connectionID: id, token, expiresAt: c.expiresAt };
     }
+    /** In-place renewal keeps the delivered bearer; align its record with the new grant expiry. */
+    syncExpiry(id: string, expiresAt: number) {
+        const record = this.record(id);
+        if (!record || record.expiresAt === expiresAt) return;
+        this.store.set(`service-token:${id}`, { ...record, expiresAt });
+    }
     authenticate(header: unknown) {
         if (typeof header !== 'string' || header.length > 256) throw new ApiError('INVALID_SERVICE_TOKEN', 401);
         const match = /^Bearer (hsvc1\.([A-Za-z0-9_-]{1,128})\.[A-Za-z0-9_-]{43})$/.exec(header);

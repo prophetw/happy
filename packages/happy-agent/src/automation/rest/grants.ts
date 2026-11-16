@@ -5,6 +5,12 @@ import { ApiError, checkBoundProjects, checkScopeProjects, scopeSchema, serviceS
 import { validateGrantOptions } from './options';
 import { MetadataStore } from './store';
 
+export type GrantScopeEdit = { projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[] };
+export type GrantEdit = {
+    name?: string; expiresAt?: number; methods?: Scope['methods']; sessionIDs?: string[];
+    options?: Connection['options']; scope?: GrantScopeEdit;
+};
+
 export class Grants {
     constructor(readonly store: MetadataStore, readonly workers: WorkerRegistration[], private now = Date.now, private maxGrantMs = 3600000, private clients?: Registration[],
         private serviceClients: ServiceClientRegistration[] = [], private maxServiceGrantMs = MAX_SERVICE_GRANT_MS) {}
@@ -79,6 +85,49 @@ export class Grants {
     rename(id: string, userID: string, name: string) {
         const c = this.owner(id, userID), label = name.trim();
         if (label) c.name = label; else delete c.name;
+        this.store.set(`connection:${id}`, c); return this.view(c);
+    }
+    /**
+     * Owner in-place renewal and scope edit of an approved service grant on the
+     * same worker/machine/client. The delivered bearer keeps working; the caller
+     * syncs the token record expiry. The result is revalidated like an execution.
+     */
+    edit(id: string, userID: string, update: GrantEdit) {
+        const c = this.owner(id, userID), now = this.now();
+        if (c.credentialMode !== 'service-token-v1') throw new ApiError('SERVICE_TOKEN_MODE_REQUIRED', 403);
+        if (c.state !== 'approved') throw new ApiError('CONNECTION_NOT_APPROVED', 409);
+        const worker = this.workers.find(w => w.id === c.workerID && w.userID === userID);
+        if (!worker || hash(worker.publicKey) !== c.workerFingerprint) throw new ApiError('WORKER_IDENTITY_CHANGED', 403);
+        if (update.name !== undefined) { const label = update.name.trim(); if (label) c.name = label; else delete c.name; }
+        if (update.expiresAt !== undefined) {
+            if (!Number.isSafeInteger(update.expiresAt) || update.expiresAt <= now || update.expiresAt > now + this.maxServiceGrantMs) throw new ApiError('SCOPE_DENIED', 403);
+            c.expiresAt = update.expiresAt;
+        }
+        if (update.methods !== undefined) c.methods = [...update.methods];
+        if (update.sessionIDs !== undefined) c.sessionIDs = [...update.sessionIDs];
+        if (update.options !== undefined) c.options = update.options;
+        if (update.scope !== undefined) {
+            const scope = update.scope;
+            if ('projectID' in scope) {
+                delete c.scopeVersion; delete c.projectIDs; delete c.projects;
+                c.projectID = scope.projectID;
+            } else {
+                c.scopeVersion = scope.scopeVersion;
+                c.projectIDs = [...scope.projectIDs].sort();
+                delete c.projectID; delete c.projectDirectory;
+                if (scope.scopeVersion === 3) {
+                    c.projects = [...scope.projects].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map(p => ({ ...p }));
+                    c.sessionIDs = [];
+                } else delete c.projects;
+            }
+        }
+        // Validate the resulting grant exactly the way execution does, then re-freeze the binding.
+        const projects = checkScopeProjects(c, worker, now);
+        if (!validateGrantOptions(c.options, worker.launchOptions)) throw new ApiError('SCOPE_DENIED', 403);
+        if (c.scopeVersion === 2 || c.scopeVersion === 3) {
+            if (projects.length !== c.projectIDs!.length || projects.some((p, i) => p.id !== c.projectIDs![i])) throw new ApiError('SCOPE_DENIED', 403);
+            c.projects = projects.map(p => ({ id: p.id, directory: p.directory }));
+        } else c.projectDirectory = projects[0].directory;
         this.store.set(`connection:${id}`, c); return this.view(c);
     }
     delete(id: string, userID: string) {

@@ -68,16 +68,35 @@ try{
   const created=await backend('/tasks','POST',{requestID:profile.name+'_create_b',machineID:'machineA',projectID:'projectB'});assert.equal(created.body.data.state,'confirmed');const sid=created.body.data.sessionID;
   const actual=(await rig.transport.sessions()).sessions;assert.equal(actual.find(s=>s.id===createdA.body.data.sessionID).metadata.path,rig.project);assert.equal(actual.find(s=>s.id===sid).metadata.path,rig.projectB);
   assert.equal((await backend('/tasks','POST',{requestID:profile.name+'_denied',machineID:'machineA',projectID:'projectC'})).body.error.code,'SCOPE_DENIED');
-  const sent=await backend(`/sessions/${sid}/messages`,'POST',{requestID:profile.name+'_send',text:'isolated fixture instruction'});assert.equal(sent.body.data.state,'submitted');
+  const sent=await backend(`/sessions/${sid}/messages`,'POST',{requestID:profile.name+'_send',text:'isolated fixture instruction'});assert(['queued','submitted'].includes(sent.body.data.state));
+  const submitted=await rig.waitForSubmitted('',profile.name+'_send',async()=>(await backend('/requests/'+profile.name+'_send')).body);assert.equal(submitted.data.state,'submitted');
   rig.complete(sid,profile.name+'_turn');const result=await backend(`/sessions/${sid}/result?turnID=${profile.name}_turn`);assert.equal(result.body.data.outcome,'completed');
   const cancelled=await backend(`/sessions/${sid}/cancel`,'POST',{requestID:profile.name+'_cancel'});assert.equal(cancelled.body.data.process,'unknown');rig.setProcess('stopped');assert.equal((await backend('/requests/'+profile.name+'_cancel')).body.data.process,'stopped');
   const stored=(await Promise.all((await readdir(path.join(rig.dir,'gateway/state'))).map(p=>readFile(path.join(rig.dir,'gateway/state',p),'utf8')))).join('');assert(!stored.includes(token));assert(!JSON.stringify(rig.audit).includes(token));
+  // In-place renewal + scope narrowing keeps the same connection and bearer.
+  const expiryBefore=rig.gateway.grants.get(id).expiresAt;
+  await page.getByRole('button',{name:'续期 / 编辑授权（令牌不变）',exact:true}).click();
+  await page.getByText('正在原地续期/编辑这项授权',{exact:false}).waitFor();
+  const daysInput=page.getByLabel('服务授权有效天数',{exact:true});const remaining=Number(await daysInput.inputValue());assert(remaining>29&&remaining<=30);
+  await daysInput.fill('30');
+  const inplaceA=page.getByRole('checkbox',{name:`projectA · ${rig.project}`,exact:true}),inplaceB=page.getByRole('checkbox',{name:`projectB · ${rig.projectB}`,exact:true});
+  assert.equal(await inplaceA.getAttribute('aria-checked'),'true');assert.equal(await inplaceB.getAttribute('aria-checked'),'true');
+  await inplaceB.click();await page.getByRole('button',{name:'保存修改（保持令牌不变）',exact:true}).click();
+  await page.getByRole('button',{name:'续期 / 编辑授权（令牌不变）',exact:true}).waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('connection'),id);
+  const live=rig.gateway.grants.get(id);assert.equal(live.state,'approved');assert.equal(live.projectID,'projectA');assert.equal(live.scopeVersion,undefined);assert(live.expiresAt>expiryBefore);
+  assert.equal((await backend('/machines')).body.ok,true);
+  assert.equal((await backend('/tasks','POST',{requestID:profile.name+'_inplace_denied',machineID:'machineA',projectID:'projectB'})).body.error.code,'SCOPE_DENIED');
+  const synced=await rig.ownerRequest(`/connections/${id}/consent`);assert.equal(synced.body.data.serviceToken.expiresAt,live.expiresAt);
+  // Rotation to a NEW token keeps the replacement flow, reached after revocation.
+  await page.getByRole('button',{name:'撤销连接',exact:true}).click();
+  await page.getByRole('button',{name:'编辑并重新授权',exact:true}).waitFor();
+  assert.equal(rig.gateway.grants.get(id).state,'revoked');assert.equal((await backend('/machines')).body.error.code,'GRANT_REVOKED');
   await page.getByRole('button',{name:'编辑并重新授权',exact:true}).click();
   await page.getByText('正在编辑已有服务授权。原启动选项和既有会话范围会保留。',{exact:false}).waitFor();
-  assert.equal(await page.getByLabel('服务授权有效天数',{exact:true}).inputValue(),'30');
-  const editProjectA=page.getByRole('checkbox',{name:`projectA · ${rig.project}`,exact:true}),editProjectB=page.getByRole('checkbox',{name:`projectB · ${rig.projectB}`,exact:true});
-  assert.equal(await editProjectA.getAttribute('aria-checked'),'true');assert.equal(await editProjectB.getAttribute('aria-checked'),'true');
-  await editProjectB.click();await page.getByRole('button',{name:'创建申请并审查权限',exact:true}).click();
+  assert(Math.abs(Number(await page.getByLabel('服务授权有效天数',{exact:true}).inputValue())-30)<0.001);
+  await page.getByLabel('服务授权有效天数',{exact:true}).fill('30');
+  await page.getByRole('button',{name:'创建申请并审查权限',exact:true}).click();
   await page.getByRole('button',{name:'确认批准以上权限',exact:true}).waitFor();const replacement=new URL(page.url()).searchParams.get('connection');assert(replacement);assert.notEqual(replacement,id);
   assert.equal(rig.gateway.grants.get(id).state,'revoked');assert.equal(rig.gateway.grants.get(replacement).state,'pending');assert.equal(rig.gateway.grants.get(replacement).projectID,'projectA');
   assert.equal((await backend('/machines')).body.error.code,'GRANT_REVOKED');
@@ -94,7 +113,7 @@ try{
   await rig.restartGateway();await rig.startWorker();assert.throws(()=>rig.gateway.grants.get(replacement),/NOT_FOUND/);assert.equal((await backend('/machines','GET',undefined,replacementToken)).body.error.code,'INVALID_SERVICE_TOKEN');assert.equal((await backend('/machines')).body.error.code,'GRANT_REVOKED');
   await page.reload();await page.getByText('连接记录',{exact:true}).waitFor();const restartedList=await rig.ownerRequest('/connections');assert(!restartedList.body.data.some(connection=>connection.id===replacement));
   await page.screenshot({path:path.join(artifacts,profile.name+'-deleted.png'),fullPage:true});
-  checks.push(profile.name+':multi-project-checkbox+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+edit-prefill+replacement-reapproval+old-token-revoked+delete-cancel/confirm+restart-persistence+no-plaintext-persistence');await context.close();
+  checks.push(profile.name+':multi-project-checkbox+full-directory-review+one-token-two-projects+unselected-project-denied+30day-scope+explicit-approval+one-time-secret+backend-REST+encrypted-fixture+cancel-unknown/stopped+inplace-renewal-same-token+inplace-scope-narrowing+edit-prefill+replacement-reapproval+old-token-revoked+delete-cancel/confirm+restart-persistence+no-plaintext-persistence');await context.close();
  }
  assert.deepEqual(errors,[]);assert.deepEqual(networkFailures,[]);
 }finally{

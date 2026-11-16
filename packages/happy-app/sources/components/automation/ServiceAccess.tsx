@@ -103,9 +103,14 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
                     || previous.methods.some(method => !worker.methods.includes(method)) || !Array.isArray(previous.sessionIDs)) throw new Error('EDIT_MISMATCH');
                 // expiresAt is resolved immediately before createdAt; hide small timestamp gaps in the day input.
                 const originalDays = Math.round(originalDuration / day * 1e6) / 1e6;
+                // In-place renewal starts from the remaining lifetime; replacement keeps the original duration.
+                const initialDays = previous.state === 'approved' ? Math.max(1000, previous.expiresAt - Date.now()) / day : originalDays;
                 let restoredProjects: string[] = [], restoredDirectories: string[] = [];
                 if (previous.scopeVersion === undefined) {
-                    if (typeof previous.projectID !== 'string' || typeof previous.projectDirectory !== 'string' || previous.projectIDs !== undefined || previous.projects !== undefined
+                    // The consent view also exposes a legacy single-project alias in projects[].
+                    const alias = previous.projects;
+                    if (typeof previous.projectID !== 'string' || typeof previous.projectDirectory !== 'string' || previous.projectIDs !== undefined
+                        || (alias !== undefined && (alias.length !== 1 || alias[0]?.id !== previous.projectID || alias[0]?.directory !== previous.projectDirectory))
                         || !worker.projects.some(p => p.id === previous.projectID && p.directory === previous.projectDirectory)) throw new Error('EDIT_MISMATCH');
                     restoredProjects = [previous.projectID];
                 } else {
@@ -127,7 +132,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
                 }
                 setOptions(value); setOriginal(previous); setClient(previous.clientID); setWorker(previous.workerID); setProjects(restoredProjects);
                 setName(previous.name ?? '');
-                setCustomDirectories(restoredDirectories); setMethods([...previous.methods]); setDays(String(originalDays));
+                setCustomDirectories(restoredDirectories); setMethods([...previous.methods]); setDays(String(Math.round(initialDays * 1e6) / 1e6));
             } catch {
                 if (version === generation.current) { setOptions(null); setOriginal(null); setError(t('settings.automation.serviceEditLoadFailed')); }
             }
@@ -147,25 +152,34 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         && (!requiresDirectorySelection || retainedSessionIDs.length === 0);
     const valid = selectionReady && sessionsValid && !!options && !!clientID && !!worker && pickedPaths.length > 0 && pickedPaths.length <= maxProjects
         && projectIDs.every(id => worker.projects.some(p => p.id === id)) && methods.length > 0 && Number.isFinite(duration) && duration >= 1000 && duration <= options.maxGrantMs;
+    const inPlace = !!original && original.state === 'approved';
     const create = async () => {
         if (!valid || !worker || !options || attempted.current) return;
         attempted.current = true; const version = generation.current; setSubmitted(true); setBusy(true); setError('');
+        const scopePart = requiresDirectorySelection && verified
+            ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID }
+            : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() };
         try {
             let next: AutomationConsent;
             try {
-                next = await api.createService({ clientID, workerID, machineID: worker.machineID, ...(name.trim() ? { name: name.trim() } : {}),
-                    ...(requiresDirectorySelection && verified ? { scopeVersion: 3 as const, projectIDs: verified.projects.map(p => p.id), projects: verified.projects, selectionID: verified.selectionID } : projectIDs.length === 1 ? { projectID: projectIDs[0] } : { scopeVersion: 2 as const, projectIDs: [...projectIDs].sort() }),
-                    methods, sessionIDs: original ? [...original.sessionIDs] : [], ...(original?.options !== undefined ? { options: original.options } : {}), expiresInMs: duration });
+                if (inPlace && original) {
+                    next = await api.edit(original.id, { name: name.trim(), expiresInMs: duration, methods, sessionIDs: [...original.sessionIDs],
+                        ...(original.options !== undefined ? { options: original.options } : {}), ...scopePart });
+                } else {
+                    next = await api.createService({ clientID, workerID, machineID: worker.machineID, ...(name.trim() ? { name: name.trim() } : {}),
+                        ...scopePart,
+                        methods, sessionIDs: original ? [...original.sessionIDs] : [], ...(original?.options !== undefined ? { options: original.options } : {}), expiresInMs: duration });
+                }
             } catch (error) {
                 if (version === generation.current) setError(error instanceof Error && error.message === 'SCOPE_DENIED'
-                    ? '创建申请被拒绝，未创建授权。请返回后重新检查项目、操作范围和有效时长。'
+                    ? (inPlace ? '修改被拒绝，未变更授权。请检查项目、操作范围和有效时长。' : '创建申请被拒绝，未创建授权。请返回后重新检查项目、操作范围和有效时长。')
                     : error instanceof Error && error.message === 'DIRECTORY_SELECTION_MISMATCH'
-                        ? '目录核实已失效或与所选范围不一致，未创建授权。请返回后重新核实目录。'
-                        : '创建结果未确认。请返回连接记录核实，不要重复创建；尚未批准的申请不会获得执行权限。');
+                        ? (inPlace ? '目录核实已失效或与所选范围不一致，未变更授权。请重新核实目录。' : '目录核实已失效或与所选范围不一致，未创建授权。请返回后重新核实目录。')
+                        : (inPlace ? '修改结果未确认。请返回连接记录核实，不要重复提交。' : '创建结果未确认。请返回连接记录核实，不要重复创建；尚未批准的申请不会获得执行权限。'));
                 return;
             }
             if (version !== generation.current) return;
-            if (original && sourceID !== undefined) {
+            if (!inPlace && original && sourceID !== undefined) {
                 if (original.state !== 'revoked' && original.state !== 'expired') {
                     try { await api.revoke(sourceID); }
                     catch {
@@ -203,7 +217,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         <Text style={styles.secondary}>项目范围限制任务入口和会话访问，不是操作系统文件沙箱；代理继续使用现有权限确认机制。</Text>
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
         {options && <>
-            {original && <Text style={styles.secondary}>{t('settings.automation.serviceEditNotice')}</Text>}
+            {original && <Text style={styles.secondary}>{inPlace ? '正在原地续期/编辑这项授权：已交付的服务令牌保持不变，保存后立即按新范围和新到期时间生效，不会撤销连接，也不会生成新令牌。' : t('settings.automation.serviceEditNotice')}</Text>}
             <Text style={styles.title}>连接名称（可选）</Text>
             <TextInput accessibilityLabel="连接名称" placeholder="例如：内容团队后端" value={name} onChangeText={setName} editable={!submitted} maxLength={80} style={styles.input} />
             <Text style={styles.secondary}>仅用于在“连接记录”中区分多条授权，不影响权限范围；留空时显示服务身份名称。</Text>
@@ -236,9 +250,10 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
             <Text style={styles.title}>有效时长（天）</Text>
             <TextInput accessibilityLabel="服务授权有效天数" value={days} onChangeText={setDays} keyboardType="decimal-pad" editable={!submitted} style={styles.input} />
             <Text style={styles.secondary}>本部署上限 {options.maxGrantMs / day} 天；从申请时计算，不会因生成令牌而延期。</Text>
+            {inPlace && <Text style={styles.secondary}>原地续期按“保存时刻 + 该时长”计算新到期时间；预填的是当前剩余时长，调大即可续期。</Text>}
             <Text style={styles.secondary}>{original?.sessionIDs.length ? t('settings.automation.serviceEditSessionsRetained', { ids: original.sessionIDs.join(', ') }) : '仅本授权新建的专用会话，不含既有会话。'}</Text>
             {original && Number.isFinite(duration) && duration > options.maxGrantMs && <Text accessibilityRole="alert" style={styles.error}>{t('settings.automation.serviceEditDurationTooLong')}</Text>}
-            <Button label="创建申请并审查权限" disabled={!valid || busy || submitted} onPress={() => void create()} />
+            <Button label={inPlace ? '保存修改（保持令牌不变）' : '创建申请并审查权限'} disabled={!valid || busy || submitted} onPress={() => void create()} />
         </>}
     </View>;
 }

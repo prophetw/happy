@@ -5,12 +5,12 @@ import { hash } from '../journal';
 import { canonicalBody, serviceClientFingerprint, verifyProof } from './auth';
 import { DirectorySelections, resolveDirectoriesSchema } from './directories';
 import { ServiceTokens, isServiceAuthorization } from './serviceTokens';
-import { Grants } from './grants';
+import { Grants, type GrantScopeEdit } from './grants';
 import { MetadataStore } from './store';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
-import { ApiError, cancelSchema, approvalSchema, connectionLabelUpdateSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
+import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectionLabelUpdateSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
@@ -207,6 +207,29 @@ export function createGateway(options: GatewayOptions) {
     app.patch<{ Params: { id: string } }>(`${base}/connections/:id`, async req => {
         const userID = await owner(req), body = connectionLabelUpdateSchema.parse(req.body);
         return ok(grants.rename(identifier.parse(req.params.id), userID, body.name));
+    });
+    app.post<{ Params: { id: string } }>(`${base}/connections/:id/edit`, async req => {
+        const userID = await owner(req);
+        if (!serviceConfig) throw new ApiError('SERVICE_TOKENS_DISABLED', 404);
+        limit(`service-edit:${userID}`, 30);
+        const id = identifier.parse(req.params.id), body = connectionEditSchema.parse(req.body);
+        const expiresAt = body.expiresInMs !== undefined ? now() + body.expiresInMs : undefined;
+        let scope: GrantScopeEdit | undefined;
+        if (body.scopeVersion === 3) {
+            if (!body.projects || !body.projectIDs || !body.selectionID) throw new ApiError('INVALID_REQUEST');
+            const current = grants.owner(id, userID), worker = directoryWorker(current.workerID, userID);
+            directories.consume(body.selectionID, userID, current.clientID, worker, body.projects);
+            scope = { scopeVersion: 3, projectIDs: body.projectIDs, projects: body.projects };
+        } else if (body.scopeVersion === 2) {
+            if (!body.projectIDs || body.projectID !== undefined || body.projects !== undefined) throw new ApiError('INVALID_REQUEST');
+            scope = { scopeVersion: 2, projectIDs: body.projectIDs };
+        } else if (body.projectID !== undefined) {
+            if (body.projectIDs !== undefined || body.projects !== undefined || body.selectionID !== undefined) throw new ApiError('INVALID_REQUEST');
+            scope = { projectID: body.projectID };
+        } else if (body.projectIDs !== undefined || body.projects !== undefined || body.selectionID !== undefined) throw new ApiError('INVALID_REQUEST');
+        const updated = grants.edit(id, userID, { name: body.name, expiresAt, methods: body.methods, sessionIDs: body.sessionIDs, options: body.options, scope });
+        if (expiresAt !== undefined) serviceTokens?.syncExpiry(id, updated.expiresAt);
+        return ok(updated);
     });
     app.delete<{ Params: { id: string } }>(`${base}/connections/:id`, async req => {
         const id = identifier.parse(req.params.id), revoked = grants.revoke(id, await owner(req));

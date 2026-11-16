@@ -284,7 +284,7 @@ export default function AutomationConnections() {
                         </>}
                         {(state === 'approved' || unknownMutation) && !deletionUnknown && <Action destructive label="撤销连接" disabled={busy} onPress={() => void mutate(false)} />}
                         {state === 'approved' && !unknownMutation && !deletionUnknown && consent.credentialMode === 'service-token-v1' && <ServiceTokenDelivery key={consent.id} consent={consent} api={api} disabled={busy} />}
-                        {!deletionUnknown && consent.credentialMode === 'service-token-v1' && <Action label={t('settings.automation.editReauthorize')} disabled={busy} onPress={() => router.push(`/settings/automation-service?from=${encodeURIComponent(consent.id)}`)} />}
+                        {!deletionUnknown && consent.credentialMode === 'service-token-v1' && <Action label={state === 'approved' ? '续期 / 编辑授权（令牌不变）' : t('settings.automation.editReauthorize')} disabled={busy} onPress={() => router.push(`/settings/automation-service?from=${encodeURIComponent(consent.id)}`)} />}
                         {!deletionUnknown && <Action destructive label={t('settings.automation.deleteRecord')} disabled={busy} onPress={() => void remove()} />}
                     </>}
                 </View>

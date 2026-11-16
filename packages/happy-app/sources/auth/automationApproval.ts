@@ -24,6 +24,13 @@ export type ServiceConnectionRequest = {
     options?: NonNullable<AutomationConsent['options']>;
 } & ({ expiresInMs: number; expiresAt?: never } | { expiresAt: number; expiresInMs?: never })
   & ({ projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[]; selectionID: string });
+export type ServiceConnectionEditRequest = {
+    /** All fields optional; at least one required. Same worker/machine/client as the original grant. */
+    name?: string; expiresInMs?: number; methods?: string[]; sessionIDs?: string[];
+    options?: NonNullable<AutomationConsent['options']>;
+    projectID?: string; scopeVersion?: 2 | 3; projectIDs?: string[];
+    projects?: { id: string; directory: string }[]; selectionID?: string;
+};
 /** Do not approve a multi-project shape that this page cannot fully display. */
 export function consentProjects(consent: AutomationConsent): { id: string; directory: string }[] {
     if (consent.scopeVersion === undefined) {
@@ -83,6 +90,7 @@ export function automationApprovalApi(relayUrl: string, getOwnerAuthorization: (
         },
         revoke: async (id: string) => call(path(id), 'DELETE'),
         rename: async (id: string, name: string) => call(path(id), 'PATCH', { name }) as Promise<{ id: string; name?: string }>,
+        edit: async (id: string, input: ServiceConnectionEditRequest) => call(`${path(id)}/edit`, 'POST', input) as Promise<AutomationConsent>,
         deleteRecord: async (id: string) => call(`${path(id)}/record`, 'DELETE'),
         serviceOptions: () => call('/service-connections/options') as Promise<ServiceConnectionOptions>,
         resolveDirectories: (input: { clientID: string; workerID: string; machineID: string; directories: string[] }) => call('/service-connections/resolve-directories', 'POST', input) as Promise<{ selectionID: string; projects: { id: string; directory: string }[]; expiresAt: number }>,
