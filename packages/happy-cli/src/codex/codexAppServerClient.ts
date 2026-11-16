@@ -280,7 +280,7 @@ export class CodexAppServerClient {
         for (const id of ids) this.userInputResolvedHandler?.(String(id));
     }
 
-    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; onNotification?: (method: string, params: any) => void; onExit?: () => void }) {
+    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; onNotification?: (method: string, params: any) => void; onExit?: () => void; notificationTransaction?: (dispatch: () => void) => void }) {
         this.sandboxConfig = sandboxConfig;
     }
 
@@ -731,6 +731,7 @@ export class CodexAppServerClient {
             logger.debug('[CodexAppServer] Process error:', err);
         });
 
+        let stdoutDrained: Promise<void> | undefined;
         proc.on('exit', (code, signal) => {
             logger.debug(`[CodexAppServer] Process exited: code=${code} signal=${signal}`);
             // Ignore stale process exits from prior generations during reconnect.
@@ -740,26 +741,34 @@ export class CodexAppServerClient {
             }
             this.connected = false;
             this.host?.onExit?.();
-            this.clearUserInputs();
-            // Reject all pending requests
-            for (const [id, req] of this.pending) {
-                if (req.epoch !== epoch) continue;
-                req.reject(new Error(`Codex process exited (code=${code}) while waiting for ${req.method}`));
-                this.pending.delete(id);
-            }
-            // An unexpected exit is a failed turn, not a user cancellation.
-            if (this.pendingTurnCompletion) {
-                const turnId = this.pendingTurnCompletion.turnId ?? this._turnId;
-                if (turnId) this.completedTurnIds.add(turnId);
-                this.eventHandler?.({
-                    type: 'turn_aborted', status: 'failed',
-                    ...(turnId ? { turn_id: turnId } : {}),
-                    error: { message: `Codex process exited (code=${code}, signal=${signal})`, codexErrorInfo: 'transportError' },
-                });
-                this._turnId = null;
-            }
-            // Keep the aborted return value for callers; the event carries the reason.
-            this.resolvePendingTurn(true);
+            const finishExit = () => {
+            if (this.process !== proc || this.processEpoch !== epoch) return;
+                this.clearUserInputs();
+                // Reject all pending requests
+                for (const [id, req] of this.pending) {
+                    if (req.epoch !== epoch) continue;
+                    req.reject(new Error(`Codex process exited (code=${code}) while waiting for ${req.method}`));
+                    this.pending.delete(id);
+                }
+                // An unexpected exit is a failed turn, not a user cancellation.
+                if (this.pendingTurnCompletion) {
+                    const turnId = this.pendingTurnCompletion.turnId ?? this._turnId;
+                    if (turnId) this.completedTurnIds.add(turnId);
+                    this.eventHandler?.({
+                        type: 'turn_aborted', status: 'failed',
+                        ...(turnId ? { turn_id: turnId } : {}),
+                        error: { message: `Codex process exited (code=${code}, signal=${signal})`, codexErrorInfo: 'transportError' },
+                    });
+                    this._turnId = null;
+                }
+                // Keep the aborted return value for callers; the event carries the reason.
+                this.resolvePendingTurn(true);
+            };
+            // exit may precede stdout EOF. Hosted's asynchronous consumer must
+            // apply buffered responses/terminal frames before aborting anything
+            // genuinely unresolved. Recheck identity after draining too.
+            if (stdoutDrained) void stdoutDrained.then(finishExit).catch(error => logger.warn('[CodexAppServer] Hosted exit finalization failed', error));
+            else finishExit();
         });
 
         // Pipe stderr for debug logging
@@ -771,10 +780,27 @@ export class CodexAppServerClient {
 
         // Parse newline-delimited JSON from stdout
         this.readline = createInterface({ input: proc.stdout! });
-        this.readline.on('line', (line) => {
+        const consumeLine = (line: string) => {
             if (this.process !== proc || this.processEpoch !== epoch) return;
             this.handleLine(line, epoch);
-        });
+        };
+        if (this.host?.notificationTransaction) {
+            // Hosted commits can be expensive. Consume with readline's bounded
+            // async iterator (which pauses its input at the high-water mark),
+            // yielding I/O between frames instead of blocking ACKs behind an
+            // entire stdout buffer. Each frame remains synchronously durable.
+            const lines = this.readline;
+            stdoutDrained = (async () => {
+                for await (const line of lines) {
+                    if (this.process !== proc || this.processEpoch !== epoch) break;
+                    consumeLine(line);
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                }
+            })().catch(error => {
+                logger.warn('[CodexAppServer] Hosted notification consumer failed', error);
+                if (this.process === proc && this.processEpoch === epoch) this.host?.onExit?.();
+            });
+        } else this.readline.on('line', consumeLine);
 
         // Perform initialize handshake
         const initParams: InitializeParams = {
@@ -1432,7 +1458,11 @@ export class CodexAppServerClient {
 
         // Notification (no id)
         if (msg.method) {
-            this.handleNotification(msg.method, msg.params);
+            const dispatch = () => this.handleNotification(msg.method, msg.params);
+            // A hosted owner can durably commit the raw and synthesized callbacks
+            // together before this native frame returns. No timer/input buffering.
+            if (this.host?.notificationTransaction) this.host.notificationTransaction(dispatch);
+            else dispatch();
             return;
         }
 

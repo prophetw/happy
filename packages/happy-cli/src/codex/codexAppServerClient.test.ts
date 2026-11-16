@@ -115,6 +115,20 @@ const sandboxConfig: SandboxConfig = {
 };
 
 describe('CodexAppServerClient sandbox integration', () => {
+    it('wraps raw and synthesized events of one native frame once; ignores truncated and stale frames', async () => {
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const events: string[] = [];
+        const transaction = vi.fn((dispatch: () => void) => { events.push('begin'); dispatch(); events.push('commit'); });
+        const client = new CodexAppServerClient(undefined, { notificationTransaction: transaction, onNotification: () => events.push('raw') });
+        (client as any)._threadId = 'thread'; (client as any)._turnId = 'turn';
+        client.setEventHandler(event => events.push(event.type));
+        const line = JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'thread', turnId: 'turn', itemId: 'item', delta: '文🙂' } });
+        (client as any).handleLine(line);
+        expect(events).toEqual(['begin', 'raw', 'token_speed_output_delta', 'agent_message_delta', 'commit']);
+        (client as any).handleLine(line.slice(0, -3));
+        (client as any).handleLine(line, -1);
+        expect(transaction).toHaveBeenCalledTimes(1);
+    });
     const originalRustLog = process.env.RUST_LOG;
 
     beforeEach(() => {
