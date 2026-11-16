@@ -10,7 +10,7 @@ import { MetadataStore } from './store';
 import { projectResponse } from './projection';
 import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
-import { ApiError, cancelSchema, approvalSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
+import { ApiError, cancelSchema, approvalSchema, connectionLabelUpdateSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
@@ -63,7 +63,7 @@ export function createGateway(options: GatewayOptions) {
         if (requestOrigin && additionalBrowserOrigins.has(requestOrigin)) {
             reply.header('Access-Control-Allow-Origin', requestOrigin).header('Vary', 'Origin');
             if (req.method === 'OPTIONS' && req.url.startsWith(`${base}/`)) return reply
-                .header('Access-Control-Allow-Methods', 'GET, POST, DELETE')
+                .header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE')
                 .header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
                 .code(204).send();
         }
@@ -204,6 +204,10 @@ export function createGateway(options: GatewayOptions) {
     function revokeJobs(grantID: string) {
         for (const [jobID, job] of jobs) if (job.grantID === grantID) { clearTimeout(job.timer); jobs.delete(jobID); job.resolve(failure('GRANT_REVOKED')); }
     }
+    app.patch<{ Params: { id: string } }>(`${base}/connections/:id`, async req => {
+        const userID = await owner(req), body = connectionLabelUpdateSchema.parse(req.body);
+        return ok(grants.rename(identifier.parse(req.params.id), userID, body.name));
+    });
     app.delete<{ Params: { id: string } }>(`${base}/connections/:id`, async req => {
         const id = identifier.parse(req.params.id), revoked = grants.revoke(id, await owner(req));
         revokeJobs(id);
@@ -248,7 +252,7 @@ export function createGateway(options: GatewayOptions) {
         if (!serviceConfig) throw new ApiError('SERVICE_TOKENS_DISABLED', 404);
         limit(`service-pair:${userID}`, 10);
         const parsed = serviceConnectionSchema.parse(req.body);
-        const { clientID, ...requested } = parsed;
+        const { clientID, name, ...requested } = parsed;
         if ('expiresInMs' in requested && requested.expiresInMs > serviceConfig.maxGrantMs) throw new ApiError('SCOPE_DENIED', 403);
         // Resolve duration once against the server clock; never trust a browser's wall clock.
         const scope = 'expiresInMs' in requested
@@ -261,9 +265,9 @@ export function createGateway(options: GatewayOptions) {
             if (scope.machineID !== worker.machineID) throw new ApiError('SCOPE_DENIED', 403);
             directories.consume(scope.selectionID, userID, clientID, worker, scope.projects);
             const { selectionID: _selection, ...bound } = scope;
-            return ok(grants.view(grants.createService(client, bound)));
+            return ok(grants.view(grants.createService(client, bound, name)));
         }
-        return ok(grants.view(grants.createService(client, scope)));
+        return ok(grants.view(grants.createService(client, scope, name)));
     });
     app.post<{ Params: { id: string } }>(`${base}/connections/:id/service-token`, async req => {
         const userID = await owner(req);

@@ -11,10 +11,10 @@ export class Grants {
     create(client: Registration, input: unknown): Connection {
         return this.createBound(client, input, hash(client.publicKey), this.maxGrantMs);
     }
-    createService(client: ServiceClientRegistration, input: unknown): Connection {
-        return this.createBound(client, input, serviceClientFingerprint(client), this.maxServiceGrantMs, 'service-token-v1');
+    createService(client: ServiceClientRegistration, input: unknown, name?: string): Connection {
+        return this.createBound(client, input, serviceClientFingerprint(client), this.maxServiceGrantMs, 'service-token-v1', name);
     }
-    private createBound(client: Registration | ServiceClientRegistration, input: unknown, clientFingerprint: string, maxGrantMs: number, credentialMode?: 'service-token-v1'): Connection {
+    private createBound(client: Registration | ServiceClientRegistration, input: unknown, clientFingerprint: string, maxGrantMs: number, credentialMode?: 'service-token-v1', name?: string): Connection {
         const parsed = (credentialMode ? serviceScopeSchema : scopeSchema).parse(input), now = this.now();
         const scope = 'projectIDs' in parsed ? { ...parsed, projectIDs: [...parsed.projectIDs].sort(), ...('projects' in parsed ? { projects: [...parsed.projects].sort((a,b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0) } : {}) } : parsed;
         const worker = this.workers.find(w => w.id === scope.workerID && w.userID === client.userID);
@@ -25,7 +25,7 @@ export class Grants {
         const binding = 'projectIDs' in scope ? { projects: projects.map(p => ({ id: p.id, directory: p.directory })) } : { projectDirectory: projects[0].directory };
         const workerFingerprint = hash(worker.publicKey);
         const externalIdentity = 'externalIdentity' in client ? client.externalIdentity : undefined;
-        const connection: Connection = { ...scope, ...binding, id: randomUUID(), clientID: client.id, userID: client.userID, workerFingerprint,
+        const connection: Connection = { ...scope, ...binding, ...(name ? { name } : {}), id: randomUUID(), clientID: client.id, userID: client.userID, workerFingerprint,
             ...(externalIdentity ? { externalIdentity } : {}), ...(credentialMode ? { credentialMode } : {}),
             clientName: client.name, clientFingerprint, state: 'pending', createdAt: now, pendingUntil: Math.min(now + 300000, scope.expiresAt),
             challenge: randomUUID(), digest: hash(canonicalBody({ scope, clientID: client.id, userID: client.userID, clientFingerprint, workerFingerprint, ...binding, externalIdentity, ...(credentialMode ? { credentialMode } : {}) })) };
@@ -74,6 +74,12 @@ export class Grants {
     }
     revoke(id: string, userID: string) {
         const c = this.owner(id, userID); c.state = 'revoked'; this.store.set(`connection:${id}`, c); return this.view(c);
+    }
+    /** Display-only label; editing it must not touch the approval digest or granted scope. */
+    rename(id: string, userID: string, name: string) {
+        const c = this.owner(id, userID), label = name.trim();
+        if (label) c.name = label; else delete c.name;
+        this.store.set(`connection:${id}`, c); return this.view(c);
     }
     delete(id: string, userID: string) {
         const c = this.owner(id, userID);

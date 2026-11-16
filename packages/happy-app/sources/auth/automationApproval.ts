@@ -1,6 +1,8 @@
 /** Dedicated automation consent. Never uses the account-link QR or account secret. */
 export interface AutomationConsent {
     id: string; userID: string; clientID: string; clientName: string; clientFingerprint: string; workerFingerprint: string;
+    /** Owner-written display label for the connection list; absent = use clientName. */
+    name?: string;
     workerID: string; workerName: string; machineID: string; projectID?: string; projectDirectory?: string;
     scopeVersion?: 2 | 3; projectIDs?: string[]; projects?: { id: string; directory: string }[];
     methods: string[]; sessionIDs: string[]; createdAt: number; expiresAt: number; pendingUntil: number;
@@ -17,6 +19,8 @@ export interface ServiceConnectionOptions {
 }
 export type ServiceConnectionRequest = {
     clientID: string; workerID: string; machineID: string; methods: string[]; sessionIDs: string[];
+    /** Owner-written display label; cosmetic only, never part of the granted scope. */
+    name?: string;
     options?: NonNullable<AutomationConsent['options']>;
 } & ({ expiresInMs: number; expiresAt?: never } | { expiresAt: number; expiresInMs?: never })
   & ({ projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[]; selectionID: string });
@@ -78,6 +82,7 @@ export function automationApprovalApi(relayUrl: string, getOwnerAuthorization: (
             return call(`${path(consent.id)}/approve`, 'POST', { digest: consent.digest, challenge: consent.challenge, ...(consent.credentialMode ? { credentialMode: consent.credentialMode } : {}), ...(consent.scopeVersion ? { scopeVersion: consent.scopeVersion } : {}) });
         },
         revoke: async (id: string) => call(path(id), 'DELETE'),
+        rename: async (id: string, name: string) => call(path(id), 'PATCH', { name }) as Promise<{ id: string; name?: string }>,
         deleteRecord: async (id: string) => call(`${path(id)}/record`, 'DELETE'),
         serviceOptions: () => call('/service-connections/options') as Promise<ServiceConnectionOptions>,
         resolveDirectories: (input: { clientID: string; workerID: string; machineID: string; directories: string[] }) => call('/service-connections/resolve-directories', 'POST', input) as Promise<{ selectionID: string; projects: { id: string; directory: string }[]; expiresAt: number }>,

@@ -43,6 +43,7 @@ try{
   page.on('pageerror',()=>errors.push('page-error'));page.on('console',m=>{if(m.type()==='error')errors.push('console-error');});page.on('requestfailed',()=>networkFailures.push('request-failed'));
   await page.goto(origin+'/?form');await page.getByRole('heading',{name:'为后端创建服务授权',exact:true}).waitFor();
   await page.getByRole('checkbox',{name:'Fixture 合作方后端',exact:true}).waitFor();
+  await page.getByLabel('连接名称',{exact:true}).fill('内容团队后端');
   const submit=page.getByRole('button',{name:'创建申请并审查权限',exact:true}),days=page.getByLabel('服务授权有效天数',{exact:true});
   await days.fill('31');assert(await submit.isDisabled());await days.fill('30');
   for(const [label,method] of [['创建任务','tasks.create'],['追加指令','sessions.send'],['取消任务','sessions.cancel']]){const checkbox=page.getByRole('checkbox',{name:`${label} · ${method}`,exact:true});assert.equal(await checkbox.getAttribute('aria-checked'),'false');await checkbox.click();}
@@ -52,9 +53,9 @@ try{
   assert.equal(await page.getByRole('checkbox',{name:`projectC · ${rig.projectC}`,exact:true}).getAttribute('aria-checked'),'false');
   await page.screenshot({path:path.join(artifacts,profile.name+'-scope.png'),fullPage:true});await submit.click();
   await page.getByRole('button',{name:'确认批准以上权限',exact:true}).waitFor();const id=new URL(page.url()).searchParams.get('connection');assert(id);
-  assert.equal(rig.gateway.grants.get(id).state,'pending');assert.equal(await page.getByLabel('一次性服务访问令牌').count(),0);
+  assert.equal(rig.gateway.grants.get(id).state,'pending');assert.equal(rig.gateway.grants.get(id).name,'内容团队后端');assert.equal(await page.getByLabel('一次性服务访问令牌').count(),0);
   assert.deepEqual(rig.gateway.grants.get(id).projectIDs,['projectA','projectB']);assert.equal(rig.gateway.grants.get(id).scopeVersion,2);
-  await page.getByText(rig.project,{exact:true}).waitFor();await page.getByText(rig.projectB,{exact:true}).waitFor();
+  await page.getByText(rig.project,{exact:true}).waitFor();await page.getByText(rig.projectB,{exact:true}).waitFor();await page.getByText('内容团队后端',{exact:true}).first().waitFor();
   await page.getByRole('button',{name:'确认批准以上权限',exact:true}).click();const issue=page.getByRole('button',{name:'生成服务访问令牌（仅交付一次）',exact:true});await issue.waitFor();
   assert.equal(rig.gateway.store.list('service-token:').length,profile.name==='desktop'?0:1);await issue.click();
   const input=page.getByLabel('一次性服务访问令牌',{exact:true});await input.waitFor();assert.equal(await input.getAttribute('type'),'password');const token=await input.inputValue();

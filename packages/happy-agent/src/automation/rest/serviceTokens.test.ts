@@ -35,6 +35,17 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   expect((await r.ownerRequest('/service-connections','POST',{...base,projectID:'projectA',expiresInMs:MAX_SERVICE_GRANT_MS+1})).status).toBe(403);
   expect(r.gateway.store.list('connection:')).toHaveLength(3);
  });
+ it('stores an owner-written display name apart from the granted scope',async()=>{
+  const r=await setup(),c=await pending(r,{name:'  内容团队后端  '});
+  expect(c.name).toBe('内容团队后端');
+  expect((await r.ownerRequest('/connections')).body.data.find((x:any)=>x.id===c.id).name).toBe('内容团队后端');
+  const renamed=await r.ownerRequest(`/connections/${c.id}`,'PATCH',{name:'市场后端'});
+  expect(renamed.status).toBe(200);expect(renamed.body.data.name).toBe('市场后端');expect(renamed.body.data.digest).toBe(c.digest);
+  expect((await r.ownerRequest(`/connections/${c.id}`,'PATCH',{name:'x'.repeat(81)})).status).toBe(400);
+  expect((await r.ownerRequest(`/connections/${c.id}`,'PATCH',{name:'不属于你'},'B')).status).toBe(404);
+  expect((await r.ownerRequest(`/connections/${c.id}`,'PATCH',{name:''})).body.data.name).toBeUndefined();
+  expect((await r.ownerRequest(`/connections/${c.id}/consent`)).body.data.digest).toBe(c.digest);
+ });
  it('keeps the configured service duration cap and original signed expiry contract',async()=>{
   const serverNow=Date.now(),r=await setup({clock:()=>serverNow,serviceTokens:{clients,maxGrantMs:60000}});
   const base={clientID:'serviceA',workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],sessionIDs:[]};
@@ -46,6 +57,7 @@ describe('opt-in service access tokens (all identities/credentials and relay are
  it('keeps signed defaults unchanged; opts in explicitly and caps service grants at 30 days',async()=>{
   const r=await setup();
   const normal=await r.client.request('POST','/connections',{workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],expiresAt:Date.now()+2*3600000});expect(normal.error.code).toBe('SCOPE_DENIED');
+  const named=await r.client.request('POST','/connections',{workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],expiresAt:Date.now()+60000,name:'x'});expect(named.error.code).toBe('INVALID_REQUEST');
   const tooLong=await r.ownerRequest('/service-connections','POST',{clientID:'serviceA',workerID:'worker',machineID:'machineA',projectID:'projectA',methods:['machines.list'],expiresAt:Date.now()+MAX_SERVICE_GRANT_MS+1000});expect(tooLong.status).toBe(403);
   const c=await pending(r);expect(c.credentialMode).toBe('service-token-v1');
   const options=await r.ownerRequest('/service-connections/options');expect(options.body.data.clients.map((x:any)=>x.id)).toEqual(['serviceA']);expect(options.body.data.workers[0].projects[0].directory).toBe(r.project);

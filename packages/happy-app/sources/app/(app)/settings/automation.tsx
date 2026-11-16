@@ -177,6 +177,32 @@ export default function AutomationConnections() {
             setDeletionUnknown(true); await verifyDelete(target.id, version);
         } finally { if (current()) setBusy(false); }
     };
+    const rename = async () => {
+        if (!consent || busy || deletionUnknown) return;
+        const value = await Modal.prompt('重命名连接', '只改变连接记录里的显示名称，不影响授权范围；留空恢复默认名称。', {
+            defaultValue: consent.name ?? '', placeholder: consent.clientName, cancelText: t('common.cancel'), confirmText: '保存',
+        });
+        if (value === null) return;
+        const next = value.trim();
+        if (next.length > 80) { setError('名称最多 80 个字符。'); return; }
+        const version = ++operation.current, current = () => operation.current === version;
+        setBusy(true); setError('');
+        try {
+            await api.rename(consent.id, next);
+            if (!current()) return;
+            const observed = await api.consent(consent.id);
+            if (!current()) return;
+            setConsent(observed); setNow(Date.now()); await refresh();
+        } catch {
+            if (!current()) return;
+            // A lost response does not prove the rename failed; read back without retrying.
+            try {
+                const observed = await api.consent(consent.id);
+                if (!current()) return;
+                setConsent(observed); setNow(Date.now()); await refresh();
+            } catch { if (current()) setError('重命名结果未确认，请重新读取连接后再试。'); }
+        } finally { if (current()) setBusy(false); }
+    };
     const state = consent ? displayState(consent, now) : '';
     return <>
         <Stack.Screen options={{ title: '助手连接' }} />
@@ -199,9 +225,16 @@ export default function AutomationConnections() {
                     {consent && <>
                         <View style={styles.divider} />
                         <View style={styles.identityRow}>
-                            <View style={styles.grow}><Text style={styles.label}>{consent.credentialMode === 'service-token-v1' ? '申请授权的服务' : '申请连接的助手'}</Text><Text selectable style={styles.assistant}>{consent.clientName}</Text></View>
+                            <View style={styles.grow}>
+                                <Text style={styles.label}>{consent.name ? '连接名称' : consent.credentialMode === 'service-token-v1' ? '申请授权的服务' : '申请连接的助手'}</Text>
+                                <Text selectable style={styles.assistant}>{consent.name || consent.clientName}</Text>
+                                {!!consent.name && <Text selectable style={styles.label}>{consent.credentialMode === 'service-token-v1' ? '服务身份' : '助手身份'} · {consent.clientName}</Text>}
+                            </View>
                             <View style={[styles.badge, !unknownMutation && state === 'approved' && styles.approvedBadge]}><Text style={styles.badgeText}>{unknownMutation ? '结果待核实' : stateLabels[state] ?? '状态未知'}</Text></View>
                         </View>
+                        {!deletionUnknown && <Pressable accessibilityRole="button" accessibilityLabel="重命名连接" onPress={() => void rename()} style={styles.disclosure}>
+                            <Text style={styles.link}>重命名连接</Text><Ionicons name="pencil-outline" size={16} color={theme.colors.textSecondary} />
+                        </Pressable>}
                         {consent.credentialMode === 'service-token-v1' && <View style={styles.notice}><Text style={styles.noticeTitle}>服务令牌授权</Text><Text style={styles.description}>批准后可一次性交付专用令牌。持有者可在以下范围内调用 REST；不需要 Happy 账号密钥。</Text></View>}
                         {unknownMutation && <View accessibilityRole="alert" style={styles.notice}>
                             <Text style={styles.noticeTitle}>操作结果尚未确认</Text><Text style={styles.description}>请求可能已经生效。请重新读取连接状态，不要重复批准；如需终止访问，可以明确撤销。</Text>
@@ -265,7 +298,7 @@ export default function AutomationConnections() {
             </ItemGroup>
             <ItemGroup title="连接记录">
                 {connections.length === 0 && <View style={styles.card}><Text style={styles.description}>{signedIn ? '暂无连接记录。助手发起申请后，可从批准链接打开。' : '登录后可查看你申请和批准过的连接。'}</Text></View>}
-                {connections.map(c => <Item key={c.id} disabled={busy} title={c.clientName} subtitle={`${c.scopeVersion !== undefined ? (c.projectIDs ?? []).join('、') : c.projectID} · ${stateLabels[displayState(c, now)] ?? '状态未知'}`} onPress={() => void load(c.id)} />)}
+                {connections.map(c => <Item key={c.id} disabled={busy} title={c.name || c.clientName} subtitle={`${c.name ? `${c.clientName} · ` : ''}${c.scopeVersion !== undefined ? (c.projectIDs ?? []).join('、') : c.projectID} · ${stateLabels[displayState(c, now)] ?? '状态未知'}`} onPress={() => void load(c.id)} />)}
                 {!!listError && <View style={styles.card}><Text accessibilityRole="alert" style={styles.error}>{listError}</Text></View>}
             </ItemGroup>
         </ItemList>

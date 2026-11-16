@@ -158,7 +158,7 @@ canonical path绑定不等于inode固定或OS文件沙箱；同一路径下内�
 ### 本人审查与一次性交付
 
 1. 已登录 Happy 的用户在“助手连接 → 为后端创建服务授权”进入服务授权页；`GET /service-connections/options` 只返回该用户的已登记服务、worker 和允许范围。
-2. `POST /service-connections` 创建 pending，body 为 `clientID + 原 scope`，没有执行权限。待批准期限仍最多 5 分钟。
+2. `POST /service-connections` 创建 pending，body 为 `clientID + 原 scope`，可选 `name`（去空格后 1..80 字符）仅为 owner 的连接记录显示标签，不进入 scope 校验或审批 digest；没有执行权限。待批准期限仍最多 5 分钟。owner 可随时用 `PATCH /connections/{id}` 修改或清空该标签，不影响已批准范围。
 3. 原批准页显示服务令牌模式、服务身份指纹、机器、项目 realpath、精确方法、会话范围及到期。`POST /connections/{id}/approve` 除原 digest/challenge 外必须明确带 `credentialMode: "service-token-v1"`；旧批准页缺少模式确认返回 426，不会默默批准新凭据类型。原签名批准 body 不变。
 4. 本人明确点击“生成服务访问令牌”，`POST /connections/{id}/service-token` 仅在该 owner 的已批准服务连接中成功一次。凭据含 256-bit CSPRNG 随机秘密；单个持久原子 claim 只保存 SHA-256 摘要与非秘密绑定、发行时间及原到期时间。完整令牌只在该次 HTTPS/no-store 响应交付，没有可读回明文的 GET。
 5. 页面默认隐藏凭据，明确点击才显示/复制；不写 localStorage、sessionStorage、URL、导航参数或日志。账号/API切换、路由失焦、进入后台和卸载清除页面凭据，迟到响应及旧复制/显示 handler 不能恢复；明确复制后的外部剪贴板内容不由页面托管。
@@ -218,6 +218,7 @@ Worker 重启后，旧 daemon 会话的 CLI `status.process` 仍可能是 `unkno
 | `GET /projects` | 有效已批准授权；只列当前 grant 的项目，返回 `projectID/directory`，无需额外方法或 worker 调用 |
 | `GET /connections`、`GET /connections/:id/consent` | 同站点 owner 身份；审查连接 |
 | `POST /connections/:id/approve`、`DELETE /connections/:id` | owner 批准/撤权；digest/challenge 防替换和重复批准；撤权保留历史 |
+| `PATCH /connections/:id` | owner 仅修改连接记录的显示名称（1..80 字符，空值清除）；不改变 scope，不进入 digest，不重新批准 |
 | `DELETE /connections/:id/record` | owner 永久删除记录；先撤权并结束等待 job，再清服务令牌摘要和连接，不删除任务/会话/intent/journal |
 | `GET /capabilities` | machines.list；实际探测 worker/daemon core 能力 |
 | `GET /machines`、`GET /sessions` | machines.list / sessions.list；cursor/limit 分页 |
