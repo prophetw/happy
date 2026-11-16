@@ -2,7 +2,7 @@
  * Pause drains native turns; it never discards inputs, aborts tools or stops business agents.
  * Expired leases stay closed until an explicit CAS resume. Legacy producers never ACK.
  */
-import { closeSync, constants, existsSync, fsyncSync, fstatSync, lstatSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, fstatSync, lstatSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve, parse } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -35,8 +35,9 @@ function read(file: string) {
         return JSON.parse(bytes.toString('utf8'));
     } finally { closeSync(fd); }
 }
+function present(file: string) { pathCheck(file); return lstatSync(file, { throwIfNoEntry: false }) !== undefined; }
 function write(file: string, value: unknown) {
-    pathCheck(file); if (existsSync(file)) read(file);
+    pathCheck(file); if (present(file)) read(file);
     const tmp = file + '.' + randomUUID() + '.tmp', fd = openSync(tmp, 'wx', 0o600);
     try { writeFileSync(fd, JSON.stringify(value)); fsyncSync(fd); } finally { closeSync(fd); }
     renameSync(tmp, file);
@@ -54,7 +55,7 @@ function check(raw: AdmissionBinding) {
 }
 function intent(b: AdmissionBinding): IntentValue | null {
     const file = join(b.directory, 'admission-intent.json');
-    if (!existsSync(file)) return null;
+    if (!present(file)) return null;
     const value = Intent.parse(read(file));
     if (!same(value.binding, b)) throw Error('hosted_admission_binding_changed');
     return value;
@@ -76,7 +77,7 @@ function lock(directory: string, name: string) {
 /** No remote/model endpoint. Caller must be the same OS owner of the private runtime. */
 export function readHostedAdmission(raw: AdmissionBinding) {
     const b = check(raw), desired = intent(b), file = join(b.directory, 'admission-status.json');
-    const status = existsSync(file) ? Status.parse(read(file)) : null;
+    const status = present(file) ? Status.parse(read(file)) : null;
     if (status && !same(status.binding, b)) throw Error('hosted_admission_binding_changed');
     return { version: 1 as const, desired, status, supported: Boolean(status && status.phase !== 'stopped' && alive(status.owner)),
         acknowledged: Boolean(status && status.phase !== 'stopped' && alive(status.owner) && status.revision === (desired?.revision ?? 0)),

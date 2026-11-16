@@ -59,3 +59,12 @@ it('reserves a recovery receipt when maintenance history reaches its limit', () 
         expect(m.permits(false)).toBe(true);
     } finally { f.close(); }
 });
+it('a dangling intent never reopens producer admission or becomes a missing command', () => {
+    const f = fixture();
+    try {
+        const m = createHostedAdmission(f.b, hostedProducerIdentity()); m.permits(false);
+        symlinkSync(join(f.b.directory, 'missing'), join(f.b.directory, 'admission-intent.json'));
+        expect(() => m.permits(false)).toThrow('symlink');
+        expect(() => readHostedAdmission(f.b)).toThrow('symlink');
+    } finally { f.close(); }
+});
