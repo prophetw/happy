@@ -65,6 +65,7 @@ export function ServiceTokenDelivery({ consent, api, disabled = false }: { conse
 export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; onCreated: (id: string) => void; sourceID?: string }) {
     const [options, setOptions] = React.useState<ServiceConnectionOptions | null>(null), [clientID, setClient] = React.useState(''), [workerID, setWorker] = React.useState(''), [projectIDs, setProjects] = React.useState<string[]>([]);
     const [name, setName] = React.useState('');
+    const [scopeDirty, setScopeDirty] = React.useState(false);
     const [methods, setMethods] = React.useState<string[]>([]), [days, setDays] = React.useState('30'), [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false), [submitted, setSubmitted] = React.useState(false);
     const [original, setOriginal] = React.useState<AutomationConsent | null>(null);
     const generation = React.useRef(0), attempted = React.useRef(false), selectionVersion = React.useRef(0);
@@ -78,6 +79,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         attempted.current = false;
         setOptions(null); setOriginal(null); setClient(''); setWorker(''); setProjects([]); setMethods([]); setDays('30');
         setName('');
+        setScopeDirty(false);
         setError(''); setBusy(false); setSubmitted(false); setCustomDirectories([]); setCustomPath(''); setClock(Date.now()); invalidateSelection();
         void (async () => {
             if (sourceID === undefined) {
@@ -144,15 +146,16 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
     const directorySupported = options?.directoryScopes === 1 && worker?.directoryScopes === 1 && !!worker.directorySelection?.roots.length;
     const maxProjects = multipleSupported ? Math.min(options?.maxProjects ?? 32, 32) : 1;
     const duration = Math.floor(Number(days) * day);
+    const inPlace = !!original && original.state === 'approved';
     const requiresDirectorySelection = customDirectories.length > 0 || original?.scopeVersion === 3;
     const pickedPaths = [...(worker?.projects.filter(p => projectIDs.includes(p.id)).map(p => p.directory) ?? []), ...customDirectories];
-    const selectionReady = !requiresDirectorySelection || (!!directorySupported && !!verified && verified.expiresAt > clock);
+    // In-place edits that keep the scope unchanged must not force directory re-verification.
+    const selectionReady = (inPlace && !scopeDirty) || !requiresDirectorySelection || (!!directorySupported && !!verified && verified.expiresAt > clock);
     const retainedSessionIDs = original?.sessionIDs ?? [];
     const sessionsValid = retainedSessionIDs.every(id => worker?.projects.some(p => projectIDs.includes(p.id) && p.sessionIDs.includes(id)))
         && (!requiresDirectorySelection || retainedSessionIDs.length === 0);
     const valid = selectionReady && sessionsValid && !!options && !!clientID && !!worker && pickedPaths.length > 0 && pickedPaths.length <= maxProjects
         && projectIDs.every(id => worker.projects.some(p => p.id === id)) && methods.length > 0 && Number.isFinite(duration) && duration >= 1000 && duration <= options.maxGrantMs;
-    const inPlace = !!original && original.state === 'approved';
     const create = async () => {
         if (!valid || !worker || !options || attempted.current) return;
         attempted.current = true; const version = generation.current; setSubmitted(true); setBusy(true); setError('');
@@ -164,7 +167,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
             try {
                 if (inPlace && original) {
                     next = await api.edit(original.id, { name: name.trim(), expiresInMs: duration, methods, sessionIDs: [...original.sessionIDs],
-                        ...(original.options !== undefined ? { options: original.options } : {}), ...scopePart });
+                        ...(original.options !== undefined ? { options: original.options } : {}), ...(scopeDirty ? scopePart : {}) });
                 } else {
                     next = await api.createService({ clientID, workerID, machineID: worker.machineID, ...(name.trim() ? { name: name.trim() } : {}),
                         ...scopePart,
@@ -199,7 +202,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         const known = worker.projects.find(p => p.directory === clean);
         if (known) setProjects(ids => ids.includes(known.id) ? ids : [...ids, known.id]);
         else setCustomDirectories(paths => paths.includes(clean) ? paths : [...paths, clean]);
-        invalidateSelection(); setCustomPath(''); setError('');
+        setScopeDirty(true); invalidateSelection(); setCustomPath(''); setError('');
     };
     const verifyDirectories = async () => {
         if (!worker || !directorySupported || submitted || checking || !pickedPaths.length || pickedPaths.length > maxProjects) return;
@@ -217,25 +220,25 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         <Text style={styles.secondary}>项目范围限制任务入口和会话访问，不是操作系统文件沙箱；代理继续使用现有权限确认机制。</Text>
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
         {options && <>
-            {original && <Text style={styles.secondary}>{inPlace ? '正在原地续期/编辑这项授权：已交付的服务令牌保持不变，保存后立即按新范围和新到期时间生效，不会撤销连接，也不会生成新令牌。' : t('settings.automation.serviceEditNotice')}</Text>}
+            {original && <Text style={styles.secondary}>{inPlace ? '正在原地续期/编辑这项授权：已交付的服务令牌保持不变，保存后立即按新范围和新到期时间生效，不会撤销连接，也不会生成新令牌。只改名称、时长或方法时无需重新核实目录；更改项目或目录选择后才需要 worker 重新核实。' : t('settings.automation.serviceEditNotice')}</Text>}
             <Text style={styles.title}>连接名称（可选）</Text>
             <TextInput accessibilityLabel="连接名称" placeholder="例如：内容团队后端" value={name} onChangeText={setName} editable={!submitted} maxLength={80} style={styles.input} />
             <Text style={styles.secondary}>仅用于在“连接记录”中区分多条授权，不影响权限范围；留空时显示服务身份名称。</Text>
             <Text style={styles.title}>服务身份</Text>
-            {options.clients.map(c => <Choice key={c.id} label={c.name} selected={clientID === c.id} disabled={submitted} onPress={() => { setClient(c.id); invalidateSelection(); }} />)}
+            {options.clients.map(c => <Choice key={c.id} label={c.name} selected={clientID === c.id} disabled={submitted || inPlace} onPress={() => { setClient(c.id); invalidateSelection(); }} />)}
             <Text style={styles.title}>机器 / Worker</Text>
-            {options.workers.map(w => <Choice key={w.id} label={`${w.name} · ${w.machineID}`} selected={workerID === w.id} disabled={submitted} onPress={() => { invalidateSelection(); setCustomDirectories([]); setCustomPath(''); setWorker(w.id); setProjects(w.projects[0] ? [w.projects[0].id] : []); setMethods(readOnly(w.methods)); }} />)}
+            {options.workers.map(w => <Choice key={w.id} label={`${w.name} · ${w.machineID}`} selected={workerID === w.id} disabled={submitted || inPlace} onPress={() => { invalidateSelection(); setCustomDirectories([]); setCustomPath(''); setWorker(w.id); setProjects(w.projects[0] ? [w.projects[0].id] : []); setMethods(readOnly(w.methods)); }} />)}
             <Text style={styles.title}>项目目录（可多选）</Text>
             <Text style={styles.secondary}>已选 {pickedPaths.length} 个项目。同一令牌仅可访问勾选的目录；创建每个任务时仍需明确指定项目。</Text>
-            {worker?.projects.map(p => <Choice key={p.id} label={`${p.id} · ${p.directory}`} selected={projectIDs.includes(p.id)} disabled={submitted} onPress={() => { invalidateSelection(); setProjects(ids => ids.includes(p.id) ? ids.filter(id => id !== p.id) : [...ids, p.id]); }} />)}
+            {worker?.projects.map(p => <Choice key={p.id} label={`${p.id} · ${p.directory}`} selected={projectIDs.includes(p.id)} disabled={submitted} onPress={() => { setScopeDirty(true); invalidateSelection(); setProjects(ids => ids.includes(p.id) ? ids.filter(id => id !== p.id) : [...ids, p.id]); }} />)}
             {directorySupported && worker && <View style={styles.section}>
                 <Text style={styles.title}>添加机器上的目录</Text>
                 <Text style={styles.secondary}>可选根目录：{worker.directorySelection!.roots.join('、')}。只授权选中的具体目录，不会自动包含以后新增的项目。</Text>
                 {!submitted && <DirectoryPicker key={worker.id} machineId={worker.machineID} machineKey={worker.id} machineName={worker.name} homeDir={worker.directorySelection!.roots[0]} initialPath={worker.directorySelection!.roots[0]} recentPaths={[]} onSelectDirectory={addDirectory} onSelectRecent={addDirectory} onRequestCustomPath={() => setError('可在下方输入机器上的绝对目录。')} />}
                 <TextInput accessibilityLabel="要添加的项目绝对目录" value={customPath} onChangeText={setCustomPath} editable={!submitted} autoCapitalize="none" autoCorrect={false} style={styles.input} />
                 <Button label="添加目录到本次选择" disabled={submitted || !customPath.trim()} onPress={() => addDirectory(customPath)} />
-                {customDirectories.map(path => <Choice key={path} label={`移除已选目录 · ${path}`} selected disabled={submitted} onPress={() => { invalidateSelection(); setCustomDirectories(paths => paths.filter(p => p !== path)); }} />)}
-                {requiresDirectorySelection && <>
+                {customDirectories.map(path => <Choice key={path} label={`移除已选目录 · ${path}`} selected disabled={submitted} onPress={() => { setScopeDirty(true); invalidateSelection(); setCustomDirectories(paths => paths.filter(p => p !== path)); }} />)}
+                {requiresDirectorySelection && (!inPlace || scopeDirty) && <>
                     <Button label={checking ? '正在核实目录' : '让 Worker 核实所选目录'} disabled={submitted || checking || pickedPaths.length > maxProjects} onPress={() => void verifyDirectories()} />
                     {verified && verified.expiresAt > clock && <Text accessibilityRole="alert" style={styles.secondary}>目录已核实；批准页将展示以下真实路径：{verified.projects.map(p => p.directory).join('、')}。请在两分钟内创建申请，最终仍须单独批准。</Text>}
                     {verified && verified.expiresAt <= clock && <Text accessibilityRole="alert" style={styles.error}>目录核实已过期，请重新核实。</Text>}

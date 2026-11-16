@@ -89,6 +89,10 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   const edited=await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{scopeVersion:3,projectIDs:next.projects.map((p:any)=>p.id),projects:next.projects,selectionID:next.selectionID});
   expect(edited.status).toBe(200);expect(edited.body.data.projects).toHaveLength(2);
   expect((await request(r,token,'/projects')).body.data.projects).toHaveLength(2);
+  const renamed=await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{name:'目录授权续期',expiresInMs:120000});
+  expect(renamed.status).toBe(200);expect(renamed.body.data.name).toBe('目录授权续期');
+  expect(renamed.body.data.projects).toHaveLength(2);
+  expect((await request(r,token,'/projects')).body.data.projects).toHaveLength(2);
  });
  it('keeps the configured service duration cap and original signed expiry contract',async()=>{
   const serverNow=Date.now(),r=await setup({clock:()=>serverNow,serviceTokens:{clients,maxGrantMs:60000}});

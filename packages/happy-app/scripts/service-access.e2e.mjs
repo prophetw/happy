@@ -88,6 +88,17 @@ try{
   assert.equal((await backend('/machines')).body.ok,true);
   assert.equal((await backend('/tasks','POST',{requestID:profile.name+'_inplace_denied',machineID:'machineA',projectID:'projectB'})).body.error.code,'SCOPE_DENIED');
   const synced=await rig.ownerRequest(`/connections/${id}/consent`);assert.equal(synced.body.data.serviceToken.expiresAt,live.expiresAt);
+  // Rename-only in-place edit needs no scope re-verification and preserves the scope.
+  await page.getByRole('button',{name:'续期 / 编辑授权（令牌不变）',exact:true}).click();
+  await page.getByText('正在原地续期/编辑这项授权',{exact:false}).waitFor();
+  await page.getByLabel('连接名称',{exact:true}).fill('内容团队后端-续期');
+  const renameSave=page.getByRole('button',{name:'保存修改（保持令牌不变）',exact:true});assert(await renameSave.isEnabled());
+  await renameSave.click();
+  await page.getByRole('button',{name:'续期 / 编辑授权（令牌不变）',exact:true}).waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('connection'),id);
+  assert.equal(rig.gateway.grants.get(id).name,'内容团队后端-续期');
+  assert.equal(rig.gateway.grants.get(id).projectID,'projectA');
+  assert.equal((await backend('/machines')).body.ok,true);
   // Rotation to a NEW token keeps the replacement flow, reached after revocation.
   await page.getByRole('button',{name:'撤销连接',exact:true}).click();
   await page.getByRole('button',{name:'编辑并重新授权',exact:true}).waitFor();
