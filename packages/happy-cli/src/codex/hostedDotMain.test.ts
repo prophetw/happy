@@ -29,6 +29,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     waitForConnection = async () => {}; updateMetadata = async () => {}; updateAgentState = async () => {};
     sendSessionDeath() {} keepAlive() {} close = async () => { clearInterval(this.timer); };
     sendSessionProtocolMessageVerified = async (envelope: unknown, localId: string) => { await h.flush(); h.sent.push({ localId, envelope }); };
+    sendSessionProtocolMessagesVerified = async (rows: any[]) => { await h.flush(); h.sent.push(...rows); return rows.map(row => row.localId); };
 } }));
 import { runHostedDot } from './hostedDotMain';
 import { readHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
@@ -65,11 +66,41 @@ function fixture(gateway = false, imported = false, seed?: (state: any) => void)
 }
 const row = (seq: number, text: string, deliveryMode = 'queue') => ({ id: String(seq), seq, body: { role: 'user', content: { type: 'text', text }, meta: { deliveryMode } } });
 const emit = (method: string, params: any) => {
+    h.options.notificationTransaction(() => {
     h.options.onNotification(method, { threadId: 'native-thread', ...params });
     if (method === 'turn/started') h.event({ type: 'task_started', thread_id: 'native-thread', turn_id: params.turn.id });
     if (method === 'turn/completed') h.event({ type: 'task_complete', thread_id: 'native-thread', turn_id: params.turn.id, status: params.turn.status });
+    });
 };
 beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.flush.mockReset().mockResolvedValue(undefined); h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockReset().mockResolvedValue({}); });
+it('commits actual native frame mutations once and skips raw/timing/no-op callbacks', async () => {
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        const before = f.state().authority.revision;
+        h.options.notificationTransaction(() => {
+            h.options.onNotification('thread/tokenUsage/updated', { threadId: 'native-thread' });
+            h.event({ type: 'token_speed_output_delta', kind: 'text' });
+            h.event({ type: 'unrecognized_notification' });
+        });
+        expect(f.state().authority.revision).toBe(before);
+        h.send.mockImplementation(async () => {
+            const rev = f.state().authority.revision;
+            emit('turn/started', { turn: { id: 'transaction-turn' } });
+            expect(f.state().authority.revision).toBe(rev + 1);
+            expect(f.state().inputs.at(-1).status).toBe('accepted');
+            h.options.notificationTransaction(() => {
+                h.options.onNotification('item/agentMessage/delta', { threadId: 'native-thread' });
+                h.event({ type: 'token_speed_output_delta', kind: 'text' });
+                h.event({ type: 'agent_message_delta', thread_id: 'native-thread', turn_id: 'transaction-turn', item_id: 'item', delta: '文🙂' });
+            });
+            expect(f.state().authority.revision).toBe(rev + 2);
+            emit('turn/completed', { turn: { id: 'transaction-turn', status: 'completed' } });
+        });
+        h.rows.push(row(1, 'transaction request'));
+        await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('completed'));
+    } finally { await f.stop(); }
+});
 it('pause fences user queue, steer and task-result inputs while ACK delivery continues, then resumes once', async () => {
     h.send.mockImplementation(async (text: string) => { emit('turn/started', { turn: { id: text } }); emit('turn/completed', { turn: { id: text, status: 'completed' } }); });
     const f = fixture(), b = { directory: f.config.directory, dotId: f.config.dotId, sessionId: f.config.sessionId, epoch: 0 };

@@ -252,6 +252,75 @@ describe('ApiSessionClient v3 messages API migration', () => {
         } finally { await client.close(); }
     });
 
+    it('delivers 50 hosted envelopes FIFO with one POST/readback and leaves the receive cursor untouched', async () => {
+        const entries = Array.from({ length: 50 }, (_, n) => ({ localId: `stable-${n}`, envelope: { id: `item-${n}`, time: 1000, role: 'agent', turn: 'turn', ev: { t: 'text', text: '文🙂', textOffset: n } } as const }));
+        const client = new ApiSessionClient('fake-token', session);
+        let stored: any[] = [];
+        mockAxiosPost.mockImplementation(async (_url, body) => {
+            stored = body.messages.map((row: any, n: number) => ({ seq: n + 7, localId: row.localId, content: { t: 'encrypted', c: row.content } }));
+            expect(body.messages.every((row: any) => Object.keys(row).sort().join(',') === 'content,localId')).toBe(true);
+            return { data: { messages: stored } };
+        });
+        mockAxiosGet.mockImplementation(async () => ({ data: { messages: stored, hasMore: false } }));
+        try {
+            expect(await client.sendSessionProtocolMessagesVerified(entries)).toEqual(entries.map(row => row.localId));
+            expect(mockAxiosPost).toHaveBeenCalledTimes(1); expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+            expect((client as any).lastReceivedSeq).toBe(0);
+            await expect(client.sendSessionProtocolMessagesVerified([...entries, entries[0]])).rejects.toThrow('session_output_batch_invalid');
+        } finally { await client.close(); }
+    });
+
+    it('removes only verified partial receipts and retries the unknown IDs with their original bodies', async () => {
+        const entries = [0, 1].map(n => ({ localId: `partial-${n}`, envelope: { id: `item-${n}`, time: 1, role: 'agent', ev: { t: 'text', text: '字' } } as const }));
+        const client = new ApiSessionClient('fake-token', session); let stored: any[] = [];
+        mockAxiosPost.mockImplementation(async (_url, body) => {
+            stored = body.messages.map((row: any, n: number) => ({ seq: n + 7, localId: row.localId, content: { t: 'encrypted', c: row.content } }));
+            return { data: { messages: mockAxiosPost.mock.calls.length === 1 ? stored.slice(0, 1) : stored } };
+        });
+        mockAxiosGet.mockImplementation(async () => ({ data: { messages: stored, hasMore: false } }));
+        try {
+            expect(await client.sendSessionProtocolMessagesVerified(entries)).toEqual(entries.map(row => row.localId));
+            expect(mockAxiosPost.mock.calls.map(call => call[1].messages.map((row: any) => row.localId))).toEqual([['partial-0', 'partial-1'], ['partial-1']]);
+            expect(mockAxiosPost.mock.calls[1][1].messages[0].content).toBe(mockAxiosPost.mock.calls[0][1].messages[1].content);
+        } finally { await client.close(); }
+    });
+
+    it('rechecks a batch after relay generation changes during readback and rejects identity changes atomically', async () => {
+        const entry = { localId: 'generation-id', envelope: { id: 'native', time: 1, role: 'agent', ev: { t: 'text', text: 'body' } } as const };
+        const client = new ApiSessionClient('fake-token', session); let stored: any[] = [];
+        mockAxiosPost.mockImplementation(async (_url, body) => {
+            stored = body.messages.map((row: any) => ({ seq: 8, localId: row.localId, content: { t: 'encrypted', c: row.content } }));
+            return { data: { messages: stored } };
+        });
+        mockAxiosGet.mockImplementation(async () => { if (mockAxiosGet.mock.calls.length === 1) (client as any).relayGeneration++; return { data: { messages: stored } }; });
+        try {
+            expect(await client.sendSessionProtocolMessagesVerified([entry])).toEqual([entry.localId]);
+            expect(mockAxiosPost).toHaveBeenCalledTimes(2);
+            (client as any).pendingOutbox.push({ localId: 'conflict', content: encryptContent(session, { different: true }) });
+            await expect(client.sendSessionProtocolMessagesVerified([entry, { ...entry, localId: 'conflict' }])).rejects.toThrow('session_output_identity_conflict');
+            expect((client as any).pendingOutbox.map((row: any) => row.localId)).toEqual(['conflict']);
+        } finally { await client.close(); }
+    });
+
+    it('returns only the verified subset at the bounded deadline and retains unknown identities', async () => {
+        vi.useFakeTimers();
+        const entries = [0, 1].map(n => ({ localId: `deadline-${n}`, envelope: { id: `e-${n}`, time: 1, role: 'agent', ev: { t: 'text', text: '字' } } as const }));
+        const client = new ApiSessionClient('fake-token', session); let stored: any[] = [], resume: (() => void) | undefined;
+        mockAxiosPost.mockImplementation(async (_url, body) => {
+            if (mockAxiosPost.mock.calls.length > 1) await new Promise<void>(resolve => { resume = resolve; });
+            stored = body.messages.map((row: any, n: number) => ({ seq: n + 7, localId: row.localId, content: { t: 'encrypted', c: row.content } }));
+            return { data: { messages: stored.filter(row => row.localId === 'deadline-0') } };
+        });
+        mockAxiosGet.mockImplementation(async () => ({ data: { messages: stored } }));
+        try {
+            const result = client.sendSessionProtocolMessagesVerified(entries);
+            await vi.advanceTimersByTimeAsync(12001);
+            expect(await result).toEqual(['deadline-0']);
+            expect((client as any).pendingOutbox.map((row: any) => row.localId)).toEqual(['deadline-1']);
+            expect((client as any).deliveryWaiters.size).toBe(0);
+        } finally { await client.close(); resume?.(); await vi.advanceTimersByTimeAsync(0); vi.useRealTimers(); }
+    });
+
     it('reports rejected durable metadata and state updates with bounded retries', async () => {
         const client = new ApiSessionClient('fake-token', session, undefined, { commonHandlers: false, receive: { afterSeq: 0, onMessage: () => {} } });
         try {

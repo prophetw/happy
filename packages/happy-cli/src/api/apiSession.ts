@@ -257,7 +257,7 @@ export class ApiSessionClient extends EventEmitter {
      * fetch's after_seq looked straight past seq 1.
      */
     private lastReceivedSeq = 0;
-    private pendingOutbox: Array<{ content: string; localId: string; verify?: boolean }> = [];
+    private pendingOutbox: Array<{ content: string; localId: string; verify?: boolean; ordered?: boolean }> = [];
     private deliveryWaiters = new Map<string, Set<() => void>>();
     private readonly sendSync: InvalidateSync;
     private readonly receiveSync: InvalidateSync;
@@ -798,14 +798,16 @@ export class ApiSessionClient extends EventEmitter {
         // then backfill older messages in subsequent batches.
         while (this.pendingOutbox.length > 0) {
             const generation = this.relayGeneration;
+            const ordered = this.pendingOutbox.filter(entry => entry.ordered);
             const batchSize = Math.min(this.pendingOutbox.length, ApiSessionClient.MAX_OUTBOX_BATCH_SIZE);
-            const batchStart = this.pendingOutbox.length - batchSize;
-            const batch = this.pendingOutbox.slice(batchStart);
+            // Only the new hosted lane is FIFO. Ordinary Happy retains its
+            // existing latest-first/backfill policy when this lane is unused.
+            const batch = ordered.length ? ordered.slice(0, ApiSessionClient.MAX_OUTBOX_BATCH_SIZE) : this.pendingOutbox.slice(-batchSize);
 
             const response = await axios.post<V3PostSessionMessagesResponse>(
                 `${this.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
                 {
-                    messages: batch
+                    messages: batch.map(({ content, localId }) => ({ content, localId }))
                 },
                 {
                     headers: this.authHeaders(),
@@ -820,35 +822,52 @@ export class ApiSessionClient extends EventEmitter {
             // back over the socket like everyone else's and move the cursor
             // then, once they have actually been seen.
             if (generation !== this.relayGeneration) continue;
-            for (const entry of batch.filter(entry => entry.verify)) {
-                const receipt = response.data.messages?.find(message => message.localId === entry.localId);
-                if (!receipt || !Number.isSafeInteger(receipt.seq)) throw new Error('session_output_unconfirmed');
-                const page = await this.readMessagePage(receipt.seq - 1);
-                const stored = page.data.messages?.find(message => message.seq === receipt.seq && message.localId === entry.localId);
-                if (!stored || stored.content?.t !== 'encrypted'
-                    || JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(stored.content.c)))
-                    !== JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(entry.content)))) {
-                    throw new Error('session_output_readback_failed');
+            const confirmed = new Set(batch.filter(entry => !entry.verify));
+            const candidates = batch.filter(entry => entry.verify).flatMap(entry => {
+                const matches = response.data.messages?.filter(message => message.localId === entry.localId) ?? [];
+                return matches.length === 1 && Number.isSafeInteger(matches[0].seq) && matches[0].seq > 0 ? [{ entry, seq: matches[0].seq }] : [];
+            }).sort((a, b) => a.seq - b.seq);
+            // One page commonly confirms the entire <=50-message batch. Bound
+            // sparse/interleaved receipts too; unknown rows retain their IDs.
+            for (let pages = 0; candidates.length && pages < 4; pages++) {
+                const first = candidates.shift()!, page = await this.readMessagePage(first.seq - 1);
+                if (generation !== this.relayGeneration) break;
+                const rows = page.data.messages ?? [];
+                const end = Math.max(first.seq, ...rows.map(row => Number.isSafeInteger(row.seq) ? row.seq : 0));
+                const covered = [first, ...candidates.filter(item => item.seq <= end)];
+                for (const item of covered) {
+                    const stored = rows.filter(row => row.seq === item.seq && row.localId === item.entry.localId);
+                    if (stored.length !== 1 || stored[0].content?.t !== 'encrypted') continue;
+                    try {
+                        if (JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(stored[0].content.c)))
+                            === JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(item.entry.content)))) confirmed.add(item.entry);
+                    } catch { /* Corrupt/mismatched readback remains unconfirmed, never sent. */ }
                 }
+                for (let n = candidates.length - 1; n >= 0; n--) if (candidates[n].seq <= end) candidates.splice(n, 1);
             }
-            this.pendingOutbox.splice(batchStart, batch.length);
-            for (const entry of batch) for (const delivered of this.deliveryWaiters.get(entry.localId) ?? []) delivered();
+            if (generation !== this.relayGeneration) continue;
+            this.pendingOutbox = this.pendingOutbox.filter(entry => !confirmed.has(entry));
+            for (const entry of confirmed) for (const delivered of this.deliveryWaiters.get(entry.localId) ?? []) delivered();
+            if (confirmed.size !== batch.length) throw new Error('session_output_unconfirmed');
         }
     }
 
-    private enqueueMessage(content: unknown, invalidate: boolean = true, localId: string = randomUUID(), verify = false) {
+    private enqueueMessage(content: unknown, invalidate: boolean = true, localId: string = randomUUID(), verify = false, ordered = false) {
         const existing = this.pendingOutbox.find(entry => entry.localId === localId);
         if (existing) {
             if (verify && JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(existing.content))) !== JSON.stringify(content)) {
                 throw new Error('session_output_identity_conflict');
             }
-            this.sendSync.invalidate(); return;
+            if (verify) existing.verify = true;
+            if (ordered) existing.ordered = true;
+            if (invalidate) this.sendSync.invalidate(); return;
         }
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
         this.pendingOutbox.push({
             content: encrypted,
             localId,
             ...(verify ? { verify: true } : {}),
+            ...(ordered ? { ordered: true } : {}),
         });
         if (invalidate) {
             this.sendSync.invalidate();
@@ -950,7 +969,7 @@ export class ApiSessionClient extends EventEmitter {
         this.enqueueMessage(content);
     }
 
-    private enqueueSessionProtocolEnvelope(envelope: SessionEnvelope, invalidate: boolean = true, localId?: string, verify = false) {
+    private enqueueSessionProtocolEnvelope(envelope: SessionEnvelope, invalidate: boolean = true, localId?: string, verify = false, ordered = false) {
         const content = {
             role: 'session',
             content: envelope,
@@ -959,7 +978,7 @@ export class ApiSessionClient extends EventEmitter {
             }
         };
 
-        this.enqueueMessage(content, invalidate, localId, verify);
+        this.enqueueMessage(content, invalidate, localId, verify, ordered);
     }
 
     sendSessionProtocolMessage(envelope: SessionEnvelope) {
@@ -992,6 +1011,33 @@ export class ApiSessionClient extends EventEmitter {
             clearTimeout(timer); waiters.delete(done);
             if (!waiters.size) this.deliveryWaiters.delete(localId);
         }
+    }
+
+    /** Hosted-only bounded FIFO admission. Resolve only IDs with encrypted
+     * POST receipt + matching readback; timeout returns the verified subset.
+     * No caller may treat an omitted ID as acknowledged. */
+    async sendSessionProtocolMessagesVerified(entries: ReadonlyArray<{ envelope: SessionEnvelope; localId: string }>): Promise<string[]> {
+        if (!entries.length || entries.length > 50 || new Set(entries.map(entry => entry.localId)).size !== entries.length) throw new Error('session_output_batch_invalid');
+        // Validate all identities before enqueuing any part of this call.
+        for (const entry of entries) {
+            const old = this.pendingOutbox.find(row => row.localId === entry.localId);
+            const content = { role: 'session', content: entry.envelope, meta: { sentFrom: 'cli' } };
+            if (old && JSON.stringify(decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(old.content))) !== JSON.stringify(content)) throw new Error('session_output_identity_conflict');
+        }
+        const verified = new Set<string>(), cleaners: Array<() => void> = [];
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const deliveries = entries.map(entry => new Promise<void>(resolve => {
+                const done = () => { verified.add(entry.localId); resolve(); };
+                const waiters = this.deliveryWaiters.get(entry.localId) ?? new Set<() => void>();
+                waiters.add(done); this.deliveryWaiters.set(entry.localId, waiters);
+                cleaners.push(() => { waiters.delete(done); if (!waiters.size) this.deliveryWaiters.delete(entry.localId); });
+            }));
+            for (const entry of entries) this.enqueueSessionProtocolEnvelope(entry.envelope, false, entry.localId, true, true);
+            this.sendSync.invalidate();
+            await Promise.race([Promise.all(deliveries), new Promise<void>(resolve => { timeout = setTimeout(resolve, 12000); })]);
+            return entries.filter(entry => verified.has(entry.localId)).map(entry => entry.localId);
+        } finally { clearTimeout(timeout); for (const clean of cleaners) clean(); }
     }
 
     /**
