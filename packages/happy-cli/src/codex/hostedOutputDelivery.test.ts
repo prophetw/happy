@@ -73,7 +73,9 @@ it('waits for a joined ACK transaction before advancing the delivery queue', asy
     await delivery.close();
 });
 it('sends an oversized indivisible snapshot alone without rewriting its ID or combining it with the next row', async () => {
-    const snapshot = row(0, 'large', 0, true); snapshot.envelope.ev.text = '文'.repeat(30000);
+    const snapshot = row(0, 'large', 0, true);
+    if (snapshot.envelope.ev.t !== 'text') throw Error('fixture must be text');
+    snapshot.envelope.ev.text = '文'.repeat(30000);
     const rows = [snapshot, row(1, 'next')];
     const send = vi.fn(async (batch: any[]) => batch.map(r => r.localId)), delivery = new HostedOutputDelivery(rows, send, () => {});
     delivery.durable(); await delivery.flush();
