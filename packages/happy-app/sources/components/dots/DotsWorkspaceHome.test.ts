@@ -37,6 +37,8 @@ vi.mock('@/sync/testloopDotsNavigation', () => ({ createTestloopDotsNavigationGu
     update: vi.fn(), invalidate: vi.fn(), begin: vi.fn(),
 }) }));
 vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
+vi.mock('./DotsWorkspacesPanel', () => ({ DotsWorkspacesPanel: () => null }));
+vi.mock('@/text', () => ({ t: (key:string) => key==='workspaces.title'?'工作区':key }));
 vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({
     ready: true, pending: null, error: null, notice: null, archiveError: null, archivePending: false,
     submit: mocks.submit, retry: vi.fn(), retryArchive: vi.fn(),

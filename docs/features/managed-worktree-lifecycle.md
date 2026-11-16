@@ -8,6 +8,9 @@ Happy Worker 的 `TaskQueue` 是工作区身份与运行引用的权威；每个
 入口，不新增 MCP/REST grant、模型工具、进程停止权、提交或推送权限。只发布这份源码不会
 启用线上回收。操作真实目录前须另获授权，并完成部署/全体 Worker 版本核对。
 
+后续的 [Dots 工作区页面](dots-workspace-management.md) 提供独立的已认证owner管理入口，
+复用本文服务与安全门，不接受模型/MCP凭证，不自动启用定时回收；正常用户流程无需CLI。
+
 ## 三种事实分别记录
 
 ```text

@@ -1,3 +1,4 @@
+import { workspacesEn } from '../workspaces';
 import type { TranslationStructure } from '../_default';
 
 /**
@@ -30,6 +31,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const en: TranslationStructure = {
+    workspaces: workspacesEn,
     qrScanner: {
         title: 'Scan QR code',
         scanWithCamera: 'Scan with camera',

@@ -5,6 +5,8 @@ import { randomUUID } from 'expo-crypto';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams } from 'expo-router';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
+import { DotsWorkspacesPanel } from './DotsWorkspacesPanel';
+import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
@@ -47,9 +49,11 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     const data = useDotsWorkspace(session.id, workspaceId, active);
     const currentData = React.useRef(data);
     currentData.current = data;
-    const { connections } = useLocalSearchParams<{ connections?: string }>();
+    const { connections, workspaces } = useLocalSearchParams<{ connections?: string; workspaces?: string }>();
     const [managingConnections, setManagingConnections] = React.useState(connections === '1');
+    const [managingWorkspaces, setManagingWorkspaces] = React.useState(workspaces === '1');
     React.useEffect(() => { if (connections === '1') setManagingConnections(true); }, [connections]);
+    React.useEffect(() => { if (workspaces === '1') setManagingWorkspaces(true); }, [workspaces]);
     const navigate = useNavigateToSession();
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [creating, setCreating] = React.useState(false);
@@ -155,6 +159,8 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 style={[s.button, { backgroundColor: '#6650b7', opacity: data.ready && !data.pending ? 1 : 0.5 }]}><Text style={{ color: '#fff', fontWeight: '600' }}>＋ 新建 Dot</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={Boolean(data.pending) || data.refreshing} onPress={() => data.retry()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="连接与授权" onPress={() => setManagingConnections(true)} style={s.button}><Text style={s.muted}>连接与授权</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={t('workspaces.title')} disabled={!active} onPress={() => setManagingWorkspaces(true)} style={s.button}>
+                    <Text style={s.muted}>{t('workspaces.title')}</Text></Pressable>
             </View>
             {limits && <Text style={s.muted}>{limits}</Text>}
             {(data.error || openError) && <Text accessibilityRole="alert" style={s.muted}>{data.error || openError}</Text>}
@@ -189,6 +195,9 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 </View>
             </View>
         </ScrollView>
+        {managingWorkspaces && active && <RNModal visible animationType="slide" onRequestClose={() => setManagingWorkspaces(false)}>
+            <DotsWorkspacesPanel key={`${session.id}:${workspaceId}`} sessionId={session.id} workspaceId={workspaceId} onClose={() => setManagingWorkspaces(false)} />
+        </RNModal>}
         {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${workspaceId}`} sessionId={session.id} workspaceId={workspaceId} onClose={() => setManagingConnections(false)} />}
         <RNModal visible={creating || editing !== null} transparent animationType="fade" onRequestClose={() => { setCreating(false); closeEdit(); }}>
             <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', alignItems: 'center', padding: 18 }}>

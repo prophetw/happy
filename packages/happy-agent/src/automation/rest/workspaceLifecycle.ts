@@ -1,6 +1,7 @@
 import { closeSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { workspacePlanSchema, workspaceDispositionSchema, workspaceOperationSchema, type WorkspaceItem } from '@slopus/happy-wire';
 import { hash } from '../journal';
 import { canonicalBody } from './auth';
 import { ApiError } from './schema';
@@ -79,28 +80,13 @@ export async function linuxWorkspaceActivity(workspace:Workspace,tasks:Pick<Queu
     } catch { return { confirmed: false, blockers: ['activity_visibility_unconfirmed'], fingerprint: '' }; }
 }
 
-const dispositionSchema = z.object({ kind: z.enum(['integrated','archived','discarded','no-change']), head: commit,
-    policy: digest,
-    mainCommit: commit, remoteCommit: commit.optional(), retainedRef: z.string().max(256), proof: z.enum(['ancestor','patch-equivalent','retained-ref']),
-    source: z.string().min(1).max(200), recordedAt: z.number(), taskDigest: digest,
-    sourceTaskID: digest, sourceRequestID: id,
-}).strict();
-const operationSchema = z.object({ id, fingerprint: digest, state: z.enum(['adopted','resolved','applying','removed','failed']),
-    revision: z.number().int().nonnegative(), planID: digest.optional(), head: commit.optional(), branch: z.string().optional(),
-    checkout: digest.optional(),
-    retainedRef: z.string().optional(), reason: z.string().optional(), removal: z.enum(['git-confirmed','absence-after-intent']).optional(),
-}).strict();
+const dispositionSchema = workspaceDispositionSchema.extend({ retainedRef: z.string().max(256), source: z.string().min(1).max(200) });
+const operationSchema = workspaceOperationSchema;
 const recordSchema = z.object({ version: z.literal(1), binding: digest, revision: z.number().int().nonnegative(),
     disposition: dispositionSchema.optional(), operations: z.array(operationSchema).max(16), checkedAt: z.number().optional(),
 }).strict();
 type Record = z.infer<typeof recordSchema>;
-const planSchema = z.object({ version: z.literal(1), id: digest, policy: digest, workspaceID: digest, revision: z.number().int().nonnegative(),
-    workspaceState:z.enum(['active','retiring','retired']), outcome:z.enum(['unknown','pending_commit','pending_integration','no_change_unreviewed','resolved']),
-    checkedAt: z.number().int().nonnegative(), expiresAt: z.number().int().nonnegative(), eligible: z.boolean(), reasons: z.array(z.string()).max(64),
-    binding: digest, git: digest, tasks: digest, head: commit.optional(), branch: z.string().optional(),
-    checkout: digest.optional(),
-    mainCommit: commit.optional(), remoteCommit: commit.optional(),
-}).strict().refine(p=>p.expiresAt===p.checkedAt+60000,'Invalid plan lifetime');
+const planSchema = workspacePlanSchema;
 export type WorkspacePlan = z.infer<typeof planSchema>;
 type Snapshot = { workspace: Workspace; tasks: QueueTask[]; related: QueueTask[]; others: Workspace[] };
 type GitState = { head: string; branch: string; mainCommit: string; remoteCommit?: string; dirty: boolean; ignored: boolean;
@@ -115,7 +101,7 @@ export class WorkspaceLifecycle {
     private readonly activity: ActivityProbe;
     constructor(readonly queue: TaskQueue, policy: WorkspacePolicy,
         activity?: ActivityProbe, private now = Date.now,
-        private git = workspaceGit) {
+        private git = workspaceGit, private authorize: () => void | Promise<void> = () => {}, private authorizationCurrent: () => void = () => {}) {
         this.policy = workspacePolicySchema.parse(policy); this.policyHash = fingerprint(this.policy);
         this.activity=activity??((w,t)=>linuxWorkspaceActivity(w,t,queue.directory,this.policy.machineID));
         if (queue.access.machineID !== this.policy.machineID) error('WORKSPACE_MACHINE_MISMATCH');
@@ -246,13 +232,32 @@ export class WorkspaceLifecycle {
     }
     async inventory(limit = 20, after = '') {
         if (!Number.isInteger(limit)||limit<1||limit>50) error('WORKSPACE_PAGE_LIMIT');
-        const rows=this.queue.transaction(s=>s.workspaces.filter(w=>w.grantID===this.policy.grantID&&w.projectID===this.policy.projectID&&w.root===this.policy.root).sort((a,b)=>a.id.localeCompare(b.id)),true);
+        const registered=this.queue.transaction(s=>s.workspaces.filter(w=>w.grantID===this.policy.grantID&&w.projectID===this.policy.projectID&&w.root===this.policy.root).sort((a,b)=>a.id.localeCompare(b.id)),true);
+        const rows=[...new Map(registered.map(w=>[w.cwd,w])).values()].sort((a,b)=>a.id.localeCompare(b.id));
         const page=rows.filter(w=>w.id>after).slice(0,limit);
         const items=page.map(w=>{const r=this.read(w);return {id:w.id,projectID:w.projectID,directory:w.cwd,baseCommit:w.baseCommit,
             branch:w.branch,revision:r.revision,state:w.retirement?.phase??(!w.managedBy?'legacy_unconfirmed':r.disposition?'resolved':'pending_disposition'),
             disposition:r.disposition, lastVerification:r.checkedAt, lastOperation:r.operations.at(-1)};});
         const pageCounts: {[state:string]:number}={};for(const item of items)pageCounts[item.state]=(pageCounts[item.state]??0)+1;
         return {total:rows.length,returned:items.length,pageCounts,items,next:rows.filter(w=>w.id>after).length>limit?page.at(-1)!.id:null};
+    }
+    /** Owner UI projection: identifiers/status only, never task text or credentials. */
+    overview(workspaceID: string): WorkspaceItem {
+        const s = this.snapshot(workspaceID), w = s.workspace, r = this.read(w);
+        return { id: w.id, projectID: w.projectID, directory: w.cwd, branch: w.branch, baseCommit: w.baseCommit,
+            revision: r.revision, managed: !!w.managedBy, state: w.retirement?.phase ?? (!w.managedBy ? 'legacy_unconfirmed' : r.disposition ? 'resolved' : 'pending_disposition'),
+            reasons: [...this.runtimeReasons(s), ...(!w.managedBy ? ['WORKSPACE_OWNER_UNCONFIRMED'] : [])],
+            taskCount: s.tasks.length, tasks: s.tasks.slice(-20).map(t => ({ id: t.id, sessionID: t.sessionID, state: t.state, resultCommit: t.resultCommit })),
+            disposition: r.disposition, lastVerification: r.checkedAt, lastOperation: r.operations.at(-1) };
+    }
+    async detail(workspaceID: string) {
+        const item = this.overview(workspaceID), plan = await this.plan(workspaceID);
+        let inspectedHead = plan.head, adoptionVerified = false;
+        if (!item.managed && plan.workspaceState === 'active') {
+            try { inspectedHead = (await this.inspectGit(this.snapshot(workspaceID).workspace, true)).head; adoptionVerified = true; }
+            catch { /* Missing/unsafe legacy ownership remains unconfirmed, never auto-adopted. */ }
+        }
+        return { item: { ...item, reasons: plan.reasons }, plan, inspectedHead, adoptionVerified, result: this.result(workspaceID, undefined, true) };
     }
     async plan(workspaceID: string): Promise<WorkspacePlan> {
         const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w),reasons=this.runtimeReasons(s);
@@ -289,11 +294,13 @@ export class WorkspaceLifecycle {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(operationID);commit.parse(expectedHead);
         return this.locked(workspaceID,async()=>{
+            await this.authorize();
             const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w),fp=fingerprint({action:'adopt',policy:this.policyHash,workspaceID,expectedRevision,expectedHead});
             const old=this.receipt(r,operationID,fp);if(old)return old;
             if(r.operations.length>=16)error('WORKSPACE_OPERATION_LIMIT');
             if(r.revision!==expectedRevision||w.retirement)error('WORKSPACE_REVISION_CHANGED');
             const state=await this.inspectGit(w,true);if(state.head!==expectedHead)error('WORKSPACE_HEAD_CHANGED');
+            await this.authorize();
             const next={...w,managedBy:{machineID:this.policy.machineID,uid:process.getuid!()}};
             // Persist ownership first under the existing queue authority; no task state is rewritten.
             this.queue.transaction(q=>{const current=q.workspaces.find(x=>x.id===w.id)!;if(this.binding(current)!==this.binding(w))error('WORKSPACE_REVISION_CHANGED');current.managedBy=next.managedBy;});
@@ -304,6 +311,7 @@ export class WorkspaceLifecycle {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(input.operationID);commit.parse(input.head);z.string().min(1).max(200).parse(input.source);
         return this.locked(workspaceID,async()=>{
+            await this.authorize();
             const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w),fp=fingerprint({action:'resolve',policy:this.policyHash,workspaceID,...input});
             const old=this.receipt(r,input.operationID,fp);if(old)return old;
             if(r.operations.length>=16)error('WORKSPACE_OPERATION_LIMIT');
@@ -333,6 +341,7 @@ export class WorkspaceLifecycle {
                 }
             } else if(input.kind==='archived'?!this.policy.allowArchive:input.kind==='discarded'?!this.policy.allowDiscard:true)error('WORKSPACE_DISPOSITION_NOT_AUTHORIZED');
             const retainedRef=`refs/happy/workspaces/${w.id}/${state.head}`;
+            await this.authorize();
             let previous='';try{previous=await this.git(w.root,['rev-parse','--verify',retainedRef]);}catch{/* New recovery ref. */}
             if(previous&&previous!==state.head)error('WORKSPACE_RETAINED_REF_CHANGED');
             if(!previous)await this.git(w.root,['update-ref',retainedRef,state.head,'0'.repeat(state.head.length)]);
@@ -348,6 +357,7 @@ export class WorkspaceLifecycle {
         const plan=parsed.data!,{id:planID,...body}=plan;
         if(planID!==fingerprint(body)||plan.policy!==this.policyHash)error('WORKSPACE_PLAN_INVALID');
         return this.locked(plan.workspaceID,async(fd)=>{
+            await this.authorize();
             const s=this.snapshot(plan.workspaceID),w=s.workspace,r=this.read(w),fp=fingerprint({action:'apply',policy:this.policyHash,planID,operationID});
             let op=this.receipt(r,operationID,fp);
             if(op&&op.state!=='applying'){
@@ -386,9 +396,13 @@ export class WorkspaceLifecycle {
                     current.retirement={operationID,phase:'retiring',retainedRef:op!.retainedRef!,retainedCommit:op!.head!};
                 });} catch {return this.fail(w,r,op,'WORKSPACE_IN_USE');}
             }
+            // Network authorization precedes the last filesystem/activity probe.
+            // It must not open an extra async gap after that safety snapshot.
+            try { await this.authorize(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
             // Recheck after the durable fence; heavy work is outside the queue transaction.
             const latest=await this.plan(w.id);
             if(latest.git!==plan.git||latest.tasks!==plan.tasks||latest.reasons.some(reason=>reason!=='retirement_in_progress'))return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED');
+            try { this.authorizationCurrent(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
             if(this.now()>plan.expiresAt||this.now()<plan.checkedAt)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
             try {
                 await this.git(w.root,['worktree','remove','--',w.cwd],fd);
@@ -413,9 +427,10 @@ export class WorkspaceLifecycle {
         this.queue.transaction(q=>{const current=q.workspaces.find(x=>x.id===w.id)!;if(current.retirement?.operationID!==op.id)error('WORKSPACE_RECOVERY_UNCONFIRMED');current.retirement!.phase='retired';});
         op.state='removed';op.removal=removal;r.revision++;op.revision=r.revision;r.checkedAt=this.now();this.write(w,r);return op;
     }
-    result(workspaceID:string) {
-        const w=this.snapshot(workspaceID).workspace,r=this.read(w),last=r.operations.at(-1);
+    result(workspaceID:string,operationID?:string,history=false) {
+        const w=this.snapshot(workspaceID).workspace,r=this.read(w),last=operationID?r.operations.find(op=>op.id===operationID):r.operations.at(-1);
         return {workspaceID,revision:r.revision,workspaceState:w.retirement?.phase??'active',disposition:r.disposition,operation:last,
+            ...(history?{operations:r.operations}:{}),
             rebuild:r.disposition?{command:'git',args:['-C',w.root,'worktree','add','-b',`recovered/${w.id}/${r.disposition.head.slice(0,12)}`,
                 join(this.queue.directory,'restored',`${w.id}-${r.disposition.head.slice(0,12)}`),r.disposition.retainedRef]}:undefined};
     }

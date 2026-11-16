@@ -1,3 +1,4 @@
+import { workspacesEn } from './workspaces';
 /**
  * English translations for the Happy app
  * Values can be:
@@ -15,6 +16,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const en = {
+    workspaces: workspacesEn,
     qrScanner: {
         title: 'Scan QR code',
         scanWithCamera: 'Scan with camera',

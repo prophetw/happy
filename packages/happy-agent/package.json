@@ -37,6 +37,12 @@
         "default": "./dist/automation/rest/index.cjs"
       }
     },
+    "./automation/workspace-owner": {
+      "import": { "types": "./dist/automation/production/workspaceOwnerMain.d.mts", "default": "./dist/automation/production/workspaceOwnerMain.mjs" }
+    },
+    "./automation/workspace-owner-job": {
+      "import": { "types": "./dist/automation/production/workspaceOwnerJob.d.mts", "default": "./dist/automation/production/workspaceOwnerJob.mjs" }
+    },
     "./automation/production": {
       "import": {
         "types": "./dist/automation/production/index.d.mts",

@@ -27,7 +27,7 @@ async function fixture() {
     const task=queue.enqueue({requestID:'send',grantID:'grant',workerID:'worker',sessionID:'session',workspaceID:w.id,authorization:'',text:'fixture',resources:workspaceResources(w,'session')});
     let activity:Activity={confirmed:true,blockers:[],fingerprint:'clear'},clock=1000;
     const policy:WorkspacePolicy={version:1,id:'fixture-policy',machineID:'machine',grantID:'grant',projectID:'project',root:repo,mainRef:'refs/heads/main',allowApply:true};
-    const manager=(overrides:Partial<WorkspacePolicy>={},effect=workspaceGit)=>new WorkspaceLifecycle(queue,{...policy,...overrides},async()=>activity,()=>clock,effect);
+    const manager=(overrides:Partial<WorkspacePolicy>={},effect=workspaceGit,authorize:()=>void|Promise<void>=()=>{},current:()=>void=()=>{})=>new WorkspaceLifecycle(queue,{...policy,...overrides},async()=>activity,()=>clock,effect,authorize,current);
     const scheduler=new TaskScheduler(queue,{authorize:async()=>{},send:async()=>({seq:1,id:'sent'}),stop:async()=>{},observe:async()=>({process:'running',cursor:1,seq:1,outcome:'completed',...workspaceResult(w)})});
     const complete=async()=>{await scheduler.tick();await scheduler.tick();expect(queue.tasks()[0].state).toBe('completed');};
     const save=()=>{writeFileSync(join(w.cwd,'feature.txt'),'feature\n');git(w.cwd,'add','feature.txt');git(w.cwd,'commit','-qm','feature');queue.update(task.id,t=>{t.resultCommit=git(w.cwd,'rev-parse','HEAD');t.worktreeDirty=false;});};
@@ -65,6 +65,16 @@ it('closes create -> queue/run -> pending result -> integrated -> planned -> rem
     expect(readFileSync(join(rebuild.args.at(-2)!,'feature.txt'),'utf8')).toBe('feature\n');
     expect(await m.apply(plan,'retire')).toEqual(removed); // old operation cannot delete the new checkout
     expect(existsSync(rebuild.args.at(-2)!)).toBe(true);
+});
+it('rechecks the original plan expiry and local policy after a delayed final authorization',async()=>{
+    const f=await fixture();await f.complete();await f.resolve(f.manager(),'no-change');let checks=0;
+    const m=f.manager({},workspaceGit,async()=>{if(++checks===2)f.advance(60001);});
+    const plan=await m.plan(f.w.id),result=await m.apply(plan,'expires-in-authorization');
+    expect(result.state).toBe('failed');expect(result.reason).toBe('WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');expect(existsSync(f.w.cwd)).toBe(true);
+    f.advance(-60001);
+    const guarded=f.manager({},workspaceGit,()=>{},()=>{throw Error('policy revoked');});
+    const blocked=await guarded.apply(await guarded.plan(f.w.id),'policy-at-remove');
+    expect(blocked.state).toBe('failed');expect(blocked.reason).toBe('WORKSPACE_AUTHORIZATION_CHANGED');expect(existsSync(f.w.cwd)).toBe(true);
 });
 
 it.each(['staged','unstaged','untracked','ignored'] as const)('retains %s files and never resolves them as an old clean HEAD',async layer=>{

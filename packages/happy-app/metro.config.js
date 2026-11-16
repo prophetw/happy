@@ -51,4 +51,10 @@ config.transformer.getTransformOptions = async () => ({
   },
 });
 
+const enhanceMiddleware = config.server.enhanceMiddleware;
+config.server.enhanceMiddleware = (middleware, server) => require('./scripts/workspaceOwnerProxy.cjs')(
+  enhanceMiddleware ? enhanceMiddleware(middleware, server) : middleware,
+  process.env.HAPPY_WORKSPACE_OWNER_URL,
+);
+
 module.exports = config;

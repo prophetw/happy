@@ -6,3 +6,4 @@ export * from './voice';
 export * from './rigMetadata';
 export * from './relaySwitch';
 export * from './humanIntervention';
+export * from './workspaceManagement';

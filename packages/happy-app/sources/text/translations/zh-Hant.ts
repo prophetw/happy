@@ -1,3 +1,4 @@
+import { workspacesZh } from '../workspaces';
 /**
  * Chinese (Traditional) translations for the Happy app
  * Values can be:
@@ -17,6 +18,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const zhHant: TranslationStructure = {
+    workspaces: workspacesZh,
     qrScanner: {
         title: '掃描 QR Code',
         scanWithCamera: '使用相機掃描',

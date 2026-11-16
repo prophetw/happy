@@ -6,7 +6,8 @@ import { readProductionConfig } from './config';
 import { privateDirectory, privateRead } from '../rest/privateFs';
 import { TaskQueue } from '../rest/taskQueue';
 import { ApiError } from '../rest/schema';
-import { canonicalRepository } from '../rest/taskWorkspaces';
+import { canonicalRepository, workspaceGit } from '../rest/taskWorkspaces';
+import { directoryAllowed, directoryProjectID } from '../rest/schema';
 import { WorkspaceLifecycle, workspacePolicySchema, type ActivityProbe } from '../rest/workspaceLifecycle';
 
 const commands = {
@@ -15,6 +16,28 @@ const commands = {
     apply: ['operation-id','plan-file'],
 } as const;
 export const workspaceUsage = 'happy-control workspaces inventory|plan|result|adopt|resolve|apply --worker-config <private worker.json> --policy <private policy.json> [command options]';
+
+/** Same owner-authoritative queue for local CLI and authenticated owner UI. */
+export function openWorkspaceLifecycle(workerConfig: string, policyFile: string, options: {
+    homeDirectory?: string; activity?: ActivityProbe; readOnly?: boolean; authorize?: () => void | Promise<void>;
+    authorizationCurrent?: () => void; ownerDirectorySelection?: boolean;
+} = {}) {
+    const policy = workspacePolicySchema.parse(JSON.parse(privateRead(policyFile, 32768).toString('utf8')));
+    const config = readProductionConfig(workerConfig);
+    if (config.role !== 'worker' || config.registration.machineID !== policy.machineID) throw new ApiError('WORKSPACE_SCOPE_DENIED', 403);
+    const known=config.registration.projects.find(p=>p.directory===policy.root);
+    if (!(known ? known.id===policy.projectID : options.ownerDirectorySelection&&config.registration.directorySelection
+        &&directoryAllowed(policy.root,config.registration.directorySelection.roots)&&policy.projectID===directoryProjectID(policy.root))) throw new ApiError('WORKSPACE_SCOPE_DENIED',403);
+    const directory = join(options.homeDirectory ?? userInfo().homedir, '.local/state/happy-control/machines', hash(policy.machineID));
+    privateDirectory(directory);
+    if (!existsSync(join(directory, hash('queue') + '.json'))) throw new ApiError('QUEUE_NOT_INITIALIZED');
+    const registration = config.registration, projectOverrides: Record<string, number> = {};
+    for (const [path, limit] of Object.entries(registration.projectConcurrencyOverrides ?? {})) projectOverrides[canonicalRepository(path)] = limit;
+    const queue = new TaskQueue(directory, { projectConcurrency: registration.projectConcurrency ?? 2,
+        machineConcurrency: registration.machineConcurrency ?? registration.maxConcurrency ?? null, projectOverrides },
+        { machineID: policy.machineID, readOnly: options.readOnly ?? true });
+    return { lifecycle: new WorkspaceLifecycle(queue, policy, options.activity, Date.now, workspaceGit, options.authorize, options.authorizationCurrent), registration };
+}
 
 /** Local owner CLI only. No REST/MCP method, credential loading, worker startup or scanner. */
 export async function workspaceCommand(argv: string[], options: { homeDirectory?: string; activity?: ActivityProbe } = {}) {
@@ -27,21 +50,10 @@ export async function workspaceCommand(argv: string[], options: { homeDirectory?
         values[key]=value;
     }
     const required=(name:string)=>{if(!values[name])throw new ApiError('WORKSPACE_COMMAND_INVALID');return values[name];};
-    const policy=workspacePolicySchema.parse(JSON.parse(privateRead(required('policy'),32768).toString('utf8')));
-    if(action==='apply'&&!policy.allowApply)throw new ApiError('WORKSPACE_APPLY_DISABLED',403);
-    const config=readProductionConfig(required('worker-config'));
-    if(config.role!=='worker'||config.registration.machineID!==policy.machineID
-        ||!config.registration.projects.some(p=>p.id===policy.projectID&&p.directory===policy.root))throw new ApiError('WORKSPACE_SCOPE_DENIED',403);
-    const directory=join(options.homeDirectory??userInfo().homedir,'.local/state/happy-control/machines',hash(policy.machineID));
-    privateDirectory(directory);
-    // Even write commands cannot initialize a fresh queue or import arbitrary directories.
-    if(!existsSync(join(directory,hash('queue')+'.json')))throw new ApiError('QUEUE_NOT_INITIALIZED');
-    const registration=config.registration, projectOverrides: Record<string,number>={};
-    for(const [path,limit] of Object.entries(registration.projectConcurrencyOverrides??{}))projectOverrides[canonicalRepository(path)]=limit;
-    const queue=new TaskQueue(directory,{projectConcurrency:registration.projectConcurrency??2,
-        machineConcurrency:registration.machineConcurrency??registration.maxConcurrency??null,projectOverrides},
-        {machineID:policy.machineID,readOnly:['inventory','plan','result'].includes(action)});
-    const lifecycle=new WorkspaceLifecycle(queue,policy,options.activity);
+    const { lifecycle } = openWorkspaceLifecycle(required('worker-config'), required('policy'), {
+        ...options, readOnly: ['inventory','plan','result'].includes(action),
+    });
+    if (action === 'apply' && !lifecycle.policy.allowApply) throw new ApiError('WORKSPACE_APPLY_DISABLED', 403);
     const revision=()=>{const n=Number(required('revision'));if(!Number.isSafeInteger(n)||n<0)throw new ApiError('WORKSPACE_COMMAND_INVALID');return n;};
     if(action==='inventory')return lifecycle.inventory(values.limit===undefined?20:Number(values.limit),values.after??'');
     if(action==='plan')return lifecycle.plan(required('id'));
