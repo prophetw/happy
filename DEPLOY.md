@@ -1,5 +1,44 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Hosted Dot 流式存储增量提交（2026-11-17，已部署）
+
+功能提交 `2b6cc7da782ca37067c8311cc7456d62df8c4435` 已普通推送个人 `fork/main`。
+从当次 fetch 一致、干净的独立 main clone 构建，保留此前已在线使用的 SQLite 兼容层和原轮次回执修复。
+运行包 `/home/dev/.local/share/happy-releases/stream-storage-20261117-2b6cc7da7`，producer Main SHA256
+为 `e86a2cae81fa3fb072b54577e993c9c63b6d992798a333858151f0ce9f962e35`；happy-wire 及 serverUrl 子入口均内联。
+
+仅更新 5 个 Dot 及新建默认的宿主 entrypoint，生命周期和输入授权 reader 保持原兼容模块。
+SQLite 仍为 v1 格式，改为增量编码/写入输出及 ACK。实际为 4 个 SQLite、1 个 JSON；JSON 保留
+完整快照路径，没有迁移用户数据。普通 CLI、执行 Worker、workspace owner、Control、Relay、
+Hindsight、Web 和 OTA 未切换版本。接口与性能边界见[流式投递说明](docs/features/hosted-stream-performance.md)。
+
+独立维护单元 `happy-dot-stream-storage-20261117-2b6cc7da7-attempt2.service` 成功退出 0。
+输入准入暂停、写者停止后，官方冷备 API 创建并校验
+`~/.local/state/happy-dot-stream-release-20261117/attempt2/cold-backup`；配套 native 冷备核验 5 个 home
+的 2358 个文件，另保存当前账号 3 个共享记忆文件。通过官方 store 事务只更新代码入口，
+新宿主在输入仍暂停时逐项核对通过后才恢复派发，没有用备份覆盖源数据。
+
+11:25（UTC+8）核验：5 个 producer 均 ready/error=null，加载的源码标记及 Main 摘要匹配；
+原 session/thread/epoch、478 条输入、74,103 条输出及其已确认状态逐 ID/摘要保持，无新增或重派
+用户输入。各 Dot 仅新增 1 条启动期空 service 协议记录，pending/unsent 均为 0，新进程日志无新增错误。
+scanner/recovery PID 为 3427195/3434735，均 active、NRestarts=0；Worker 和 workspace owner 的
+PID/start/boot 保持。整体 health 仍 degraded，保留既有 `assistant_runs_need_attention`、
+`assistant_conversation_needs_attention`、`assistant_happy_push_needs_attention`，不报告全局健康全绿。
+
+复用源码一致的 263 项相关回归、CLI 类型检查和 3 个进程崩溃恢复场景；固定正式包再通过
+真实 Chromium、隔离 Relay、脚本 App Server 的 7 组流程，页面/Console/非预期 HTTP/清理错误集合为空，
+真实模型调用 0。隔离 Relay 在 SIGTERM 后重现既有 PGlite 关停异常，信号前无此错；边界已记录。
+真实账号新模型回复、手机实际体验与长期运行未验证。
+
+失败记录保留：首次在入口切换前因生命周期 status 误传 admission 的 epoch 字段被拒绝；接续又被
+新建默认仍指向旧 P0 入口的保护检查拒绝，并自动恢复原 5 个宿主。修正操作脚本并把全部真实入口
+纳入停写前预检后，attempt2 重新冷备并完成切换。原失败 unit、activation 和命令日志均保留于
+`~/.local/state/happy-dot-stream-release-20261117/`，未将失败改记为成功。
+
+回退须沿用准入暂停和停写流程，仅按 attempt2 的 `runtime-bindings-before.json` 恢复 5 个 Dot 和
+新建默认的旧 entrypoint，核对旧宿主及当前最新数据后再恢复派发；旧包保留。
+不得用冷备覆盖上线后的消息、任务、记忆或回执。此次更新无需客户端发版。
+
 ## 助手连接命名、原地续期与同 key 编辑（2026-11-16，已部署；本条 11-17 补记）
 
 功能提交 `9be118dac`（连接自定义名称与重命名）、`d5e0adc87`（已批准服务授权原地续期/改范围且令牌不变、worker 队列身份租约）、`0296a2719`（范围未变时免目录重新核实，修复只改名字无法保存）。发布期间另一流程把 workspace UI `563a906a` 合入并推送 `0957e596`；最终 Web/OTA 均从当次 `fork/main` 的干净 checkout 构建，未丢弃该并发功能。并发切换期间导出的首个 OTA 组 `4c614b75-0c0b-45bb-9d73-9fda30fa9a97` 已被后续组取代，以最终组为准。
