@@ -1,7 +1,7 @@
 import { apiSocket } from './apiSocket';
 import { TestloopDotsSnapshotSchema, type TestloopDotsSnapshot } from './testloopDots';
 
-type ReadRequest = { schemaVersion: 1; workspaceId: string; requestId: string } & (
+type ReadRequest = { schemaVersion: 1; workspaceId: string; requestId: string; archiveSessionIds?: string[] } & (
     { action: 'list' } | { action: 'inspect'; dotId: string });
 
 /** Read-only session RPC. Transport success alone never supplies a directory. */
@@ -15,7 +15,9 @@ export async function readDotsWorkspace(sessionId: string, request: ReadRequest)
     const parsed = TestloopDotsSnapshotSchema.safeParse(reply);
     if (!parsed.success || !parsed.data.ok || parsed.data.workspaceId !== request.workspaceId
         || parsed.data.requestId !== request.requestId
-        || request.action === 'inspect' && parsed.data.workbench?.detail?.dotId !== request.dotId)
+        || parsed.data.deletedDots?.some(deletion => !request.archiveSessionIds?.includes(deletion.sessionId))
+        || request.action === 'inspect' && parsed.data.dots.some(dot => dot.id === request.dotId)
+            && parsed.data.workbench?.detail?.dotId !== request.dotId)
         throw new Error('dots_read_unconfirmed');
     return parsed.data;
 }

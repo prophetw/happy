@@ -65,6 +65,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     const [editName, setEditName] = React.useState(''), [editInstruction, setEditInstruction] = React.useState('');
     const [opening, setOpening] = React.useState<string | null>(null), [openError, setOpenError] = React.useState<string | null>(null);
     const [deleteConfirming, setDeleteConfirming] = React.useState(false);
+    const formSubmitting = React.useRef(false);
     const createId = React.useRef<string | null>(null), updateId = React.useRef<string | null>(null), deleteId = React.useRef<string | null>(null);
     const compact = width < 760;
     useFocusEffect(React.useCallback(() => {
@@ -107,11 +108,21 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         setEditing(dot); setEditName(dot.name); setEditInstruction(dot.instruction);
     };
     const closeEdit = () => { setEditing(null); setEditName(''); setEditInstruction(''); };
-    const saveEdit = () => {
-        if (!editing) return;
-        const requestId = randomUUID(); updateId.current = requestId;
-        void data.submit({ schemaVersion: 1, requestId, action: 'update', dotId: editing.id,
-            name: editName.trim(), instruction: editInstruction.trim(), ...(editing.settings ? { settings: { agent: 'codex' as const, model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } } : {}) });
+    const saveForm = async () => {
+        if (formSubmitting.current || currentData.current.pending) return;
+        formSubmitting.current = true;
+        try {
+            const requestId = randomUUID();
+            if (editing) {
+                updateId.current = requestId;
+                await currentData.current.submit({ schemaVersion: 1, requestId, action: 'update', dotId: editing.id,
+                    name: editName.trim(), instruction: editInstruction.trim(), ...(editing.settings ? { settings: { agent: 'codex' as const, model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } } : {}) });
+            } else {
+                createId.current = requestId;
+                await currentData.current.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim(),
+                    settings: { agent: 'codex', model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } });
+            }
+        } finally { formSubmitting.current = false; }
     };
     const deleteDot = async () => {
         const target = editingRef.current;
@@ -238,11 +249,8 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                             <Text style={s.muted}>重试刷新</Text></Pressable>}
                     </View>}
                     {(data.error || openError) && <Text accessibilityRole="alert" style={s.muted}>{data.error || openError}</Text>}
-                    <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || Boolean(editing.settings)) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => {
-                        if (editing) { saveEdit(); return; }
-                        const requestId = randomUUID(); createId.current = requestId;
-                        void data.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim(), settings: { agent: 'codex', model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } });
-                    }} style={[s.button, { backgroundColor: '#6650b7', opacity: canSubmit ? 1 : 0.5 }]}><Text style={{ color: '#fff' }}>{editing ? '保存修改' : '创建 Dot'}</Text></Pressable>
+                    <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || Boolean(editing.settings)) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => void saveForm()}
+                        style={[s.button, { backgroundColor: '#6650b7', opacity: canSubmit ? 1 : 0.5 }]}><Text style={{ color: '#fff' }}>{editing ? '保存修改' : '创建 Dot'}</Text></Pressable>
                     <Pressable accessibilityRole="button" accessibilityLabel={editing ? '关闭编辑表单' : '关闭创建表单'}
                         onPress={() => { setCreating(false); closeEdit(); }} style={s.button}><Text style={s.muted}>关闭</Text></Pressable>
                 </ScrollView>

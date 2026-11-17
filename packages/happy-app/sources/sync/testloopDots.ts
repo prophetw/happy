@@ -57,6 +57,7 @@ export const TestloopDotsSnapshotSchema = z.object({
     dots: z.array(z.object({ id: uuid, name: z.string().min(1).max(80), instruction: z.string().max(2000),
         sessionId, conversationEpoch: z.number().int().nonnegative().optional(), status: z.literal('active'), settings: modelSettings.optional() }).strict()).max(1000),
     deletedDot: z.object({ id: uuid, sessionId }).strict().optional(),
+    deletedDots: z.array(z.object({ requestId: uuid, revision: z.number().int().nonnegative(), id: uuid, sessionId }).strict()).max(50).optional(),
     modelOptions: z.array(z.object({ code: z.string(), value: z.string(), thinkingLevels: z.array(z.string()), defaultThinkingLevel: z.string() })).optional(),
     limits: z.unknown().optional(),
     workbench: workbench.optional(),
@@ -64,6 +65,10 @@ export const TestloopDotsSnapshotSchema = z.object({
     && new Set(value.dots.map(dot => dot.sessionId)).size === value.dots.length, 'duplicate_dot_binding')
     .refine(value => !value.deletedDot || (value.ok
         && !value.dots.some(dot => dot.id === value.deletedDot!.id || dot.sessionId === value.deletedDot!.sessionId)), 'invalid_deleted_dot_binding')
+    .refine(value => !value.deletedDots || value.ok
+        && new Set(value.deletedDots.map(dot => dot.sessionId)).size === value.deletedDots.length
+        && value.deletedDots.every(deletion => deletion.revision <= value.revision
+            && !value.dots.some(dot => dot.id === deletion.id || dot.sessionId === deletion.sessionId)), 'invalid_deleted_dots_binding')
     .refine(value => !value.workbench || (new Set(value.workbench.dots.map(dot => dot.id)).size === value.workbench.dots.length
         && value.workbench.dots.every(dot => value.dots.some(item => item.id === dot.id))
         && (!value.workbench.detail || value.dots.some(dot => dot.id === value.workbench!.detail!.dotId))), 'workbench_dot_binding_changed');
@@ -127,10 +132,13 @@ export function projectTestloopDotsMessages(messages: readonly WorkspaceMessage[
     return { snapshot: received.at(-1)?.snapshot ?? null, receipts, deletions, details, pendingRequest: pending };
 }
 
-/** Read snapshots update views, while only durable messages can confirm mutations. */
+/** Reads update the directory and explicit deletion proofs, never an unrelated pending mutation. */
 export function mergeDotsWorkspaceRead(history: ReturnType<typeof projectTestloopDotsMessages>, live?: TestloopDotsSnapshot) {
+    if (!live?.ok) return history;
+    if (live.deletedDots?.length) history = { ...history, deletions: { ...history.deletions,
+        ...Object.fromEntries(live.deletedDots.map(deletion => [deletion.requestId, deletion])) } };
     const prior = history.snapshot;
-    if (!live?.ok || prior && (prior.revision > live.revision
+    if (prior && (prior.revision > live.revision
         || prior.revision === live.revision && (prior.workbench?.revision ?? -1) > (live.workbench?.revision ?? -1)
         || prior.revision === live.revision && (prior.workbench?.revision ?? -1) === (live.workbench?.revision ?? -1)
             && (prior.workbench?.asOf ?? '') > (live.workbench?.asOf ?? ''))) return history;
@@ -138,6 +146,15 @@ export function mergeDotsWorkspaceRead(history: ReturnType<typeof projectTestloo
     const view = live.workbench;
     if (view?.detail) details[view.detail.dotId] = { data: view.detail, asOf: view.asOf };
     return { ...history, snapshot: live, details };
+}
+
+/** A validated terminal RPC receipt replaces waiting for a synthetic chat reply. */
+export function mergeDotsWorkspaceReceipt(history: ReturnType<typeof projectTestloopDotsMessages>, request: TestloopDotsRequest, receipt: TestloopDotsSnapshot) {
+    const next = mergeDotsWorkspaceRead(history, receipt);
+    const deletions = { ...next.deletions };
+    if (receipt.ok && request.action === 'delete' && receipt.deletedDot?.id === request.dotId)
+        deletions[request.requestId] = { requestId: request.requestId, revision: receipt.revision, ...receipt.deletedDot };
+    return { ...next, receipts: { ...next.receipts, [request.requestId]: receipt }, deletions };
 }
 
 export function testloopWorkStatus(task: { status: string; needsReview: boolean; goalPhase?: string | null }) {

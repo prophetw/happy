@@ -55,7 +55,7 @@ beforeEach(() => {
     mocks.submit.mockReset();
     mocks.navigate.mockReset();
 });
-it('confirms destructive clear and returns to the workspace while the host rotates the session', async () => {
+it('confirms clear and stays in the current page until the host confirms a replacement session', async () => {
     let mounts = 0;
     function Composer() {
         React.useEffect(() => { mounts++; }, []);
@@ -79,7 +79,7 @@ it('confirms destructive clear and returns to the workspace while the host rotat
     expect(mocks.confirm).toHaveBeenLastCalledWith('清空当前对话？', expect.stringContaining('独立后台任务继续运行'), { confirmText: '清空对话' });
     expect(mocks.submit).toHaveBeenCalledExactlyOnceWith({ schemaVersion: 1,
         requestId: '33333333-3333-4333-8333-333333333333', action: 'clear', dotId: '22222222-2222-4222-8222-222222222222' });
-    expect(mocks.navigate).toHaveBeenCalledWith('workspace-session');
+    expect(mocks.navigate).not.toHaveBeenCalled();
     expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
     expect(mounts).toBe(1);
 
@@ -87,6 +87,9 @@ it('confirms destructive clear and returns to the workspace while the host rotat
     await act(async () => renderer.update(React.createElement(DotSessionContent, props)));
     expect(JSON.stringify(renderer.root.findAllByType('Text').map((node: any) => node.props.children))).toContain('旧聊天、长期记忆');
     expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
+    mocks.data = { projection: { snapshot: { ok: true, dots: [{ id: props.metadata.dotId, sessionId: 'new-dot-session' }] } } };
+    await act(async () => renderer.update(React.createElement(DotSessionContent, props)));
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith('new-dot-session');
     await act(async () => renderer.unmount());
 });
 
@@ -104,6 +107,38 @@ it('disables clearing while a host request is pending', async () => {
     expect(clear.props.disabled).toBe(true);
     await act(async () => clear.props.onPress());
     expect(mocks.confirm).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('waits for the clear receipt before following a replacement visible in the directory', async () => {
+    const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
+        children: () => React.createElement('Composer') };
+    const projection = { snapshot: { ok: true, dots: [{ id: props.metadata.dotId, sessionId: 'replacement' }] } };
+    mocks.data = { projection, pending: { request: { action: 'clear' }, timedOut: true } };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    mocks.data = { projection, pending: null };
+    await act(async () => renderer.update(React.createElement(DotSessionContent, props)));
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith('replacement');
+    await act(async () => renderer.unmount());
+});
+
+it('does not confirm a clear against a different account after the confirmation dialog was opened', async () => {
+    let confirm!: (accepted: boolean) => void;
+    mocks.confirm.mockImplementation(() => new Promise(resolve => { confirm = resolve; }));
+    const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
+        children: () => React.createElement('Composer') };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    await act(async () => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '清空当前对话')!.props.onPress());
+    mocks.credentials = { token: 'another-account', secret: 'another-secret' };
+    await act(async () => renderer.update(React.createElement(DotSessionContent, props)));
+    await act(async () => confirm(true));
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(mocks.navigate).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });
 

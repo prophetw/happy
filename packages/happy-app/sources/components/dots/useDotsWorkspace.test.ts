@@ -15,6 +15,9 @@ const deleteRequest = { schemaVersion: 1 as const, requestId: deleteId, action: 
 const mocks = vi.hoisted(() => ({
     messages: [] as any[], values: [] as any[], sendMessage: vi.fn(), ensureSessionReady: vi.fn(),
     archive: vi.fn(), updateIdentity: vi.fn(), read: vi.fn(), loaded: false, token: 'token',
+    rpc: vi.fn(), valuesOnDisk: new Map<string, string>(), encryptions: new Map<string, any>(), failStorage: false,
+    extraSessions: {} as Record<string, any>,
+    active: true,
 }));
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => listId }));
@@ -26,6 +29,12 @@ vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({
 }) }));
 vi.mock('@/hooks/useSessionVisibility', () => ({ useSessionVisibility: vi.fn() }));
 vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://test.invalid' }));
+vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
+vi.mock('react-native-mmkv', () => ({ MMKV: class {
+    getString(key: string) { return mocks.valuesOnDisk.get(key); }
+    set(key: string, value: string) { if (mocks.failStorage) throw new Error('disk full'); mocks.valuesOnDisk.set(key, value); }
+    delete(key: string) { mocks.valuesOnDisk.delete(key); }
+} }));
 vi.mock('@/sync/storage', () => ({
     useRealtimeStatus: () => 'connected',
     useSessionMessages: () => ({ messages: mocks.messages, isLoaded: mocks.loaded }),
@@ -36,9 +45,16 @@ vi.mock('@/sync/storage', () => ({
         'dot-session': { id: 'dot-session', active: true, metadata: { lifecycleState: 'running', testloopDots: {
             schemaVersion: 1, kind: 'dot', workspaceId, workspaceSessionId: 'workspace-session', dotId,
         } } },
+        ...mocks.extraSessions,
     } }) },
 }));
 vi.mock('@/sync/sync', () => ({ sync: {
+    get encryption() {
+        if (!mocks.encryptions.has(mocks.token)) mocks.encryptions.set(mocks.token, {
+            anonID: mocks.token, encryptRaw: async (value: unknown) => JSON.stringify(value), decryptRaw: async (value: string) => JSON.parse(value),
+        });
+        return mocks.encryptions.get(mocks.token);
+    },
     getCredentials: () => ({ token: mocks.token, secret: 'secret' }),
     sendMessage: mocks.sendMessage, ensureSessionReady: mocks.ensureSessionReady,
 } }));
@@ -49,7 +65,7 @@ vi.mock('@/sync/dotsWorkspaceRead', () => ({ readDotsWorkspace: mocks.read }));
 import { useDotsWorkspace } from './useDotsWorkspace';
 
 function Harness({ index = 0 }: { index?: number }) {
-    const value = useDotsWorkspace('workspace-session', workspaceId, true);
+    const value = useDotsWorkspace('workspace-session', workspaceId, mocks.active);
     mocks.values[index] = value;
     return null;
 }
@@ -63,9 +79,16 @@ beforeAll(() => {
     });
 });
 afterAll(() => vi.restoreAllMocks());
+let accountSequence = 0;
 beforeEach(() => {
     mocks.messages = [];
-    mocks.loaded = false; mocks.token = 'token';
+    mocks.loaded = false; mocks.token = `token-${++accountSequence}`;
+    mocks.valuesOnDisk.clear(); mocks.encryptions.clear(); mocks.failStorage = false;
+    mocks.extraSessions = {};
+    mocks.active = true;
+    mocks.rpc.mockReset().mockImplementation(async (_session, _method, request) => ({ ok: true, data: {
+        schemaVersion: 1, workspaceId, requestId: request.command.requestId, status: 'queued', error: null,
+    } }));
     mocks.read.mockReset().mockRejectedValue(new Error('offline'));
     mocks.values = [];
     mocks.sendMessage.mockReset().mockResolvedValue(true);
@@ -92,12 +115,168 @@ const update = async (renderer: ReturnType<typeof create>, indexes = [0]) => act
     renderer.update(React.createElement(React.Fragment, null, indexes.map(index => React.createElement(Harness, { key: index, index }))));
 });
 
+it('applies a management RPC receipt immediately without sending or waiting for chat messages', async () => {
+    const request = { schemaVersion: 1 as const, requestId: clearId, action: 'create' as const, name: dot.name, instruction: dot.instruction };
+    mocks.rpc.mockResolvedValue({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [dot] },
+    } });
+    const renderer = await render();
+    await act(async () => { await mocks.values[0].submit(request); });
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
+    expect(mocks.values[0].notice).toContain('已创建');
+    expect(mocks.messages).toEqual([]);
+    await act(async () => renderer.unmount());
+});
+
+it('finds cross-device deletion proofs in bounded batches without requiring command chat history', async () => {
+    const deletedId = '77777777-7777-4777-8777-777777777777';
+    for (let index = 1; index <= 51; index++) {
+        const id = `old-session-${index}`;
+        mocks.extraSessions[id] = { id, active: true, metadata: { testloopDots: {
+            schemaVersion: 1, kind: 'dot', workspaceId, workspaceSessionId: 'workspace-session', dotId: deletedId,
+        } } };
+    }
+    mocks.extraSessions.foreign = { id: 'foreign', metadata: { testloopDots: { schemaVersion: 1, kind: 'dot',
+        workspaceId: deletedId, workspaceSessionId: 'workspace-session', dotId: deletedId } } };
+    mocks.read.mockImplementation(async (_session, request) => ({ schemaVersion: 1, workspaceId, revision: 5, requestId: request.requestId, ok: true, dots: [dot],
+        deletedDots: request.archiveSessionIds?.includes('old-session-51')
+            ? [{ requestId: deleteId, revision: 4, id: deletedId, sessionId: 'old-session-51' }] : [],
+    }));
+    const renderer = await render();
+    const batches = mocks.read.mock.calls.map(([_session, request]) => request.archiveSessionIds ?? []);
+    expect(batches.map(batch => batch.length)).toEqual([50, 2]);
+    expect(new Set(batches.flat()).size).toBe(52);
+    expect(batches.flat()).not.toContain('foreign');
+    expect(mocks.archive).toHaveBeenCalledExactlyOnceWith('old-session-51', deletedId);
+    expect(mocks.values[0].notice).toBeNull();
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('restores a lost-response command after reload and retries its original ID and payload', async () => {
+    mocks.rpc.mockRejectedValueOnce(new Error('response lost'));
+    let renderer = await render();
+    await act(async () => { await mocks.values[0].submit(clearRequest); });
+    expect(mocks.values[0].pending).toMatchObject({ request: clearRequest, timedOut: true });
+    await act(async () => renderer.unmount());
+    renderer = await render();
+    expect(mocks.values[0].pending).toMatchObject({ request: clearRequest, timedOut: true });
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [dot] },
+    } });
+    await act(async () => { await mocks.values[0].retry(); });
+    expect(mocks.rpc).toHaveBeenLastCalledWith('workspace-session', 'testloop-dots-command', { schemaVersion: 1, workspaceId, command: clearRequest });
+    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].notice).toContain('已清空');
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('does not send a command if its recovery intent cannot be saved', async () => {
+    const renderer = await render();
+    mocks.failStorage = true;
+    await act(async () => { expect(await mocks.values[0].submit(clearRequest)).toBe(false); });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].error).toContain('未发送新操作');
+    await act(async () => renderer.unmount());
+});
+
+it('keeps a successful receipt through blur and consumes it when the same workspace returns', async () => {
+    let finish!: (reply: unknown) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const renderer = await render();
+    await act(async () => { void mocks.values[0].submit(clearRequest); });
+    mocks.active = false; await update(renderer);
+    await act(async () => finish({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [dot] },
+    } }));
+    mocks.active = true; await update(renderer);
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
+    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+});
+
+it('persists an old chat command receipt so it does not become pending again before history reloads', async () => {
+    mocks.loaded = true; mocks.messages = [command(clearRequest)];
+    let renderer = await render();
+    expect(mocks.values[0].pending?.request).toEqual(clearRequest);
+    mocks.messages = [command(clearRequest), receipt(clearId, 1, [dot])];
+    await update(renderer);
+    expect(mocks.values[0].pending).toBeNull();
+    await act(async () => renderer.unmount());
+    mocks.loaded = false; mocks.messages = [];
+    renderer = await render();
+    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('does not replace a new account pending command with an old account response', async () => {
+    let finish!: (reply: unknown) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const renderer = await render();
+    await act(async () => { void mocks.values[0].submit(clearRequest); });
+    mocks.token = 'second-command-account'; await update(renderer);
+    await act(async () => { await mocks.values[0].submit(deleteRequest); });
+    await act(async () => finish({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [dot] },
+    } }));
+    expect(mocks.values[0].pending?.request).toEqual(deleteRequest);
+    expect(mocks.values[0].projection.receipts[clearId]).toBeUndefined();
+    expect(mocks.values[0].notice).toBeNull();
+    await act(async () => renderer.unmount());
+});
+
+it('does not mirror an accepted rename after its account changed while the session was loading', async () => {
+    let finish!: () => void;
+    mocks.ensureSessionReady.mockImplementation((id: string) => id === 'dot-session' ? new Promise<void>(resolve => { finish = resolve; }) : Promise.resolve());
+    const request = { schemaVersion: 1 as const, requestId: clearId, action: 'update' as const, dotId, name: '新名字', instruction: '新职责' };
+    mocks.rpc.mockResolvedValue({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [{ ...dot, name: '新名字', instruction: '新职责' }] },
+    } });
+    const renderer = await render();
+    await act(async () => { await mocks.values[0].submit(request); });
+    mocks.token = 'second-rename-account'; await update(renderer);
+    await act(async () => finish());
+    expect(mocks.updateIdentity).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('does not mirror an older rename after a newer accepted rename finishes loading first', async () => {
+    const finishes: (() => void)[] = [];
+    mocks.ensureSessionReady.mockImplementation((id: string) => id === 'dot-session'
+        ? new Promise<void>(resolve => { finishes.push(resolve); }) : Promise.resolve());
+    let revision = 0;
+    mocks.rpc.mockImplementation(async (_session, _method, { command: request }) => ({ ok: true, data: {
+        schemaVersion: 1, workspaceId, requestId: request.requestId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision: ++revision, requestId: request.requestId, ok: true,
+            dots: [{ ...dot, name: request.name, instruction: request.instruction }] },
+    } }));
+    const renderer = await render();
+    await act(async () => { await mocks.values[0].submit({ schemaVersion: 1, requestId: clearId, action: 'update', dotId, name: '名称 A', instruction: '职责 A' }); });
+    await act(async () => { await mocks.values[0].submit({ schemaVersion: 1, requestId: deleteId, action: 'update', dotId, name: '名称 B', instruction: '职责 B' }); });
+    expect(finishes).toHaveLength(2);
+    await act(async () => finishes[1]());
+    expect(mocks.updateIdentity).toHaveBeenCalledExactlyOnceWith(dot.sessionId, '名称 B', '职责 B');
+    await act(async () => finishes[0]());
+    expect(mocks.updateIdentity).toHaveBeenCalledTimes(1);
+    expect(mocks.values[0].projection.snapshot.dots[0].name).toBe('名称 B');
+    await act(async () => renderer.unmount());
+});
+
 it('announces clear only while the current host projection retains the same Dot/session binding', async () => {
     const renderer = await render();
     await act(async () => { await mocks.values[0].submit(clearRequest); });
-    expect(mocks.sendMessage).toHaveBeenCalledWith('workspace-session', testloopDotsCommand(clearRequest), expect.objectContaining({
-        displayText: '清空 Dot 当前对话上下文',
-    }));
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.rpc).toHaveBeenCalledWith('workspace-session', 'testloop-dots-command', {
+        schemaVersion: 1, workspaceId, command: clearRequest,
+    });
     mocks.messages = [command(clearRequest), receipt(clearId, 1, [dot])];
     await update(renderer);
     expect(mocks.values[0].pending).toBeNull();
@@ -159,6 +338,20 @@ it('shares one in-flight archive attempt by dotId across workspace observers', a
     expect(mocks.values[1].archivePending).toBe(false);
     expect(mocks.values[0].archiveError).toBeNull();
     expect(mocks.values[1].archiveError).toBeNull();
+    await act(async () => renderer.unmount());
+});
+
+it('keeps archive attempts and completion state isolated when the account changes', async () => {
+    const finishes: (() => void)[] = [];
+    mocks.archive.mockImplementation(() => new Promise<void>(resolve => { finishes.push(resolve); }));
+    mocks.messages = [command(deleteRequest), receipt(deleteId, 2, [], { deletedDot: { id: dotId, sessionId: dot.sessionId } })];
+    const renderer = await render();
+    mocks.token = 'second-archive-account'; await update(renderer);
+    expect(mocks.archive).toHaveBeenCalledTimes(2);
+    await act(async () => finishes[0]());
+    expect(mocks.values[0].archivePending).toBe(true);
+    await act(async () => finishes[1]());
+    expect(mocks.values[0].archivePending).toBe(false);
     await act(async () => renderer.unmount());
 });
 

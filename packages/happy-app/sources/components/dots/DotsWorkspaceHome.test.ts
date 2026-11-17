@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ confirm: vi.fn(), submit: vi.fn(), navigate: vi.fn(), data: null as any }));
+const mocks = vi.hoisted(() => ({ confirm: vi.fn(), submit: vi.fn(), navigate: vi.fn(), uuid: vi.fn(), data: null as any }));
 const dot = { id: '55555555-5555-4555-8555-555555555555', name: '写作助理', instruction: '整理通知',
     sessionId: 'dot-session', status: 'active' as const };
 const deleteRequest = { schemaVersion: 1 as const, requestId: '33333333-3333-4333-8333-333333333333',
@@ -25,7 +25,7 @@ vi.mock('@react-navigation/native', async () => {
     const module = await import('react'); return { useFocusEffect: (callback: () => void) => module.useEffect(callback, [callback]) };
 });
 vi.mock('expo-router', () => ({ useLocalSearchParams: () => ({}) }));
-vi.mock('expo-crypto', () => ({ randomUUID: () => '33333333-3333-4333-8333-333333333333' }));
+vi.mock('expo-crypto', () => ({ randomUUID: mocks.uuid }));
 vi.mock('@/modal', () => ({ Modal: { confirm: mocks.confirm } }));
 vi.mock('@/hooks/useNavigateToSession', () => ({ useNavigateToSession: () => mocks.navigate }));
 vi.mock('@/sync/storage', () => ({
@@ -65,12 +65,40 @@ beforeEach(() => {
     mocks.confirm.mockReset();
     mocks.submit.mockReset();
     mocks.navigate.mockReset();
+    mocks.uuid.mockReset().mockReturnValue(deleteRequest.requestId);
 });
 
 const press = async (node: any) => act(async () => node.props.onPress());
 const button = (renderer: ReturnType<typeof create>, label: string) =>
     renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === label)!;
 const management = (renderer: ReturnType<typeof create>) => renderer.root.findByType('Modal');
+
+it.each(['create', 'update'] as const)('keeps the first %s request and receipt when the form is pressed twice before rerender', async action => {
+    const projection = { snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 1, requestId: 'list', ok: true,
+        dots: [dot], modelOptions: [{ code: 'gpt-6.1-sol', value: 'GPT 6.1 Sol', thinkingLevels: ['xhigh'], defaultThinkingLevel: 'xhigh' }] },
+        receipts: {}, deletions: {}, details: {}, pendingRequest: null };
+    mocks.data = { projection };
+    mocks.uuid.mockReturnValueOnce(deleteRequest.requestId).mockReturnValue('44444444-4444-4444-8444-444444444444');
+    let complete!: (value: boolean) => void;
+    mocks.submit.mockImplementation(() => new Promise<boolean>(resolve => { complete = resolve; }));
+    const props = { session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, props)); });
+    await press(button(renderer, action === 'create' ? '新建 Dot' : '管理 写作助理'));
+    await act(async () => {
+        renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === 'Dot 名称')!.props.onChangeText('新的助理名称');
+        renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === 'Dot 长期职责')!.props.onChangeText('整理通知');
+    });
+    const save = button(renderer, action === 'create' ? '创建 Dot' : '保存 Dot');
+    await act(async () => { save.props.onPress(); save.props.onPress(); });
+    expect(mocks.submit).toHaveBeenCalledTimes(1);
+    expect(mocks.submit.mock.calls[0][0]).toMatchObject({ requestId: deleteRequest.requestId, action });
+    await act(async () => complete(true));
+    mocks.data = { projection: { ...projection, receipts: { [deleteRequest.requestId]: { ok: true } } } };
+    await act(async () => renderer.update(React.createElement(DotsWorkspacePanel, props)));
+    expect(management(renderer).props.visible).toBe(false);
+    await act(async () => renderer.unmount());
+});
 
 it('keeps deletion behind confirmation and pending, preserves failures, and closes only after the current snapshot removes the Dot', async () => {
     let renderer!: ReturnType<typeof create>;

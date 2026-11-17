@@ -67,7 +67,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     useFocusEffect(React.useCallback(() => {
         navigation.update(`${session.id}:${metadata.workspaceId}:${metadata.dotId}`, active);
         return () => navigation.invalidate();
-    }, [navigation, session.id, metadata.workspaceId, metadata.dotId, active]));
+    }, [navigation, session.id, metadata.workspaceId, metadata.dotId, active, memoryBinding]));
     React.useEffect(() => {
         memoryAttempt.current = null; setMemoryEdit(null); setMemoryOpen(false); setMemoryBusy(false); setMemoryUnknown(false); setMemoryError(null);
         memoryConflictDrafts.current.clear();
@@ -149,29 +149,30 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     };
     const replacement = data.projection?.snapshot?.ok ? data.projection.snapshot.dots.find(d => d.id === metadata.dotId)?.sessionId : undefined;
     React.useEffect(() => {
-        if (!active || !replacement || replacement === session.id) return;
+        if (!active || !replacement || replacement === session.id || data.pending?.request.action === 'clear') return;
         const operation = navigation.begin();
         if (!operation) return;
         void operation.afterReady(() => sync.ensureSessionReady(replacement), () => {
             if (currentDots.current.projection?.snapshot?.dots.find(d => d.id === metadata.dotId)?.sessionId === replacement) navigate(replacement);
         }).catch(() => { if (operation.isCurrent()) setError('新对话暂时无法打开，请返回工作台刷新重试。'); });
-    }, [active, replacement, session.id, navigation, metadata.dotId, navigate]);
+    }, [active, replacement, session.id, navigation, metadata.dotId, navigate, data.pending?.request.action, memoryBinding]);
     const clearConversation = async () => {
         if (clearConfirming || currentDots.current.pending) return;
         const current = currentDots.current.projection?.snapshot;
         const dot = current?.dots.find(item => item.id === metadata.dotId && item.sessionId === session.id);
         if (!dot) return;
+        const operation = navigation.begin();
+        if (!operation) return;
         setClearConfirming(true);
         try {
             const confirmed = await GlobalModal.confirm('清空当前对话？',
                 '将删除当前聊天记录并重置模型上下文，正在进行的聊天轮次会停止。用户与 Dot 长期记忆、身份、模型设置和授权保留；独立后台任务继续运行，旧任务回报不注入新对话。此操作不可撤销。',
                 { confirmText: '清空对话' });
-            if (!confirmed || currentDots.current.pending) return;
+            if (!confirmed || !operation.isCurrent() || currentDots.current.pending) return;
             const latestDot = currentDots.current.projection?.snapshot?.dots
                 .find(item => item.id === metadata.dotId && item.sessionId === session.id);
             if (!latestDot) return;
             await currentDots.current.submit({ schemaVersion: 1, requestId: randomUUID(), action: 'clear', dotId: metadata.dotId });
-            navigate(metadata.workspaceSessionId);
         } finally {
             setClearConfirming(false);
         }
