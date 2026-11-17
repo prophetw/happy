@@ -33,7 +33,7 @@ function regular(file: string, limit = HOSTED_STORAGE_LIMIT) {
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > limit) throw Error('hosted_storage_file_invalid');
     return stat;
 }
-function bytes(file: string, limit = HOSTED_STORAGE_LIMIT): Buffer {
+function readBytes(file: string, limit: number): Buffer {
     regular(file, limit);
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
@@ -46,6 +46,21 @@ function bytes(file: string, limit = HOSTED_STORAGE_LIMIT): Buffer {
             || s.mtimeNs !== before.mtimeNs || s.ctimeNs !== before.ctimeNs || s.nlink !== 1n)) throw Error('hosted_storage_file_changed');
         return result.subarray(0, used);
     } finally { closeSync(fd); }
+}
+function bytes(file: string, limit = HOSTED_STORAGE_LIMIT): Buffer {
+    // Atomic publication invalidates the old snapshot, not the new private file.
+    // Reopen only a different valid inode; same-inode changes remain fail closed.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const before = regular(file, limit);
+        try { return readBytes(file, limit); }
+        catch (error) {
+            if (!(error instanceof Error) || !['hosted_storage_file_changed', 'hosted_storage_file_invalid'].includes(error.message)) throw error;
+            const after = regular(file, limit);
+            if (after.dev === before.dev && after.ino === before.ino) throw error;
+            if (attempt === 1) throw Error('hosted_storage_file_changed');
+        }
+    }
+    throw Error('hosted_storage_file_changed');
 }
 function json(file: string, limit?: number): any { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes(file, limit))); }
 function syncDirectory(directory: string) {
