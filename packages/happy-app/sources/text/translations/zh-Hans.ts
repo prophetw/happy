@@ -60,6 +60,8 @@ export const zhHans: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: '重新添加同名记忆？',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `「${key}」此前已忘记，当前墓碑为第 ${revision} 版。确认重新添加为第 ${revision + 1} 版吗？旧正文和历史版本不会恢复。`,
         // Simple string constants
         cancel: '取消',
         authenticate: '认证',

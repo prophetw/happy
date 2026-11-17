@@ -27,20 +27,43 @@ function safePath(path: string) {
     }
 }
 function present(file: string) { safePath(file); return lstatSync(file, { throwIfNoEntry: false }) !== undefined; }
-function stampEqual(a: BigIntStats, b: BigIntStats) {
-    return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && a.nlink === b.nlink;
-}
 function read(file: string, maxBytes = HOSTED_STATE_MAX_BYTES): any {
-    safePath(file);
-    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-        const stat = fstatSync(fd, { bigint: true });
-        if (!stat.isFile() || stat.nlink !== 1n || stat.size > BigInt(maxBytes)) throw Error('hosted_lifecycle_file_invalid');
-        const bytes = Buffer.alloc(Number(stat.size) + 1); let size = 0, n: number;
-        while (size < bytes.length && (n = readSync(fd, bytes, size, bytes.length - size, null)) > 0) size += n;
-        if (BigInt(size) !== stat.size || !stampEqual(stat, fstatSync(fd, { bigint: true })) || !stampEqual(stat, lstatSync(file, { bigint: true }))) throw Error('hosted_lifecycle_file_changed');
-        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)));
-    } finally { closeSync(fd); }
+    const privateFile = (s: BigIntStats, detached = false) => s.isFile() && (s.nlink === 1n || detached && s.nlink === 0n)
+        && s.uid === BigInt(process.getuid!()) && !(s.mode & 0o077n) && s.size <= BigInt(maxBytes);
+    const sameInode = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
+    const named = () => {
+        safePath(file); const current = lstatSync(file, { bigint: true });
+        if (!privateFile(current)) throw Error('hosted_lifecycle_file_invalid');
+        return current;
+    };
+    for (let attempt = 0; ; attempt++) {
+        safePath(file);
+        const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+            const before = fstatSync(fd, { bigint: true });
+            if (!privateFile(before, true)) throw Error('hosted_lifecycle_file_invalid');
+            // Atomic publication may detach the old inode. Never consume its bytes;
+            // only a different valid named inode permits one complete reopen.
+            if (before.nlink === 0n) {
+                if (sameInode(before, named()) || attempt !== 0) throw Error('hosted_lifecycle_file_changed');
+                continue;
+            }
+            const bytes = Buffer.alloc(Number(before.size) + 1); let size = 0, n: number;
+            while (size < bytes.length && (n = readSync(fd, bytes, size, bytes.length - size, null)) > 0) size += n;
+            const end = fstatSync(fd, { bigint: true });
+            if (!privateFile(end, true) || !sameInode(before, end) || before.uid !== end.uid || before.mode !== end.mode
+                || before.size !== end.size || before.mtimeNs !== end.mtimeNs || BigInt(size) !== before.size
+                || before.ctimeNs !== end.ctimeNs && end.nlink !== 0n) throw Error('hosted_lifecycle_file_changed');
+            const current = named();
+            if (!sameInode(before, current)) {
+                if (attempt !== 0) throw Error('hosted_lifecycle_file_changed');
+                continue;
+            }
+            if (end.nlink !== 1n || before.ctimeNs !== end.ctimeNs || before.size !== current.size
+                || before.mtimeNs !== current.mtimeNs || before.ctimeNs !== current.ctimeNs) throw Error('hosted_lifecycle_file_changed');
+            return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)));
+        } finally { closeSync(fd); }
+    }
 }
 function syncDirectory(path: string) {
     safePath(path);

@@ -44,6 +44,8 @@ export const ja: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: '忘れたメモリを再追加しますか？',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `「${key}」はリビジョン ${revision} で削除済みです。リビジョン ${revision + 1} として再追加しますか？以前の内容と履歴は復元されません。`,
         // Simple string constants
         cancel: 'キャンセル',
         authenticate: '認証',

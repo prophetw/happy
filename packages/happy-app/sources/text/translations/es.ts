@@ -41,6 +41,8 @@ export const es: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: '¿Volver a añadir el recuerdo olvidado?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `«${key}» se olvidó en la revisión ${revision}. ¿Volver a añadirlo como revisión ${revision + 1}? El contenido y el historial anteriores no se restaurarán.`,
         // Simple string constants
         cancel: 'Cancelar',
         authenticate: 'Autenticar',

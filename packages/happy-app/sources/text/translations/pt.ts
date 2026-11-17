@@ -41,6 +41,8 @@ export const pt: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: 'Adicionar novamente a memória esquecida?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `«${key}» foi esquecida na revisão ${revision}. Adicioná-la novamente como revisão ${revision + 1}? O conteúdo e o histórico anteriores não serão restaurados.`,
         // Simple string constants
         cancel: 'Cancelar',
         authenticate: 'Autenticar',

@@ -52,6 +52,8 @@ export const pl: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: 'Dodać ponownie zapomnianą pamięć?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `Pamięć „${key}” została zapomniana w wersji ${revision}. Dodać ją ponownie jako wersję ${revision + 1}? Poprzednia treść i historia nie zostaną przywrócone.`,
         // Simple string constants
         cancel: 'Anuluj',
         authenticate: 'Uwierzytelnij',

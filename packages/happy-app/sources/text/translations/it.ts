@@ -41,6 +41,8 @@ export const it: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: 'Aggiungere di nuovo il ricordo dimenticato?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `«${key}» è stato dimenticato alla revisione ${revision}. Aggiungerlo di nuovo come revisione ${revision + 1}? Il contenuto e la cronologia precedenti non verranno ripristinati.`,
         // Simple string constants
         cancel: 'Annulla',
         authenticate: 'Autentica',

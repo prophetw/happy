@@ -58,6 +58,8 @@ export const en = {
     },
 
     common: {
+        recreateMemoryTitle: 'Re-add forgotten memory?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `"${key}" was forgotten at revision ${revision}. Re-add it as revision ${revision + 1}? Previous content and history will not be restored.`,
         // Simple string constants
         cancel: 'Cancel',
         authenticate: 'Authenticate',

@@ -52,6 +52,8 @@ export const ru: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: 'Добавить забытое воспоминание заново?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `Запись «${key}» была забыта на ревизии ${revision}. Добавить её заново как ревизию ${revision + 1}? Прежнее содержимое и история не будут восстановлены.`,
         // Simple string constants
         cancel: 'Отмена',
         authenticate: 'Авторизация',

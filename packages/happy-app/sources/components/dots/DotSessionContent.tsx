@@ -12,9 +12,11 @@ import type { Session } from '@/sync/storageTypes';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
 import { testloopWorkStatus, testloopWorkQueueReason, type TestloopDotsMetadata } from '@/sync/testloopDots';
 import { kindLabel } from '@/sync/dotMemoryKinds';
+import { t } from '@/text';
 import { useAuth } from '@/auth/AuthContext';
 import { getServerUrl } from '@/sync/serverConfig';
-import { dotMemoryEditError, dotMemoryEditRejected, requestDotMemoryEdit, type DotMemoryEditRequest } from '@/sync/dotMemoryEdit';
+import { dotMemoryEditError, dotMemoryEditRejected, dotMemoryValueBytes, DOT_MEMORY_VALUE_MAX_BYTES, readDotMemoryTombstone, requestDotMemoryEdit, type DotMemoryEditRequest } from '@/sync/dotMemoryEdit';
+import { observationError } from '@/sync/dotObservation';
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 import { DotObservationPanel } from './DotObservationPanel';
@@ -119,6 +121,10 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                 let value;
                 try { value = memoryEdit.json ? JSON.parse(memoryEdit.text) : memoryEdit.text; }
                 catch { setMemoryError('内容不是有效的 JSON，请修正后重试。'); return; }
+                const valueBytes = dotMemoryValueBytes(value);
+                if (valueBytes > DOT_MEMORY_VALUE_MAX_BYTES) {
+                    setMemoryError(dotMemoryEditError(new Error('memory_edit_invalid_request'))); return;
+                }
                 const expiry = memoryEdit.expiresAt?.trim() || null;
                 if (expiry && (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(expiry) || !Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now())) {
                     setMemoryError('请输入包含时区的未来 ISO 时间，或清空有效期。'); return;
@@ -132,23 +138,53 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         }
         if (attempt.binding !== memoryBinding) return;
         attempt.running = true; setMemoryBusy(true); setMemoryError(null);
+        let recreationChecked = false;
         try {
-            const receipt = await requestDotMemoryEdit(metadata.workspaceSessionId, attempt.request);
-            // An already submitted write still resolves while its screen is hidden or refreshing.
-            if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
-            memoryConflictDrafts.current.delete(memoryDraftKey(memoryEdit));
-            memoryAttempt.current = null; setMemoryEdit(null); setMemoryOpen(false); setMemoryUnknown(false); setMemoryRefresh(value => value + 1);
-            setNotice(receipt.currentRevision > receipt.revision ? '此次记忆操作已完成，记忆已有后续修改，正在刷新最新内容。'
-                : receipt.action === 'forget' ? '记忆已忘记。' : '记忆已保存。');
-        } catch (failure) {
-            if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
-            if (!attempt.uncertain && dotMemoryEditRejected(failure)) {
-                memoryAttempt.current = null;
-                if (failure instanceof Error && failure.message === 'memory_edit_revision_conflict' && memoryEdit.action === 'remember')
-                    memoryConflictDrafts.current.set(memoryDraftKey(memoryEdit), memoryEdit);
+            for (;;) {
+                try {
+                    const receipt = await requestDotMemoryEdit(metadata.workspaceSessionId, attempt.request);
+                    // An already submitted write still resolves while its screen is hidden or refreshing.
+                    if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
+                    memoryConflictDrafts.current.delete(memoryDraftKey(memoryEdit));
+                    memoryAttempt.current = null; setMemoryEdit(null); setMemoryOpen(false); setMemoryUnknown(false); setMemoryRefresh(value => value + 1);
+                    setNotice(receipt.currentRevision > receipt.revision ? '此次记忆操作已完成，记忆已有后续修改，正在刷新最新内容。'
+                        : receipt.action === 'forget' ? '记忆已忘记。' : '记忆已保存。');
+                    return;
+                } catch (failure) {
+                    if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
+                    const attemptOperation: DotMemoryEditRequest['operation'] = attempt.request.operation;
+                    if (!recreationChecked && !attempt.uncertain && failure instanceof Error && failure.message === 'memory_edit_revision_conflict'
+                        && memoryEdit.action === 'remember' && !memoryEdit.existing && attemptOperation.action === 'remember' && attemptOperation.revision === 0) {
+                        recreationChecked = true;
+                        let tombstoneRevision: number | null;
+                        try { tombstoneRevision = await readDotMemoryTombstone(metadata.workspaceSessionId, metadata.dotId, memoryEdit.scope, attemptOperation.key); }
+                        catch (readFailure) {
+                            memoryAttempt.current = null; memoryConflictDrafts.current.set(memoryDraftKey(memoryEdit), memoryEdit);
+                            setMemoryError(observationError(readFailure)); return;
+                        }
+                        if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
+                        if (tombstoneRevision !== null) {
+                            const confirmed = await GlobalModal.confirm(t('common.recreateMemoryTitle'),
+                                t('common.recreateMemoryMessage', { key: attemptOperation.key, revision: tombstoneRevision }), { confirmText: t('common.create') });
+                            if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
+                            if (confirmed) {
+                                attempt = { binding: memoryBinding, running: true, uncertain: false, request: { ...attempt.request,
+                                    requestID: randomUUID(), operation: { ...attemptOperation, revision: tombstoneRevision } } };
+                                memoryAttempt.current = attempt;
+                                continue;
+                            }
+                        }
+                    }
+                    if (!attempt.uncertain && dotMemoryEditRejected(failure)) {
+                        memoryAttempt.current = null;
+                        if (failure instanceof Error && failure.message === 'memory_edit_revision_conflict' && memoryEdit.action === 'remember')
+                            memoryConflictDrafts.current.set(memoryDraftKey(memoryEdit), memoryEdit);
+                    }
+                    else { attempt.uncertain = true; setMemoryUnknown(true); }
+                    setMemoryError(dotMemoryEditError(failure) + (attempt.uncertain && dotMemoryEditRejected(failure) ? ' 上次请求结果仍待核对，重试会沿用原请求。' : ''));
+                    return;
+                }
             }
-            else { attempt.uncertain = true; setMemoryUnknown(true); }
-            setMemoryError(dotMemoryEditError(failure) + (attempt.uncertain && dotMemoryEditRejected(failure) ? ' 上次请求结果仍待核对，重试会沿用原请求。' : ''));
         } finally {
             attempt.running = false;
             if (memoryCurrent.current.binding === memoryBinding) setMemoryBusy(false);

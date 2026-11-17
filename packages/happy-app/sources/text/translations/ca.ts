@@ -41,6 +41,8 @@ export const ca: TranslationStructure = {
     },
 
     common: {
+        recreateMemoryTitle: 'Tornar a afegir el record oblidat?',
+        recreateMemoryMessage: ({ key, revision }: { key: string; revision: number }) => `«${key}» s'ha oblidat a la revisió ${revision}. Tornar-lo a afegir com a revisió ${revision + 1}? El contingut i l'historial anteriors no es restauraran.`,
         // Simple string constants
         cancel: 'Cancel·la',
         authenticate: 'Autentica',

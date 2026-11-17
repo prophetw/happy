@@ -1,10 +1,17 @@
 import { z } from 'zod';
+import * as Crypto from 'expo-crypto';
 import { apiSocket } from './apiSocket';
+import { ObservationMemorySchema, requestDotObservation, type MemoryScope } from './dotObservation';
 
 const id = z.string().uuid(), revision = z.number().int().nonnegative();
+export const DOT_MEMORY_VALUE_MAX_BYTES = 4096;
+export function dotMemoryValueBytes(value: unknown) {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+const memoryValue = z.json().refine(value => dotMemoryValueBytes(value) <= DOT_MEMORY_VALUE_MAX_BYTES);
 const operation = z.discriminatedUnion('action', [
     z.object({ action: z.literal('remember'), key: z.string().min(1).max(200), revision,
-        kind: z.enum(['fact', 'preference', 'commitment']), value: z.json(), expiresAt: z.string().datetime({ offset: true }).nullable().default(null) }).strict(),
+        kind: z.enum(['fact', 'preference', 'commitment']), value: memoryValue, expiresAt: z.string().datetime({ offset: true }).nullable().default(null) }).strict(),
     z.object({ action: z.literal('forget'), key: z.string().min(1).max(200), revision: revision.positive() }).strict(),
 ]);
 const requestSchema = z.object({ schemaVersion: z.literal(1), workspaceId: id, dotId: id,
@@ -14,6 +21,20 @@ const receiptSchema = requestSchema.omit({ operation: true }).extend({ action: z
     currentStatus: z.enum(['active', 'deleted']), duplicate: z.boolean(), indexing: z.enum(['pending', 'not_required']) });
 export type DotMemoryEditRequest = z.infer<typeof requestSchema>;
 export type DotMemoryEditReceipt = z.infer<typeof receiptSchema>;
+
+/** Reads only public metadata; deleted memory keys and values remain erased on the host. */
+export async function readDotMemoryTombstone(sessionId: string, dotId: string, scope: MemoryScope, key: string): Promise<number | null> {
+    const input = new TextEncoder().encode(JSON.stringify(key.trim().normalize('NFC')));
+    const hash = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, input);
+    const keyDigest = 'sha256:' + Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+    try {
+        const result = await requestDotObservation(sessionId, { dotId, action: 'memory', keyDigest, scope }, ObservationMemorySchema);
+        return result.memory.status === 'deleted' ? result.memory.revision : null;
+    } catch (error) {
+        if (error instanceof Error && error.message === 'observation_memory_not_found') return null;
+        throw error;
+    }
+}
 
 export async function requestDotMemoryEdit(sessionId: string, request: DotMemoryEditRequest): Promise<DotMemoryEditReceipt> {
     const checked = requestSchema.safeParse(request);

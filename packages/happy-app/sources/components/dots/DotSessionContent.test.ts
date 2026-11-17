@@ -8,7 +8,9 @@ vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
     return Object.fromEntries(['View', 'Text', 'Pressable', 'ActivityIndicator', 'ScrollView', 'Modal', 'TextInput'].map(name => [name, host(name)]));
 });
-vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#eee', divider: '#ccc' } } }) }));
+vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#eee', divider: '#ccc' } } }),
+    StyleSheet: { create: (styles: any) => typeof styles === 'function'
+        ? styles({ colors: { text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#eee', divider: '#ccc' } }) : styles } }));
 vi.mock('@react-navigation/native', async () => {
     const module = await import('react'); return { useFocusEffect: (callback: () => void) => module.useEffect(callback, [callback]) };
 });
@@ -20,7 +22,20 @@ vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ credentials: mocks.credentials, isAuthenticated: mocks.authenticated }) }));
 vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => mocks.server }));
 vi.mock('@/modal', () => ({ Modal: { confirm: mocks.confirm } }));
-vi.mock('expo-crypto', () => ({ randomUUID: () => '33333333-3333-4333-8333-333333333333' }));
+vi.mock('expo-crypto', async () => {
+    const { createHash } = await import('node:crypto');
+    return { randomUUID: () => '33333333-3333-4333-8333-333333333333', CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+        digest: async (_algorithm: string, data: Uint8Array) => {
+            const hash = createHash('sha256').update(data).digest();
+            return hash.buffer.slice(hash.byteOffset, hash.byteOffset + hash.byteLength) as ArrayBuffer;
+        } };
+});
+vi.mock('@/text', () => ({ t: (key: string, params?: { key: string; revision: number }) => {
+    if (key === 'common.recreateMemoryTitle') return '重新添加同名记忆？';
+    if (key === 'common.recreateMemoryMessage') return `「${params!.key}」此前已忘记，当前墓碑为第 ${params!.revision} 版。确认重新添加为第 ${params!.revision + 1} 版吗？旧正文和历史版本不会恢复。`;
+    if (key === 'common.create') return '创建';
+    return key;
+} }));
 vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
 vi.mock('./DotRecoveryNotice', () => ({ DotRecoveryNotice: () => null }));
 vi.mock('./DotObservationPanel', async () => {
@@ -45,12 +60,14 @@ beforeEach(() => {
     mocks.data = null;
     mocks.credentials = { token: 'account', secret: 'secret' }; mocks.server = 'https://relay.example'; mocks.authenticated = true;
     mocks.ready.mockReset(); mocks.ready.mockResolvedValue(undefined);
-    mocks.rpc.mockReset(); mocks.rpc.mockImplementation(async (_session, _method, request) => ({ ok: true, data: {
+    mocks.rpc.mockReset(); mocks.rpc.mockImplementation(async (_session, _method, request) => {
+        if (_method === 'testloop-dot-observation') return { ok: false, error: 'observation_memory_not_found' };
+        return { ok: true, data: {
         schemaVersion: 1, workspaceId: request.workspaceId, dotId: request.dotId, dotSessionId: request.dotSessionId,
         scope: request.scope, requestID: request.requestID, action: request.operation.action, keyDigest: 'sha256:' + 'b'.repeat(64),
         revision: request.operation.revision + 1, currentRevision: request.operation.revision + 1,
         currentStatus: request.operation.action === 'forget' ? 'deleted' : 'active', duplicate: false, indexing: 'pending',
-    } }));
+    } }; });
     mocks.confirm.mockReset();
     mocks.submit.mockReset();
     mocks.navigate.mockReset();
@@ -217,7 +234,9 @@ it('lets a new memory pick its kind instead of always saving a preference', asyn
     await act(async () => input('记忆有效期').props.onChangeText('2099-01-01T00:00:00Z'));
     await pressed('保存记忆');
     expect(request).toBeNull();
-    expect(mocks.rpc.mock.calls[0][2]).toMatchObject({ scope: 'user', operation: { action: 'remember', key: '交付节奏', kind: 'fact', value: '每周三提交', revision: 0, expiresAt: '2099-01-01T00:00:00.000Z' } });
+    await vi.waitFor(() => expect(mocks.rpc.mock.calls.find(call => call[1] === 'testloop-dot-memory-edit')?.[2]).toMatchObject({ scope: 'user', operation: { action: 'remember', key: '交付节奏', kind: 'fact', value: '每周三提交', revision: 0, expiresAt: '2099-01-01T00:00:00.000Z' } }));
+    expect(mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-observation')).toHaveLength(0);
+    expect(mocks.confirm).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });
 
@@ -234,7 +253,7 @@ it('explains why a memory cannot be added before the workspace projection is rea
     await act(async () => renderer.unmount());
 });
 
-async function memoryForm() {
+async function memoryForm(options: { add?: boolean; scope?: 'dot' | 'user' } = {}) {
     const requests: unknown[] = [];
     const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
         metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
@@ -243,10 +262,105 @@ async function memoryForm() {
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
     const button = (label: string) => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === label)!;
     const input = (label: string) => renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === label)!;
-    await act(async () => renderer.root.findByType('ObservationPanel').props.onEditMemory('偏好', { revision: 2, value: '旧偏好', kind: 'preference', expiresAt: null }));
+    if (options.add) {
+        await act(async () => renderer.root.findByType('ObservationPanel').props.onAddMemory(options.scope ?? 'dot'));
+        await act(async () => input('记忆名称').props.onChangeText('偏好'));
+    } else {
+        await act(async () => renderer.root.findByType('ObservationPanel').props.onEditMemory('偏好', { revision: 2, value: '旧偏好', kind: 'preference', expiresAt: null }));
+    }
     await act(async () => input('记忆内容').props.onChangeText('用户的新草稿'));
     return { renderer, props, requests, button, input, text: () => JSON.stringify(renderer.toJSON()) };
 }
+
+const deletedReply = (request: any, revision = 3) => ({ ok: true, data: {
+    schemaVersion: 1, dotId: request.dotId, asOf: '2026-11-17T00:00:00Z', snapshotId: 'sha256:' + 'a'.repeat(64),
+    action: 'memory', section: 'versions', scope: request.scope,
+    memory: { keyDigest: request.keyDigest, key: null, status: 'deleted', revision, deletedAt: '2026-11-17T00:00:00Z' },
+    page: { items: [], total: 0, offset: 0, nextOffset: null } } });
+
+it.each(['dot', 'user'] as const)('requires explicit confirmation and the current tombstone revision when recreating a forgotten memory: %s', async scope => {
+    const success = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (session, method, request) => {
+        if (method === 'testloop-dot-observation') return deletedReply(request);
+        if (method === 'testloop-dot-memory-edit' && request.operation.revision === 0) return { ok: false, error: 'memory_edit_revision_conflict' };
+        return success(session, method, request);
+    });
+    const f = await memoryForm({ add: true, scope });
+    const writes = () => mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-memory-edit');
+    mocks.confirm.mockResolvedValueOnce(false);
+    await act(async () => f.button('保存记忆').props.onPress());
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
+    expect(writes()).toHaveLength(1);
+    expect(writes()[0][2].operation.revision).toBe(0);
+    expect(f.input('记忆内容').props.value).toBe('用户的新草稿');
+    mocks.confirm.mockResolvedValueOnce(true);
+    await act(async () => f.button('保存记忆').props.onPress());
+    await vi.waitFor(() => expect(writes()).toHaveLength(3));
+    expect(mocks.confirm).toHaveBeenLastCalledWith('重新添加同名记忆？', expect.stringContaining('第 3 版'), { confirmText: '创建' });
+    expect(writes().map(call => call[2].operation.revision)).toEqual([0, 0, 3]);
+    expect(writes()[2][2]).toMatchObject({ scope, operation: { action: 'remember', key: '偏好', revision: 3, value: '用户的新草稿' } });
+    await act(async () => f.renderer.unmount());
+});
+
+it('keeps a confirmed recreation on the original request after losing its acknowledgement', async () => {
+    const success = mocks.rpc.getMockImplementation()!;
+    let lose = true;
+    mocks.confirm.mockResolvedValue(true);
+    mocks.rpc.mockImplementation(async (session, method, request) => {
+        if (method === 'testloop-dot-observation') return deletedReply(request);
+        if (method === 'testloop-dot-memory-edit' && request.operation.revision === 0) return { ok: false, error: 'memory_edit_revision_conflict' };
+        if (method === 'testloop-dot-memory-edit' && lose) { lose = false; throw new Error('reply lost'); }
+        return success(session, method, request);
+    });
+    const f = await memoryForm({ add: true });
+    await act(async () => f.button('保存记忆').props.onPress());
+    const sent = mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-memory-edit').at(-1)![2];
+    expect(sent.operation.revision).toBe(3);
+    expect(f.text()).toContain('尚未收到可核对的保存回执');
+    await act(async () => f.button('重试上次记忆操作').props.onPress());
+    await vi.waitFor(() => expect(mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-memory-edit')).toHaveLength(3));
+    const calls = mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-memory-edit');
+    expect(calls.map(call => call[2].operation.revision)).toEqual([0, 3, 3]);
+    expect(calls[2][2]).toEqual(sent);
+    expect(mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-observation')).toHaveLength(1);
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    await act(async () => f.renderer.unmount());
+});
+
+it('re-reads and reconfirms a changed tombstone after the host rejects its stale CAS revision', async () => {
+    const success = mocks.rpc.getMockImplementation()!;
+    let revision = 3, firstWrite = true;
+    mocks.confirm.mockResolvedValue(true);
+    mocks.rpc.mockImplementation(async (session, method, request) => {
+        if (method === 'testloop-dot-observation') return deletedReply(request, revision);
+        if (method === 'testloop-dot-memory-edit' && request.operation.revision === 0) return { ok: false, error: 'memory_edit_revision_conflict' };
+        if (method === 'testloop-dot-memory-edit' && request.operation.revision === 3 && firstWrite) {
+            firstWrite = false; revision = 5; return { ok: false, error: 'memory_edit_revision_conflict' };
+        }
+        return success(session, method, request);
+    });
+    const f = await memoryForm({ add: true });
+    await act(async () => f.button('保存记忆').props.onPress());
+    expect(f.text()).toContain('这条记忆已有更新，未覆盖');
+    await act(async () => f.button('保存记忆').props.onPress());
+    const writes = mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-memory-edit');
+    expect(writes.map(call => call[2].operation.revision)).toEqual([0, 3, 0, 5]);
+    expect(mocks.rpc.mock.calls.filter(call => call[1] === 'testloop-dot-observation')).toHaveLength(2);
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
+    expect(mocks.confirm).toHaveBeenLastCalledWith('重新添加同名记忆？', expect.stringContaining('第 5 版'), { confirmText: '创建' });
+    await act(async () => f.renderer.unmount());
+});
+
+it('rejects UTF-8 JSON values over 4096 bytes locally without creating a retry attempt', async () => {
+    const f = await memoryForm();
+    await act(async () => f.input('记忆内容').props.onChangeText('中'.repeat(1365)));
+    await act(async () => f.button('保存记忆').props.onPress());
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(f.text()).toContain('记忆内容或版本无法核对，请检查输入后重试。');
+    expect(f.input('记忆内容').props.editable).toBe(true);
+    expect(f.button('保存记忆')).toBeDefined();
+    await act(async () => f.renderer.unmount());
+});
 
 it('keeps an uncertain write frozen and retries the same request without double dispatch', async () => {
     const success = mocks.rpc.getMockImplementation()!;
