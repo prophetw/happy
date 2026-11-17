@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /** Isolated, synthetic producer + real JSONL child + real encrypted HTTP outbox.
  * No live configuration, accounts, journals or models are used. Storage source
- * is an explicitly supplied compatibility module; never installed into main. */
+ * is the checkout's module or an explicitly supplied compatibility module. */
 import { build } from 'esbuild';
 import { createServer } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, mkdtempSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, mkdtempSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -14,9 +14,25 @@ const cli = resolve(dirname(fileURLToPath(import.meta.url)), '..'), repo = resol
 const options = Object.fromEntries(process.argv.slice(2).map(arg => { const index = arg.indexOf('='); if (index < 0) throw Error('Use --name=value'); return [arg.slice(2, index), arg.slice(index + 1)]; }));
 const output = resolve(options.output ?? mkdtempSync('/tmp/hosted-stream-bench-'));
 mkdirSync(output, { recursive: true, mode: 0o700 });
-if (!existsSync(join(output, 'node_modules'))) symlinkSync(join(repo, 'node_modules'), join(output, 'node_modules'));
-const storage = resolve(options['storage-source'] ?? '');
-if (!existsSync(storage) || !options['storage-source']) throw Error('--storage-source=/absolute/reviewed/hostedDotStorage.ts required (read-only source)');
+const dependencies = join(output, 'node_modules');
+if (!existsSync(dependencies)) {
+    // Workspace packages such as happy-wire may be linked only in the CLI's
+    // node_modules. Assemble links in the temporary output, never in the repo.
+    mkdirSync(dependencies);
+    for (const source of [join(repo, 'node_modules'), join(cli, 'node_modules')]) {
+        if (!existsSync(source)) continue;
+        for (const name of readdirSync(source).filter(name => !name.startsWith('.'))) {
+            const target = join(dependencies, name);
+            if (name.startsWith('@')) {
+                mkdirSync(target, { recursive: true });
+                for (const member of readdirSync(join(source, name))) if (!lstatSync(join(target, member), { throwIfNoEntry: false }))
+                    symlinkSync(join(source, name, member), join(target, member));
+            } else if (!lstatSync(target, { throwIfNoEntry: false })) symlinkSync(join(source, name), target);
+        }
+    }
+}
+const storage = resolve(options['storage-source'] ?? join(cli, 'src/codex/hostedDotStorage.ts'));
+if (!existsSync(storage)) throw Error('Storage source does not exist');
 const baseline = options.baseline ?? '51d4287c4c21fc59905f4bce442490ad48e864a4';
 const deployed = options['deployed-root'];
 const variants = (options.variants ?? 'main,candidate').split(','), backends = (options.backends ?? 'json,sqlite').split(',');
@@ -46,6 +62,8 @@ for (const variant of variants) {
                 let source = variant === 'main' && path.startsWith(cli + '/src/') ? execFileSync('git', ['show', `${baseline}:${path.slice(repo.length + 1)}`], { cwd: repo, maxBuffer: 4 * 1024 * 1024 }).toString() : readFileSync(path, 'utf8');
                 if (path.endsWith('hostedDotState.ts')) source = source.replace('HostedDotJournal.parse(readPrivate(file))', 'HostedDotJournal.parse(globalThis.__fixtureRead ? globalThis.__fixtureRead(file) : readPrivate(file))');
                 if (path.endsWith('hostedDotAuthorityPublisher.ts')) {
+                    source = source.replace('const storageWrite = write ? undefined : createHostedStorageWriter(file, state);',
+                        'const storageWrite = write ? undefined : (globalThis.__fixtureCreateWriter ?? createHostedStorageWriter)(file, state);');
                     source = source.replace(/write = (savePrivate|saveHostedStorage)/, 'write = globalThis.__fixtureWrite ?? $1');
                     source = source.replace('= saveHostedStorage):', '= globalThis.__fixtureWrite ?? saveHostedStorage):');
                     source = source.replace('if (Buffer.byteLength(JSON.stringify(state)', 'if (!globalThis.__fixtureWrite && Buffer.byteLength(JSON.stringify(state)');

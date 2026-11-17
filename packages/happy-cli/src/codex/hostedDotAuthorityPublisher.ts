@@ -1,16 +1,17 @@
 import { HOSTED_STATE_MAX_BYTES, hostedProducerIdentity, type HostedState } from './hostedDotState';
-import { saveHostedStorage } from './hostedDotStorage';
+import { createHostedStorageWriter } from './hostedDotStorage';
 
 /** Private writer. A failed revocation must fail-stop, never leave live stale authority. */
 export function createHostedAuthorityPublisher(file: string, state: HostedState,
-    producer: ReturnType<typeof hostedProducerIdentity>, write: (file: string, value: HostedState) => unknown = saveHostedStorage): () => void {
+    producer: ReturnType<typeof hostedProducerIdentity>, write?: (file: string, value: HostedState) => unknown): () => void {
     let revision = state.authority && JSON.stringify(state.authority.producer) === JSON.stringify(producer) ? state.authority.revision : 0;
+    const storageWrite = write ? undefined : createHostedStorageWriter(file, state);
     const boundedWrite = () => {
         // Include additive authority metadata and actual UTF-8 bytes. Never replace
         // the last readable recovery journal with an oversized snapshot.
-        if (write !== saveHostedStorage && Buffer.byteLength(JSON.stringify(state), 'utf8') > HOSTED_STATE_MAX_BYTES)
+        if (write && Buffer.byteLength(JSON.stringify(state), 'utf8') > HOSTED_STATE_MAX_BYTES)
             throw new Error('hosted_authority_state_too_large');
-        write(file, state);
+        if (write) write(file, state); else storageWrite!();
     };
     return () => {
         try {

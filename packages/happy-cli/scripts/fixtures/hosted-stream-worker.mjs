@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { runHostedDot } from '@fixture/main';
 import { HostedDotConfig, loadHostedState, savePrivate } from '@fixture/state';
-import { saveHostedStorage, readHostedStorage, migrateHostedStorage } from '@fixture/storage';
+import { saveHostedStorage, readHostedStorage, createHostedStorageWriter } from '@fixture/storage';
 const [directory, backend, relay, countText, intervalText, historyText, restartText] = process.argv.slice(2);
 const count = Number(countText), history = Number(historyText), restart = restartText === 'restart';
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -30,19 +30,31 @@ if (!restart) {
     const padding = history ? Math.max(0, Math.floor((13 * 1024 * 1024 - Buffer.byteLength(JSON.stringify(seed))) / history)) : 0;
     for (const row of seed.outputs) row.envelope.ev.text += 'x'.repeat(padding);
     savePrivate(file, seed);
-    if (backend === 'sqlite') migrateHostedStorage(runtime, () => {}); // Synthetic directory only; happy-path setup, not a migration test.
+    if (backend === 'sqlite') {
+        // Initialize only this new synthetic directory using the production
+        // fresh-database path. There is no migration API in the live runtime.
+        writeFileSync(join(runtime, 'storage.json'), JSON.stringify({ version: 1, kind: 'happy-dot-state', directory: runtime, backend: 'sqlite', pending: true }), { mode: 0o600 });
+        writeFileSync(file, JSON.stringify({ version: 0, storage: 'sqlite', error: 'hosted_sqlite_reader_required' }), { mode: 0o600 });
+        saveHostedStorage(file, seed);
+    }
 }
 if (restart) writeFileSync(join(directory, 'restart-durable-ids.json'), JSON.stringify(readHostedStorage(file).outputs.map(row => row.localId)), { mode: 0o600 });
 const metrics = { persists: 0, persistMs: 0, persistMaxMs: 0, queuePeak: 0, notifications: 0, nativeFailures: 0, generated: [], consumed: [] };
 globalThis.__fixtureNativeEvent = event => { if (event.type === 'turn_aborted' && event.status === 'failed') metrics.nativeFailures++; };
 globalThis.__fixtureRead = readHostedStorage;
-globalThis.__fixtureWrite = (file, state) => {
+const measuredWrite = (file, state, write) => {
     const firstText = state.outputs.find(row => row.localId.endsWith('fixture-item:0'));
     if (!restart && process.env.FIXTURE_FAULT === 'ack' && firstText?.sent) process.exit(86); // Verified, ACK not yet durable.
-    const start = performance.now(); saveHostedStorage(file, state);
+    const start = performance.now(); const result = write();
     const ms = performance.now() - start; metrics.persists++; metrics.persistMs += ms; metrics.persistMaxMs = Math.max(ms, metrics.persistMaxMs);
     metrics.queuePeak = Math.max(metrics.queuePeak, state.outputs.filter(row => !row.sent).length);
     if (!restart && process.env.FIXTURE_FAULT === 'durable' && firstText) process.exit(86); // Durable, not yet admitted to transport.
+    return result;
+};
+globalThis.__fixtureWrite = (file, state) => measuredWrite(file, state, () => saveHostedStorage(file, state));
+globalThis.__fixtureCreateWriter = (file, state) => {
+    const write = createHostedStorageWriter(file, state);
+    return () => measuredWrite(file, state, write);
 };
 globalThis.__fixtureNotification = (method, params) => {
     if (method === 'item/agentMessage/delta') { metrics.notifications++; metrics.generated.push(params.generatedAt); metrics.consumed.push(Date.now()); }
