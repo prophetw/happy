@@ -560,3 +560,51 @@ it('durably blocks immediately when mapping an ordinary abort fails without acce
         catch (error) { expect(error).toMatchObject({ message: 'hosted_event_persistence_failed' }); }
     }
 });
+
+it('accepts a late native terminal receipt after the completion promise resolved first', async () => {
+    h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'late-terminal' } }); });
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'late native receipt'));
+        await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('unknown'));
+        emit('turn/completed', { turn: { id: 'late-terminal', status: 'completed' } });
+        await vi.waitFor(() => expect(f.state()).toMatchObject({ status: 'ready', error: null, inputs: [{ id: '1', status: 'completed' }] }));
+        expect(h.send).toHaveBeenCalledTimes(1);
+    } finally { await f.stop(); }
+});
+it('keeps a definitive failed native receipt when the send promise rejects', async () => {
+    h.send.mockImplementation(async () => { emit('turn/started', { turn: { id: 'failed-terminal' } }); emit('turn/completed', { turn: { id: 'failed-terminal', status: 'failed' } }); throw Error('native failure'); });
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(row(1, 'failed native receipt'));
+        await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('failed'));
+        expect(h.send).toHaveBeenCalledTimes(1);
+    } finally { await f.stop(); }
+});
+it('releases only an input-unconfirmed block proved by exact original native history without replay', async () => {
+    h.history = [{ id: 'original-turn', status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'original request' }] }] }];
+    const f = fixture(false, false, state => {
+        state.threadId = 'native-thread'; state.status = 'blocked'; state.error = 'hosted_input_unconfirmed';
+        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'original', text: 'original request', status: 'unknown', turnId: 'original-turn', beforeTurns: [] }];
+    });
+    try {
+        await vi.waitFor(() => expect(f.state()).toMatchObject({ status: 'ready', error: null, inputs: [{ id: 'original', status: 'completed' }] }));
+        expect(h.send).not.toHaveBeenCalled();expect(h.resume).toHaveBeenCalledTimes(1);
+    } finally { await f.stop(); }
+});
+it('keeps a mixed completed and still-running original history blocked without replay', async () => {
+    h.history = [{ id: 'confirmed', status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'confirmed request' }] }] },
+        { id: 'still-running', status: 'inProgress', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'pending request' }] }] }];
+    const f = fixture(false, false, state => {
+        state.threadId = 'native-thread'; state.status = 'blocked'; state.error = 'hosted_input_unconfirmed';
+        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'one', text: 'confirmed request', status: 'unknown', turnId: 'confirmed', beforeTurns: [] },
+            { epoch: 0, delivery: 'queue', seq: 2, id: 'two', text: 'pending request', status: 'unknown', turnId: 'still-running', beforeTurns: [] }];
+    });
+    try {
+        await vi.waitFor(() => expect(f.state().inputs[0].status).toBe('completed'));
+        expect(f.state()).toMatchObject({ status: 'blocked', error: 'hosted_input_unconfirmed', inputs: [{ status: 'completed' }, { status: 'unknown' }] });
+        expect(h.send).not.toHaveBeenCalled();
+    } finally { await f.stop(); }
+});

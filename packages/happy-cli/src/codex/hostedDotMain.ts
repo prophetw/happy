@@ -176,16 +176,20 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
         state.afterSeq = message.seq; persist();
     };
     const reconcile = (turns: ThreadTurn[]) => {
+        let confirmed = false;
         for (const row of state.inputs.filter(r => ['dispatching', 'accepted', 'unknown'].includes(r.status))) {
             const matching = row.turnId ? turns.filter(t => t.id === row.turnId && (row.status === 'accepted' || t.items?.some((i: any) => i.type === 'userMessage' && i.content?.some((p: any) => p.type === 'text' && p.text === row.text)))) : turns.filter(t => !row.beforeTurns?.includes(t.id)
                 && t.items?.some((i: any) => i.type === 'userMessage' && i.content?.some((p: any) => p.type === 'text' && p.text === row.text)));
             if (matching.length !== 1) { row.status = 'unknown'; continue; }
             const turn = matching[0]; row.turnId = turn.id;
+            if (typeof turn.status !== 'string' || !['completed', 'failed', 'interrupted'].includes(turn.status)) { row.status = 'unknown'; continue; }
+            confirmed = true;
             for (const item of turn.items ?? []) if (item.type === 'agentMessage' && typeof item.text === 'string') publish({ type: 'agent_message', thread_id: state.threadId, turn_id: turn.id, item_id: item.id, message: item.text });
             row.status = turn.status === 'completed' ? 'completed' : turn.status === 'failed' ? 'failed' : 'interrupted';
             endTurn(turn.id, row.status);
         }
         if (state.inputs.some(r => r.status === 'unknown')) { state.status = 'blocked'; state.error = 'hosted_input_unconfirmed'; }
+        else if (confirmed && state.error === 'hosted_input_unconfirmed') { state.status = 'ready'; state.error = null; }
         persist();
     };
     try {
@@ -225,12 +229,16 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                         if (row) { row.turnId = p.turn.id; row.status = 'accepted'; changed = true; }
                     }
                     if (method === 'turn/completed') {
+                        if (!['completed', 'failed', 'interrupted'].includes(p.turn.status)) return;
                         const status = p.turn.status === 'completed' ? 'completed' : p.turn.status === 'failed' ? 'failed' : 'interrupted';
                         terminalTurns.set(p.turn.id, status);
-                        for (const row of state.inputs.filter(r => r.turnId === p.turn.id && r.status === 'accepted')) {
+                        const confirmedRows = state.inputs.filter(r => r.turnId === p.turn.id && ['accepted', 'unknown'].includes(r.status));
+                        for (const row of confirmedRows) {
                             row.status = status; changed = true;
                             if (p.turn.error) row.error = String(p.turn.error.message ?? p.turn.error.codexErrorInfo ?? 'hosted_model_failed').slice(0, 2000);
                         }
+                        // A legacy/idle completion can resolve the promise before the definitive v2 receipt.
+                        if (confirmedRows.length && state.error === 'hosted_input_unconfirmed' && !state.inputs.some(r => r.status === 'unknown')) { state.status = 'ready'; state.error = null; }
                         if (p.turn.error && addOutput(state, createEnvelope('agent', { t: 'service', text: '模型执行失败：' + String(p.turn.error.message ?? p.turn.error.codexErrorInfo ?? '未知错误').slice(0, 1000) + '；没有切换模型或自动重试。' }))) changed = true;
                     }
                     // Timing/unrelated notifications do not change the durable journal.
@@ -398,7 +406,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                         row.status = 'dispatching'; state.status = 'running'; persist();
                         active = client.sendTurnAndWait(row.text, { model: settings.model, effort: settings.effort, sandbox: 'read-only', approvalPolicy: 'never' }).then(() => {
                             if (['dispatching', 'accepted'].includes(row.status)) { row.status = 'unknown'; state.status = 'blocked'; state.error = 'hosted_input_unconfirmed'; }
-                        }).catch(() => { row.status = 'unknown'; state.status = 'blocked'; state.error = 'hosted_input_unconfirmed'; })
+                        }).catch(() => { if (['dispatching', 'accepted'].includes(row.status)) { row.status = 'unknown'; state.status = 'blocked'; state.error = 'hosted_input_unconfirmed'; } })
                             .finally(() => { if (state.status !== 'blocked') state.status = 'ready'; persist(); active = undefined; });
                     }
                 }
