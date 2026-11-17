@@ -7,12 +7,13 @@ import ts from 'typescript';
 const require = createRequire(import.meta.url);
 const output = resolve(process.argv[2] ?? '.hosted-lifecycle-test');
 mkdirSync(output, { recursive: true });
-for (const name of ['hostedDotState', 'hostedDotLifecycle', 'hostedDotAuthority', 'hostedDotAuthorityPublisher']) {
+for (const name of ['hostedDotStorage', 'hostedDotState', 'hostedDotLifecycle', 'hostedDotAuthority', 'hostedDotAuthorityPublisher']) {
   const source = readFileSync(new URL('../src/codex/' + name + '.ts', import.meta.url), 'utf8');
   const result = ts.transpileModule(source, { fileName: name+'.ts', reportDiagnostics: true,
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } });
   if (result.diagnostics?.some(d => d.category === ts.DiagnosticCategory.Error)) throw Error(ts.formatDiagnosticsWithColorAndContext(result.diagnostics, { getCanonicalFileName: f=>f, getCurrentDirectory:()=>process.cwd(), getNewLine:()=> '\n' }));
-  const code = result.outputText.replace(/require\(["']zod["']\)/g, 'require('+JSON.stringify(require.resolve('zod'))+')')
+  const code = result.outputText.replace(/import\.meta\.url/g, 'require("node:url").pathToFileURL(__filename).href')
+    .replace(/require\(["']zod["']\)/g, 'require('+JSON.stringify(require.resolve('zod'))+')')
     .replace(/require\(["']\.\/(hostedDot\w+)["']\)/g, 'require("./$1.cjs")');
   writeFileSync(join(output, name + '.cjs'), code);
 }

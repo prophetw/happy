@@ -170,3 +170,10 @@ test('a lifecycle clear fence immediately revokes the public input authority',t=
   writeFileSync(join(f.directory,'lifecycle-clear.json'),JSON.stringify(f.clear()));assert.throws(()=>authority.readHostedInputAuthority(f.b),/clear_pending/);
 });
 
+test('SQLite stop acknowledges a producer exit before control consumption without replacing the sentinel',async t=>{
+ const f=fixture(t);f.initialize();api.changeHostedDotStorage(f.b,'sqlite');
+ writeFileSync(f.entrypoint,readFileSync(f.entrypoint,'utf8').replace("setInterval(()=>{const file=", "setTimeout(()=>process.exit(0),250);setInterval(()=>{return;const file="));
+ f.start();await waitFor(()=>f.status().status==='ready');await api.stopHostedDot({...f.b,requestId:'sqlite-exit-before-control'});
+ assert.equal(api.hostedStorageBackend(f.directory),'sqlite');assert.equal(f.status().running,false);assert.ok(f.status().controls.includes('sqlite-exit-before-control'));
+ assert.equal(JSON.parse(readFileSync(join(f.directory,'state.json'),'utf8')).storage,'sqlite');
+});
