@@ -144,6 +144,26 @@ describe('requestAttachmentUpload', () => {
 });
 
 describe('uploadEncryptedBlob', () => {
+    it('authenticates a local PUT when PUBLIC_URL differs from the API origin', async () => {
+        fetchMock.mockResolvedValueOnce(response({ ok: true }));
+
+        await uploadEncryptedBlob({
+            uploadUrl: 'https://public-relay.example/home-relay/v1/sessions/session-1/attachments/blob',
+            method: 'PUT',
+        }, new Uint8Array([1, 2, 3]), credentials);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://public-relay.example/home-relay/v1/sessions/session-1/attachments/blob',
+            expect.objectContaining({
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'Authorization': `Bearer ${credentials.token}`,
+                },
+            }),
+        );
+    });
+
     it('classifies POST blob upload network failures without leaking presigned data', async () => {
         fetchMock.mockRejectedValueOnce(new Error('Failed to fetch'));
 
@@ -220,6 +240,33 @@ describe('uploadEncryptedBlob', () => {
 });
 
 describe('downloadEncryptedAttachment', () => {
+    it('authenticates a local download when PUBLIC_URL differs from the API origin', async () => {
+        const publicLocalUrl = 'https://public-relay.example/home-relay/v1/sessions/session-1/attachments/blob';
+        fetchMock
+            .mockResolvedValueOnce(response({ ok: true, json: { downloadUrl: publicLocalUrl } }))
+            .mockResolvedValueOnce(response({ ok: true, arrayBuffer: new Uint8Array([1, 2, 3]).buffer }));
+
+        await expect(downloadEncryptedAttachment(
+            credentials,
+            'session-1',
+            'sessions/session-1/attachments/blob',
+        )).resolves.toEqual(new Uint8Array([1, 2, 3]));
+
+        expect(fetchMock).toHaveBeenNthCalledWith(2, publicLocalUrl, {
+            headers: { 'Authorization': `Bearer ${credentials.token}` },
+        });
+    });
+
+    it('does not send Bearer credentials to a presigned storage download', async () => {
+        fetchMock
+            .mockResolvedValueOnce(response({ ok: true, json: { downloadUrl: storageUrl } }))
+            .mockResolvedValueOnce(response({ ok: true, arrayBuffer: new Uint8Array([1]).buffer }));
+
+        await downloadEncryptedAttachment(credentials, 'session-1', 'happy/session-1/ref');
+
+        expect(fetchMock).toHaveBeenNthCalledWith(2, storageUrl, { headers: {} });
+    });
+
     it('classifies request-download network failures without leaking attachment refs', async () => {
         fetchMock.mockRejectedValueOnce(new Error('Failed to fetch'));
 

@@ -166,7 +166,7 @@ export async function uploadEncryptedBlob(
     }
 
     // PUT (local-storage mode): direct upload to our server.
-    const isServerUrl = upload.uploadUrl.startsWith(serverUrl);
+    const isServerUrl = isLocalAttachmentUrl(upload.uploadUrl);
     const headers: Record<string, string> = {
         'Content-Type': 'application/octet-stream',
     };
@@ -278,7 +278,7 @@ export async function downloadEncryptedAttachment(
     }
     const downloadUrl = rewriteLoopbackHost(rawDownloadUrl);
 
-    const isServerUrl = downloadUrl.startsWith(API_ENDPOINT);
+    const isServerUrl = isLocalAttachmentUrl(downloadUrl);
     const headers: Record<string, string> = {};
     if (isServerUrl) {
         headers['Authorization'] = `Bearer ${credentials.token}`;
@@ -319,6 +319,20 @@ export async function downloadEncryptedAttachment(
         });
     }
     return new Uint8Array(buffer);
+}
+
+function isLocalAttachmentUrl(value: string): boolean {
+    try {
+        const url = new URL(value);
+        if (url.search) return false;
+        // A local Relay may advertise a PUBLIC_URL on another origin or with a
+        // reverse-proxy path prefix. Recognize its authenticated route instead
+        // of comparing it with the API origin; presigned object-store URLs keep
+        // their credentials in the query and must not receive the Bearer token.
+        return /(?:^|\/)v1\/sessions\/[^/]+\/attachments\/[^/]+\/?$/.test(url.pathname);
+    } catch {
+        return false;
+    }
 }
 
 function formatNetworkErrorMessage(prefix: string, message: string): string {
