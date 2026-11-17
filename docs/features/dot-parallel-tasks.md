@@ -63,7 +63,7 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 ## 保留、清理与集成
 
-### 会话密钥过期与进程核验（2026-11-17，待部署）
+### 会话密钥过期与进程核验（2026-11-17，已部署）
 
 会话密钥的 14 天保留期不再决定队列能否核验旧进程。daemon 启动时、持久会话写入前，将本机 daemon 启动记录的最小字段保存到 `<sessionsFile>.processes/<sha256(sessionID)>/`：sessionID、machineId、hostPid、savedAt 和原 daemon 启动标记，不保存密钥、正文或路径。复用现有私有 MetadataStore，目录 0700、文件 0600；每次启动代次独立、原子写入，旧版本会话继续重写 `sessions.json` 不会删除这些记录，迟到旧记录也不能覆盖新绑定。相同时间但不同身份、损坏或不安全权限均拒绝核验。
 

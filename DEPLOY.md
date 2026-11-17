@@ -1,10 +1,16 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
-## Dot 更新后共享排他资源阻塞（2026-11-17，线上历史占用已恢复；代码待部署）
+## Dot 更新后共享排他资源阻塞（2026-11-17，已恢复并部署）
 
 本次查到会话 `cmw03esy5548zmy1dufoiyb8s` 的历史 turn 被当作整机排他占用；会话记录已超过 14 天并被清理，CLI 返回 unknown，队列一直保留资源。原 11-07 迁移备份中可核对其 daemon 启动记录、machineID、PID 3765695；savedAt 早于本次开机，当前 PID 与进程组均 ESRCH。14:44（UTC+8）通过正式 TaskQueue 事务重新核验原身份，将该历史占用归约为 failed/execution_stopped；未删除记录、修改资源或重发请求。随后“Dot 自研”原请求进入 running，seq=27215、原 session 保持；“三维图形开发源码”仍有真实同目录占用，回执已变为“同一工作目录正在被其他任务使用”。
 
-源码修复独立保留最小进程核验记录，支持 surviving old CLI 写入，并让 Worker 在旧密钥不可用时仍可向绑定机器核验停止，见[运行契约](docs/features/dot-parallel-tasks.md#会话密钥过期与进程核验2026-11-17待部署)。未改调度并发配置、放宽 unknown 或执行取消。
+源码修复独立保留最小进程核验记录，支持旧 CLI 继续写入，并让 Worker 在旧密钥不可用时仍可向绑定机器核验停止，见[运行契约与更新指南](docs/features/dot-parallel-tasks.md#happy-dot-服务更新指南)。未改调度并发配置、放宽 unknown 或执行取消。
+
+功能源 `226a87621307d9a5e20315d6f81a66e3eeaf4343` 已推送个人 `fork/main`，当次 fetch 与干净 main clone 一致，复用逐文件核验过的相同源码构建产物。15:08:14（UTC+8）由独立维护单元 `happy-automation-maintenance-session-process-20261117-226a8762.service` 切换 Worker 至 `/home/dev/.local/share/happy-automation/releases/session-process-20261117-226a8762`；新 PID 2098979，active/running、NRestarts=0、Control connected，维护单元 success/0。42 个原会话根的 PID/startTicks/cgroup 不变；注册配置、308 份会话密钥和 512 条原任务/request/session/派发证据均保持，305 份进程档案用部署版 reader 逐项核验。更新前后只读队列检查均无整机排他、排队或不明阻塞，原 2 个运行任务继续；没有为验收新派模型任务。
+
+仅切 Worker；TestLoop scanner/recovery PID 1274229/1281972 保持，producer、Control、Relay、Web/OTA 未发布或重启。全局共享规则和本仓 AGENTS.md 已改为允许仅本任务文件的 commit 与普通 push，部署/商店等额外权限不随之扩大。
+
+冷备位于 `/var/lib/happy-automation-maintenance/session-process-20261117-226a8762/after-stop-1024255/`，685 个文件摘要复核通过，包含机器密文/密钥、Worker journal/receipts 和会话注册表。本次进程档案是在新 Worker 首次启动后生成，后续维护必须一并备份 `sessions.json.processes/`。显式回退入口为同根的 `rollback-release.py --launch`，通过已核验的 PowerShell→Ubuntu-22.04 root 入口启动；它核对当前 owner/入口、保存最新备份、验证旧 V2 reader，再只撤销本次 drop-in，保留当前账本、档案和 worktree。回退脚本已准备，实际回退未执行。
 
 验证：新增两处回归先红后绿；CLI 四文件 55 项、agent proof/restart 两文件 18 项通过，另有 parallel/project 两文件 35 项通过（不重复累计 proof 套件）。两包类型检查、agent/CLI pkgroll 和 CLI 内联依赖检查通过；最终 CLI bundle 在两个全新 Node 进程间验证旧格式覆写后仍能读取进程证据且不保留密钥。构建有既有 bin/空声明 chunk 与依赖内联警告；构建产物探针最初两次错误使用内部导出名，按实际 bundle namespace 修正后通过，不把探针失败记作产品通过。
 
@@ -14,7 +20,7 @@ TestLoop 隔离 Chromium 的原等待→恢复→完成七组检查通过，页�
 | --- | --- |
 | 资源恢复后原任务完成 | [查看](http://100.116.89.36:3210/img-bed/images/11f330be-09cd-432f-b0f7-d3d7cd87c4d9.png) |
 
-私有证据 `/home/dev/.local/state/happy-dot-resource-repair-20261117/` 包含修复前快照、身份与开机证据、受限事务脚本、回归/构建日志及产物探针；浏览器在 TestLoop `.e2e-artifacts/dot-autonomous/2026-11-17T06-44-17-942Z/`。服务可执行入口没有切换。正式发布仍需提交/推送授权和可用维护通道；本次宿主 PowerShell→WSL 实际返回 `0x8007274c`，当前进程 sudo 被 NoNewPrivileges 拒绝，未借此重启整台 WSL。长期运行、真机与修复版本实际部署未验证。
+私有证据 `/home/dev/.local/state/happy-dot-resource-repair-20261117/` 包含修复前快照、身份与开机证据、受限事务脚本、回归/构建日志、产物清单、`deploy/activation.json`、备份/档案复核及更新前后队列报告；浏览器在 TestLoop `.e2e-artifacts/dot-autonomous/2026-11-17T06-44-17-942Z/`。前轮宿主通道曾返回 `0x8007274c`，本轮重试恢复并核对 machine-id 后完成部署；没有重启 WSL，原失败记录保留。已验证一次真实更新重启；长期运行、真实账号页面/真机和所有未知进程故障均未验证，不能据此保证所有 resource-wait 都消失。
 
 ## Happy Dot 交互减法（2026-11-17，Web / iOS OTA 已发布）
 
