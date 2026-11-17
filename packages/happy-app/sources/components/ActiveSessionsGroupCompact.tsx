@@ -495,6 +495,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionContent: {
         flex: 1,
+        // A chat's name can be one long unbroken word. Without this the title's
+        // min-content width keeps this column from shrinking, and the status
+        // badge at the row's end is pushed out of the card and clipped.
+        minWidth: 0,
         justifyContent: 'center',
     },
     sessionTitleRow: {
@@ -504,6 +508,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionTitle: {
         fontSize: Platform.select({ web: 13, default: 15 }),
         flex: 1,
+        minWidth: 0,
         ...Typography.default('regular'),
     },
     sessionShortcutBadge: {
