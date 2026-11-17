@@ -1,5 +1,16 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## 助手连接命名、原地续期与同 key 编辑（2026-11-16，已部署；本条 11-17 补记）
+
+功能提交 `9be118dac`（连接自定义名称与重命名）、`d5e0adc87`（已批准服务授权原地续期/改范围且令牌不变、worker 队列身份租约）、`0296a2719`（范围未变时免目录重新核实，修复只改名字无法保存）。发布期间另一流程把 workspace UI `563a906a` 合入并推送 `0957e596`；最终 Web/OTA 均从当次 `fork/main` 的干净 checkout 构建，未丢弃该并发功能。并发切换期间导出的首个 OTA 组 `4c614b75-0c0b-45bb-9d73-9fda30fa9a97` 已被后续组取代，以最终组为准。
+
+- Control：镜像 `sha256:c899e8bc90330dd14dd1b3eee38e9579f535e10ffe98bde0a83563a3f103ff06` 已切换且 healthy，`POST /connections/{id}/edit` 生效；state 停写备份在 `~/.local/state/happy-inplace-release-20261116T120338Z/control-state.tar.gz`。回滚用旧镜像 `sha256:68a6f9c138bccd5ef7140c5d43d233fed28d204c2cd9dd7cca94f28ecfbb9c4f` force-recreate，保留当前 state。
+- 受信 Worker：受管切换到 `/home/dev/.local/share/happy-automation/releases/inplace-grant-edit-20261116-d5e0adc87`，PID 3798258；3 个原会话保持（`changedOriginalSessionPIDs=[]`）。冷备与计划在 `/var/lib/happy-automation-maintenance/inplace-grant-edit-20261116/`。回滚删除新增 drop-in 后 daemon-reload 并重启，即回到 `workspace-lifecycle-20261115-fad9c1c5e`；不用冷备覆盖新回执。
+- Web：最终 `0296a2719` 产物已发布；本机网关、Tailscale、公网三处 index 与入口 JS 逐字节一致，gzip 正常，手机尺寸匿名页与助手连接页浏览器 errors=[]。最新发布前备份为 `web.bak-scopefix-20261116T122619Z`。
+- iOS preview OTA：最终组 `301583a5-cf6c-4f11-88c1-106c248ca108`，update `01a1e454-24e1-7b95-8935-427ad6ff2e46`，runtime 21、源 `0296a2719`；preview/production 实际 manifest 均指向该组。真机下载/加载未验证；未发布 Android、原生包或 npm。
+- 验证：两端类型检查、automation/rest 套件与 desktop+mobile 服务授权 E2E（含同 key 续期/缩范围/只改名保存）通过；全量套件出现的 `preparing/queued` 时序失败单独复跑通过，上一轮 CORS 断言已同步修正。目录 E2E 的 esbuild JSX loader 失败在改动前 HEAD 同样存在，未因此宣称全仓全绿。
+- 未验证：未对真实授权执行续期/扩权，真机加载与真实账号页面交互未验收。
+
 ## 99.57 公网双前门（2026-11-14，已部署）
 
 > 本节为 2026-11-14 的部署与验收记录；不代表之后的源码集成已重新部署或复验服务。
