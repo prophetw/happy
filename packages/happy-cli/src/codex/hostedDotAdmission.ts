@@ -2,7 +2,7 @@
  * Pause drains native turns; it never discards inputs, aborts tools or stops business agents.
  * Expired leases stay closed until an explicit CAS resume. Legacy producers never ACK.
  */
-import { closeSync, constants, fsyncSync, fstatSync, lstatSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, fstatSync, lstatSync, openSync, readFileSync, readSync, renameSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve, parse } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -26,14 +26,41 @@ function pathCheck(path: string) {
     }
 }
 function read(file: string) {
-    pathCheck(file); const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-        const s = fstatSync(fd, { bigint: true });
-        if (!s.isFile() || s.nlink !== 1n || s.uid !== BigInt(process.getuid!()) || (s.mode & 0o077n) || s.size > 65536n) throw Error('hosted_admission_file_invalid');
-        const bytes = readFileSync(fd), end = fstatSync(fd, { bigint: true }), named = lstatSync(file, { bigint: true });
-        if (s.dev !== named.dev || s.ino !== named.ino || s.size !== BigInt(bytes.length) || s.mtimeNs !== end.mtimeNs || s.ctimeNs !== end.ctimeNs || s.ctimeNs !== named.ctimeNs) throw Error('hosted_admission_file_changed');
-        return JSON.parse(bytes.toString('utf8'));
-    } finally { closeSync(fd); }
+    const privateFile = (s: BigIntStats, detached = false) => s.isFile() && (s.nlink === 1n || detached && s.nlink === 0n)
+        && s.uid === BigInt(process.getuid!()) && !(s.mode & 0o077n) && s.size <= 65536n;
+    const sameInode = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
+    const named = () => {
+        pathCheck(file); const current = lstatSync(file, { bigint: true });
+        if (!privateFile(current)) throw Error('hosted_admission_file_invalid');
+        return current;
+    };
+    for (let attempt = 0; ; attempt++) {
+        pathCheck(file); const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+            const before = fstatSync(fd, { bigint: true });
+            if (!privateFile(before, true)) throw Error('hosted_admission_file_invalid');
+            // rename-over can unlink the inode between open and the first fstat.
+            // Never consume detached bytes: only a different valid named inode permits one fresh read.
+            if (before.nlink === 0n) {
+                if (sameInode(before, named()) || attempt !== 0) throw Error('hosted_admission_file_changed');
+                continue;
+            }
+            const bytes = Buffer.alloc(Number(before.size) + 1); let size = 0, count: number;
+            while (size < bytes.length && (count = readSync(fd, bytes, size, bytes.length - size, null)) > 0) size += count;
+            const end = fstatSync(fd, { bigint: true });
+            if (!privateFile(end, true) || !sameInode(before, end) || before.uid !== end.uid || before.mode !== end.mode
+                || before.size !== end.size || before.mtimeNs !== end.mtimeNs || BigInt(size) !== before.size
+                || before.ctimeNs !== end.ctimeNs && end.nlink !== 0n) throw Error('hosted_admission_file_changed');
+            const current = named();
+            if (!sameInode(before, current)) {
+                if (attempt !== 0) throw Error('hosted_admission_file_changed');
+                continue;
+            }
+            if (end.nlink !== 1n || before.ctimeNs !== end.ctimeNs || before.size !== current.size
+                || before.mtimeNs !== current.mtimeNs || before.ctimeNs !== current.ctimeNs) throw Error('hosted_admission_file_changed');
+            return JSON.parse(bytes.subarray(0, size).toString('utf8'));
+        } finally { closeSync(fd); }
+    }
 }
 function present(file: string) { pathCheck(file); return lstatSync(file, { throwIfNoEntry: false }) !== undefined; }
 function write(file: string, value: unknown) {

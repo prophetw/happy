@@ -1,10 +1,33 @@
-import { expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
+import { afterEach, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, chmodSync, renameSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createHostedAdmission, readHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
 import { hostedProducerIdentity } from './hostedDotState';
+
+const hooks = vi.hoisted(() => ({
+    paths: new Map<number, string>(),
+    onOpen: undefined as undefined | ((file: string) => void),
+    onRead: undefined as undefined | ((file: string) => void),
+}));
+vi.mock('node:fs', async importOriginal => {
+    const fs = await importOriginal<typeof import('node:fs')>();
+    return { ...fs,
+        openSync: (...args: Parameters<typeof fs.openSync>) => {
+            const fd = fs.openSync(...args), file = String(args[0]); hooks.paths.set(fd, file); hooks.onOpen?.(file); return fd;
+        },
+        readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
+            const value = fs.readFileSync(...args);
+            if (typeof args[0] === 'number') hooks.onRead?.(hooks.paths.get(args[0]) ?? '');
+            return value;
+        },
+        readSync: (fd: number, bytes: Buffer, offset: number, length: number, position: number | null) => {
+            const size = fs.readSync(fd, bytes, offset, length, position); hooks.onRead?.(hooks.paths.get(fd) ?? ''); return size;
+        },
+    };
+});
+afterEach(() => { hooks.onOpen = hooks.onRead = undefined; hooks.paths.clear(); });
 
 function fixture() {
     const directory = mkdtempSync(join(tmpdir(), 'admission-'));
@@ -67,4 +90,71 @@ it('a dangling intent never reopens producer admission or becomes a missing comm
         expect(() => m.permits(false)).toThrow('symlink');
         expect(() => readHostedAdmission(f.b)).toThrow('symlink');
     } finally { f.close(); }
+});
+
+function replace(file: string, value: unknown, mode = 0o600) {
+    const tmp = file + '.' + randomUUID(); writeFileSync(tmp, JSON.stringify(value), { mode }); chmodSync(tmp, mode); renameSync(tmp, file);
+}
+function openFixture() {
+    const f = fixture(), owner = hostedProducerIdentity(), producer = createHostedAdmission(f.b, owner);
+    producer.permits(false);
+    requestHostedAdmission({ ...f.b, operation: { id: 'open', action: 'resume', leaseUntil: 0, expectedRevision: 0 } });
+    producer.permits(false);
+    return { ...f, owner };
+}
+for (const target of ['config.json', 'admission-intent.json', 'admission-status.json']) {
+    for (const timing of ['onOpen', 'onRead'] as const) it(`${target}: ${timing} rename discards old bytes and reopens the current private inode`, () => {
+        const f = openFixture(), file = join(f.b.directory, target); let replacements = 0;
+        try {
+            hooks[timing] = path => {
+                if (path !== file) return;
+                hooks[timing] = undefined; replacements++;
+                if (target === 'admission-intent.json') requestHostedAdmission({ ...f.b,
+                    operation: { id: 'pause', action: 'pause', leaseUntil: Date.now() + 30000, expectedRevision: 1 } });
+                else if (target === 'admission-status.json') createHostedAdmission(f.b, f.owner).permits(false);
+                else replace(file, f.b);
+            };
+            const result = readHostedAdmission(f.b);
+            expect(replacements).toBe(1);
+            expect(result.desired?.revision).toBe(target === 'admission-intent.json' ? 2 : 1);
+            if (target === 'admission-intent.json') expect(result.desired?.operation.action).toBe('pause');
+            expect(result.status?.binding).toEqual(f.b);
+        } finally { hooks.onOpen = hooks.onRead = undefined; f.close(); }
+    });
+}
+it('repeated config inode replacement fails after one full reopen', () => {
+    const f = openFixture(), file = join(f.b.directory, 'config.json'); let opens = 0;
+    try {
+        hooks.onOpen = path => { if (path === file) { opens++; replace(file, f.b); } };
+        expect(() => readHostedAdmission(f.b)).toThrow('hosted_admission_file_changed');
+        expect(opens).toBe(2);
+    } finally { hooks.onOpen = undefined; f.close(); }
+});
+it('same-inode modification never retries or authorizes an earlier descriptor snapshot', () => {
+    const f = openFixture(), file = join(f.b.directory, 'config.json'); let opens = 0;
+    try {
+        hooks.onOpen = path => { if (path === file) opens++; };
+        hooks.onRead = path => {
+            if (path !== file) return;
+            hooks.onRead = undefined;
+            writeFileSync(file, JSON.stringify({ ...f.b, sessionId: 'foreign' }));
+        };
+        expect(() => readHostedAdmission(f.b)).toThrow('hosted_admission_file_changed');
+        expect(opens).toBe(1);
+    } finally { hooks.onOpen = hooks.onRead = undefined; f.close(); }
+});
+for (const invalid of ['mode', 'hardlink', 'symlink', 'size', 'json'] as const) it(`an invalid ${invalid} replacement cannot trigger a permissive retry`, () => {
+    const f = openFixture(), file = join(f.b.directory, 'config.json');
+    try {
+        hooks.onOpen = path => {
+            if (path !== file) return;
+            hooks.onOpen = undefined;
+            replace(file, f.b, invalid === 'mode' ? 0o644 : 0o600);
+            if (invalid === 'hardlink') linkSync(file, file + '.other');
+            if (invalid === 'symlink') { renameSync(file, file + '.other'); symlinkSync(file + '.other', file); }
+            if (invalid === 'size') writeFileSync(file, 'x'.repeat(65537));
+            if (invalid === 'json') writeFileSync(file, '{malformed');
+        };
+        expect(() => readHostedAdmission(f.b)).toThrow();
+    } finally { hooks.onOpen = undefined; f.close(); }
 });
