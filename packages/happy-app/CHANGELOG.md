@@ -1,3 +1,12 @@
+# November 17 - Simpler Dot controls
+
+Requires the updated TestLoop host.
+
+- **Save memories directly** — add, edit, or forget a memory from its form, with drafts preserved when versions conflict.
+- **Find everyday actions sooner** — use Chat, Work, and Memory; open diagnostics when you need more detail.
+- **Confirm tools with one tap** — review the preview and confirm without copying a command.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # November 11 - More relevant Dot memories
 
 Requires the updated TestLoop host.

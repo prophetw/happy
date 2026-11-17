@@ -18,6 +18,7 @@ import { t } from '@/text';
 import { isHttpMarkdownLink, markdownSessionId } from './linkUtils';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
+import { isToolConfirmationCommand } from '../toolConfirmation';
 
 // Option type for callback
 export type Option = {
@@ -27,6 +28,9 @@ export type Option = {
 export const MarkdownView = React.memo((props: { 
     markdown: string;
     onOptionPress?: (option: Option) => void;
+    /** Exact command from the current host preview; never a new authorization. */
+    toolConfirmation?: string;
+    toolConfirmationPending?: boolean;
     sessionId?: string;
     /**
      * The parent owns long-press copy (see LongPressCopyable). Suppresses native
@@ -87,7 +91,7 @@ export const MarkdownView = React.memo((props: {
                     } else if (block.type === 'mermaid') {
                         return <MermaidRenderer content={block.content} key={index} />;
                     } else if (block.type === 'options') {
-                        return <RenderOptionsBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} onOptionPress={props.onOptionPress} />;
+                        return <RenderOptionsBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} onOptionPress={props.onOptionPress} toolConfirmation={props.toolConfirmation} toolConfirmationPending={props.toolConfirmationPending} />;
                     } else if (block.type === 'table') {
                         return <RenderTableBlock headers={block.headers} rows={block.rows} onLinkPress={handleLinkPress} selectable={selectable} key={index} first={index === 0} last={index === blocks.length - 1} />;
                     } else if (block.type === 'image') {
@@ -242,23 +246,32 @@ function RenderOptionsBlock(props: {
     first: boolean, 
     last: boolean, 
     selectable: boolean,
-    onOptionPress?: (option: Option) => void 
+    onOptionPress?: (option: Option) => void,
+    toolConfirmation?: string,
+    toolConfirmationPending?: boolean,
 }) {
     return (
         <View style={[style.optionsContainer, props.first && style.first, props.last && style.last]}>
             {props.items.map((item, index) => {
-                if (props.onOptionPress) {
+                const confirmation = isToolConfirmationCommand(item);
+                const label = confirmation && props.toolConfirmation === item ? '确认这次操作' : item;
+                const pending = confirmation && props.toolConfirmation === item && props.toolConfirmationPending === true;
+                if (props.onOptionPress && (!confirmation || props.toolConfirmation === item)) {
                     return (
                         <Pressable
                             key={index}
+                            accessibilityRole="button"
+                            accessibilityLabel={label}
+                            accessibilityState={{ disabled: pending }}
+                            disabled={pending}
                             style={({ pressed }) => [
                                 style.optionPressable,
                                 style.optionButton,
-                                pressed && style.optionButtonPressed
+                                (pressed || pending) && style.optionButtonPressed
                             ]}
-                            onPress={() => props.onOptionPress?.({ title: item })}
+                            onPress={() => { if (!pending) props.onOptionPress?.({ title: item }); }}
                         >
-                            <Text selectable={props.selectable} style={style.optionButtonText}>{item}</Text>
+                            <Text selectable={props.selectable} style={style.optionButtonText}>{pending ? '正在发送确认…' : label}</Text>
                         </Pressable>
                     );
                 } else {

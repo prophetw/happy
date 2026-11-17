@@ -129,10 +129,10 @@ it('explains a v3 unrelated memory in the frozen selection details', async () =>
     expect(f.text()).toContain('与本轮问题无关');
     expect(f.text()).not.toContain('观察数据格式无法确认');
 });
-it('shows versions, links actual historical usage and keeps editing in the existing conversation flow', async () => {
+it('shows versions and passes the current revision and scope to explicit memory actions', async () => {
     const f = await render('memory'); await f.click('查看记忆：偏好'); expect(f.text()).toContain('旧版'); expect(f.text()).toContain('新版');
     await f.click('编辑这条记忆'); expect(f.props.onEditMemory).toHaveBeenCalledWith('偏好', expect.objectContaining({ revision: 2, value: '新版' }), 'dot');
-    await f.click('请求忘记这条记忆'); expect(f.props.onForgetMemory).toHaveBeenCalledWith('偏好', 'dot');
+    await f.click('忘记这条记忆'); expect(f.props.onForgetMemory).toHaveBeenCalledWith('偏好', 2, 'dot');
     await f.click('查看历史带入记录'); expect(f.text()).toContain('带入第 1 版');
     await f.click('检查第 1 轮'); expect(f.text()).toContain('原交办');
 });
@@ -173,8 +173,8 @@ it('routes same-key user memories and every edit/forget action to the selected s
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).toMatchObject({ action: 'memory', scope: 'user', keyDigest });
     await f.click('编辑这条记忆');
     expect(f.props.onEditMemory).toHaveBeenLastCalledWith('偏好', expect.objectContaining({ revision: 2 }), 'user');
-    await f.click('请求忘记这条记忆');
-    expect(f.props.onForgetMemory).toHaveBeenLastCalledWith('偏好', 'user');
+    await f.click('忘记这条记忆');
+    expect(f.props.onForgetMemory).toHaveBeenLastCalledWith('偏好', 2, 'user');
     await f.click('Dot级记忆');
     await f.click('添加记忆');
     expect(f.props.onAddMemory).toHaveBeenCalledWith('dot');

@@ -12,20 +12,27 @@ import type { Session } from '@/sync/storageTypes';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
 import { testloopWorkStatus, testloopWorkQueueReason, type TestloopDotsMetadata } from '@/sync/testloopDots';
 import { kindLabel } from '@/sync/dotMemoryKinds';
+import { useAuth } from '@/auth/AuthContext';
+import { getServerUrl } from '@/sync/serverConfig';
+import { dotMemoryEditError, dotMemoryEditRejected, requestDotMemoryEdit, type DotMemoryEditRequest } from '@/sync/dotMemoryEdit';
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 import { DotObservationPanel } from './DotObservationPanel';
 import { DotRecoveryNotice } from './DotRecoveryNotice';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
-type Tab = 'chat' | 'activity' | 'work' | 'memory' | 'basis';
-const tabLabels = { chat: '对话', activity: '活动', work: '工作', memory: '记忆', basis: '本轮依据' };
+type Tab = 'chat' | 'work' | 'memory';
+const tabLabels = { chat: '对话', work: '工作', memory: '记忆' };
+type MemoryDraft = { binding: object; action: 'remember' | 'forget'; scope: 'dot' | 'user'; key: string; text: string;
+    kind: 'fact' | 'preference' | 'commitment'; json: boolean; expiresAt: string | null; existing: boolean; revision: number; savedText?: string };
+const memoryDraftKey = (draft: Pick<MemoryDraft, 'scope' | 'key'>) => JSON.stringify([draft.scope, draft.key.trim().normalize('NFC')]);
 
 /** Keep Happy's real conversation mounted while its host-backed work/memory panel changes. */
 export function DotSessionContent({ session, metadata, active, children, topInset = 0 }: {
     session: Session; metadata: DotMetadata; active: boolean; children: (request: { id: string; text: string } | null) => React.ReactNode; topInset?: number;
 }) {
     const { theme } = useUnistyles();
+    const { credentials, isAuthenticated } = useAuth(), server = getServerUrl();
     const colors = theme.colors;
     const realtime = useRealtimeStatus();
     useSessionVisibility(session.id, active, false, realtime);
@@ -36,14 +43,23 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [tab, setTab] = React.useState<Tab>('chat');
     const [managingConnections, setManagingConnections] = React.useState(false);
-    const [sideTab, setSideTab] = React.useState<Exclude<Tab, 'chat'>>('activity'), [expanded, setExpanded] = React.useState(true);
+    const [sideTab, setSideTab] = React.useState<Exclude<Tab, 'chat'>>('work'), [expanded, setExpanded] = React.useState(true);
+    const [diagnosticMode, setDiagnosticMode] = React.useState<'activity' | 'basis' | null>(null);
     const [taskId, setTaskId] = React.useState<string | null>(null), [error, setError] = React.useState<string | null>(null);
-    const [memoryEdit, setMemoryEdit] = React.useState<{ scope: 'dot' | 'user'; key: string; text: string; kind: string; json: boolean; expiresAt: string | null; existing: boolean } | null>(null);
+    const [memoryEdit, setMemoryEdit] = React.useState<MemoryDraft | null>(null);
+    const [memoryBusy, setMemoryBusy] = React.useState(false), [memoryUnknown, setMemoryUnknown] = React.useState(false);
+    const [memoryError, setMemoryError] = React.useState<string | null>(null), [memoryRefresh, setMemoryRefresh] = React.useState(0);
+    const [memoryOpen, setMemoryOpen] = React.useState(false);
+    const memoryBinding = React.useMemo(() => ({}), [session.id, metadata.workspaceId, metadata.workspaceSessionId, metadata.dotId,
+        credentials?.token, credentials?.secret, server, isAuthenticated]);
+    const memoryCurrent = React.useRef({ binding: memoryBinding, active });
+    memoryCurrent.current = { binding: memoryBinding, active };
+    const memoryAttempt = React.useRef<{ binding: object; request: DotMemoryEditRequest; running: boolean; uncertain: boolean } | null>(null);
+    const memoryConflictDrafts = React.useRef(new Map<string, MemoryDraft>());
     const [notice, setNotice] = React.useState<string | null>(null);
     const [clearConfirming, setClearConfirming] = React.useState(false);
     const [composeRequest, setComposeRequest] = React.useState<{ id: string; text: string } | null>(null);
     const wide = width >= 920;
-    const directMemory = Boolean(session.metadata?.codexThreadId);
     const own = data.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
     const view = own ? data.projection?.details[metadata.dotId] : undefined;
     const detail = view?.data;
@@ -52,6 +68,74 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         navigation.update(`${session.id}:${metadata.workspaceId}:${metadata.dotId}`, active);
         return () => navigation.invalidate();
     }, [navigation, session.id, metadata.workspaceId, metadata.dotId, active]));
+    React.useEffect(() => {
+        memoryAttempt.current = null; setMemoryEdit(null); setMemoryOpen(false); setMemoryBusy(false); setMemoryUnknown(false); setMemoryError(null);
+        memoryConflictDrafts.current.clear();
+        setNotice(null); setDiagnosticMode(null);
+    }, [memoryBinding]);
+    React.useEffect(() => {
+        memoryCurrent.current = { binding: memoryBinding, active };
+        return () => { memoryCurrent.current = { binding: {}, active: false }; };
+    }, [memoryBinding, active]);
+    const memoryBindingIsCurrent = () => memoryCurrent.current.binding === memoryBinding
+        && isAuthenticated && Boolean(credentials?.token) && sync.getCredentials()?.token === credentials?.token
+        && sync.getCredentials()?.secret === credentials?.secret && getServerUrl() === server;
+    const memoryIsCurrent = () => memoryBindingIsCurrent() && memoryCurrent.current.active
+        && currentDots.current.ready && currentDots.current.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
+    const beginMemoryEdit = (draft: Omit<MemoryDraft, 'binding'>) => {
+        if (!memoryIsCurrent()) { setNotice('工作台数据还没就绪，稍后再处理这条记忆。'); return; }
+        if (memoryAttempt.current?.binding === memoryBinding) { setMemoryOpen(true); return; }
+        const conflict = draft.action === 'remember' ? memoryConflictDrafts.current.get(memoryDraftKey(draft)) : undefined;
+        setMemoryEdit({ ...draft, binding: memoryBinding, ...(conflict ? { text: conflict.text, json: conflict.json,
+            expiresAt: conflict.expiresAt, savedText: draft.text } : {}) });
+        setMemoryOpen(true); setMemoryError(null); setMemoryUnknown(false); setNotice(null);
+    };
+    const saveMemory = async () => {
+        if (!memoryIsCurrent() || !memoryEdit || memoryEdit.binding !== memoryBinding || memoryAttempt.current?.running) return;
+        let attempt = memoryAttempt.current;
+        if (!attempt) {
+            let operation: DotMemoryEditRequest['operation'];
+            if (memoryEdit.action === 'forget') operation = { action: 'forget', key: memoryEdit.key, revision: memoryEdit.revision };
+            else {
+                if (!memoryEdit.key.trim() || !memoryEdit.text.trim()) { setMemoryError('请填写记忆名称和内容。'); return; }
+                let value;
+                try { value = memoryEdit.json ? JSON.parse(memoryEdit.text) : memoryEdit.text; }
+                catch { setMemoryError('内容不是有效的 JSON，请修正后重试。'); return; }
+                const expiry = memoryEdit.expiresAt?.trim() || null;
+                if (expiry && (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(expiry) || !Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now())) {
+                    setMemoryError('请输入包含时区的未来 ISO 时间，或清空有效期。'); return;
+                }
+                operation = { action: 'remember', key: memoryEdit.key.trim().normalize('NFC'), revision: memoryEdit.revision,
+                    kind: memoryEdit.kind, value, expiresAt: expiry ? new Date(expiry).toISOString() : null };
+            }
+            attempt = { binding: memoryBinding, running: false, uncertain: false, request: { schemaVersion: 1, workspaceId: metadata.workspaceId,
+                dotId: metadata.dotId, dotSessionId: session.id, scope: memoryEdit.scope, requestID: randomUUID(), operation } };
+            memoryAttempt.current = attempt;
+        }
+        if (attempt.binding !== memoryBinding) return;
+        attempt.running = true; setMemoryBusy(true); setMemoryError(null);
+        try {
+            const receipt = await requestDotMemoryEdit(metadata.workspaceSessionId, attempt.request);
+            // An already submitted write still resolves while its screen is hidden or refreshing.
+            if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
+            memoryConflictDrafts.current.delete(memoryDraftKey(memoryEdit));
+            memoryAttempt.current = null; setMemoryEdit(null); setMemoryOpen(false); setMemoryUnknown(false); setMemoryRefresh(value => value + 1);
+            setNotice(receipt.currentRevision > receipt.revision ? '此次记忆操作已完成，记忆已有后续修改，正在刷新最新内容。'
+                : receipt.action === 'forget' ? '记忆已忘记。' : '记忆已保存。');
+        } catch (failure) {
+            if (!memoryBindingIsCurrent() || memoryAttempt.current !== attempt) return;
+            if (!attempt.uncertain && dotMemoryEditRejected(failure)) {
+                memoryAttempt.current = null;
+                if (failure instanceof Error && failure.message === 'memory_edit_revision_conflict' && memoryEdit.action === 'remember')
+                    memoryConflictDrafts.current.set(memoryDraftKey(memoryEdit), memoryEdit);
+            }
+            else { attempt.uncertain = true; setMemoryUnknown(true); }
+            setMemoryError(dotMemoryEditError(failure) + (attempt.uncertain && dotMemoryEditRejected(failure) ? ' 上次请求结果仍待核对，重试会沿用原请求。' : ''));
+        } finally {
+            attempt.running = false;
+            if (memoryCurrent.current.binding === memoryBinding) setMemoryBusy(false);
+        }
+    };
     const body = { color: colors.text, fontSize: 14, lineHeight: 23 };
     const muted = { color: colors.textSecondary, fontSize: 12, lineHeight: 21 };
     const heading = { color: colors.text, fontSize: 17, fontWeight: '600' as const };
@@ -60,7 +144,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         onPress={onPress} style={[button, compact && { minHeight: 34, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 }, { opacity: disabled ? 0.5 : 1 }]}><Text style={body}>{label}</Text></Pressable>;
     const toConversation = (text: string) => {
         setComposeRequest({ id: `${session.id}:${Date.now()}`, text });
-        setTab('chat'); setTaskId(null); setMemoryEdit(null);
+        setTab('chat'); setTaskId(null); setMemoryOpen(false); if (!memoryAttempt.current) setMemoryEdit(null);
         setNotice('已放入对话输入框。核对后发送，结果会回到这个 Dot。');
     };
     const replacement = data.projection?.snapshot?.ok ? data.projection.snapshot.dots.find(d => d.id === metadata.dotId)?.sessionId : undefined;
@@ -108,27 +192,25 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             </ScrollView>
         </View>
     </Modal>;
-    const observationPanel = <>
-        <DotObservationPanel key={`${metadata.dotId}:${wide ? sideTab : tab}`} sessionId={metadata.workspaceSessionId}
-            workspaceId={metadata.workspaceId} dotId={metadata.dotId} dotSessionId={session.id} active={Boolean(active && own && (wide ? expanded : tab !== 'chat'))}
-            mode={(wide ? sideTab : tab) === 'memory' ? 'memory' : (wide ? sideTab : tab) === 'basis' ? 'basis' : 'activity'}
-            presence={session.presence} onExecution={id => void openExecution(id)}
+    const observationPanel = (mode: 'memory' | 'activity' | 'basis') => <>
+        <DotObservationPanel key={`${metadata.dotId}:${mode}`} sessionId={metadata.workspaceSessionId}
+            workspaceId={metadata.workspaceId} dotId={metadata.dotId} dotSessionId={session.id} active={Boolean(active && own && (mode !== 'memory' || (wide ? expanded : tab === 'memory')))}
+            mode={mode}
+            presence={session.presence} refreshKey={memoryRefresh} onExecution={id => void openExecution(id)}
             onEditMemory={(key, version, scope = 'dot') => {
-                if (!data.ready || !own) { setNotice('工作台数据还没就绪，稍后再编辑这条记忆。'); return; }
-                setMemoryEdit({ scope, key, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
-                    kind: version.kind, json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
-            }} onForgetMemory={(key, scope = 'dot') => {
-                if (!data.ready || !own) { setNotice('工作台数据还没就绪，稍后再处理这条记忆。'); return; }
-                toConversation(`请忘记${scope === 'user' ? '用户级（所有 Dot 共享）' : '当前 Dot 的个人'}记忆 ${JSON.stringify(key)}，${directMemory ? '直接执行并告知结果' : '先展示变更供我确认'}。`);
+                beginMemoryEdit({ action: 'remember', scope, key, revision: version.revision, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
+                    kind: version.kind as MemoryDraft['kind'], json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
+            }} onForgetMemory={(key, revision, scope = 'dot') => {
+                beginMemoryEdit({ action: 'forget', scope, key, revision, text: '', kind: 'fact', json: false, expiresAt: null, existing: true });
             }} onAddMemory={(scope = 'dot') => {
-                if (!data.ready || !own) { setNotice('工作台数据还没就绪，稍后再添加记忆。'); return; }
-                setMemoryEdit({ scope, key: '', text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
+                beginMemoryEdit({ action: 'remember', scope, key: '', revision: 0, text: '', kind: 'preference', json: false, expiresAt: null, existing: false });
             }} />
     </>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            {wide && (['activity', 'work', 'memory', 'basis'] as const).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={button}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
+            {wide && (['work', 'memory'] as const).map(item => <Pressable key={item} accessibilityRole="tab" aria-selected={sideTab === item} accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={[button, { backgroundColor: sideTab === item ? colors.surfaceHigh : colors.surface }]}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
             {(wide ? sideTab : tab) === 'work' && action('刷新工作项', () => { data.retry(); }, Boolean(data.pending), !wide)}
+            {action('诊断详情', () => setDiagnosticMode('activity'), false, !wide)}
             {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming, !wide)}
             {action('可用连接与项目', () => setManagingConnections(true), false, !wide)}
         </View>
@@ -137,7 +219,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {data.pending && !data.pending.timedOut && <ActivityIndicator />}
             {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
             {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}
-            {(wide ? sideTab : tab) !== 'work' ? observationPanel : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
+            {(wide ? sideTab : tab) !== 'work' ? observationPanel('memory') : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
                     <Text style={heading}>工作项 · {detail.taskTotal}</Text>
                     <Text style={muted}>不同项目可以同时执行，同一项目默认最多 2 项，其余按排队顺序开始。</Text>
                     {detail.tasks.map(task => <Pressable key={task.id} accessibilityRole="button" accessibilityLabel={`查看工作项：${task.title}`} onPress={() => setTaskId(task.id)} style={{ gap: 6, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
@@ -152,11 +234,11 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     return <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, minHeight: 0, paddingTop: topInset }}>
         {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${metadata.dotId}`} sessionId={metadata.workspaceSessionId} workspaceId={metadata.workspaceId} dotId={metadata.dotId} onClose={() => setManagingConnections(false)} />}
         {wide ? <View style={{ alignItems: 'flex-end', paddingHorizontal: 16 }}>{action(expanded ? '收起工作栏' : '展开工作栏', () => setExpanded(value => !value))}</View>
-            : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'activity', 'work', 'memory', 'basis'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { paddingHorizontal: 8, flexGrow: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
+            : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'work', 'memory'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" aria-selected={tab === item} accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { paddingHorizontal: 8, flexGrow: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
                 <Text style={body}>{tabLabels[item]}</Text>
             </Pressable>)}</View>}
         {(data.notice || notice) && <View style={{ marginHorizontal: 14, marginVertical: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.surfaceHigh }}>
-            <Text accessibilityLiveRegion="polite" style={[muted, { color: colors.textSecondary }]}>{data.notice || notice}</Text>
+            <Text accessibilityLiveRegion="polite" style={[muted, { color: colors.textSecondary }]}>{notice || data.notice}</Text>
         </View>}
         <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
             <View style={{ flex: 1, display: wide || tab === 'chat' ? 'flex' : 'none', minWidth: 0 }}>
@@ -165,6 +247,12 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             </View>
             <View style={{ width: wide ? 320 : '100%', display: wide ? expanded ? 'flex' : 'none' : tab === 'chat' ? 'none' : 'flex', borderLeftWidth: wide ? 1 : 0, borderLeftColor: colors.divider }}>{panel}</View>
         </View>
+        {diagnosticMode && active && own && sheet('诊断详情', () => setDiagnosticMode(null), <>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {action('活动记录', () => setDiagnosticMode('activity'))}{action('本轮依据', () => setDiagnosticMode('basis'))}
+            </View>
+            {observationPanel(diagnosticMode)}
+        </>)}
         {selectedTask && sheet(selectedTask.title, () => setTaskId(null), <>
             <Text style={body}>{testloopWorkStatus(selectedTask)}</Text>
             <Text style={body}>{selectedTask.instruction}</Text>
@@ -181,32 +269,40 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {selectedTask.executionSessionId && action('查看执行会话', () => void openExecution(selectedTask.executionSessionId!))}
             {action('在对话中跟进此工作', () => toConversation(`请跟进当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），说明最新进展和仍需处理的事项。`))}
         </>)}
-        {memoryEdit && data.ready && own && sheet(memoryEdit.key ? '修改记忆' : '添加记忆', () => setMemoryEdit(null), <>
+        {!memoryOpen && memoryEdit?.binding === memoryBinding && memoryAttempt.current && <View style={{ padding: 12 }}>
+            {action('恢复上次记忆操作', () => setMemoryOpen(true))}
+        </View>}
+        {memoryOpen && memoryEdit?.binding === memoryBinding && data.ready && own && sheet(memoryEdit.action === 'forget' ? '忘记记忆' : memoryEdit.existing ? '修改记忆' : '添加记忆', () => {
+            setMemoryOpen(false);
+            if (memoryConflictDrafts.current.has(memoryDraftKey(memoryEdit))) {
+                memoryConflictDrafts.current.set(memoryDraftKey(memoryEdit), memoryEdit);
+                setNotice('草稿已保留。刷新记忆并重新编辑同一条即可继续。');
+            }
+            if (!memoryAttempt.current) setMemoryEdit(null);
+        }, <>
             <Text style={muted}>范围：{memoryEdit.scope === 'user' ? '用户级 · 所有Dot共享' : 'Dot级 · 当前Dot私有'}</Text>
-            <Text style={muted}>名称</Text><TextInput accessibilityLabel="记忆名称" value={memoryEdit.key} editable={!memoryEdit.existing} onChangeText={key => setMemoryEdit(previous => previous && ({ ...previous, key }))} maxLength={200} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
+            {memoryEdit.action === 'forget' ? <Text style={body}>确认忘记「{memoryEdit.key}」？此操作只影响以上范围的这条记忆。</Text> : <>
+            {memoryEdit.savedText !== undefined && <>
+                <Text style={muted}>已恢复未保存的草稿，请核对当前内容后保存。</Text>
+                <Text style={muted}>当前已保存内容（第 {memoryEdit.revision} 版）</Text><Text selectable style={body}>{memoryEdit.savedText}</Text>
+            </>}
+            <Text style={muted}>名称</Text><TextInput accessibilityLabel="记忆名称" value={memoryEdit.key} editable={!memoryEdit.existing && !memoryBusy && !memoryUnknown} onChangeText={key => setMemoryEdit(previous => previous && ({ ...previous, key }))} maxLength={200} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
             <Text style={muted}>类型{memoryEdit.existing ? '（创建后固定）' : ''}</Text>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {(['fact', 'preference', 'commitment'] as const).map(item => <Pressable key={item} accessibilityRole="button"
                     accessibilityLabel={`记忆类型：${kindLabel(item)}`} accessibilityState={{ selected: memoryEdit.kind === item }}
-                    disabled={memoryEdit.existing} onPress={() => setMemoryEdit(previous => previous && ({ ...previous, kind: item }))}
+                    disabled={memoryEdit.existing || memoryBusy || memoryUnknown} onPress={() => setMemoryEdit(previous => previous && ({ ...previous, kind: item }))}
                     style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 10, borderWidth: 1,
                         borderColor: memoryEdit.kind === item ? colors.surfaceHigh : colors.divider,
                         backgroundColor: memoryEdit.kind === item ? colors.surfaceHigh : 'transparent', opacity: memoryEdit.existing ? 0.6 : 1 }}>
                     <Text style={{ color: colors.text, fontSize: 13 }}>{kindLabel(item)}</Text></Pressable>)}
             </View>
-            <Text style={muted}>{memoryEdit.json ? 'JSON 内容' : '内容'}</Text><TextInput accessibilityLabel="记忆内容" value={memoryEdit.text} maxLength={4096} onChangeText={text => setMemoryEdit(previous => previous && ({ ...previous, text }))} multiline style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, minHeight: 120, padding: 12, borderRadius: 10, textAlignVertical: 'top' }} />
-            <Text style={muted}>有效期（ISO 时间，留空表示不设到期）</Text><TextInput accessibilityLabel="记忆有效期" value={memoryEdit.expiresAt ?? ''} onChangeText={expiresAt => setMemoryEdit(previous => previous && ({ ...previous, expiresAt: expiresAt || null }))} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
-            {error && <Text accessibilityRole="alert" style={body}>{error}</Text>}
-            {action(directMemory ? '带入对话' : '带入对话并确认', () => {
-                if (!memoryEdit.key.trim() || !memoryEdit.text.trim()) { setError('请填写记忆名称和内容。'); return; }
-                let value: unknown = memoryEdit.text;
-                try { if (memoryEdit.json) value = JSON.parse(memoryEdit.text); } catch { setError('内容不是有效的 JSON，请修正后重试。'); return; }
-                const expiry = memoryEdit.expiresAt?.trim() || null;
-                if (expiry && (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(expiry) || !Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now())) {
-                    setError('请输入包含时区的未来 ISO 时间，或清空有效期。'); return;
-                }
-                setError(null); toConversation(`请将${memoryEdit.scope === 'user' ? '用户级（所有 Dot 共享）' : '当前 Dot 的个人'}记忆 ${JSON.stringify(memoryEdit.key.trim())} 保存为 ${memoryEdit.kind}，内容为 ${JSON.stringify(value)}，有效期为 ${expiry ? new Date(expiry).toISOString() : '不设置到期'}。${directMemory ? '直接保存并告知结果' : '先展示变更供我确认'}。`);
-            })}
+            <Text style={muted}>{memoryEdit.savedText !== undefined ? '待保存草稿' : memoryEdit.json ? 'JSON 内容' : '内容'}</Text><TextInput accessibilityLabel="记忆内容" value={memoryEdit.text} editable={!memoryBusy && !memoryUnknown} maxLength={4096} onChangeText={text => setMemoryEdit(previous => previous && ({ ...previous, text }))} multiline style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, minHeight: 120, padding: 12, borderRadius: 10, textAlignVertical: 'top' }} />
+            <Text style={muted}>有效期（ISO 时间，留空表示不设到期）</Text><TextInput accessibilityLabel="记忆有效期" value={memoryEdit.expiresAt ?? ''} editable={!memoryBusy && !memoryUnknown} onChangeText={expiresAt => setMemoryEdit(previous => previous && ({ ...previous, expiresAt: expiresAt || null }))} style={{ color: colors.text, borderWidth: 1, borderColor: colors.divider, padding: 12, borderRadius: 10 }} />
+            </>}
+            {memoryError && <Text accessibilityRole="alert" style={body}>{memoryError}</Text>}
+            {memoryBusy && <ActivityIndicator />}
+            {action(memoryUnknown ? '重试上次记忆操作' : memoryEdit.action === 'forget' ? '确认忘记' : '保存记忆', () => void saveMemory(), memoryBusy)}
         </>)}
     </View>;
 }

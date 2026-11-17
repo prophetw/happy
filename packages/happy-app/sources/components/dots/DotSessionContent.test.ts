@@ -2,7 +2,8 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ navigate: vi.fn(), visibility: vi.fn(), confirm: vi.fn(), submit: vi.fn(), data: null as any }));
+const mocks = vi.hoisted(() => ({ navigate: vi.fn(), visibility: vi.fn(), confirm: vi.fn(), submit: vi.fn(), ready: vi.fn(), rpc: vi.fn(), data: null as any,
+    credentials: { token: 'account', secret: 'secret' }, server: 'https://relay.example', authenticated: true }));
 vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
     return Object.fromEntries(['View', 'Text', 'Pressable', 'ActivityIndicator', 'ScrollView', 'Modal', 'TextInput'].map(name => [name, host(name)]));
@@ -14,7 +15,10 @@ vi.mock('@react-navigation/native', async () => {
 vi.mock('@/hooks/useNavigateToSession', () => ({ useNavigateToSession: () => mocks.navigate }));
 vi.mock('@/hooks/useSessionVisibility', () => ({ useSessionVisibility: mocks.visibility }));
 vi.mock('@/sync/storage', () => ({ storage: { getState: () => ({ sessions: {} }) }, useRealtimeStatus: () => 'connected' }));
-vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: vi.fn() } }));
+vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: mocks.ready, getCredentials: () => mocks.credentials } }));
+vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
+vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ credentials: mocks.credentials, isAuthenticated: mocks.authenticated }) }));
+vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => mocks.server }));
 vi.mock('@/modal', () => ({ Modal: { confirm: mocks.confirm } }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '33333333-3333-4333-8333-333333333333' }));
 vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
@@ -23,8 +27,8 @@ vi.mock('./DotObservationPanel', async () => {
     const module = await import('react'); return { DotObservationPanel: (props: any) => module.createElement('ObservationPanel', props) };
 });
 vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({ ready: true, pending: null, error: null, notice: null, retry: vi.fn(), submit: mocks.submit,
-    projection: { snapshot: { dots: [{ id: 'dot-id', sessionId: 'dot-session' }] }, details: { 'dot-id': { asOf: '2026-11-05T00:00:00Z',
-        data: { dotId: 'dot-id', taskTotal: 0, tasks: [], memory: { access: ['read', 'write', 'forget'], total: 0, items: [], omittedCount: 0 } } } } },
+    projection: { snapshot: { dots: [{ id: '22222222-2222-4222-8222-222222222222', sessionId: 'dot-session' }] }, details: { '22222222-2222-4222-8222-222222222222': { asOf: '2026-11-05T00:00:00Z',
+        data: { dotId: '22222222-2222-4222-8222-222222222222', taskTotal: 0, tasks: [], memory: { access: ['read', 'write', 'forget'], total: 0, items: [], omittedCount: 0 } } } } },
     ...(mocks.data ?? {}),
 }) }));
 import { DotSessionContent } from './DotSessionContent';
@@ -39,6 +43,14 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
     mocks.data = null;
+    mocks.credentials = { token: 'account', secret: 'secret' }; mocks.server = 'https://relay.example'; mocks.authenticated = true;
+    mocks.ready.mockReset(); mocks.ready.mockResolvedValue(undefined);
+    mocks.rpc.mockReset(); mocks.rpc.mockImplementation(async (_session, _method, request) => ({ ok: true, data: {
+        schemaVersion: 1, workspaceId: request.workspaceId, dotId: request.dotId, dotSessionId: request.dotSessionId,
+        scope: request.scope, requestID: request.requestID, action: request.operation.action, keyDigest: 'sha256:' + 'b'.repeat(64),
+        revision: request.operation.revision + 1, currentRevision: request.operation.revision + 1,
+        currentStatus: request.operation.action === 'forget' ? 'deleted' : 'active', duplicate: false, indexing: 'pending',
+    } }));
     mocks.confirm.mockReset();
     mocks.submit.mockReset();
     mocks.navigate.mockReset();
@@ -51,7 +63,7 @@ it('confirms destructive clear and returns to the workspace while the host rotat
         return React.createElement('Composer', { draft });
     }
     const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
-        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
         children: () => React.createElement(Composer) };
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
@@ -66,7 +78,7 @@ it('confirms destructive clear and returns to the workspace while the host rotat
     await act(async () => clear().props.onPress());
     expect(mocks.confirm).toHaveBeenLastCalledWith('清空当前对话？', expect.stringContaining('独立后台任务继续运行'), { confirmText: '清空对话' });
     expect(mocks.submit).toHaveBeenCalledExactlyOnceWith({ schemaVersion: 1,
-        requestId: '33333333-3333-4333-8333-333333333333', action: 'clear', dotId: 'dot-id' });
+        requestId: '33333333-3333-4333-8333-333333333333', action: 'clear', dotId: '22222222-2222-4222-8222-222222222222' });
     expect(mocks.navigate).toHaveBeenCalledWith('workspace-session');
     expect(renderer.root.findByType('Composer').props.draft).toBe('不能丢失的草稿');
     expect(mounts).toBe(1);
@@ -84,7 +96,7 @@ it('disables clearing while a host request is pending', async () => {
     await act(async () => {
         renderer = create(React.createElement(DotSessionContent, {
             session: { id: 'dot-session', presence: 'online' } as any, active: true,
-            metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+            metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
             children: () => React.createElement('Composer'),
         }));
     });
@@ -95,7 +107,7 @@ it('disables clearing while a host request is pending', async () => {
     await act(async () => renderer.unmount());
 });
 
-it('keeps the real composer mounted through observer tabs and routes memory editing into that conversation', async () => {
+it('saves an edited memory without sending a chat message or changing the composer draft', async () => {
     let mounts = 0; const requests: unknown[] = [];
     function Composer({ request }: { request: unknown }) {
         React.useEffect(() => { mounts++; }, []);
@@ -105,7 +117,7 @@ it('keeps the real composer mounted through observer tabs and routes memory edit
     }
     let renderer!: ReturnType<typeof create>;
     const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
-        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
         children: (request: unknown) => React.createElement(Composer, { request }) };
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
     const tabs = () => renderer.root.findAllByType('Pressable').filter((node: any) => node.props.accessibilityRole === 'tab');
@@ -114,29 +126,39 @@ it('keeps the real composer mounted through observer tabs and routes memory edit
     expect(renderer.root.findByType('Composer').props.draft).toBe('原有草稿'); expect(mounts).toBe(1);
     const panel = renderer.root.findByType('ObservationPanel'); expect(panel.props.mode).toBe('memory'); expect(panel.props.active).toBe(true);
     await act(async () => panel.props.onEditMemory('偏好', { revision: 2, value: '新偏好', kind: 'preference', expiresAt: null }));
-    const confirm = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '带入对话并确认');
+    const refreshKey = panel.props.refreshKey;
+    const confirm = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '保存记忆');
     await act(async () => confirm.props.onPress());
-    expect(requests).toHaveLength(1); expect(JSON.stringify(requests)).toContain('新偏好');
+    expect(requests).toHaveLength(0);
+    expect(mocks.rpc).toHaveBeenCalledExactlyOnceWith('workspace-session', 'testloop-dot-memory-edit', expect.objectContaining({
+        dotSessionId: 'dot-session', scope: 'dot', operation: { action: 'remember', key: '偏好', revision: 2, value: '新偏好', kind: 'preference', expiresAt: null },
+    }));
+    expect(JSON.stringify(renderer.toJSON())).toContain('记忆已保存');
+    expect(renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    expect(renderer.root.findByType('ObservationPanel').props.refreshKey).toBeGreaterThan(refreshKey);
     expect(renderer.root.findByType('Composer').props.draft).toBe('原有草稿'); expect(mounts).toBe(1);
-    await switchTo('本轮依据'); expect(renderer.root.findByType('ObservationPanel').props.mode).toBe('basis');
     await act(async () => renderer.unmount());
 });
 
-it('carries user-level scope explicitly into the existing edit and forget conversation', async () => {
+it('saves and explicitly confirms forgetting only the selected user-level memory', async () => {
     let request: { text: string } | null = null;
     let renderer!: ReturnType<typeof create>;
     const props = { session: { id: 'dot-session', presence: 'online', metadata: { codexThreadId: 'native-thread' } } as any, active: true,
-        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
         children: (value: any) => { request = value; return React.createElement('Composer'); } };
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
     const panel = renderer.root.findByType('ObservationPanel');
     await act(async () => panel.props.onEditMemory('偏好', { revision: 1, value: '共享偏好', kind: 'preference', expiresAt: null }, 'user'));
-    const send = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '带入对话')!;
+    const send = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '保存记忆')!;
     await act(async () => send.props.onPress());
-    expect(request!.text).toContain('用户级（所有 Dot 共享）记忆');
-    expect(request!.text).toContain('直接保存并告知结果');
-    await act(async () => panel.props.onForgetMemory('偏好', 'user'));
-    expect(request!.text).toContain('请忘记用户级（所有 Dot 共享）记忆');
+    expect(request).toBeNull();
+    expect(mocks.rpc.mock.calls[0][2]).toMatchObject({ scope: 'user', operation: { action: 'remember', key: '偏好', revision: 1 } });
+    await act(async () => renderer.root.findByType('ObservationPanel').props.onForgetMemory('偏好', 2, 'user'));
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    const forget = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === '确认忘记')!;
+    await act(async () => forget.props.onPress());
+    expect(request).toBeNull();
+    expect(mocks.rpc.mock.calls[1][2]).toMatchObject({ scope: 'user', operation: { action: 'forget', key: '偏好', revision: 2 } });
     await act(async () => renderer.unmount());
 });
 
@@ -144,7 +166,7 @@ it('lets a new memory pick its kind instead of always saving a preference', asyn
     let request: { text: string } | null = null;
     let renderer!: ReturnType<typeof create>;
     const props = { session: { id: 'dot-session', presence: 'online', metadata: { codexThreadId: 'native-thread' } } as any, active: true,
-        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
         children: (value: any) => { request = value; return React.createElement('Composer'); } };
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
     const panel = renderer.root.findByType('ObservationPanel');
@@ -158,10 +180,9 @@ it('lets a new memory pick its kind instead of always saving a preference', asyn
     await act(async () => input('记忆名称').props.onChangeText('交付节奏'));
     await act(async () => input('记忆内容').props.onChangeText('每周三提交'));
     await act(async () => input('记忆有效期').props.onChangeText('2099-01-01T00:00:00Z'));
-    await pressed('带入对话');
-    expect(request!.text).toContain('保存为 fact');
-    expect(request!.text).toContain('交付节奏');
-    expect(request!.text).toContain('每周三提交');
+    await pressed('保存记忆');
+    expect(request).toBeNull();
+    expect(mocks.rpc.mock.calls[0][2]).toMatchObject({ scope: 'user', operation: { action: 'remember', key: '交付节奏', kind: 'fact', value: '每周三提交', revision: 0, expiresAt: '2099-01-01T00:00:00.000Z' } });
     await act(async () => renderer.unmount());
 });
 
@@ -169,7 +190,7 @@ it('explains why a memory cannot be added before the workspace projection is rea
     mocks.data = { ready: false };
     let renderer!: ReturnType<typeof create>;
     const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
-        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: 'workspace-id', workspaceSessionId: 'workspace-session', dotId: 'dot-id' },
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
         children: () => React.createElement('Composer') };
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
     const panel = renderer.root.findByType('ObservationPanel');
@@ -178,14 +199,183 @@ it('explains why a memory cannot be added before the workspace projection is rea
     await act(async () => renderer.unmount());
 });
 
+async function memoryForm() {
+    const requests: unknown[] = [];
+    const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
+        children: (request: unknown) => { if (request) requests.push(request); return React.createElement('Composer', { draft: '原聊天草稿' }); } };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    const button = (label: string) => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === label)!;
+    const input = (label: string) => renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === label)!;
+    await act(async () => renderer.root.findByType('ObservationPanel').props.onEditMemory('偏好', { revision: 2, value: '旧偏好', kind: 'preference', expiresAt: null }));
+    await act(async () => input('记忆内容').props.onChangeText('用户的新草稿'));
+    return { renderer, props, requests, button, input, text: () => JSON.stringify(renderer.toJSON()) };
+}
+
+it('keeps an uncertain write frozen and retries the same request without double dispatch', async () => {
+    const success = mocks.rpc.getMockImplementation()!;
+    let reject!: (error: Error) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise((_, rejectRequest) => { reject = rejectRequest; }));
+    const f = await memoryForm(), save = f.button('保存记忆');
+    await act(async () => { save.props.onPress(); save.props.onPress(); });
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(f.button('保存记忆').props.disabled).toBe(true);
+    const sent = mocks.rpc.mock.calls[0][2];
+    await act(async () => reject(new Error('reply lost after saving')));
+    expect(f.text()).toContain('尚未收到可核对的保存回执');
+    expect(f.input('记忆内容').props.value).toBe('用户的新草稿');
+    expect(f.input('记忆内容').props.editable).toBe(false);
+    mocks.rpc.mockImplementation(success);
+    await act(async () => f.button('重试上次记忆操作').props.onPress());
+    expect(mocks.rpc.mock.calls[1][2]).toEqual(sent);
+    expect(f.requests).toHaveLength(0);
+    expect(f.text()).toContain('记忆已保存');
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    await act(async () => f.renderer.unmount());
+});
+
+it('can close and reopen an uncertain memory operation without changing its request', async () => {
+    mocks.rpc.mockRejectedValueOnce(new Error('reply lost'));
+    const f = await memoryForm();
+    await act(async () => f.button('保存记忆').props.onPress());
+    const sent = mocks.rpc.mock.calls[0][2];
+    await act(async () => f.button('关闭').props.onPress());
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    await act(async () => f.button('恢复上次记忆操作').props.onPress());
+    expect(f.input('记忆内容').props.value).toBe('用户的新草稿');
+    await act(async () => f.button('重试上次记忆操作').props.onPress());
+    expect(mocks.rpc.mock.calls[1][2]).toEqual(sent);
+    await act(async () => f.renderer.unmount());
+});
+
+it('preserves an editable draft when the host refuses an outdated memory revision', async () => {
+    mocks.rpc.mockResolvedValueOnce({ ok: false, error: 'memory_edit_revision_conflict' });
+    const f = await memoryForm();
+    await act(async () => f.button('保存记忆').props.onPress());
+    expect(f.text()).toContain('这条记忆已有更新，未覆盖');
+    expect(f.input('记忆内容').props.value).toBe('用户的新草稿');
+    expect(f.input('记忆内容').props.editable).toBe(true);
+    expect(f.text()).not.toContain('记忆已保存');
+    expect(f.requests).toHaveLength(0);
+    await act(async () => f.renderer.unmount());
+});
+
+it.each([{ active: false, ready: false }, { active: true, ready: false }])('records a completed write while the same Dot is temporarily unavailable: %j', async visibility => {
+    const success = mocks.rpc.getMockImplementation()!;
+    let resolve!: (receipt: unknown) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise(resolveRequest => { resolve = resolveRequest; }));
+    const f = await memoryForm();
+    await act(async () => f.button('保存记忆').props.onPress());
+    const sent = mocks.rpc.mock.calls[0];
+    mocks.data = { ready: visibility.ready };
+    await act(async () => f.renderer.update(React.createElement(DotSessionContent, { ...f.props, active: visibility.active })));
+    await act(async () => resolve(await success(...sent)));
+    mocks.data = null;
+    await act(async () => f.renderer.update(React.createElement(DotSessionContent, f.props)));
+    expect(f.text()).toContain('记忆已保存');
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    await act(async () => f.renderer.root.findByType('ObservationPanel').props.onEditMemory('偏好', { revision: 3, value: '用户的新草稿', kind: 'preference', expiresAt: null }));
+    await act(async () => f.input('记忆内容').props.onChangeText('再次编辑的内容'));
+    await act(async () => f.button('保存记忆').props.onPress());
+    expect(mocks.rpc.mock.calls[1][2].operation).toMatchObject({ revision: 3, value: '再次编辑的内容' });
+    await act(async () => f.renderer.unmount());
+});
+
+it('freezes an unknown write received while inactive until the same request is verified', async () => {
+    let reject!: (error: Error) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise((_, rejectRequest) => { reject = rejectRequest; }));
+    const f = await memoryForm();
+    await act(async () => f.button('保存记忆').props.onPress());
+    const sent = mocks.rpc.mock.calls[0][2];
+    mocks.data = { ready: false };
+    await act(async () => f.renderer.update(React.createElement(DotSessionContent, { ...f.props, active: false })));
+    await act(async () => reject(new Error('reply lost')));
+    mocks.data = null;
+    await act(async () => f.renderer.update(React.createElement(DotSessionContent, f.props)));
+    expect(f.input('记忆内容').props.editable).toBe(false);
+    expect(f.text()).toContain('尚未收到可核对的保存回执');
+    await act(async () => f.button('重试上次记忆操作').props.onPress());
+    expect(mocks.rpc.mock.calls[1][2]).toEqual(sent);
+    await act(async () => f.renderer.unmount());
+});
+
+it('restores a conflict draft after closing, refreshing and reopening the same scoped memory', async () => {
+    mocks.rpc.mockResolvedValueOnce({ ok: false, error: 'memory_edit_revision_conflict' });
+    const f = await memoryForm();
+    await act(async () => f.button('保存记忆').props.onPress());
+    await act(async () => f.button('关闭').props.onPress());
+    await act(async () => f.renderer.root.findByType('ObservationPanel').props.onEditMemory('偏好', { revision: 1, value: '共享层原内容', kind: 'preference', expiresAt: null }, 'user'));
+    expect(f.input('记忆内容').props.value).toBe('共享层原内容');
+    await act(async () => f.button('关闭').props.onPress());
+    await act(async () => f.renderer.root.findByType('ObservationPanel').props.onEditMemory('偏好', { revision: 3, value: '当前已保存的内容', kind: 'preference', expiresAt: null }, 'dot'));
+    expect(f.input('记忆内容').props.value).toBe('用户的新草稿');
+    expect(f.text()).toContain('当前已保存的内容');
+    await act(async () => f.button('保存记忆').props.onPress());
+    expect(mocks.rpc.mock.calls[1][2].operation).toMatchObject({ key: '偏好', revision: 3, value: '用户的新草稿' });
+    await act(async () => f.renderer.unmount());
+});
+
+it.each(['account', 'session', 'signed-out'] as const)('ignores an in-flight memory receipt after the %s binding changes', async changed => {
+    const success = mocks.rpc.getMockImplementation()!;
+    let resolve!: (receipt: unknown) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise(resolveRequest => { resolve = resolveRequest; }));
+    const f = await memoryForm(), oldSave = f.button('保存记忆').props.onPress;
+    await act(async () => oldSave());
+    const sent = mocks.rpc.mock.calls[0];
+    const next = changed === 'session' ? { ...f.props, session: { ...f.props.session, id: 'replacement-session' } } : f.props;
+    if (changed === 'account') mocks.credentials = { token: 'other-account', secret: 'other-secret' };
+    if (changed === 'signed-out') mocks.authenticated = false;
+    await act(async () => f.renderer.update(React.createElement(DotSessionContent, next)));
+    await act(async () => { resolve(await success(...sent)); oldSave(); });
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(f.text()).not.toContain('记忆已保存');
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    await act(async () => f.renderer.unmount());
+});
+
+it('does not mistake a later authorization refusal for proof that the previous unknown write never happened', async () => {
+    mocks.rpc.mockRejectedValueOnce(new Error('reply lost'));
+    mocks.rpc.mockResolvedValueOnce({ ok: false, error: 'memory_edit_not_authorized' });
+    const f = await memoryForm();
+    await act(async () => f.button('保存记忆').props.onPress());
+    await act(async () => f.button('重试上次记忆操作').props.onPress());
+    expect(f.text()).toContain('上次请求结果仍待核对');
+    expect(f.input('记忆内容').props.editable).toBe(false);
+    expect(mocks.rpc.mock.calls[1][2]).toEqual(mocks.rpc.mock.calls[0][2]);
+    await act(async () => f.renderer.unmount());
+});
+
+it('ignores a delayed save receipt after switching Dot and rejects the old save handler', async () => {
+    const success = mocks.rpc.getMockImplementation()!;
+    let resolve!: (receipt: unknown) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise(resolveRequest => { resolve = resolveRequest; }));
+    const f = await memoryForm(), save = f.button('保存记忆').props.onPress;
+    await act(async () => save());
+    const oldCall = mocks.rpc.mock.calls[0];
+    const newDot = '55555555-5555-4555-8555-555555555555';
+    const next = { ...f.props, session: { ...f.props.session, id: 'second-session' }, metadata: { ...f.props.metadata, dotId: newDot } };
+    mocks.data = { projection: { snapshot: { dots: [{ id: newDot, sessionId: 'second-session' }] }, details: {} } };
+    await act(async () => f.renderer.update(React.createElement(DotSessionContent, next)));
+    await act(async () => { resolve(await success(...oldCall)); save(); });
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(f.text()).not.toContain('记忆已保存');
+    expect(f.renderer.root.findAllByType('TextInput')).toHaveLength(0);
+    await act(async () => f.renderer.root.findByType('ObservationPanel').props.onEditMemory('第二条', { revision: 4, value: '另一范围', kind: 'fact', expiresAt: null }));
+    await act(async () => f.button('保存记忆').props.onPress());
+    expect(mocks.rpc.mock.calls[1][2]).toMatchObject({ dotId: newDot, dotSessionId: 'second-session', operation: { key: '第二条', revision: 4 } });
+    expect(f.requests).toHaveLength(0);
+    await act(async () => f.renderer.unmount());
+});
+
 it('shows queue/resource/location state and routes targeted cancellation through the existing user composer',async()=>{
     const task={id:'11111111-1111-4111-8111-111111111111',title:'隔离代码任务',kind:'delegate',status:'queued',needsReview:false,projectID:'project',goalPhase:null,
         instruction:'写入独立文件',runId:null,reason:null,nextWakeAt:null,finishedAt:null,executionSessionId:'actual-session',executionOutcome:null,businessVerification:'unverified',steps:[],result:null,resultTruncated:false,
         queueReason:'execution_slot',canCancel:true,execution:{mode:'worktree',directory:'/fixture/worktrees/task-a',branch:'dot-task/task-a',projectID:'project'}};
-    const snapshot={dots:[{id:'dot-id',sessionId:'dot-session'}]},detail={dotId:'dot-id',taskTotal:1,tasks:[task],memory:null};
-    mocks.data={projection:{snapshot,details:{'dot-id':{asOf:'2026-11-09T00:00:00Z',data:detail}}}};
+    const snapshot={dots:[{id:'22222222-2222-4222-8222-222222222222',sessionId:'dot-session'}]},detail={dotId:'22222222-2222-4222-8222-222222222222',taskTotal:1,tasks:[task],memory:null};
+    mocks.data={projection:{snapshot,details:{'22222222-2222-4222-8222-222222222222':{asOf:'2026-11-09T00:00:00Z',data:detail}}}};
     let request:any,renderer!:ReturnType<typeof create>;
-    const props={session:{id:'dot-session',presence:'online'} as any,active:true,metadata:{schemaVersion:1 as const,kind:'dot' as const,workspaceId:'workspace-id',workspaceSessionId:'workspace-session',dotId:'dot-id'},children:(value:unknown)=>{request=value;return React.createElement('Composer');}};
+    const props={session:{id:'dot-session',presence:'online'} as any,active:true,metadata:{schemaVersion:1 as const,kind:'dot' as const,workspaceId:'11111111-1111-4111-8111-111111111111',workspaceSessionId:'workspace-session',dotId:'22222222-2222-4222-8222-222222222222'},children:(value:unknown)=>{request=value;return React.createElement('Composer');}};
     await act(async()=>{renderer=create(React.createElement(DotSessionContent,props));});
     await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());
     const open=()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='查看工作项：隔离代码任务')!;await act(async()=>open().props.onPress());

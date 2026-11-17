@@ -7,6 +7,7 @@ import { FlashList, FlashListRef, type ListRenderItemInfo } from '@shopify/flash
 import { useHeaderHeight } from '@/utils/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageView } from './MessageView';
+import { activeHostedToolConfirmation } from './toolConfirmation';
 import { AgentWorkGroupHeader } from './AgentWorkGroupHeader';
 import { Metadata, Session } from '@/sync/storageTypes';
 import { ChatFooter } from './ChatFooter';
@@ -311,9 +312,17 @@ const ChatListInternal = React.memo((props: {
     const sessionInForeground = props.active && appState !== 'background';
     const currentTurnComplete = session?.thinking !== true
         && !hasPendingPermission;
+    const [confirmationExpiryTick, setConfirmationExpiryTick] = React.useState(0);
+    const toolConfirmation = React.useMemo(() => activeHostedToolConfirmation(props.messages), [props.messages, confirmationExpiryTick]);
+    React.useEffect(() => {
+        if (!toolConfirmation) return;
+        const timer = setTimeout(() => setConfirmationExpiryTick(value => value + 1),
+            Math.min(600_000, Math.max(0, toolConfirmation.expiresAt - Date.now())));
+        return () => clearTimeout(timer);
+    }, [toolConfirmation]);
     const groupingOptions = React.useMemo(
-        () => ({ collapseCurrentTurn: currentTurnComplete }),
-        [currentTurnComplete],
+        () => ({ collapseCurrentTurn: currentTurnComplete && !toolConfirmation }),
+        [currentTurnComplete, toolConfirmation],
     );
 
     // Messages arrive newest-first, so the window is a prefix of the array and
@@ -610,10 +619,11 @@ const ChatListInternal = React.memo((props: {
                     sessionId={props.sessionId}
                     durationMs={agentTurnDurationByMessageId.get(item.message.id)?.durationMs}
                     turnCompletedAt={agentTurnDurationByMessageId.get(item.message.id)?.completedAt}
+                    toolConfirmation={props.active && toolConfirmation?.messageId === item.message.id ? toolConfirmation.command : undefined}
                 />
             </DiffSyntaxCell>
         );
-    }, [agentTurnDurationByMessageId, props.metadata, props.sessionId, syntaxViewport, isGroupExpanded, handleToggleGroup]);
+    }, [agentTurnDurationByMessageId, props.metadata, props.sessionId, props.active, toolConfirmation, syntaxViewport, isGroupExpanded, handleToggleGroup]);
 
     // The list is inverted, so offset 0 is the newest message and growing
     // offsets walk back through history.

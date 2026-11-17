@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
     appState: 'active' as 'active' | 'inactive' | 'background',
@@ -119,6 +119,7 @@ vi.mock('./MessageView', async () => {
         MessageView: (props: any) => ReactModule.createElement('MessageView', {
             id: props.message.id,
             kind: props.message.kind,
+            toolConfirmation: props.toolConfirmation,
         }),
     };
 });
@@ -205,6 +206,72 @@ function renderChat(renderer: ReturnType<typeof create> | undefined, active = tr
 function messageIds(renderer: ReturnType<typeof create>): string[] {
     return renderer.root.findAllByType('MessageView').map((node: any) => node.props.id);
 }
+
+describe('host tool confirmation', () => {
+    beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(5); });
+    afterEach(() => vi.useRealTimers());
+    it('keeps the current host preview visible and interactive after the agent replies', () => {
+        const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+        state.messages = [agentMessage('reply', 4), {
+            ...agentMessage('preview', 3), meta: { sentFrom: 'testloop-assistant' },
+            text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>`,
+        }, toolMessage('tool', 2), userMessage('user', 1)];
+        state.session = { id: 'session', metadata: null, thinking: false, agentState: { requests: {} } };
+        const renderer = renderChat(undefined);
+        const preview = renderer.root.findAllByType('MessageView').find((node: any) => node.props.id === 'preview');
+        expect(preview?.props.toolConfirmation).toBe(command);
+    });
+
+    it('retires the preview as soon as a new user message arrives, including a queued send', () => {
+        const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+        const preview = { ...agentMessage('preview', 3), meta: { sentFrom: 'testloop-assistant' },
+            text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` };
+        state.messages = [preview, userMessage('user', 1)];
+        state.session = { id: 'session', metadata: null, thinking: false, agentState: { requests: {} } };
+        const renderer = renderChat(undefined);
+        state.messages = [{ ...userMessage('next', 4), pending: true }, ...state.messages];
+        renderChat(renderer);
+        expect(renderer.root.findAllByType('MessageView').filter((node: any) => node.props.toolConfirmation).length).toBe(0);
+    });
+
+    it.each(['ordinary-agent', 'quoted', 'fenced', 'malformed', 'inactive'])('does not activate a %s preview', (kind) => {
+        const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+        let text = `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>`;
+        if (kind === 'quoted') text = text.split('\n').map(line => '> ' + line).join('\n');
+        if (kind === 'fenced') text = '```\n' + text + '\n```';
+        if (kind === 'malformed') text = text.replace(command, '确认工具 unknown');
+        state.messages = [{ ...agentMessage('preview', 3), text,
+            meta: { sentFrom: kind === 'ordinary-agent' ? 'codex' : 'testloop-assistant' } }, userMessage('user', 1)];
+        state.session = { id: 'session', metadata: null, thinking: false, agentState: { requests: {} } };
+        const renderer = renderChat(undefined, kind !== 'inactive');
+        expect(renderer.root.findAllByType('MessageView').filter((node: any) => node.props.toolConfirmation).length).toBe(0);
+    });
+
+    it('offers only the newest host preview from the same user turn', () => {
+        const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+        const newerCommand = '确认工具 233d733a-7da7-49ee-a7b1-d596be44bca9';
+        const preview = (id: string, value: string, at: number) => ({ ...agentMessage(id, at), meta: { sentFrom: 'testloop-assistant' },
+            text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${value}</option>\n</options>` });
+        state.messages = [preview('new', newerCommand, 4), preview('old', command, 3), userMessage('user', 1)];
+        state.session = { id: 'session', metadata: null, thinking: false, agentState: { requests: {} } };
+        const renderer = renderChat(undefined);
+        expect(renderer.root.findAllByType('MessageView').filter((node: any) => node.props.toolConfirmation)
+            .map((node: any) => [node.props.id, node.props.toolConfirmation])).toEqual([['new', newerCommand]]);
+    });
+
+    it('retires the current preview after ten minutes even without a newer message', () => {
+        const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+        state.messages = [{ ...agentMessage('preview', 3), meta: { sentFrom: 'testloop-assistant' },
+            text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` }, userMessage('user', 1)];
+        state.session = { id: 'session', metadata: null, thinking: false, agentState: { requests: {} } };
+        const renderer = renderChat(undefined);
+        expect(renderer.root.findAllByType('MessageView').filter((node: any) => node.props.toolConfirmation).length).toBe(1);
+        act(() => vi.advanceTimersByTime(600_000));
+        expect(renderer.root.findAllByType('MessageView').filter((node: any) => node.props.toolConfirmation).length).toBe(0);
+        renderChat(renderer);
+        expect(renderer.root.findAllByType('MessageView').filter((node: any) => node.props.toolConfirmation).length).toBe(0);
+    });
+});
 
 afterEach(() => {
     act(() => renderers.splice(0).forEach((renderer) => renderer.unmount()));

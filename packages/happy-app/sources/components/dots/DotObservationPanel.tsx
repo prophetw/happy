@@ -38,11 +38,11 @@ function eventTitle(event: ObservationEvent) {
 }
 
 /** Observation reads and explicit user memory moves stay bound to the account, workspace, Dot and visible screen. */
-export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionId, active, mode, presence,
+export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionId, active, mode, presence, refreshKey = 0,
     onExecution, onEditMemory, onForgetMemory, onAddMemory }: {
-    sessionId: string; workspaceId: string; dotId: string; dotSessionId: string; active: boolean; mode: Mode; presence: string | number;
+    sessionId: string; workspaceId: string; dotId: string; dotSessionId: string; active: boolean; mode: Mode; presence: string | number; refreshKey?: number;
     onExecution: (sessionId: string) => void;
-    onEditMemory: (key: string, version: ObservationMemoryVersion, scope?: MemoryScope) => void; onForgetMemory: (key: string, scope?: MemoryScope) => void;
+    onEditMemory: (key: string, version: ObservationMemoryVersion, scope?: MemoryScope) => void; onForgetMemory: (key: string, revision: number, scope?: MemoryScope) => void;
     onAddMemory: (scope?: MemoryScope) => void;
 }) {
     const { theme } = useUnistyles(), { credentials, isAuthenticated } = useAuth(), server = getServerUrl();
@@ -89,7 +89,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
     useFocusEffect(React.useCallback(() => {
         focused.current = true; void load(initial);
         return () => { focused.current = false; epoch.current++; moveCancellation.current++; };
-    }, [load, initial]));
+    }, [load, initial, refreshKey]));
     React.useEffect(() => {
         const listener = AppState.addEventListener('change', state => {
             foreground.current = state === 'active';
@@ -296,7 +296,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
                 <Text style={muted}>记录于 {date(version.recordedAt)}{version.expiresAt ? ` · 有效期至 ${date(version.expiresAt)}` : ''}</Text>
                 {!version.historical && result.memory.key && <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
                     {facts?.memory?.access.includes('write') && button('编辑这条记忆', () => onEditMemory(result.memory.key!, version, memoryScope), { flex: 1 })}
-                    {facts?.memory?.access.includes('forget') && button('请求忘记这条记忆', () => onForgetMemory(result.memory.key!, memoryScope), { flex: 1 })}
+                    {facts?.memory?.access.includes('forget') && button('忘记这条记忆', () => onForgetMemory(result.memory.key!, result.memory.revision, memoryScope), { flex: 1 })}
                 </View>}
             </View>) : listTurns(result.page.items)}
         </>}

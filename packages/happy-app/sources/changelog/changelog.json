@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 17 - Simpler Dot controls",
+      "summary": "Requires the updated TestLoop host.",
+      "markdown": "- **Save memories directly** — add, edit, or forget a memory from its form, with drafts preserved when versions conflict.\n- **Find everyday actions sooner** — use Chat, Work, and Memory; open diagnostics when you need more detail.\n- **Confirm tools with one tap** — review the preview and confirm without copying a command.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 11 - More relevant Dot memories",
       "summary": "Requires the updated TestLoop host.",
       "markdown": "- **Use relevant memories** — leave unrelated memories out of the background for your current question.\n- **Understand skipped memories** — see when a memory was unrelated to that question.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -176,5 +181,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 11 - More relevant Dot memories"
+  "latestTitle": "November 17 - Simpler Dot controls"
 }

@@ -20,6 +20,8 @@ import { resolveUserMessageBubbleColor } from '@/utils/userMessageBubbleColor';
 import { LongPressCopyable } from './LongPressCopyable';
 import { formatMessageTimestamp, formatTurnDuration } from '@/utils/messageTimestamp';
 import { OutputTokenSpeed } from './usage/OutputTokenSpeed';
+import { activeHostedToolConfirmation, isToolConfirmationCommand } from './toolConfirmation';
+import { Modal } from '@/modal';
 
 
 export const MessageView = React.memo((props: {
@@ -29,6 +31,7 @@ export const MessageView = React.memo((props: {
   getMessageById?: (id: string) => Message | null;
   durationMs?: number;
   turnCompletedAt?: number;
+  toolConfirmation?: string;
 }) => {
   return (
     <View
@@ -43,6 +46,7 @@ export const MessageView = React.memo((props: {
           getMessageById={props.getMessageById}
           durationMs={props.durationMs}
           turnCompletedAt={props.turnCompletedAt}
+          toolConfirmation={props.toolConfirmation}
         />
       </View>
     </View>
@@ -57,6 +61,7 @@ function RenderBlock(props: {
   getMessageById?: (id: string) => Message | null;
   durationMs?: number;
   turnCompletedAt?: number;
+  toolConfirmation?: string;
 }): React.ReactElement {
   switch (props.message.kind) {
     case 'user-text':
@@ -69,7 +74,7 @@ function RenderBlock(props: {
       );
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} sessionId={props.sessionId} durationMs={props.durationMs} turnCompletedAt={props.turnCompletedAt} />;
+      return <AgentTextBlock message={props.message} sessionId={props.sessionId} durationMs={props.durationMs} turnCompletedAt={props.turnCompletedAt} toolConfirmation={props.toolConfirmation} />;
 
     case 'tool-call':
       return <ToolCallBlock
@@ -275,10 +280,43 @@ function AgentTextBlock(props: {
   sessionId: string;
   durationMs?: number;
   turnCompletedAt?: number;
+  toolConfirmation?: string;
 }) {
+  const toolConfirmation = props.toolConfirmation === activeHostedToolConfirmation([props.message])?.command
+    ? props.toolConfirmation : undefined;
+  const confirmationKey = toolConfirmation ? `${props.sessionId}:${props.message.id}:${toolConfirmation}` : null;
+  const confirmationSubmission = React.useRef<{ key: string; accepted: boolean } | null>(null);
+  const [pendingConfirmationKey, setPendingConfirmationKey] = React.useState<string | null>(null);
   const handleOptionPress = React.useCallback((option: Option) => {
-    sync.sendMessage(props.sessionId, option.title, { source: 'option' });
-  }, [props.sessionId]);
+    if (!isToolConfirmationCommand(option.title)) {
+      sync.sendMessage(props.sessionId, option.title, { source: 'option' });
+      return;
+    }
+    if (option.title !== toolConfirmation || !confirmationKey || confirmationSubmission.current?.key === confirmationKey) return;
+    // Ref first: two clicks can arrive before readiness/encryption creates a pending message.
+    const attempt = { key: confirmationKey, accepted: false };
+    confirmationSubmission.current = attempt;
+    setPendingConfirmationKey(confirmationKey);
+    const releaseUnsent = () => {
+      if (attempt.accepted || confirmationSubmission.current !== attempt) return;
+      confirmationSubmission.current = null; setPendingConfirmationKey(null);
+    };
+    void (async () => {
+      try {
+        const accepted = await sync.sendMessage(props.sessionId, option.title, {
+          source: 'option', onAccepted: () => { attempt.accepted = true; },
+        });
+        if (accepted === false) releaseUnsent();
+        // Accepted means queued, not delivered. Keep the lock; the outbox owns retry.
+        if (accepted === true) attempt.accepted = true;
+      } catch (error) {
+        releaseUnsent();
+        Modal.alert(t('common.error'), attempt.accepted
+          ? '确认消息已进入发送队列，请查看聊天中的发送状态。'
+          : error instanceof Error ? error.message : '确认消息未发送，请重试。');
+      }
+    })();
+  }, [props.sessionId, toolConfirmation, confirmationKey]);
   const { theme } = useUnistyles();
 
   // Hide thinking messages
@@ -293,7 +331,8 @@ function AgentTextBlock(props: {
 
   return (
     <View style={styles.agentMessageContainer}>
-      <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} sessionId={props.sessionId} />
+      <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} sessionId={props.sessionId} toolConfirmation={toolConfirmation}
+        toolConfirmationPending={confirmationKey !== null && pendingConfirmationKey === confirmationKey} />
       <View style={styles.agentFooterRow}>
         <MessageCopyButton text={props.message.text} />
         {metaText ? (

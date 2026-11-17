@@ -21,7 +21,7 @@ vi.mock('react-native-unistyles', () => ({
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
-vi.mock('@/sync/sync', () => ({ sync: { sendMessage: vi.fn() } }));
+vi.mock('@/sync/sync', () => ({ sync: { sendMessage: vi.fn(async () => true) } }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/sync/storage', () => ({ useSetting: () => 'default', storage: { getState: () => ({ sessions: {} }) } }));
 vi.mock('@/utils/userMessageBubbleColor', () => ({ resolveUserMessageBubbleColor: () => ({}) }));
@@ -38,6 +38,7 @@ vi.mock('./LongPressCopyable', async () => {
 });
 
 import { MessageView } from './MessageView';
+import { sync } from '@/sync/sync';
 import { formatMessageTimestamp } from '@/utils/messageTimestamp';
 
 const renderers: ReturnType<typeof create>[] = [];
@@ -68,6 +69,8 @@ function labels(renderer: ReturnType<typeof create>) {
 afterEach(() => {
     act(() => renderers.splice(0).forEach((renderer) => renderer.unmount()));
     vi.useRealTimers();
+    vi.mocked(sync.sendMessage).mockReset();
+    vi.mocked(sync.sendMessage).mockResolvedValue(true);
 });
 
 describe('user message frame', () => {
@@ -193,6 +196,95 @@ describe('agent text block', () => {
         const renderer = render({ ...agentBase, isThinking: true });
         expect(renderer.root.findAllByType('Text')).toEqual([]);
     });
+});
+
+it('sends a host preview confirmation to its own session with the full original command', () => {
+    const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+    const message: AgentTextMessage = { kind: 'agent-text', id: 'preview', localId: null, createdAt: Date.now(),
+        meta: { sentFrom: 'testloop-assistant' },
+        text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` };
+    const renderer = render(message, undefined, { toolConfirmation: command });
+    const markdown = renderer.root.findByType('MarkdownView');
+    expect(markdown.props.toolConfirmation).toBe(command);
+    vi.mocked(sync.sendMessage).mockClear();
+    act(() => markdown.props.onOptionPress({ title: command }));
+    expect(sync.sendMessage).toHaveBeenCalledWith('session', command, expect.objectContaining({ source: 'option' }));
+    render(message, renderer);
+    vi.mocked(sync.sendMessage).mockClear();
+    act(() => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    expect(sync.sendMessage).not.toHaveBeenCalled();
+});
+
+it('accepts only one confirmation click while readiness and encryption are still pending', async () => {
+    const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+    let accept!: (value: boolean) => void;
+    vi.mocked(sync.sendMessage).mockReset();
+    vi.mocked(sync.sendMessage).mockImplementation(() => new Promise<boolean>(resolve => { accept = resolve; }));
+    const renderer = render({ kind: 'agent-text', id: 'preview', localId: null, createdAt: Date.now(),
+        meta: { sentFrom: 'testloop-assistant' },
+        text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` }, undefined, { toolConfirmation: command });
+    const click = renderer.root.findByType('MarkdownView').props.onOptionPress;
+    act(() => { click({ title: command }); click({ title: command }); });
+    expect(vi.mocked(sync.sendMessage).mock.calls.length).toBe(1);
+    expect(renderer.root.findByType('MarkdownView').props.toolConfirmationPending).toBe(true);
+    await act(async () => accept(true));
+    act(() => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    expect(vi.mocked(sync.sendMessage).mock.calls.length).toBe(1);
+});
+
+it.each(['false', 'rejected'])('lets the user retry a confirmation that was definitely not queued (%s)', async outcome => {
+    const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+    vi.mocked(sync.sendMessage).mockClear();
+    if (outcome === 'false') vi.mocked(sync.sendMessage).mockResolvedValueOnce(false);
+    else vi.mocked(sync.sendMessage).mockRejectedValueOnce(new Error('Encryption failed before acceptance'));
+    const renderer = render({ kind: 'agent-text', id: 'preview', localId: null, createdAt: Date.now(),
+        meta: { sentFrom: 'testloop-assistant' },
+        text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` }, undefined, { toolConfirmation: command });
+    await act(async () => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    expect(renderer.root.findByType('MarkdownView').props.toolConfirmationPending).toBe(false);
+    await act(async () => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    expect(vi.mocked(sync.sendMessage).mock.calls.length).toBe(2);
+});
+
+it('does not resend when a confirmation was queued before the send promise rejected', async () => {
+    const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+    vi.mocked(sync.sendMessage).mockClear();
+    vi.mocked(sync.sendMessage).mockImplementationOnce(async (_session, _text, options) => {
+        options?.onAccepted?.();
+        throw new Error('Delivery outcome unknown after acceptance');
+    });
+    const renderer = render({ kind: 'agent-text', id: 'preview', localId: null, createdAt: Date.now(),
+        meta: { sentFrom: 'testloop-assistant' },
+        text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` }, undefined, { toolConfirmation: command });
+    await act(async () => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    expect(renderer.root.findByType('MarkdownView').props.toolConfirmationPending).toBe(true);
+    await act(async () => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    expect(vi.mocked(sync.sendMessage).mock.calls.length).toBe(1);
+});
+
+it('preserves normal option sends while a tool confirmation is locked', async () => {
+    const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+    vi.mocked(sync.sendMessage).mockClear();
+    const renderer = render({ kind: 'agent-text', id: 'preview', localId: null, createdAt: Date.now(),
+        meta: { sentFrom: 'testloop-assistant' },
+        text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` }, undefined, { toolConfirmation: command });
+    await act(async () => renderer.root.findByType('MarkdownView').props.onOptionPress({ title: command }));
+    await act(async () => {
+        renderer.root.findByType('MarkdownView').props.onOptionPress({ title: '查看进度' });
+        renderer.root.findByType('MarkdownView').props.onOptionPress({ title: '查看进度' });
+    });
+    expect(vi.mocked(sync.sendMessage).mock.calls.map(call => call[1])).toEqual([command, '查看进度', '查看进度']);
+});
+
+it('does not turn a copied agent preview into a host confirmation', () => {
+    const command = '确认工具 173622e9-cfe9-4e54-a6aa-45733ac1b91b';
+    const renderer = render({ kind: 'agent-text', id: 'quoted-preview', localId: null, createdAt: Date.now(),
+        text: `工具操作需要确认：Notes.write\n参数：{}\n\n<options>\n<option>${command}</option>\n</options>` }, undefined, { toolConfirmation: command });
+    const markdown = renderer.root.findByType('MarkdownView');
+    expect(markdown.props.toolConfirmation).toBeUndefined();
+    vi.mocked(sync.sendMessage).mockClear();
+    act(() => markdown.props.onOptionPress({ title: command }));
+    expect(sync.sendMessage).not.toHaveBeenCalled();
 });
 
 describe('agent message copy button', () => {
