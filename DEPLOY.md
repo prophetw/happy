@@ -1,5 +1,19 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Happy Dot 交互减法（2026-11-17，Web / iOS OTA 已发布）
+
+功能提交 `5f384e3dd45f0c33342dd547751110fd2a0ca07f` 已普通推送个人 `fork/main`，发布前已保留当前主线的图片输入与流式存储等增量。Web / OTA 从当次 fetch 一致、干净的独立 main clone 构建，源目录为 `~/.local/state/dot-interaction-release-20261117/app/source`。本版常用入口收为对话／工作／记忆，记忆表单直接调用已认证工作台加密 RPC，托管工具预览提供一次确认按钮；原授权及未知写入不重放的边界保持。
+
+- Web 已更新 `/home/dev/code/happy-local/web`。本机、[Tailscale](https://desktop-8ut4p0p.taild92624.ts.net/happy/)和[公网](https://szsp.suitbim.com.cn:7100/happy/)首页 SHA256 均为 `ff59eb93ef6b431d6433878d0232d55119fbfee293a896077d6c186b0cb47747`；三个入口 JS 经实际网关逐字节核对，完整发布文件及 gzip 校验通过。保留旧 hash 资源与原挂载目录，没有重启 Relay / gateway。手机尺寸正式匿名首页和 Dots 账号／服务器提示浏览器 errors=[]；开发端口 8989 未更新。
+- 个人 `@prophetwayen/happy` preview iOS OTA：[更新组 `77596586-c8c6-4aa3-ab51-9cc972b7c13f`](https://expo.dev/accounts/prophetwayen/projects/happy/updates/77596586-c8c6-4aa3-ab51-9cc972b7c13f)，update `01a1e81d-8572-70a7-b708-abc074347cbd`，14:06:51（UTC+8）创建，runtime 21，environment preview，源 `5f384e3dd`。update:list/view 和 preview / production 实际 manifest 均指向该版本；实际下载启动包 10,320,284 字节、SHA256 `30c93198bd9905ce41a380981d81dbcbdb32703fb9bca43d678b1dc9d223012d` 与本地 iOS 导出一致。保留两个 channel 同指 preview branch 的现有映射。未发布 Android、npm 或新原生安装包，真机加载未验证。
+- 配套 TestLoop 源 `975264ac1cf5e662125abe01b511f7c1c1d2f891` 已推送并部署至 `interaction-20261117-975264a`。14:05（UTC+8）只读核验 5 个 Dot 均 ready/error=null、pending/未 ACK 输出为 0，原 session/thread/epoch、486 条输入、77,493 条原输出、记忆与授权保持；维护后新增 5 条输出。scanner / recovery PID 1274229 / 1281972，NRestarts=0，13 个网关使用新宿主，62 个受保护进程身份不变。此前 stream producer、生命周期与授权 reader 沿用原版；没有迁移存储或重派业务。health 仅保留原三项 attention。
+
+验证：最终 App 源类型检查及 8 文件 169 项定向测试通过；配套宿主类型、记忆及工具回归通过。真实 Chromium 隔离交互 11 组通过，覆盖直接保存、作用域、未知回包原 ID 重试、冲突草稿恢复、切 Dot 隔离、三入口和单次工具确认。发布后实际账号绑定的加密 Relay RPC 可读取工作台和 5 个 Dot，新增记忆接口对无效请求正常拒绝；线上没有合法记忆写入、测试业务消息或真实模型调用。真实账号浏览器写入、iOS 真机和长期运行仍未验证。
+
+证据根 `~/.local/state/dot-interaction-release-20261117/`，包含 `web-verified.json`、`live-rpc.json`、`app/web-publication.json`、App 导出／OTA 日志和 `host/activation.json`。Web 完整旧版本在 `app/previous-web/`；回退保持原挂载目录，原子恢复备份首页及 gzip，保留旧 hash 资源。宿主已完成官方停写冷备及 5 个 native home / 2354 文件、3 个共享记忆文件核验；回退走 `host/rollback.py` 的预检、停写、最新冷备与仅退入口流程，不用旧账本覆盖上线后数据。OTA 回退使用个人项目既有重发流程，并核对两个共享渠道。
+
+发布期间故障如实保留：准备时磁盘满导致 clone / scanner ENOSPC，六个过期零字节 Control proof 被逐文件核验后隔离，Control 恢复 healthy，原 5 个 Dot 按原退避自然恢复；没有删业务数据或绕过认证。首次 Web 导出因隔离 clone 的 workspace 链接失败，修正 clone 本地链接后通过。首次宿主维护在生产修改前因 status 多传 epoch 被严格 schema 拒绝，修正维护脚本后 attempt2 成功；首轮记录保留在 `host/attempt-1/`。详见 TestLoop `DEPLOY.md` 同日期条目，私有冷备与原始证据不上传。
+
 ## Hosted Dot 流式存储增量提交（2026-11-17，已部署）
 
 功能提交 `2b6cc7da782ca37067c8311cc7456d62df8c4435` 已普通推送个人 `fork/main`。
