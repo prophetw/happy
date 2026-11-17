@@ -66,6 +66,21 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   expect(narrowed.status).toBe(200);
   expect((await request(r,token,'/tasks','POST',{requestID:'inplace_denied',machineID:'machineA',projectID:'projectA'})).body.error.code).toBe('SCOPE_DENIED');
  });
+ it('tracks last bearer usage with one-minute persistence and exposes it to owner views',async()=>{
+  let time=Date.now();const r=await setup({clock:()=>time}),c=await pending(r);await approve(r,c);const token=await issue(r,c);
+  const read=async()=>(await r.ownerRequest(`/connections/${c.id}/consent`)).body.data.serviceToken;
+  expect((await read()).lastUsedAt).toBeUndefined();
+  expect((await request(r,token,'/projects')).status).toBe(200);
+  expect((await read()).lastUsedAt).toBe(time);
+  time+=30000;expect((await request(r,token,'/projects')).status).toBe(200);
+  expect((await read()).lastUsedAt).toBe(time-30000);
+  time+=31000;expect((await request(r,token,'/projects')).status).toBe(200);
+  expect((await read()).lastUsedAt).toBe(time);
+  const listed=(await r.ownerRequest('/connections')).body.data.find((x:any)=>x.id===c.id);
+  expect(listed.serviceToken.lastUsedAt).toBe(time);
+  await r.restartGateway();
+  expect((await read()).lastUsedAt).toBe(time);
+ });
  it('rejects in-place edits for pending, cross-user, non-service, empty and over-cap requests',async()=>{
   const r=await setup(),c=await pending(r);
   expect((await r.ownerRequest(`/connections/${c.id}/edit`,'POST',{expiresInMs:60000})).body.error.code).toBe('CONNECTION_NOT_APPROVED');

@@ -177,7 +177,10 @@ export function createGateway(options: GatewayOptions) {
     });
     app.get(`${base}/connections`, async req => {
         const userID = await owner(req);
-        return ok(store.list<Connection>('connection:').filter(c => c.userID === userID).map(c => grants.view(c)));
+        return ok(store.list<Connection>('connection:').filter(c => c.userID === userID).map(c => ({
+            ...grants.view(c),
+            ...(c.credentialMode === 'service-token-v1' && serviceTokens ? { serviceToken: serviceTokens.metadata(c.id) } : {}),
+        })));
     });
     app.get<{ Params: { id: string } }>(`${base}/connections/:id`, async req => {
         const p = clientAuth(req), c = grants.get(identifier.parse(req.params.id));

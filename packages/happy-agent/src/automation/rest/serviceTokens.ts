@@ -6,7 +6,9 @@ import type { MetadataStore } from './store';
 
 const recordSchema = z.object({ version: z.literal(1), connectionID: identifier, clientID: identifier, userID: identifier,
     clientFingerprint: z.string().regex(/^[a-f0-9]{64}$/), digest: z.string().regex(/^[a-f0-9]{64}$/),
-    issuedAt: z.number().int().positive(), expiresAt: z.number().int().positive() }).strict();
+    issuedAt: z.number().int().positive(), expiresAt: z.number().int().positive(),
+    /** Last successful bearer authentication; persisted at most once per minute. */
+    lastUsedAt: z.number().int().positive().optional() }).strict();
 const digest = (value: string) => createHash('sha256').update(value).digest();
 export const isServiceAuthorization = (value: unknown) => typeof value === 'string' && /^Bearer\s+hsvc1\./i.test(value);
 
@@ -29,7 +31,7 @@ export class ServiceTokens {
     }
     metadata(id: string) {
         const record = this.record(id);
-        return record ? { issued: true, issuedAt: record.issuedAt, expiresAt: record.expiresAt } : { issued: false };
+        return record ? { issued: true, issuedAt: record.issuedAt, expiresAt: record.expiresAt, ...(record.lastUsedAt !== undefined ? { lastUsedAt: record.lastUsedAt } : {}) } : { issued: false };
     }
     issue(id: string, userID: string) {
         const c = this.grants.owner(id, userID);
@@ -58,6 +60,14 @@ export class ServiceTokens {
         if (!registration || c.credentialMode !== 'service-token-v1' || c.userID !== record.userID || c.clientFingerprint !== record.clientFingerprint
             || c.expiresAt !== record.expiresAt) throw new ApiError('INVALID_SERVICE_TOKEN', 401);
         if (this.now() >= record.expiresAt) throw new ApiError('GRANT_EXPIRED', 403);
+        this.touch(record);
         return { registration, grantID: c.id };
+    }
+    /** Usage bookkeeping never blocks an authenticated call and never mutates the grant. */
+    private touch(record: { connectionID: string; lastUsedAt?: number } & Record<string, unknown>) {
+        const now = this.now();
+        if (record.lastUsedAt !== undefined && now - record.lastUsedAt < 60000) return;
+        try { this.store.set(`service-token:${record.connectionID}`, { ...record, lastUsedAt: now }); }
+        catch { /* Best-effort only; a bookkeeping write failure must not reject usage. */ }
     }
 }

@@ -15,7 +15,7 @@ function operation(path: string, verb: string, operationId: string, security: st
         responses: Object.fromEntries([200,202,400,401,403,404,409,413,426,429,503].map(status => [String(status), { description: status === 202 ? 'Mutation outcome uncertain: query the SAME requestID; no automatic redispatch.' : String(status), content: { 'application/json': { schema: { $ref: '#/components/schemas/Envelope' } } } }])) };
 }
 operation('/connections','post','requestConnection','ClientProof','Create pending consent only; no access until explicit approval.',scopeSchema);
-operation('/connections','get','listConnections','OwnerBearer','Same-origin owner approval UI only; never an automation API credential.');
+operation('/connections','get','listConnections','OwnerBearer','Same-origin owner approval UI only; never an automation API credential. Service grants include serviceToken metadata (issued/issuedAt/expiresAt and lastUsedAt, the last successful bearer authentication persisted at most once per minute).');
 operation('/connections/{id}','get','connectionStatus','ClientProof','Only the registered client that requested the connection. Includes the approved projects as projects[] with id/directory for every scope version.');
 operation('/connections/{id}/consent','get','consent','OwnerBearer','Owner-only immutable scope and key fingerprints, plus approval binding challenge.');
 operation('/connections/{id}/approve','post','approve','OwnerBearer','Exact digest/challenge; single use, pending TTL; no account secret transfer. Multi-project scope requires explicit scopeVersion=2 or 3 acknowledgement; v3 paths rechecked with online worker before approval; older approval pages fail with 426.',approvalSchema);

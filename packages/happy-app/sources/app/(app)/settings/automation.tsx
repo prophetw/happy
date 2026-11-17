@@ -42,6 +42,14 @@ function friendlyError(error: unknown) {
     return errorLabels[code] ?? '暂时无法读取或更新连接，请检查网络后重试。';
 }
 function formatTime(value: number) { return new Date(value).toLocaleString(); }
+/** Short "last used" label for cleanup of long-unused service tokens. */
+function lastUsedLabel(value: number, nowMs: number) {
+    const diff = Math.max(0, nowMs - value);
+    if (diff < 60000) return t('time.justNow');
+    if (diff < 3600000) return t('time.minutesAgo', { count: Math.floor(diff / 60000) });
+    if (diff < 86400000) return t('time.hoursAgo', { count: Math.floor(diff / 3600000) });
+    return t('time.daysAgo', { count: Math.floor(diff / 86400000) });
+}
 function screenFont(weight: 'regular' | 'semiBold' = 'regular') {
     const font = Typography.default(weight);
     return Platform.OS === 'web' ? { fontFamily: `"${font.fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif` } : font;
@@ -259,6 +267,7 @@ export default function AutomationConnections() {
                             {!!consent.options?.agents.length && <Detail label="允许的启动选项（默认启动始终可用）" value={consent.options.agents.map(a =>
                                 `${a.agent}：模型 [${a.models.length ? a.models.join(', ') : '仅默认'}]；权限模式 [${a.permissionModes.length ? a.permissionModes.join(', ') : '仅默认'}]`).join('\n')} />}
                             <Detail label="授权到期" value={formatTime(consent.expiresAt)} />
+                            {consent.credentialMode === 'service-token-v1' && <Detail label="令牌最近使用" value={consent.serviceToken?.lastUsedAt !== undefined ? `${formatTime(consent.serviceToken.lastUsedAt)} · ${lastUsedLabel(consent.serviceToken.lastUsedAt, now)}` : '尚未使用（按令牌认证统计）'} />}
                             {state === 'pending' && <Detail label="请在此时间前确认" value={formatTime(consent.pendingUntil)} />}
                         </View>
                         <Text accessibilityRole="header" style={styles.sectionTitle}>允许的操作 · {consent.methods.length} 项</Text>
@@ -298,7 +307,11 @@ export default function AutomationConnections() {
             </ItemGroup>
             <ItemGroup title="连接记录">
                 {connections.length === 0 && <View style={styles.card}><Text style={styles.description}>{signedIn ? '暂无连接记录。助手发起申请后，可从批准链接打开。' : '登录后可查看你申请和批准过的连接。'}</Text></View>}
-                {connections.map(c => <Item key={c.id} disabled={busy} title={c.name || c.clientName} subtitle={`${c.name ? `${c.clientName} · ` : ''}${c.scopeVersion !== undefined ? (c.projectIDs ?? []).join('、') : c.projectID} · ${stateLabels[displayState(c, now)] ?? '状态未知'}`} onPress={() => void load(c.id)} />)}
+                {connections.map(c => {
+                    const used = c.credentialMode === 'service-token-v1' && c.serviceToken?.issued
+                        ? ` · ${c.serviceToken.lastUsedAt !== undefined ? `最近 ${lastUsedLabel(c.serviceToken.lastUsedAt, now)}` : '未使用'}` : '';
+                    return <Item key={c.id} disabled={busy} title={c.name || c.clientName} subtitle={`${c.name ? `${c.clientName} · ` : ''}${c.scopeVersion !== undefined ? (c.projectIDs ?? []).join('、') : c.projectID} · ${stateLabels[displayState(c, now)] ?? '状态未知'}${used}`} onPress={() => void load(c.id)} />;
+                })}
                 {!!listError && <View style={styles.card}><Text accessibilityRole="alert" style={styles.error}>{listError}</Text></View>}
             </ItemGroup>
         </ItemList>
