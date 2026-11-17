@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { z } from 'zod';
 import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, hash, HostedDotJournal, savePrivate } from './hostedDotState';
+import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend } from './hostedDotStorage';
 
 export const HOSTED_DOT_LIFECYCLE_VERSION = 1 as const;
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -78,11 +79,13 @@ function configFor(b: HostedDotBinding) {
     if (config.directory !== b.directory || config.dotId !== b.dotId || config.sessionId !== b.sessionId) throw Error('hosted_lifecycle_binding_changed');
     return config;
 }
-function journalFor(b: HostedDotBinding, config: HostedDotConfig | null) {
+function journalFor(b: HostedDotBinding, config: HostedDotConfig | null, full = false) {
     const file = join(b.directory, 'state.json');
-    if (!present(file)) return null;
+    const stored = readHostedStorage(file, full ? undefined : ['inputs', 'controls']);
+    if (!stored) return null;
     if (!config) throw Error('hosted_lifecycle_binding_missing');
-    const state = HostedDotJournal.parse(read(file));
+    const state = HostedDotJournal.parse(stored);
+    if (!full) state.inputs = stored.inputs; // preserve absent consumer fields; validation above is still mandatory
     if (state.binding !== hash(config)) {
         const { effort, ...legacy } = config;
         if (state.binding !== hash(legacy)) throw Error('hosted_lifecycle_binding_changed');
@@ -124,14 +127,14 @@ function recoverLocked(b: HostedDotBinding) {
     if (status.running) return { recovered: false, reason: 'running' };
     const release = lock(join(b.directory, 'runtime.lock'), 0);
     try {
-        const config = configFor(b), state = journalFor(b, config);
+        const config = configFor(b), state = journalFor(b, config, true);
         if (!state || state.status !== 'blocked' || !recoverable.has(state.error ?? '') || state.bootstrap?.stage === 'injecting' || state.inputs.some(row => uncertain.has(row.status))) return { recovered: false, reason: 'not_safe' };
         const file = join(b.directory, 'recovery.json');
         const prior = present(file) ? z.strictObject({ attempts: integer.positive(), lastAttemptAt: integer }).parse(read(file)) : { attempts: 0, lastAttemptAt: 0 };
         if (prior.attempts && Date.now() - prior.lastAttemptAt < backoff[Math.min(prior.attempts, backoff.length - 1)]) return { recovered: false, reason: 'backoff' };
         // Account the attempt first. A crash may delay recovery, never erase backoff.
         write(file, { attempts: prior.attempts + 1, lastAttemptAt: Date.now() });
-        write(join(b.directory, 'state.json'), { ...state, status: 'starting', error: null });
+        saveHostedStorage(join(b.directory, 'state.json'), { ...state, status: 'starting', error: null });
         return { recovered: true };
     } finally { release(); }
 }
@@ -194,6 +197,25 @@ export async function stopHostedDot(raw: HostedDotBinding & { requestId: string;
                 if (prior.id === requestId && prior.action !== action) throw Error('hosted_lifecycle_request_conflict');
                 if (prior.id !== requestId && !status.controls.includes(prior.id)) throw Error('hosted_lifecycle_control_pending');
             }
+            if (!status.running) {
+                const runtimeRelease = lock(join(b.directory, 'runtime.lock'), 0);
+                try {
+                    const state = journalFor(b, configFor(b), true);
+                    if (!state && action === 'stop') {
+                        // No producer ever needs to consume a stop for an absent journal.
+                        // Only this exact request (checked above) may remove its pending stop.
+                        if (present(file)) { rmSync(file); syncDirectory(b.directory); }
+                        return;
+                    }
+                    write(file, { id: requestId, action });
+                    if (state && !state.controls.includes(requestId)) {
+                        const stored = readHostedStorage(join(b.directory, 'state.json'))!;
+                        stored.controls = [...(stored.controls ?? []), requestId];
+                        saveHostedStorage(join(b.directory, 'state.json'), stored);
+                    }
+                    return;
+                } finally { runtimeRelease(); }
+            }
             write(file, { id: requestId, action });
         } finally { releaseLaunch(); }
         const deadline = Date.now() + timeoutMs;
@@ -215,7 +237,9 @@ export async function stopHostedDot(raw: HostedDotBinding & { requestId: string;
                             if (action === 'stop') {
                                 const state = journalFor(b, configFor(b));
                                 if (state && !state.controls.includes(requestId)) {
-                                    write(join(b.directory, 'state.json'), { ...state, controls: [...state.controls, requestId] });
+                                    const stored = readHostedStorage(join(b.directory, 'state.json'))!;
+                                    stored.controls = [...(stored.controls ?? []), requestId];
+                                    saveHostedStorage(join(b.directory, 'state.json'), stored);
                                 } else if (!state) {
                                     // Before first launch there is no journal in
                                     // which to acknowledge a stop. No producer can
@@ -270,7 +294,8 @@ export function clearHostedDot(raw: ClearRequest) {
         try {
             if (floor(c.directory) > c.epoch) throw Error('hosted_lifecycle_epoch_changed');
             write(join(c.directory, 'reset-epoch.json'), { epoch: c.epoch });
-            for (const name of ['state.json', 'config.json', 'control.json', 'task-gateway.json', 'events', 'recovery.json', 'bootstrap.json', 'owner.json']) {
+            removeHostedStorage(c.directory);
+            for (const name of ['config.json', 'control.json', 'task-gateway.json', 'events', 'recovery.json', 'bootstrap.json', 'owner.json', 'admission-intent.json', 'admission-status.json']) {
                 const path = join(c.directory, name); safePath(path); rmSync(path, { recursive: true, force: true });
             }
             for (const name of ['sessions', 'archived_sessions']) { const path = join(c.codexHome, name); safePath(path); rmSync(path, { recursive: true, force: true }); }
@@ -280,3 +305,16 @@ export function clearHostedDot(raw: ClearRequest) {
     } finally { release(); }
 }
 
+/** Read-only storage boundary, available even when the producer is offline. */
+export function readHostedDotJournal(raw: HostedDotBinding) {
+    const b = binding(raw), state = journalFor(b, configFor(b));
+    if (!state) throw Error('hosted_lifecycle_journal_missing');
+    // Consumer projections must preserve absent epoch/delivery rather than grant defaults.
+    return { version: 1 as const, dotId: b.dotId, sessionId: b.sessionId, epoch: state.epoch, status: state.status, inputs: state.inputs };
+}
+export function readHostedDotEpoch(raw: HostedDotBinding) {
+    const b = binding(raw), state = journalFor(b, configFor(b));
+    if (!state) throw Error('hosted_lifecycle_journal_missing');
+    return { version: 1 as const, dotId: b.dotId, sessionId: b.sessionId, epoch: state.epoch };
+}
+export { hostedStorageBackend };

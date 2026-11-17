@@ -2,6 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpat
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { hash, HOSTED_STATE_MAX_BYTES, HostedAuthorityMetadata, HostedDotConfig } from './hostedDotState';
+import { hostedStorageBackend, readHostedStorage } from './hostedDotStorage';
 
 export const HOSTED_INPUT_AUTHORITY_VERSION = 1 as const;
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -61,7 +62,9 @@ function readSnapshot(expected: { directory: string; dotId: string; sessionId: s
     const configRead = readBounded(configFile), config = HostedDotConfig.parse(configRead.value);
     if (config.dotId !== expected.dotId || config.sessionId !== expected.sessionId || config.directory !== expected.directory)
         throw new Error('hosted_authority_binding_changed');
-    const stateRead = readBounded(stateFile, true), state = Journal.parse(stateRead.value);
+    const sqlite = hostedStorageBackend(expected.directory) === 'sqlite';
+    const stateRead = sqlite ? { value: readHostedStorage(stateFile, ['inputs']), stamp: stamp(stateFile) } : readBounded(stateFile, true);
+    const state = Journal.parse(stateRead.value);
     const floorFile = join(expected.directory, 'reset-epoch.json');
     let floorRead: ReturnType<typeof readBounded> | undefined;
     try {
@@ -98,6 +101,7 @@ function readSnapshot(expected: { directory: string; dotId: string; sessionId: s
         if (currentState.dev !== stateRead.stamp.dev || currentState.ino !== stateRead.stamp.ino) throw new StateSnapshotRace();
         throw new Error('hosted_authority_file_changed');
     }
+    if (sqlite && hash(Journal.parse(readHostedStorage(stateFile, ['inputs']))) !== hash(state)) throw new StateSnapshotRace();
     if (realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
     assertNotClearing(expected.directory);
     return { version: 1, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch,
