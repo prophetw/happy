@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiSessionClient } from './apiSession';
-import { decodeBase64, decrypt, decryptBlob, encodeBase64, encrypt } from './encryption';
+import { decodeBase64, decrypt, decryptBlob, encodeBase64, encrypt, encryptBlob } from './encryption';
 import type { Update } from './types';
 import { logger } from '@/ui/logger';
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers';
@@ -650,6 +650,43 @@ describe('ApiSessionClient v3 messages API migration', () => {
         expect(reportUsage).toHaveBeenCalledTimes(1);
         expect(mockSocket.emit.mock.calls.filter(([event]: [string]) => event === 'usage-report')).toHaveLength(1);
         await client.close();
+    });
+
+    it.each(['https://private-relay.test/home-relay', 'https://public-relay.test/public-relay'])(
+        'downloads and decrypts a Relay attachment advertised by %s',
+        async (advertisedRelay) => {
+            const serverUrl = 'https://private-relay.test/home-relay';
+            const client = new ApiSessionClient('fake-token', session, undefined, { serverUrl });
+            const ref = `sessions/${session.id}/attachments/image.enc`;
+            const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+            try {
+                mockAxiosPost.mockResolvedValueOnce({ data: { downloadUrl: `${advertisedRelay}/v1/${ref}` } });
+                mockAxiosGet.mockResolvedValueOnce({ data: encryptBlob(image, await client.getBlobKey()) });
+
+                await expect(client.downloadAndDecryptAttachment(ref)).resolves.toEqual(image);
+                expect(mockAxiosGet).toHaveBeenCalledWith(`${serverUrl}/v1/${ref}`, expect.objectContaining({
+                    headers: { Authorization: 'Bearer fake-token' },
+                }));
+            } finally {
+                await client.close();
+            }
+        },
+    );
+
+    it('uses presigned attachment URLs without Relay credentials even on the same origin', async () => {
+        const serverUrl = 'https://relay.test/home-relay';
+        const client = new ApiSessionClient('fake-token', session, undefined, { serverUrl });
+        const ref = `sessions/${session.id}/attachments/image.enc`;
+        const downloadUrl = `${serverUrl}/v1/${ref}?X-Amz-Signature=test-signature`;
+        try {
+            mockAxiosPost.mockResolvedValueOnce({ data: { downloadUrl } });
+            mockAxiosGet.mockResolvedValueOnce({ data: new Uint8Array([1]) });
+
+            await client.downloadAttachment(ref);
+            expect(mockAxiosGet).toHaveBeenCalledWith(downloadUrl, expect.objectContaining({ headers: {} }));
+        } finally {
+            await client.close();
+        }
     });
 
     it('uploads local Claude transcript image blocks and sends file before user text', async () => {

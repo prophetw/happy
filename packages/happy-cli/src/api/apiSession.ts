@@ -619,12 +619,13 @@ export class ApiSessionClient extends EventEmitter {
      * presigned URL that does not accept extra headers.
      */
     async downloadAttachment(ref: string): Promise<Uint8Array> {
-        const requestUrl = `${this.serverUrl}/v1/sessions/${this.sessionId}/attachments/request-download`;
+        const { serverUrl, token } = this;
+        const requestUrl = `${serverUrl}/v1/sessions/${this.sessionId}/attachments/request-download`;
         const requestRes = await axios.post(
             requestUrl,
             { ref },
             {
-                headers: { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                 timeout: 30000,
             },
         );
@@ -633,13 +634,13 @@ export class ApiSessionClient extends EventEmitter {
             throw new Error('request-download returned no downloadUrl');
         }
 
-        const isServerUrl = downloadUrl.startsWith(this.serverUrl);
-        const headers: Record<string, string> = {};
-        if (isServerUrl) {
-            headers['Authorization'] = `Bearer ${this.token}`;
-        }
-        const response = await axios.get(downloadUrl, {
-            headers,
+        const advertisedUrl = new URL(downloadUrl);
+        const attachmentPath = new URL(`/v1/${ref}`, serverUrl).pathname;
+        // The Relay can advertise a public origin while this session uses a
+        // private one. Fetch its authenticated route through the active Relay.
+        const isRelayAttachment = !advertisedUrl.search && advertisedUrl.pathname.endsWith(attachmentPath);
+        const response = await axios.get(isRelayAttachment ? `${serverUrl}${attachmentPath}` : downloadUrl, {
+            headers: isRelayAttachment ? { Authorization: `Bearer ${token}` } : {},
             responseType: 'arraybuffer',
             timeout: 60000,
             maxRedirects: 5,
