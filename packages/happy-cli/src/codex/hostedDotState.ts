@@ -2,6 +2,7 @@ import { existsSync, lstatSync, openSync, closeSync, fsyncSync, readFileSync, wr
 import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { SessionEnvelope } from '@slopus/happy-wire';
+import { readHostedStorage, assertHostedStorageReadyForStart } from './hostedDotStorage';
 
 export const HOSTED_STATE_MAX_BYTES = 32 * 1024 * 1024;
 
@@ -60,7 +61,9 @@ export function savePrivate(file: string, value: unknown): void {
 }
 export function loadHostedState(file: string, config: HostedDotConfig): HostedState {
     const binding = hash(config);
-    const state = existsSync(file) ? HostedDotJournal.parse(readPrivate(file)) : HostedDotJournal.parse({ version: 1, binding, epoch: existsSync(config.directory + '/reset-epoch.json') ? z.object({ epoch: z.number().int().nonnegative() }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch : 0, threadId: null,
+    assertHostedStorageReadyForStart(file);
+    const stored = readHostedStorage(file);
+    const state = stored ? HostedDotJournal.parse(stored) : HostedDotJournal.parse({ version: 1, binding, epoch: existsSync(config.directory + '/reset-epoch.json') ? z.object({ epoch: z.number().int().nonnegative() }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch : 0, threadId: null,
         creating: false, afterSeq: config.bootstrap?.afterSeq ?? 0, status: 'starting', error: null, inputs: [], outputs: [] });
     if (state.binding !== binding) {
         const { effort, ...legacy } = config;
@@ -72,7 +75,6 @@ export function loadHostedState(file: string, config: HostedDotConfig): HostedSt
     if (state.bootstrap?.stage === 'injecting') throw new Error('hosted_bootstrap_unconfirmed');
     return state;
 }
-/** Returns whether a new durable output was queued; duplicate receipts stay unchanged. */
 export function addOutput(state: HostedState, envelope: SessionEnvelope): boolean {
     const localId = `hosted:${state.epoch}:${envelope.id}`;
     const existing = state.outputs.find(o => o.localId === localId);
