@@ -1,5 +1,13 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 对话内记忆提示（2026-11-17，producer / Web 已部署，部分验证）
+
+固定发布源 `e10927bb754afb2a036be627b3890a382e2a0802` 已普通推送个人 `fork/main`，从干净 release 构建；后续 `bc558206` 未纳入。5 个 Dot producer 实际进程均运行 `/home/dev/.local/share/happy-releases/memory-visibility-20261117-e10927bb/packages/happy-cli/bin/stream-hosted-dot.mjs`，全局 CLI/daemon、Control、Relay、Worker 和既有 lifecycle/inputAuthority 未切换。宿主为 TestLoop `b87c3af`，最终 activation verified，原输入输出、权限、记忆和 13 个 gateway 保持。
+
+`/home/dev/code/happy-local/web` 已更新同源的对话内记忆提示：召回默认折叠，显示真实命中/空结果/失败，详情复用现有观察、编辑和忘记。新首页 SHA256 `565e4d8c55295f6b74e8be43a0f155204db11235f6853cdd50dd8c5b84e55961`；本机、Tailscale、公网三入口及 6 个入口 JS 一致，匿名手机尺寸浏览器 `errors=[]`。完整旧 Web 保存在 `~/.local/state/dot-memory-visibility-release-20261117/app/previous-web`，旧 hash 资源和回退入口保留。未发布 OTA、Android、新原生包或 8989。
+
+发布源 App 类型检查、changelog 一致性及 8 文件 189 项测试通过；待发布静态产物的隔离记忆闭环 8/8 通过。实际加密 Relay RPC、生产现有记忆只读召回及宿主/Web 回退预检均通过，业务写入、消息发送、模型调用均为 0。真实模型语义、真实账号业务写入、手机原生端和长期运行未验证。维护失败与恢复、最终 activation、冷备及 Web 证据见 TestLoop `DEPLOY.md` 和私有根 `~/.local/state/dot-memory-visibility-release-20261117/`。
+
 ## Dot 更新后共享排他资源阻塞（2026-11-17，已恢复并部署）
 
 本次查到会话 `cmw03esy5548zmy1dufoiyb8s` 的历史 turn 被当作整机排他占用；会话记录已超过 14 天并被清理，CLI 返回 unknown，队列一直保留资源。原 11-07 迁移备份中可核对其 daemon 启动记录、machineID、PID 3765695；savedAt 早于本次开机，当前 PID 与进程组均 ESRCH。14:44（UTC+8）通过正式 TaskQueue 事务重新核验原身份，将该历史占用归约为 failed/execution_stopped；未删除记录、修改资源或重发请求。随后“Dot 自研”原请求进入 running，seq=27215、原 session 保持；“三维图形开发源码”仍有真实同目录占用，回执已变为“同一工作目录正在被其他任务使用”。
