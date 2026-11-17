@@ -62,8 +62,10 @@ export class ScopedWorker {
             command, deadline: this.now() + 60000 }, () => this.currentGrant(t), true, launchCheck);
         this.scheduler = new TaskScheduler(this.queue, {
             stopped: async t => {
-                const session = await this.localSession(t.sessionID), machine = (await this.transport.machines()).find(m => m.id === registration.machineID);
-                if (!machine || (session.metadata as any)?.machineId !== registration.machineID) return false;
+                // The owner can attest exit after session keys expire. Requiring a
+                // decryptable session first would leave the original lease stuck forever.
+                const machine = (await this.transport.machines()).find(m => m.id === registration.machineID);
+                if (!machine) return false;
                 return (await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID: t.sessionID })).process === 'stopped';
             },
             authorize: async t => { const result = await run(t, { version: 1, method: 'sessions.status', sessionID: t.sessionID, cursor: 0, limit: 1 }, true); if(!result.ok)throw new ApiError(result.error?.code??'EXECUTION_UNAVAILABLE',503); },

@@ -91,6 +91,29 @@ it('delivers a pre-restart queued session exactly once using reviewed proof whil
     expect((await f.call(restarted, 'sessions.status', { sessionID: created.sessionID, cursor: 0, limit: 10 })).data.process).toBe('unknown');
 }, 20000);
 
+it('reconciles an expired legacy session through owner status when its message key is no longer listed', async () => {
+    const f = fixture(), legacy = await f.ordinaryLiveSession(), queued = await f.create('after-expiry');
+    f.trustPreviousOwnedChild(f.worker, queued.sessionID);
+    await f.send(f.worker, queued.sessionID, 'after-expiry-send');
+    await f.worker.tick();
+    expect(f.worker.queue.tasks().find(t => t.requestID === 'after-expiry-send')?.state).toBe('waiting-resource');
+    const list = f.transport.sessions;
+    f.transport.sessions = async (...args) => { const page = await list(...args); return { ...page, sessions: page.sessions.filter(s => s.id !== legacy.id) }; };
+    const restarted = f.restore();
+    await restarted.tick(); // Losing the message key alone is not proof of exit.
+    expect(restarted.queue.tasks().find(t => t.id === legacy.task.id)?.state).toBe('running');
+    expect(restarted.queue.tasks().find(t => t.requestID === 'after-expiry-send')?.state).toBe('waiting-resource');
+    process.kill(-f.session(legacy.id).metadata.hostPid, 'SIGTERM');
+    await until(async () => await f.cliStatus(legacy.id) === 'stopped');
+    await restarted.tick();
+    expect(restarted.queue.tasks().find(t => t.id === legacy.task.id)?.state).toBe('failed');
+    expect(restarted.queue.tasks().find(t => t.id === legacy.task.id)?.reason).toBe('execution_stopped');
+    expect(restarted.queue.tasks().find(t => t.requestID === 'after-expiry-send')?.state).toBe('running');
+    await restarted.tick();
+    expect(f.messages(queued.sessionID).filter(row => row.localId)).toHaveLength(1);
+    expect(f.noKillAuthorityCalls()).toBe(0);
+}, 20000);
+
 for (const invalid of ['missing', 'pid', 'boot'] as const) it(`keeps the original machine lease and queued message untouched with ${invalid} process proof`, async () => {
     const f = fixture(), legacy = await f.ordinaryLiveSession(), created = await f.create('waiter');
     await f.send(f.worker, created.sessionID, 'waiter-send');

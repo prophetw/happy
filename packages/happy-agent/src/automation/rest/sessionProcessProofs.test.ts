@@ -1,14 +1,32 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { SessionProcessProofs, readLinuxProcess, type LinuxProcessIdentity } from './sessionProcessProofs';
+import { SessionProcessArchive, SessionProcessProofs, readLinuxProcess, type LinuxProcessIdentity } from './sessionProcessProofs';
 import { TaskQueue } from './taskQueue';
 import { TaskScheduler } from './taskScheduler';
 
 const roots: string[] = [], children: ChildProcess[] = [];
+it('keeps immutable process generations through old writes and refuses corrupt or ambiguous evidence', () => {
+    const root = mkdtempSync(join(tmpdir(), 'happy-process-archive-')); roots.push(root);
+    const directory = join(root, 'processes'), archive = new SessionProcessArchive(directory);
+    expect(archive.read('session')).toBeUndefined(); expect(existsSync(directory)).toBe(false);
+    const old = { savedAt: 1, metadata: { machineId: 'machine', hostPid: 12345, startedBy: 'daemon' as const, startedFromDaemon: true as const } };
+    const current = { ...old, savedAt: 2, metadata: { ...old.metadata, hostPid: 54321 } };
+    archive.record('session', current); archive.record('session', old); archive.record('session', current);
+    expect(new SessionProcessArchive(directory).read('session')).toEqual(current);
+    const sessionDirectory = join(directory, readdirSync(directory)[0]), files = readdirSync(sessionDirectory);
+    expect(files).toHaveLength(2);
+    expect(statSync(sessionDirectory).mode & 0o777).toBe(0o700);
+    const file = join(sessionDirectory, files[0]); chmodSync(file, 0o644);
+    expect(() => archive.read('session')).toThrow(); chmodSync(file, 0o600);
+    archive.record('session', { ...current, metadata: { ...current.metadata, hostPid: 67890 } });
+    expect(() => archive.read('session')).toThrow('SESSION_PROCESS_BINDING_AMBIGUOUS');
+    writeFileSync(file, '{corrupt'); expect(() => archive.read('session')).toThrow();
+    expect(() => archive.read('../escape')).toThrow();
+});
 async function setup() {
     const root = mkdtempSync(join(tmpdir(), 'happy-process-proof-')); roots.push(root);
     const repo = join(root, 'repo'); mkdirSync(repo); execFileSync('git', ['init','-q'], { cwd: repo });

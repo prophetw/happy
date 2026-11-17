@@ -46,7 +46,10 @@
 第一次写文件前运行 `git rev-parse --show-toplevel` 和
 `git status --porcelain=v1 -uall`，记录已有改动。只追踪、修改和暂存本任务路径；
 不覆盖其他任务的改动，不使用全局 `git add .` / `git add -A` / reset。
-默认不 commit、不 push，除非用户要求；提交前检查暂存文件清单。
+完成当前任务及最低充分验证后，默认允许只提交本任务文件，并普通 push 到已核实的
+个人远端 `fork` 和当前任务目标分支，无需逐次确认。提交前检查暂存文件清单；不得
+提交其他人的改动或 force push。用户明确要求不提交、不推送或仅审阅时优先遵循。
+这项 Git 授权不包含额外的部署、OTA、商店或 npm 发布。
 
 ## 3. “preview prophet” 的个人发布目标
 

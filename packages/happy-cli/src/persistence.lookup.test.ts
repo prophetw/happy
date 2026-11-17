@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { markSessionStopped, persistSession, readPersistedSession, readPersistedSessions, type PersistedSession } from './persistence';
+import { archivePersistedSessionProcesses, markSessionStopped, persistSession, readPersistedSession, readPersistedSessionProcess, readPersistedSessions, type PersistedSession } from './persistence';
+import { observePersistedProcess } from './daemon/automationControl';
 
 const config = vi.hoisted(() => ({ sessionsFile: '', logsDir: '/tmp', isDaemonProcess: false }));
 const clock = vi.hoisted(() => ({ uptime: vi.fn(() => 365 * 24 * 60 * 60) }));
@@ -85,6 +86,46 @@ it('rechecks retention as time passes without rereading unchanged bytes', () => 
     expect(readPersistedSession('s1')).toBeDefined();
     vi.mocked(Date.now).mockReturnValue(now + 14 * DAY);
     expect(readPersistedSession('s1')).toBeUndefined(); expect(reads()).toBe(1);
+});
+
+it('retains process reconciliation across key expiry, pruning and a fresh file generation', () => {
+    const old = record({ savedAt: Date.now() - 15 * DAY,
+        metadata: { hostPid: 12345, machineId: 'machine', startedBy: 'daemon', startedFromDaemon: true, path: '/fixture/project' } as PersistedSession['metadata'] });
+    write({ old });
+    const processRecord = () => readPersistedSessionProcess('old');
+    const status = () => observePersistedProcess(processRecord(), 'machine', Date.now() - 365 * DAY);
+    expect(readPersistedSession('old')).toBeUndefined();
+    expect(status()).toBe('stopped');
+    persistSession('new', record());
+    const bytes = readFileSync(config.sessionsFile, 'utf8');
+    const stored = JSON.parse(bytes);
+    expect(stored.sessions.old).toBeUndefined();
+    expect(processRecord()).toEqual({ savedAt: old.savedAt,
+        metadata: { hostPid: 12345, machineId: 'machine', startedBy: 'daemon', startedFromDaemon: true } });
+    const replacement = join(root, 'restart'); writeFileSync(replacement, bytes); renameSync(replacement, config.sessionsFile);
+    expect(status()).toBe('stopped');
+    // A surviving/reused PID, group or permission error is still unknown.
+    vi.mocked(process.kill).mockReturnValue(true); expect(status()).toBe('unknown');
+    vi.mocked(process.kill).mockImplementation(pid => { if (pid < 0) return true; throw Object.assign(Error('gone'), { code: 'ESRCH' }); });
+    expect(status()).toBe('unknown');
+    vi.mocked(process.kill).mockImplementation(() => { throw Object.assign(Error('denied'), { code: 'EPERM' }); });
+    expect(status()).toBe('unknown');
+    // A resumed session supersedes the archived identity, even before it stops.
+    persistSession('old', { ...old, savedAt: Date.now(), metadata: { ...old.metadata, hostPid: 54321 } });
+    expect(processRecord()?.metadata.hostPid).toBe(54321);
+    // An older process rewrites the old registry, including a stale session.
+    write({ old }); expect(processRecord()?.metadata.hostPid).toBe(54321);
+    writeFileSync(config.sessionsFile, '{broken'); expect(processRecord()).toBeUndefined();
+});
+
+it('archives startup evidence before a surviving old-version writer removes expired keys', () => {
+    const old = record({ savedAt: Date.now() - 15 * DAY,
+        metadata: { hostPid: 12345, machineId: 'machine', startedBy: 'daemon', startedFromDaemon: true } as PersistedSession['metadata'] });
+    write({ old }); archivePersistedSessionProcesses();
+    // Old binaries only write {sessions}, and know nothing about the process archive.
+    write({ other: record() });
+    expect(observePersistedProcess(readPersistedSessionProcess('old'), 'machine', Date.now() - 365 * DAY)).toBe('stopped');
+    expect(readPersistedSession('old')).toBeUndefined();
 });
 
 it('rechecks a live PID on every lookup and expires its key only when absence is confirmed', () => {

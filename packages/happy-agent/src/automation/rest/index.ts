@@ -25,3 +25,5 @@ export { WorkspaceLifecycle, workspacePolicySchema } from './workspaceLifecycle'
 export type { WorkspacePolicy, WorkspacePlan, ActivityProbe } from './workspaceLifecycle';
 export { SessionProcessProofs, readLinuxProcess, LinuxProcessIdentitySchema } from './sessionProcessProofs';
 export type { LinuxProcessIdentity } from './sessionProcessProofs';
+export { SessionProcessArchive, PersistedSessionProcessSchema } from './sessionProcessProofs';
+export type { PersistedSessionProcess } from './sessionProcessProofs';

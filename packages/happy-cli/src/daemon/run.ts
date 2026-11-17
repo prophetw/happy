@@ -18,7 +18,7 @@ import { startCaffeinate, stopCaffeinate } from '@/utils/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
-import { writeDaemonState, DaemonLocallyPersistedState, readDaemonState, acquireDaemonLock, releaseDaemonLock, readPersistedSessions, readPersistedSession, readCredentials, readSettings, persistSession, markSessionStopped } from '@/persistence';
+import { writeDaemonState, DaemonLocallyPersistedState, readDaemonState, acquireDaemonLock, releaseDaemonLock, readPersistedSessions, readPersistedSessionProcess, archivePersistedSessionProcesses, readCredentials, readSettings, persistSession, markSessionStopped } from '@/persistence';
 import type { PersistedSession } from '@/persistence';
 
 import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
@@ -197,6 +197,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     // Retain session data after process exits so resume can still find it.
     // Pre-populate from disk so sessions survive daemon restarts.
     const sessionIdToFinishedSession = new Map<string, TrackedSession>();
+    archivePersistedSessionProcesses();
     const persisted = readPersistedSessions();
     for (const [id, s] of Object.entries(persisted)) {
       sessionIdToFinishedSession.set(id, {
@@ -1110,7 +1111,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
           const tracked = getCurrentChildren().find(s => s.happySessionId === sessionID)
             ?? sessionIdToFinishedSession.get(sessionID);
           if (!tracked || tracked.startedBy === 'persisted')
-            return observePersistedProcess(readPersistedSession(sessionID), machineId, bootTimeMs);
+            return observePersistedProcess(readPersistedSessionProcess(sessionID), machineId, bootTimeMs);
           return observeOwnedProcess(tracked ? { pid: tracked.pid,
             owned: tracked.startedBy === 'daemon' && !!tracked.childProcess,
             stopping: stoppingPids.has(tracked.pid) } : undefined);

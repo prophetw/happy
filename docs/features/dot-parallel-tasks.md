@@ -63,6 +63,39 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 ## 保留、清理与集成
 
+### 会话密钥过期与进程核验（2026-11-17，待部署）
+
+会话密钥的 14 天保留期不再决定队列能否核验旧进程。daemon 启动时、持久会话写入前，将本机 daemon 启动记录的最小字段保存到 `<sessionsFile>.processes/<sha256(sessionID)>/`：sessionID、machineId、hostPid、savedAt 和原 daemon 启动标记，不保存密钥、正文或路径。复用现有私有 MetadataStore，目录 0700、文件 0600；每次启动代次独立、原子写入，旧版本会话继续重写 `sessions.json` 不会删除这些记录，迟到旧记录也不能覆盖新绑定。相同时间但不同身份、损坏或不安全权限均拒绝核验。
+
+状态读取仍由原 `observePersistedProcess` 检查机器绑定、启动时间与当前 PID/进程组；只有启动早于本次开机，或 PID 和进程组均为 ESRCH，才确认 stopped。活 PID、残留组和权限错误保持 unknown，不新增停止或重发权限。队列在旧会话已无法解密/列出时，仍能直接向绑定机器查询原 session 的停止状态；确认后按既有 `execution_stopped` 归约，保留原任务、请求、资源和失败历史，后续任务继续原队列。
+
+发布与回滚备份必须同时包含 `sessions.json.processes/`、原会话文件、机器队列及其密钥。进程记录不跟随会话保留期自动删除；旧可执行程序可以忽略该目录，但回滚不能删除新记录或恢复旧账本覆盖新任务。首次更新前已丢失且没有可核对备份的记录仍会 unknown，不能用猜测补造 stopped。
+
+部署验收除 connected/ready 外，须核对所有未终态的 `machine/exclusive` 占用、原排队任务的 reason/seq/派发状态；重启 Worker 后再次核对。真正存在的目录或命名资源占用仍需等待，不能为了清除提示而取消其他工作。
+
+### Happy Dot 服务更新指南
+
+这次修复覆盖会话保留期、旧版本会话写入和 Worker 重启导致的停止证据丢失。它不保证所有 resource-wait 都消失：真实目录/命名资源冲突、未确认的存活进程、撤权、存储损坏和修复前已丢失的记录仍需分别处理。
+
+1. **确定实际更新对象。** 仅改 Worker/调度时只切 Worker，不顺带停 Dot producer、宿主、Relay 或 Web。用 `systemctl show happy-automation-worker.service -p MainPID -p ExecStart -p DropInPaths -p KillMode` 核对实际 release，不能从源码目录或 CLI 版本号推断。保留 `KillMode=process`，独立业务会话继续运行。
+2. **发布前保存状态。** 同一 OS 用户运行下面的只读检查，把结果存入私有发布目录。逐项核实整机排他、blocked/未知进程、原排队 requestID/sessionID/seq；已存在的真实占用应记录预期，不用改锁掩盖它。若有无法解释的整机排他，先调查，不能把它带过发布验收。
+
+   ```bash
+   node scripts/check-worker-queue.mjs \
+     --config /etc/happy-control/worker.json \
+     --runtime /absolute/path/to/actual-release \
+     --require-no-global-holders > /private/release/queue-before.json
+   ```
+
+   检查只读机器账本，不输出任务正文或凭据；退出码 0 表示读取成功且严格模式无整机排他，2 表示仍有整机排他，1 表示读取/配置失败。0 不代表业务任务全部结束，必须阅读 waiting/uncertain 及其 blockers。
+3. **准备可回退的固定产物。** 从当次 fetch 一致、干净的个人 main 构建；验证本次相关测试及 CLI 内联依赖。保存实际 argv、PID/startTicks、配置与 drop-in 哈希，以及存活业务会话的 PID/startTicks/cgroup。候选文件名必须排在现有覆盖配置之后，并在启动前检查最终生效 argv。
+4. **由独立维护单元切换。** 使用经过审阅的现有 Worker 发布协调器，正常停止旧 Worker，确认 daemon owner/lock 释放。保持业务会话不被终止；停写段备份 Worker journal/receipts、机器队列和 `.payload-key`，同时保存 `sessions.json` 与 `sessions.json.processes/` 的一致快照和哈希。活跃 worktree 保留原位，不把活动目录叫冷备。快照发生变化或校验失败则停止切换并恢复原入口，不能跳过备份。用新不可变 release/drop-in 启动，保留所有原请求与当前数据。
+5. **验收恢复能力。** 核对新 PID/真实入口/哈希、Control connected、原业务会话身份不变，确认最小进程档案已从原会话注册表初始化。再次执行上面的队列检查（runtime 换成新 release），逐原 ID 对比；等待至少一个实际调度/收集周期，原排队任务应开始或显示可解释的真实 blocker，不能新增不明的 machine/exclusive。观察健康日志中的 unavailable、Exception、FAILED；错误必须解释或回退。不能用新 requestID 重发来“验收恢复”。
+6. **升级/重启的专项验证。** 发布回归必须覆盖旧密钥过期并被旧 CLI 写入删除、Worker 重建后 owner status 可查、PID/组仍活及权限错误时不放行、停止后原消息只发送一次。生产可以用自然排队的原任务验证；无合适任务时使用隔离实际子进程测试，不为验收发未经用户交办的付费模型任务。
+7. **需要回退时只退可执行入口。** 先保存最新账本和进程档案，核对旧 reader 能读当前格式，再由独立协调器撤销本次所属 drop-in。保留新消息、回执、进程档案与 worktree，不用发布前备份覆盖上线后的数据。回退后重复状态与原任务验收。
+
+遇到本文提示时，先看只读报告：`globalHolders=[]` 而 waiting.blockers 指向同 checkout/命名资源，通常是正常等待；有历史 legacy 整机占用时，核对原 machine/session/PID/启动时刻和当前内核证据。修复前记录已被删掉时，只能使用可验证的原备份或原 owner 状态做受限归约，并保留证据；没有证据就保持 unknown，不删锁、不伪造 completed、不取消别人的真实工作。scanner/producer 也需要更新时，另遵循 TestLoop 的 `docs/features/dot-maintenance-admission.md`：先取得各自 pause ACK，切换后只 resume 本次持有的 pause，不能把 scanner 暂停当成所有输入已冻结。
+
 默认保留所有 worktree、分支、日志和改动。失败、取消、dirty 或停止证据不足时不清理。`cleanCompletedWorkspace` 只用于操作者明确请求的本机维护：所有关联任务 completed、Git status 完全干净、调用方提供真实进程停止证明，才允许 `git worktree remove`；不删除分支。completed 回执显示 resultCommit 和 dirty；没有新提交或仍有 dirty 不得称代码已按 commit 交付。保存目录、任务 ID 和分支即可由用户继续检查；不能重放未知副作用任务作为“恢复”。
 
 派发不再把原目录的暂存、未暂存或未跟踪改动作为拒绝条件。`integration` 保持原请求、原会话、原 cwd，不自动 stash/reset/commit，也不替换用户文件。实际 merge/push、测试服务操作由执行 Agent 按原授权和具体文件冲突处理；派发器不通过“清空工作区”解决问题。

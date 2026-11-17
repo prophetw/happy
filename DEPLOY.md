@@ -1,5 +1,21 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 更新后共享排他资源阻塞（2026-11-17，线上历史占用已恢复；代码待部署）
+
+本次查到会话 `cmw03esy5548zmy1dufoiyb8s` 的历史 turn 被当作整机排他占用；会话记录已超过 14 天并被清理，CLI 返回 unknown，队列一直保留资源。原 11-07 迁移备份中可核对其 daemon 启动记录、machineID、PID 3765695；savedAt 早于本次开机，当前 PID 与进程组均 ESRCH。14:44（UTC+8）通过正式 TaskQueue 事务重新核验原身份，将该历史占用归约为 failed/execution_stopped；未删除记录、修改资源或重发请求。随后“Dot 自研”原请求进入 running，seq=27215、原 session 保持；“三维图形开发源码”仍有真实同目录占用，回执已变为“同一工作目录正在被其他任务使用”。
+
+源码修复独立保留最小进程核验记录，支持 surviving old CLI 写入，并让 Worker 在旧密钥不可用时仍可向绑定机器核验停止，见[运行契约](docs/features/dot-parallel-tasks.md#会话密钥过期与进程核验2026-11-17待部署)。未改调度并发配置、放宽 unknown 或执行取消。
+
+验证：新增两处回归先红后绿；CLI 四文件 55 项、agent proof/restart 两文件 18 项通过，另有 parallel/project 两文件 35 项通过（不重复累计 proof 套件）。两包类型检查、agent/CLI pkgroll 和 CLI 内联依赖检查通过；最终 CLI bundle 在两个全新 Node 进程间验证旧格式覆写后仍能读取进程证据且不保留密钥。构建有既有 bin/空声明 chunk 与依赖内联警告；构建产物探针最初两次错误使用内部导出名，按实际 bundle namespace 修正后通过，不把探针失败记作产品通过。
+
+TestLoop 隔离 Chromium 的原等待→恢复→完成七组检查通过，页面/Console/非预期 HTTP 错误为空，真实付费模型调用为 0。该浏览器使用执行端夹具，不代替真实账号页面或 Worker 新版上线验收。
+
+| 隔离验收节点 | 截图 |
+| --- | --- |
+| 资源恢复后原任务完成 | [查看](http://100.116.89.36:3210/img-bed/images/11f330be-09cd-432f-b0f7-d3d7cd87c4d9.png) |
+
+私有证据 `/home/dev/.local/state/happy-dot-resource-repair-20261117/` 包含修复前快照、身份与开机证据、受限事务脚本、回归/构建日志及产物探针；浏览器在 TestLoop `.e2e-artifacts/dot-autonomous/2026-11-17T06-44-17-942Z/`。服务可执行入口没有切换。正式发布仍需提交/推送授权和可用维护通道；本次宿主 PowerShell→WSL 实际返回 `0x8007274c`，当前进程 sudo 被 NoNewPrivileges 拒绝，未借此重启整台 WSL。长期运行、真机与修复版本实际部署未验证。
+
 ## Happy Dot 交互减法（2026-11-17，Web / iOS OTA 已发布）
 
 功能提交 `5f384e3dd45f0c33342dd547751110fd2a0ca07f` 已普通推送个人 `fork/main`，发布前已保留当前主线的图片输入与流式存储等增量。Web / OTA 从当次 fetch 一致、干净的独立 main clone 构建，源目录为 `~/.local/state/dot-interaction-release-20261117/app/source`。本版常用入口收为对话／工作／记忆，记忆表单直接调用已认证工作台加密 RPC，托管工具预览提供一次确认按钮；原授权及未知写入不重放的边界保持。

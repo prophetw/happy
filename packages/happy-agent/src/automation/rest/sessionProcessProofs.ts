@@ -1,11 +1,49 @@
-import { readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { MetadataStore } from './store';
 import { canonicalRepository } from './taskWorkspaces';
+import { hash } from '../journal';
+import { canonicalBody } from './auth';
 
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const absolute = z.string().min(1).max(4096).refine(isAbsolute);
+export const PersistedSessionProcessSchema = z.object({
+    savedAt: z.number().finite().positive(),
+    metadata: z.object({ machineId: identifier, hostPid: z.number().int().positive(),
+        startedBy: z.literal('daemon'), startedFromDaemon: z.literal(true) }).strict(),
+}).strict();
+export type PersistedSessionProcess = z.infer<typeof PersistedSessionProcessSchema>;
+const archivedProcessSchema = z.object({ sessionID: identifier, process: PersistedSessionProcessSchema }).strict();
+
+/** Minimal launch records, independent of expiring message keys and old-version writers.
+ * Generations are immutable: an old process cannot overwrite a newer session binding.
+ * No record grants kill/dispatch authority or proves exit without fresh owner checks.
+ */
+export class SessionProcessArchive {
+    constructor(readonly directory: string) {}
+    private store(sessionID: string, create = true) {
+        identifier.parse(sessionID);
+        return new MetadataStore(join(this.directory, hash(sessionID)), 1024 * 1024, create);
+    }
+    record(sessionID: string, process: PersistedSessionProcess) {
+        const record = archivedProcessSchema.parse({ sessionID, process }), store = this.store(sessionID);
+        const key = `process:${process.savedAt}:${hash(canonicalBody(record))}`;
+        if (store.get(key) === null) store.set(key, record);
+    }
+    read(sessionID: string): PersistedSessionProcess | undefined {
+        identifier.parse(sessionID);
+        if (!lstatSync(join(this.directory, hash(sessionID)), { throwIfNoEntry: false })) return undefined;
+        const records = this.store(sessionID, false).list<unknown>('process:').map(value => {
+            const record = archivedProcessSchema.parse(value);
+            if (record.sessionID !== sessionID) throw new Error('SESSION_PROCESS_BINDING_CHANGED');
+            return record.process;
+        }).sort((a, b) => b.savedAt - a.savedAt);
+        if (records.length > 1 && records[0].savedAt === records[1].savedAt
+            && canonicalBody(records[0]) !== canonicalBody(records[1])) throw new Error('SESSION_PROCESS_BINDING_AMBIGUOUS');
+        return records[0];
+    }
+}
 export const LinuxProcessIdentitySchema = z.object({
     pid: z.number().int().positive(), uid: z.number().int().nonnegative(),
     bootID: z.string().uuid(), startTicks: z.string().regex(/^\d{1,32}$/),

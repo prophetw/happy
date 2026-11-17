@@ -14,6 +14,7 @@ import * as z from 'zod';
 import { encodeBase64, decodeBase64 } from '@/api/encryption';
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
+import { SessionProcessArchive, PersistedSessionProcessSchema, type PersistedSessionProcess } from 'happy-agent/automation';
 
 export const SandboxConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -448,6 +449,15 @@ type SessionsFile = {
   sessions: Record<string, PersistedSession>;
 };
 
+function processRecord(session: PersistedSession): PersistedSessionProcess | undefined {
+  const metadata = session.metadata;
+  const parsed = PersistedSessionProcessSchema.safeParse({ savedAt: session.savedAt, metadata: {
+    machineId: metadata?.machineId, hostPid: metadata?.hostPid,
+    startedBy: metadata?.startedBy, startedFromDaemon: metadata?.startedFromDaemon,
+  } });
+  return parsed.success ? parsed.data : undefined;
+}
+
 const SESSION_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 /** Last time this session was known to be running (older records: when it started). */
@@ -506,7 +516,7 @@ export function readPersistedSessions(): Record<string, PersistedSession> {
 }
 
 // One parsed file generation, not a cache of process liveness or retention decisions.
-let sessionIndex: { file: string; stamp: string; sessions: Record<string, PersistedSession> } | undefined;
+let sessionIndex: { file: string; stamp: string; data: SessionsFile } | undefined;
 
 function sessionsFileStamp(fd?: number): string {
   const info = fd === undefined ? statSync(configuration.sessionsFile, { bigint: true }) : fstatSync(fd, { bigint: true });
@@ -515,8 +525,8 @@ function sessionsFileStamp(fd?: number): string {
   return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.mode}:${info.uid}:${info.gid}:${info.nlink}`;
 }
 
-/** Targeted status lookup. Writes and startup retain the uncached full-reader path. */
-export function readPersistedSession(sessionId: string): PersistedSession | undefined {
+/** One pinned generation shared by key lookup and process reconciliation. */
+function readSessionIndex(): SessionsFile {
   let fd: number | undefined;
   try {
     const file = configuration.sessionsFile;
@@ -528,20 +538,55 @@ export function readPersistedSession(sessionId: string): PersistedSession | unde
       const data = JSON.parse(readFileSync(fd, 'utf-8')) as SessionsFile;
       const after = sessionsFileStamp(fd);
       if (before !== after || after !== sessionsFileStamp() || !data?.sessions || typeof data.sessions !== 'object' || Array.isArray(data.sessions)
-          || Object.values(data.sessions).some(value => value == null)) return undefined;
-      sessionIndex = { file, stamp: after, sessions: data.sessions };
+          || Object.values(data.sessions).some(value => value == null)) throw new Error('SESSIONS_FILE_UNAVAILABLE');
+      sessionIndex = { file, stamp: after, data };
     }
-    if (!Object.hasOwn(sessionIndex.sessions, sessionId)) return undefined;
-    const session = sessionIndex.sessions[sessionId];
+    return sessionIndex.data;
+  } catch (error) {
+    sessionIndex = undefined;
+    throw error;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Targeted key lookup. The UI/reconnect retention policy is unchanged. */
+export function readPersistedSession(sessionId: string): PersistedSession | undefined {
+  try {
+    const { sessions } = readSessionIndex();
+    if (!Object.hasOwn(sessions, sessionId)) return undefined;
+    const session = sessions[sessionId];
     const now = Date.now(), bootTimeMs = now - os.uptime() * 1000;
     if (!isSessionProcessRunning(session, bootTimeMs) && !(now - lastAliveAt(session) < SESSION_MAX_AGE_MS)) return undefined;
     // Do not let callers mutate the next reader's cached key or identity metadata.
     return structuredClone(session);
   } catch {
-    sessionIndex = undefined;
     return undefined;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Local launch evidence only; callers must still probe PID AND process group on every use. */
+export function readPersistedSessionProcess(sessionId: string): PersistedSessionProcess | undefined {
+  try {
+    const { sessions } = readSessionIndex();
+    const archived = new SessionProcessArchive(configuration.sessionsFile + '.processes').read(sessionId);
+    if (!Object.hasOwn(sessions, sessionId)) return archived;
+    const current = processRecord(sessions[sessionId]);
+    if (!current) return undefined;
+    // A delayed old-version registry write cannot replace a newer launch binding.
+    if (archived && archived.savedAt > current.savedAt) return archived;
+    if (archived && archived.savedAt === current.savedAt && JSON.stringify(archived) !== JSON.stringify(current)) return undefined;
+    return current;
+  } catch { return undefined; }
+}
+
+/** Called before daemon startup filtering and before writes can prune old keys. */
+export function archivePersistedSessionProcesses(): void {
+  if (!existsSync(configuration.sessionsFile)) return;
+  const archive = new SessionProcessArchive(configuration.sessionsFile + '.processes');
+  for (const [id, session] of Object.entries(readSessionIndex().sessions)) {
+    const record = processRecord(session);
+    if (record) archive.record(id, record);
   }
 }
 
@@ -565,14 +610,17 @@ export function markSessionStopped(sessionId: string): void {
 
 function writeSessionsFile(sessions: Record<string, PersistedSession>): void {
   const tmpFile = configuration.sessionsFile + '.tmp';
-  writeFileSync(tmpFile, JSON.stringify({ sessions }, null, 2), 'utf-8');
+  writeFileSync(tmpFile, JSON.stringify({ sessions }, null, 2), { encoding: 'utf-8', mode: 0o600 });
   renameSync(tmpFile, configuration.sessionsFile);
   sessionIndex = undefined;
 }
 
 export function persistSession(sessionId: string, session: PersistedSession): void {
   try {
+    archivePersistedSessionProcesses();
     const existing = readPersistedSessions();
+    const record = processRecord(session);
+    if (record) new SessionProcessArchive(configuration.sessionsFile + '.processes').record(sessionId, record);
     existing[sessionId] = session;
     writeSessionsFile(existing);
   } catch (error) {
