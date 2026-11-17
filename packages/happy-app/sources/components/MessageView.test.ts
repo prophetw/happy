@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as Clipboard from 'expo-clipboard';
-import type { AgentTextMessage, Message, UserTextMessage } from '@/sync/typesMessage';
+import type { AgentTextMessage, Message, ToolCallMessage, UserTextMessage } from '@/sync/typesMessage';
 
 vi.hoisted(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true));
 vi.mock('react-native', async () => {
@@ -38,6 +38,7 @@ vi.mock('./LongPressCopyable', async () => {
 });
 
 import { MessageView } from './MessageView';
+import { ToolCallRendererContext } from './tools/ToolCallRendererContext';
 import { sync } from '@/sync/sync';
 import { formatMessageTimestamp } from '@/utils/messageTimestamp';
 
@@ -285,6 +286,39 @@ it('does not turn a copied agent preview into a host confirmation', () => {
     vi.mocked(sync.sendMessage).mockClear();
     act(() => markdown.props.onOptionPress({ title: command }));
     expect(sync.sendMessage).not.toHaveBeenCalled();
+});
+
+describe('tool call renderer context', () => {
+    const toolMessage: ToolCallMessage = {
+        kind: 'tool-call', id: 'tool-1', localId: null, createdAt: Date.now(),
+        tool: {
+            name: 'McpTool', state: 'completed', input: { server: 'dot_memory', tool: 'dot_memory_recall', arguments: {} },
+            createdAt: Date.now(), startedAt: Date.now(), completedAt: Date.now(), description: null,
+        },
+        children: [],
+    };
+
+    function renderWith(renderer: ((context: any) => React.ReactNode) | null) {
+        const message = React.createElement(MessageView, { message: toolMessage, sessionId: 'session', metadata: null });
+        return renderer ? React.createElement(ToolCallRendererContext.Provider, { value: renderer }, message) : message;
+    }
+
+    it('lets a provider replace a selected tool row', () => {
+        const custom = React.createElement('MemoryHint');
+        let renderer!: ReturnType<typeof create>;
+        act(() => { renderer = create(renderWith(() => custom)); }); renderers.push(renderer);
+        expect(renderer.root.findAllByType('MemoryHint')).toHaveLength(1);
+        expect(renderer.root.findAllByType('ToolView')).toHaveLength(0);
+    });
+
+    it('falls back to ToolView when the renderer returns undefined and without a provider', () => {
+        let renderer!: ReturnType<typeof create>;
+        act(() => { renderer = create(renderWith(() => undefined)); }); renderers.push(renderer);
+        expect(renderer.root.findAllByType('ToolView')).toHaveLength(1);
+        act(() => { renderer.update(renderWith(null)); });
+        expect(renderer.root.findAllByType('ToolView')).toHaveLength(1);
+        expect(renderer.root.findAllByType('MemoryHint')).toHaveLength(0);
+    });
 });
 
 describe('agent message copy button', () => {

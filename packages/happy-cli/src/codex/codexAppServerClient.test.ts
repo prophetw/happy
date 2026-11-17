@@ -269,7 +269,7 @@ describe('CodexAppServerClient sandbox integration', () => {
         await client.disconnect();
     });
 
-    it.each(['mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageGeneration'])
+    it.each(['dynamicToolCall', 'webSearch', 'imageGeneration'])
     ('reports execution boundaries for an otherwise unmapped native %s', async (type) => {
         const { CodexAppServerClient } = await import('./codexAppServerClient');
         const client = new CodexAppServerClient();
@@ -283,6 +283,55 @@ describe('CodexAppServerClient sandbox integration', () => {
         expect(events).toEqual([
             { type: 'token_speed_tool_begin', call_id: 'thread-main:tool-1' },
             { type: 'token_speed_tool_end', call_id: 'thread-main:tool-1' },
+        ]);
+    });
+
+    it('emits legacy MCP tool call begin and end with scoped ids and raw payload fields', async () => {
+        const { CodexAppServerClient } = await import('./codexAppServerClient');
+        const client = new CodexAppServerClient();
+        const events: Array<Record<string, unknown>> = [];
+        client.setEventHandler((event) => events.push(event));
+        const argumentsPayload = { query: 'status' };
+        const resultPayload = { content: [{ type: 'text', text: '{"state":"completed"}' }] };
+
+        (client as any).handleNotification('item/started', {
+            threadId: 'thread-main',
+            item: {
+                type: 'mcpToolCall', id: 'tool-1', server: 'happy-control', tool: 'status',
+                arguments: argumentsPayload, status: 'inProgress',
+            },
+        });
+        (client as any).handleNotification('item/completed', {
+            threadId: 'thread-main',
+            item: {
+                type: 'mcpToolCall', id: 'tool-1', server: 'happy-control', tool: 'status',
+                arguments: argumentsPayload, status: 'completed', result: resultPayload,
+            },
+        });
+
+        expect(events).toEqual([
+            {
+                type: 'mcp_tool_call_begin',
+                call_id: 'thread-main:tool-1',
+                callId: 'thread-main:tool-1',
+                server: 'happy-control',
+                tool: 'status',
+                arguments: argumentsPayload,
+                result: undefined,
+                error: undefined,
+                status: 'inProgress',
+            },
+            {
+                type: 'mcp_tool_call_end',
+                call_id: 'thread-main:tool-1',
+                callId: 'thread-main:tool-1',
+                server: 'happy-control',
+                tool: 'status',
+                arguments: argumentsPayload,
+                result: resultPayload,
+                error: undefined,
+                status: 'completed',
+            },
         ]);
     });
 

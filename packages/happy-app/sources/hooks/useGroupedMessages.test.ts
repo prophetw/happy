@@ -303,6 +303,50 @@ describe('useGroupedMessages', () => {
         });
     });
 
+    it('keeps Dot memory tools visible instead of folding them into work', () => {
+        const memoryCall = toolMessage('tool-memory', 4);
+        const memory: ToolCallMessage = {
+            ...memoryCall,
+            tool: {
+                ...memoryCall.tool,
+                name: 'McpTool',
+                input: { server: 'dot_memory', tool: 'dot_memory_recall', arguments: { query: '偏好' } },
+            },
+        };
+        const messages: Message[] = [
+            {
+                kind: 'agent-text',
+                id: 'agent-final',
+                localId: null,
+                createdAt: 5,
+                text: 'done',
+            },
+            memory,
+            toolMessage('tool-hidden', 3),
+            {
+                kind: 'user-text',
+                id: 'user',
+                localId: null,
+                createdAt: 1,
+                text: 'recall',
+            },
+        ];
+
+        const items = groupMessagesForDisplay(messages, true);
+
+        // The memory hint stays a top-level row; only the ordinary tool collapses.
+        expect(items.map((item) => item.id)).toEqual([
+            'user',
+            'work-agent-final',
+            'tool-memory',
+            'agent-final',
+        ]);
+        const group = items.find((item) => item.type === 'agent-work-group');
+        expect(group).toMatchObject({ type: 'agent-work-group' });
+        if (group?.type !== 'agent-work-group') throw new Error('Expected an agent work group');
+        expect(group.messages.map((message) => message.id)).toEqual(['tool-hidden']);
+    });
+
     it('excludes hidden tools from display entirely', () => {
         const hidden: ToolCallMessage = {
             ...toolMessage('tool-hidden', 3),

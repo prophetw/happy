@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Message } from '@/sync/typesMessage';
 import { knownTools } from '@/components/tools/knownTools';
 import { isInteractiveQuestionToolName } from '@/utils/toolDisplay';
+import { isDotMemoryToolCall } from '@/utils/dotMemoryTool';
 import { assignTurns } from '@/utils/agentTurns';
 
 // Display item types for the grouped message list
@@ -128,6 +129,9 @@ function collectAgentWorkGroups(messages: Message[], turnOf: number[], collapseC
             if (msg.kind === 'user-text') return false;
             if (isInvisibleMessage(msg) || isUserAttachment(msg)) return false;
             if (msg.kind === 'tool-call' && isInteractiveQuestionToolName(msg.tool.name)) return false;
+            // Dot memory reads/writes stay as their own visible hint rows in history
+            // instead of disappearing into a collapsed work group.
+            if (msg.kind === 'tool-call' && isDotMemoryToolCall(msg.tool)) return false;
             return true;
         });
 

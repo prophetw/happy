@@ -1186,7 +1186,39 @@ export const pt: TranslationStructure = {
         friendRequestGeneric: 'Novo pedido de amizade',
         friendAccepted: ({ name }: { name: string }) => `Agora você é amigo de ${name}`,
         friendAcceptedGeneric: 'Pedido de amizade aceito',
-    }
+    },
+
+    dots: {
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `Lembranças relacionadas encontradas: ${count}`,
+            recallEmpty: 'Pesquisou na memória · nenhuma correspondência',
+            recallRunning: 'Pesquisando na memória…',
+            recallFailed: 'Falha na pesquisa da memória',
+            recallUnreadable: 'Não foi possível ler o resultado da pesquisa',
+            writeSaved: 'Salvo na memória',
+            writeForgotten: 'Esquecido na memória atual',
+            writeRunning: 'Salvando na memória…',
+            writeFailed: 'Falha ao salvar na memória',
+            writeUnreadable: 'Não foi possível ler o resultado do salvamento',
+            writePending: 'A operação de memória respondeu; o estado precisa ser verificado',
+            confirmRunning: 'Confirmando a memória…',
+            confirmFailed: 'Falha ao confirmar a memória',
+            confirmUnreadable: 'Não foi possível ler o resultado da confirmação',
+            proposePending: 'A alteração da memória aguarda confirmação',
+            proposeRunning: 'Preparando uma proposta de memória…',
+            proposeFailed: 'Falha na proposta de memória',
+            proposeUnreadable: 'Não foi possível ler o resultado da proposta',
+            proposeReturned: 'A proposta de memória respondeu; o estado precisa ser verificado',
+            expand: 'Mostrar detalhes',
+            collapse: 'Ocultar detalhes',
+            viewMemory: 'Ver esta memória',
+            viewRecallItem: ({ key }: { key: string }) => `Ver memória recuperada: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Origem: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Escopo: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'Usuário',
+        },
+    },
 } as const;
 
 export type TranslationsPt = typeof pt;

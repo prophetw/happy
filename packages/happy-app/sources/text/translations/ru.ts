@@ -1220,6 +1220,38 @@ export const ru: TranslationStructure = {
         friendAcceptedGeneric: 'Запрос в друзья принят',
     },
 
+    dots: {
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `Найдено связанных записей в памяти: ${count}`,
+            recallEmpty: 'Поиск по памяти выполнен · совпадений нет',
+            recallRunning: 'Идёт поиск по памяти…',
+            recallFailed: 'Не удалось выполнить поиск по памяти',
+            recallUnreadable: 'Не удалось прочитать результат поиска по памяти',
+            writeSaved: 'Сохранено в память',
+            writeForgotten: 'Забыто в текущей памяти',
+            writeRunning: 'Сохранение в память…',
+            writeFailed: 'Не удалось сохранить в память',
+            writeUnreadable: 'Не удалось прочитать результат сохранения',
+            writePending: 'Операция с памятью вернула ответ; статус нужно проверить',
+            confirmRunning: 'Подтверждение памяти…',
+            confirmFailed: 'Не удалось подтвердить память',
+            confirmUnreadable: 'Не удалось прочитать результат подтверждения',
+            proposePending: 'Изменение памяти ожидает подтверждения',
+            proposeRunning: 'Подготовка предложения по памяти…',
+            proposeFailed: 'Не удалось создать предложение по памяти',
+            proposeUnreadable: 'Не удалось прочитать результат предложения',
+            proposeReturned: 'Предложение по памяти получено; статус нужно проверить',
+            expand: 'Показать детали',
+            collapse: 'Скрыть детали',
+            viewMemory: 'Открыть эту запись',
+            viewRecallItem: ({ key }: { key: string }) => `Открыть найденную запись: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Источник: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Область: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'Пользователь',
+        },
+    },
+
 } as const;
 
 export type TranslationsRu = typeof ru;

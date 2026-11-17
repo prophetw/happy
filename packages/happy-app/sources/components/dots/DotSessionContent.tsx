@@ -18,13 +18,17 @@ import { dotMemoryEditError, dotMemoryEditRejected, requestDotMemoryEdit, type D
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { DotsConnectionsPanel } from './DotsConnectionsPanel';
 import { DotObservationPanel } from './DotObservationPanel';
+import { DotMemoryToolHint } from './DotMemoryToolHint';
 import { DotRecoveryNotice } from './DotRecoveryNotice';
+import { ToolCallRendererContext, type ToolCallRenderer } from '@/components/tools/ToolCallRendererContext';
+import { dotMemoryHint, type DotMemoryTarget } from '@/utils/dotMemoryTool';
 
 type DotMetadata = Extract<TestloopDotsMetadata, { kind: 'dot' }>;
 type Tab = 'chat' | 'work' | 'memory';
 const tabLabels = { chat: '对话', work: '工作', memory: '记忆' };
 type MemoryDraft = { binding: object; action: 'remember' | 'forget'; scope: 'dot' | 'user'; key: string; text: string;
     kind: 'fact' | 'preference' | 'commitment'; json: boolean; expiresAt: string | null; existing: boolean; revision: number; savedText?: string };
+type MemoryTarget = DotMemoryTarget & { nonce: number };
 const memoryDraftKey = (draft: Pick<MemoryDraft, 'scope' | 'key'>) => JSON.stringify([draft.scope, draft.key.trim().normalize('NFC')]);
 
 /** Keep Happy's real conversation mounted while its host-backed work/memory panel changes. */
@@ -50,6 +54,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [memoryBusy, setMemoryBusy] = React.useState(false), [memoryUnknown, setMemoryUnknown] = React.useState(false);
     const [memoryError, setMemoryError] = React.useState<string | null>(null), [memoryRefresh, setMemoryRefresh] = React.useState(0);
     const [memoryOpen, setMemoryOpen] = React.useState(false);
+    const [memoryTarget, setMemoryTarget] = React.useState<MemoryTarget | null>(null);
     const memoryBinding = React.useMemo(() => ({}), [session.id, metadata.workspaceId, metadata.workspaceSessionId, metadata.dotId,
         credentials?.token, credentials?.secret, server, isAuthenticated]);
     const memoryCurrent = React.useRef({ binding: memoryBinding, active });
@@ -60,6 +65,19 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [clearConfirming, setClearConfirming] = React.useState(false);
     const [composeRequest, setComposeRequest] = React.useState<{ id: string; text: string } | null>(null);
     const wide = width >= 920;
+    const wideRef = React.useRef(wide);
+    wideRef.current = wide;
+    const memoryNonce = React.useRef(0);
+    // Hint targets open the observation panel without touching the chat draft.
+    const openMemory = React.useCallback((target: DotMemoryTarget) => {
+        setMemoryTarget({ keyDigest: target.keyDigest, scope: target.scope, nonce: ++memoryNonce.current });
+        setMemoryOpen(false); setDiagnosticMode(null); setTaskId(null);
+        if (wideRef.current) { setSideTab('memory'); setExpanded(true); } else setTab('memory');
+    }, []);
+    const renderDotMemoryTool = React.useCallback<ToolCallRenderer>(({ tool }) => {
+        const hint = dotMemoryHint(tool);
+        return hint ? <DotMemoryToolHint hint={hint} onOpen={openMemory} /> : undefined;
+    }, [openMemory]);
     const own = data.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
     const view = own ? data.projection?.details[metadata.dotId] : undefined;
     const detail = view?.data;
@@ -71,7 +89,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     React.useEffect(() => {
         memoryAttempt.current = null; setMemoryEdit(null); setMemoryOpen(false); setMemoryBusy(false); setMemoryUnknown(false); setMemoryError(null);
         memoryConflictDrafts.current.clear();
-        setNotice(null); setDiagnosticMode(null);
+        setNotice(null); setDiagnosticMode(null); setMemoryTarget(null);
     }, [memoryBinding]);
     React.useEffect(() => {
         memoryCurrent.current = { binding: memoryBinding, active };
@@ -194,10 +212,12 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         </View>
     </Modal>;
     const observationPanel = (mode: 'memory' | 'activity' | 'basis') => <>
-        <DotObservationPanel key={`${metadata.dotId}:${mode}`} sessionId={metadata.workspaceSessionId}
+        <DotObservationPanel key={`${metadata.dotId}:${mode}:${mode === 'memory' ? memoryTarget?.nonce ?? 0 : 0}`} sessionId={metadata.workspaceSessionId}
             workspaceId={metadata.workspaceId} dotId={metadata.dotId} dotSessionId={session.id} active={Boolean(active && own && (mode !== 'memory' || (wide ? expanded : tab === 'memory')))}
             mode={mode}
-            presence={session.presence} refreshKey={memoryRefresh} onExecution={id => void openExecution(id)}
+            presence={session.presence} refreshKey={memoryRefresh}
+            initialMemory={mode === 'memory' && memoryTarget ? { keyDigest: memoryTarget.keyDigest, scope: memoryTarget.scope } : null}
+            onExecution={id => void openExecution(id)}
             onEditMemory={(key, version, scope = 'dot') => {
                 beginMemoryEdit({ action: 'remember', scope, key, revision: version.revision, text: typeof version.value === 'string' ? version.value : JSON.stringify(version.value),
                     kind: version.kind as MemoryDraft['kind'], json: typeof version.value !== 'string', expiresAt: version.expiresAt, existing: true });
@@ -244,7 +264,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
             <View style={{ flex: 1, display: wide || tab === 'chat' ? 'flex' : 'none', minWidth: 0 }}>
                 <DotRecoveryNotice key={session.id} workspaceId={metadata.workspaceId} dotId={metadata.dotId} sessionId={session.id} online={session.presence === 'online'} />
-                {children(composeRequest)}
+                <ToolCallRendererContext.Provider value={renderDotMemoryTool}>{children(composeRequest)}</ToolCallRendererContext.Provider>
             </View>
             <View style={{ width: wide ? 320 : '100%', display: wide ? expanded ? 'flex' : 'none' : tab === 'chat' ? 'none' : 'flex', borderLeftWidth: wide ? 1 : 0, borderLeftColor: colors.divider }}>{panel}</View>
         </View>

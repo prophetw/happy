@@ -38,17 +38,33 @@ function eventTitle(event: ObservationEvent) {
 }
 
 /** Observation reads and explicit user memory moves stay bound to the account, workspace, Dot and visible screen. */
-export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionId, active, mode, presence, refreshKey = 0,
+export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionId, active, mode, presence, refreshKey = 0, initialMemory = null,
     onExecution, onEditMemory, onForgetMemory, onAddMemory }: {
     sessionId: string; workspaceId: string; dotId: string; dotSessionId: string; active: boolean; mode: Mode; presence: string | number; refreshKey?: number;
+    /** Opens one memory detail directly, e.g. from an in-conversation memory hint. */
+    initialMemory?: { keyDigest: string; scope: MemoryScope } | null;
     onExecution: (sessionId: string) => void;
     onEditMemory: (key: string, version: ObservationMemoryVersion, scope?: MemoryScope) => void; onForgetMemory: (key: string, revision: number, scope?: MemoryScope) => void;
     onAddMemory: (scope?: MemoryScope) => void;
 }) {
     const { theme } = useUnistyles(), { credentials, isAuthenticated } = useAuth(), server = getServerUrl();
-    const [memoryScope, setMemoryScope] = React.useState<MemoryScope>('dot');
+    const [memoryScope, setMemoryScope] = React.useState<MemoryScope>(initialMemory?.scope ?? 'dot');
+    const [openedMemory, setOpenedMemory] = React.useState<{ keyDigest: string; scope: MemoryScope } | null>(mode === 'memory' ? initialMemory ?? null : null);
     const scope = React.useMemo(() => ({}), [credentials?.token, credentials?.secret, isAuthenticated, server, sessionId, workspaceId, dotId, dotSessionId, mode, memoryScope]);
-    const initial = React.useMemo<ObservationRequest>(() => (mode === 'memory' ? { dotId, action: 'memories', scope: memoryScope } : { dotId, action: mode === 'basis' ? 'turns' : 'activity' }), [dotId, mode, memoryScope]);
+    const initial = React.useMemo<ObservationRequest>(() => {
+        if (mode !== 'memory') return mode === 'basis' ? { dotId, action: 'turns' } : { dotId, action: 'activity' };
+        if (openedMemory) return { dotId, action: 'memory', keyDigest: openedMemory.keyDigest, section: 'versions', scope: openedMemory.scope };
+        return { dotId, action: 'memories', scope: memoryScope };
+    }, [dotId, mode, memoryScope, openedMemory]);
+    // A new hint target replaces the current detail; removing the target returns to the list.
+    const initialDigest = initialMemory?.keyDigest, initialScope = initialMemory?.scope;
+    React.useEffect(() => {
+        if (mode !== 'memory') return;
+        if (!initialDigest || !initialScope) { setOpenedMemory(null); return; }
+        setMemoryScope(initialScope);
+        setOpenedMemory(current => current?.keyDigest === initialDigest && current.scope === initialScope
+            ? current : { keyDigest: initialDigest, scope: initialScope });
+    }, [mode, initialDigest, initialScope]);
     const [loaded, setLoaded] = React.useState<{ scope: object; overview: ObservationOverview | null; result: ObservationResponse; query: ObservationRequest } | null>(null);
     const summaryCache = React.useRef<{ key: string; value: ObservationOverview } | null>(null);
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState<string | null>(null);
@@ -172,7 +188,12 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             {detail ? (
                 <Pressable accessibilityRole="button" accessibilityLabel="返回观察列表" disabled={busy}
-                    onPress={() => { void load(initial); }}
+                    onPress={() => {
+                        // Leaving an initial hint's detail returns to that scope's list; the
+                        // changed query is loaded by the focus effect.
+                        if (mode === 'memory' && openedMemory !== null) { setOpenedMemory(null); return; }
+                        void load(initial);
+                    }}
                     style={{ paddingVertical: 6, paddingHorizontal: 12, backgroundColor: colors.surfaceHigh, borderRadius: 8, justifyContent: 'center' }}>
                     <Text style={{ ...body, fontSize: 13, fontWeight: '500' }}>← 返回列表</Text>
                 </Pressable>
@@ -189,7 +210,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
         </View>
         {mode === 'memory' && <View style={{ flexDirection: 'row', gap: 8 }}>
             {(['dot', 'user'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'dot' ? 'Dot级记忆' : '用户级记忆'}
-                accessibilityState={{ selected: memoryScope === value }} onPress={() => setMemoryScope(value)} style={{ padding: 10, borderRadius: 8, backgroundColor: memoryScope === value ? colors.surfaceHigh : 'transparent' }}>
+                accessibilityState={{ selected: memoryScope === value }} onPress={() => { setMemoryScope(value); setOpenedMemory(null); }} style={{ padding: 10, borderRadius: 8, backgroundColor: memoryScope === value ? colors.surfaceHigh : 'transparent' }}>
                 <Text style={body}>{value === 'dot' ? 'Dot级 · 私有' : '用户级 · 所有Dot共享'}</Text>
             </Pressable>)}
         </View>}

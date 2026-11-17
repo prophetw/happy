@@ -1187,7 +1187,39 @@ export const ca: TranslationStructure = {
         friendRequestGeneric: 'Nova sol·licitud d\'amistat',
         friendAccepted: ({ name }: { name: string }) => `Ara ets amic de ${name}`,
         friendAcceptedGeneric: 'Sol·licitud d\'amistat acceptada',
-    }
+    },
+
+    dots: {
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `S'han trobat records relacionats: ${count}`,
+            recallEmpty: 'S\'ha cercat a la memòria · cap coincidència',
+            recallRunning: 'S\'està cercant a la memòria…',
+            recallFailed: 'La cerca a la memòria ha fallat',
+            recallUnreadable: 'No s\'ha pogut llegir el resultat de la cerca',
+            writeSaved: 'Desat a la memòria',
+            writeForgotten: 'Oblidat a la memòria actual',
+            writeRunning: 'S\'està desant a la memòria…',
+            writeFailed: 'No s\'ha pogut desar a la memòria',
+            writeUnreadable: 'No s\'ha pogut llegir el resultat del desament',
+            writePending: 'L\'operació de memòria ha respost; cal verificar l\'estat',
+            confirmRunning: 'S\'està confirmant la memòria…',
+            confirmFailed: 'No s\'ha pogut confirmar la memòria',
+            confirmUnreadable: 'No s\'ha pogut llegir el resultat de la confirmació',
+            proposePending: 'El canvi de memòria espera confirmació',
+            proposeRunning: 'S\'està preparant una proposta de memòria…',
+            proposeFailed: 'La proposta de memòria ha fallat',
+            proposeUnreadable: 'No s\'ha pogut llegir el resultat de la proposta',
+            proposeReturned: 'La proposta de memòria ha respost; cal verificar l\'estat',
+            expand: 'Mostra els detalls',
+            collapse: 'Amaga els detalls',
+            viewMemory: 'Mostra aquest record',
+            viewRecallItem: ({ key }: { key: string }) => `Mostra el record recuperat: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Origen: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Àmbit: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'Usuari',
+        },
+    },
 } as const;
 
 export type TranslationsCa = typeof ca;

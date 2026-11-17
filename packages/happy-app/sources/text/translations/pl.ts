@@ -1219,6 +1219,38 @@ export const pl: TranslationStructure = {
         friendAcceptedGeneric: 'Zaproszenie do znajomych zaakceptowane',
     },
 
+    dots: {
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `Znaleziono powiązane wspomnienia: ${count}`,
+            recallEmpty: 'Przeszukano pamięć · brak dopasowań',
+            recallRunning: 'Wyszukiwanie w pamięci…',
+            recallFailed: 'Wyszukiwanie w pamięci nie powiodło się',
+            recallUnreadable: 'Nie można odczytać wyniku wyszukiwania pamięci',
+            writeSaved: 'Zapisano w pamięci',
+            writeForgotten: 'Zapomniano w bieżącej pamięci',
+            writeRunning: 'Zapisywanie w pamięci…',
+            writeFailed: 'Zapis w pamięci nie powiódł się',
+            writeUnreadable: 'Nie można odczytać wyniku zapisu pamięci',
+            writePending: 'Operacja pamięci zwróciła wynik; status wymaga sprawdzenia',
+            confirmRunning: 'Potwierdzanie pamięci…',
+            confirmFailed: 'Potwierdzenie pamięci nie powiodło się',
+            confirmUnreadable: 'Nie można odczytać wyniku potwierdzenia pamięci',
+            proposePending: 'Zmiana pamięci czeka na potwierdzenie',
+            proposeRunning: 'Przygotowywanie propozycji pamięci…',
+            proposeFailed: 'Propozycja pamięci nie powiodła się',
+            proposeUnreadable: 'Nie można odczytać wyniku propozycji pamięci',
+            proposeReturned: 'Propozycja pamięci zwrócona; status wymaga sprawdzenia',
+            expand: 'Pokaż szczegóły',
+            collapse: 'Ukryj szczegóły',
+            viewMemory: 'Zobacz tę pamięć',
+            viewRecallItem: ({ key }: { key: string }) => `Zobacz przywołane wspomnienie: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Źródło: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Zakres: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'Użytkownik',
+        },
+    },
+
 } as const;
 
 export type TranslationsPl = typeof pl;

@@ -8,6 +8,7 @@ import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage, isOtherParticipantMessage } from "@/sync/typesMessage";
 import { Metadata } from "@/sync/storageTypes";
 import { ToolView } from "./tools/ToolView";
+import { ToolCallRendererContext } from "./tools/ToolCallRendererContext";
 import { AgentEvent, SessionAuthor } from "@/sync/typesRaw";
 import { sync } from '@/sync/sync';
 import { useSetting } from '@/sync/storage';
@@ -446,18 +447,23 @@ function ToolCallBlock(props: {
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
 }) {
+  // A host may take over selected tool rows; undefined keeps the default card.
+  const renderToolCall = React.useContext(ToolCallRendererContext);
   if (!props.message.tool) {
     return null;
   }
+  const custom = renderToolCall?.({ tool: props.message.tool, message: props.message, sessionId: props.sessionId });
   return (
     <View style={styles.toolContainer}>
-      <ToolView
-        tool={props.message.tool}
-        metadata={props.metadata}
-        messages={props.message.children}
-        sessionId={props.sessionId}
-        messageId={props.message.id}
-      />
+      {custom !== undefined ? custom : (
+        <ToolView
+          tool={props.message.tool}
+          metadata={props.metadata}
+          messages={props.message.children}
+          sessionId={props.sessionId}
+          messageId={props.message.id}
+        />
+      )}
     </View>
   );
 }

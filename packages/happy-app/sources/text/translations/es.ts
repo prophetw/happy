@@ -1190,6 +1190,38 @@ export const es: TranslationStructure = {
         friendAcceptedGeneric: 'Solicitud de amistad aceptada',
     },
 
+    dots: {
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `Se encontraron recuerdos relacionados: ${count}`,
+            recallEmpty: 'Se buscó en la memoria · sin coincidencias',
+            recallRunning: 'Buscando en la memoria…',
+            recallFailed: 'La búsqueda en la memoria falló',
+            recallUnreadable: 'No se pudo leer el resultado de la búsqueda',
+            writeSaved: 'Guardado en la memoria',
+            writeForgotten: 'Olvidado en la memoria actual',
+            writeRunning: 'Guardando en la memoria…',
+            writeFailed: 'No se pudo guardar en la memoria',
+            writeUnreadable: 'No se pudo leer el resultado del guardado',
+            writePending: 'La operación de memoria respondió; falta verificar el estado',
+            confirmRunning: 'Confirmando la memoria…',
+            confirmFailed: 'No se pudo confirmar la memoria',
+            confirmUnreadable: 'No se pudo leer el resultado de la confirmación',
+            proposePending: 'El cambio de memoria espera confirmación',
+            proposeRunning: 'Preparando una propuesta de memoria…',
+            proposeFailed: 'La propuesta de memoria falló',
+            proposeUnreadable: 'No se pudo leer el resultado de la propuesta',
+            proposeReturned: 'La propuesta de memoria respondió; falta verificar el estado',
+            expand: 'Mostrar detalles',
+            collapse: 'Ocultar detalles',
+            viewMemory: 'Ver este recuerdo',
+            viewRecallItem: ({ key }: { key: string }) => `Ver recuerdo recuperado: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Origen: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Ámbito: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'Usuario',
+        },
+    },
+
 } as const;
 
 export type TranslationsEs = typeof es;

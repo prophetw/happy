@@ -493,6 +493,107 @@ describe('mapCodexMcpMessageToSessionEnvelopes', () => {
         });
     });
 
+    it('maps live MCP tool call begin and end to one tool call', () => {
+        const begin = mapCodexMcpMessageToSessionEnvelopes({
+            type: 'mcp_tool_call_begin',
+            call_id: 'thread-main:item-1',
+            callId: 'thread-main:item-1',
+            server: 'happy-control',
+            tool: 'status',
+            arguments: { task_id: 't-1' },
+            status: 'inProgress',
+        }, { currentTurnId: 'turn-1' });
+
+        expect(begin.envelopes).toHaveLength(1);
+        expect(begin.envelopes[0].ev).toEqual({
+            t: 'tool-call-start',
+            call: 'thread-main:item-1',
+            name: 'McpTool',
+            title: 'happy-control.status',
+            description: 'happy-control.status',
+            args: { server: 'happy-control', tool: 'status', arguments: { task_id: 't-1' } },
+        });
+
+        const end = mapCodexMcpMessageToSessionEnvelopes({
+            type: 'mcp_tool_call_end',
+            call_id: 'thread-main:item-1',
+            callId: 'thread-main:item-1',
+            server: 'happy-control',
+            tool: 'status',
+            status: 'completed',
+            result: {
+                content: [{ type: 'text', text: '{"state":"completed"}' }],
+                structuredContent: { state: 'completed', task_id: 't-1' },
+            },
+        }, begin);
+
+        expect(end.envelopes).toHaveLength(1);
+        const endEvent = end.envelopes[0].ev;
+        expect(endEvent.t).toBe('tool-call-end');
+        if (endEvent.t === 'tool-call-end') {
+            expect(endEvent.call).toBe('thread-main:item-1');
+            expect(endEvent.isError).toBe(false);
+            expect(typeof endEvent.result).toBe('string');
+            expect(JSON.parse(endEvent.result!)).toEqual({ state: 'completed', task_id: 't-1' });
+            expect(endEvent.result).not.toContain('[object Object]');
+        }
+    });
+
+    it.each([
+        ['camelCase', { content: [{ type: 'text', text: 'text fallback' }], structuredContent: { state: 'completed' } }, { state: 'completed' }],
+        ['snake_case', { content: [{ type: 'text', text: 'text fallback' }], structured_content: { state: 'completed' } }, { state: 'completed' }],
+        ['Ok wrapper', { Ok: { content: [{ type: 'text', text: 'text fallback' }], structuredContent: { state: 'completed' } } }, { state: 'completed' }],
+    ] as const)('prefers structured MCP results from live %s results', (_label, result, structured) => {
+        const mapped = mapCodexMcpMessageToSessionEnvelopes({
+            type: 'mcp_tool_call_end',
+            call_id: 'call-1',
+            status: 'completed',
+            result,
+        }, { currentTurnId: 'turn-1' });
+
+        const endEvent = mapped.envelopes[0].ev;
+        expect(endEvent.t).toBe('tool-call-end');
+        if (endEvent.t === 'tool-call-end') {
+            expect(endEvent.isError).toBe(false);
+            expect(JSON.parse(endEvent.result!)).toEqual(structured);
+        }
+    });
+
+    it('keeps complete MCP content JSON text when structured content is absent', () => {
+        const text = '{"task_id":"t_1","state":"completed"}';
+        const mapped = mapCodexMcpMessageToSessionEnvelopes({
+            type: 'mcp_tool_call_end',
+            call_id: 'call-1',
+            status: 'completed',
+            result: { content: [{ type: 'text', text }] },
+        }, { currentTurnId: 'turn-1' });
+
+        const endEvent = mapped.envelopes[0].ev;
+        expect(endEvent.t).toBe('tool-call-end');
+        if (endEvent.t === 'tool-call-end') {
+            expect(endEvent.result).toBe(text);
+            expect(JSON.parse(endEvent.result!)).toEqual({ task_id: 't_1', state: 'completed' });
+        }
+    });
+
+    it.each([
+        [{ status: 'failed', error: { message: 'task failed' } }, 'task failed'],
+        [{ status: 'declined', error: 'permission denied' }, 'permission denied'],
+        [{ status: 'completed', result: { content: [{ type: 'text', text: 'mcp_tool_unavailable' }], isError: true } }, 'mcp_tool_unavailable'],
+        [{ status: 'completed', result: { Err: { message: 'wrapped failure' } } }, 'wrapped failure'],
+    ] as const)('marks live MCP tool failure results with an error: %j', (fields, expected) => {
+        const mapped = mapCodexMcpMessageToSessionEnvelopes({
+            type: 'mcp_tool_call_end',
+            call_id: 'call-1',
+            ...fields,
+        }, { currentTurnId: 'turn-1' });
+
+        expect(mapped.envelopes).toHaveLength(1);
+        expect(mapped.envelopes[0]).toMatchObject({
+            ev: { t: 'tool-call-end', call: 'call-1', result: expected, isError: true },
+        });
+    });
+
     it('maps token_count messages to usage-only session envelopes', () => {
         const result = mapCodexMcpMessageToSessionEnvelopes(
             { type: 'token_count', total_tokens: 10 },
@@ -943,6 +1044,83 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         expect(subagents).toHaveLength(2);
         expect(subagents[1]).toBe(subagents[0]);
         expect(isCuid(subagents[0]!)).toBe(true);
+    });
+
+    it('backfills historical MCP tool calls with their structured result', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                completedAt: 101,
+                status: 'completed',
+                items: [{
+                    id: 'mcp-1',
+                    type: 'mcpToolCall',
+                    server: 'happy-control',
+                    tool: 'wait',
+                    status: 'completed',
+                    arguments: { task_id: 't-1' },
+                    result: {
+                        content: [{ type: 'text', text: '{"state":"completed"}' }],
+                        structuredContent: { state: 'completed', summary: 'done' },
+                    },
+                }],
+            }],
+        });
+
+        expect(envelopes.map((envelope) => envelope.ev.t)).toEqual([
+            'turn-start', 'tool-call-start', 'tool-call-end', 'turn-end',
+        ]);
+        const start = envelopes.find((envelope) => envelope.ev.t === 'tool-call-start');
+        expect(start?.ev).toEqual({
+            t: 'tool-call-start',
+            call: 'mcp-1',
+            name: 'McpTool',
+            title: 'happy-control.wait',
+            description: 'happy-control.wait',
+            args: { server: 'happy-control', tool: 'wait', arguments: { task_id: 't-1' } },
+        });
+
+        const end = envelopes.find((envelope) => envelope.ev.t === 'tool-call-end');
+        expect(end?.ev.t).toBe('tool-call-end');
+        if (end?.ev.t === 'tool-call-end') {
+            expect(end.ev.isError).toBe(false);
+            expect(JSON.parse(end.ev.result!)).toEqual({ state: 'completed', summary: 'done' });
+            expect(end.ev.result).not.toContain('[object Object]');
+        }
+        expect(JSON.stringify(envelopes)).not.toContain('[object Object]');
+    });
+
+    it('backfills historical MCP tool call errors as readable results', () => {
+        const envelopes = mapCodexThreadToSessionEnvelopes({
+            turns: [{
+                id: 'turn-1',
+                startedAt: 100,
+                completedAt: 101,
+                status: 'completed',
+                items: [{
+                    id: 'mcp-failed',
+                    type: 'mcpToolCall',
+                    server: 'happy-control',
+                    tool: 'wait',
+                    status: 'failed',
+                    arguments: { task_id: 't-1' },
+                    error: { message: 'wait failed' },
+                    result: {
+                        content: [{ type: 'text', text: 'mcp_tool_unavailable' }],
+                        isError: true,
+                    },
+                }],
+            }],
+        });
+
+        const end = envelopes.find((envelope) => envelope.ev.t === 'tool-call-end');
+        expect(end?.ev).toEqual({
+            t: 'tool-call-end',
+            call: 'mcp-failed',
+            result: 'wait failed',
+            isError: true,
+        });
     });
 
     it('uses one fallback timestamp pair for historical tool items without provider timestamps', () => {

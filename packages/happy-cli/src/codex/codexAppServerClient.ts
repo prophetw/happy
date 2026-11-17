@@ -646,11 +646,32 @@ export class CodexAppServerClient {
             return true;
         }
 
+        if ((method === 'item/started' || method === 'item/completed') && item.type === 'mcpToolCall') {
+            const itemId = typeof item.id === 'string' ? item.id : '';
+            const callId = itemId
+                ? formatScopedItemKey(stringOrNull(params?.threadId) ?? this._threadId, itemId)
+                : '';
+            // Legacy MCP event names keep the structured result intact for the
+            // session mapper, and token speed recognizes their begin/end pair.
+            this.eventHandler?.({
+                type: method === 'item/started' ? 'mcp_tool_call_begin' : 'mcp_tool_call_end',
+                call_id: callId,
+                callId,
+                server: item.server,
+                tool: item.tool,
+                arguments: item.arguments,
+                result: item.result,
+                error: item.error,
+                status: item.status,
+            });
+            return true;
+        }
+
         if (method === 'item/started' || method === 'item/completed') {
             // Native tools and compaction have paired execution boundaries,
             // even when they have no UI mapping here. Exclude their duration
             // and let the next measured request recover after they finish.
-            if (['mcpToolCall', 'dynamicToolCall', 'webSearch', 'imageGeneration',
+            if (['dynamicToolCall', 'webSearch', 'imageGeneration',
                 'imageView', 'sleep', 'contextCompaction'].includes(item.type)) {
                 const itemId = typeof item.id === 'string' ? item.id : '';
                 this.eventHandler?.({

@@ -45,8 +45,8 @@ function response(query: any): unknown {
     if (query.action === 'activity') return { ...base, action: 'activity', page: paged([event]) };
     if (query.action === 'memories') return { ...base, action: 'memories', scope: query.scope ?? 'dot', page: paged([{ keyDigest, key: '偏好', revision: 2, status: 'effective', preview: { text: '新版', truncated: false } }]) };
     if (query.action === 'turns') return { ...base, action: 'turns', page: paged([summary]) };
-    if (query.action === 'memory' && query.section === 'usage') return { ...base, action: 'memory', scope: query.scope ?? 'dot', section: 'usage', memory: { keyDigest, key: '偏好', revision: 2, status: 'effective', deletedAt: null }, page: paged([{ ...summary, memoryRevision: 1 }]) };
-    if (query.action === 'memory') return { ...base, action: 'memory', scope: query.scope ?? 'dot', section: 'versions', memory: { keyDigest, key: '偏好', revision: 2, status: 'effective', deletedAt: null },
+    if (query.action === 'memory' && query.section === 'usage') return { ...base, action: 'memory', scope: query.scope ?? 'dot', section: 'usage', memory: { keyDigest: query.keyDigest ?? keyDigest, key: '偏好', revision: 2, status: 'effective', deletedAt: null }, page: paged([{ ...summary, memoryRevision: 1 }]) };
+    if (query.action === 'memory') return { ...base, action: 'memory', scope: query.scope ?? 'dot', section: 'versions', memory: { keyDigest: query.keyDigest ?? keyDigest, key: '偏好', revision: 2, status: 'effective', deletedAt: null },
         page: paged([2, 1].map(revision => ({ revision, action: 'remember', kind: 'preference', value: revision === 2 ? '新版' : '旧版', source: 'user', sourceRef: 'message:1',
             verified: true, expiresAt: null, recordedAt: at, confirmedAt: at, historical: revision === 1 }))) };
     if (query.action === 'turn' && query.section === 'overview') return { ...base, action: 'turn', section: 'overview', turnId, turn: { ...summary, reply: { text: '原回复', truncated: false },
@@ -75,9 +75,9 @@ beforeEach(() => {
     mocks.credentials = { token: 'account', secret: 'secret' }; mocks.server = 'https://relay.example';
     mocks.rpc.mockImplementation(async (_session: string, _method: string, query: unknown) => ({ ok: true, data: response(query) }));
 });
-async function render(mode: 'activity' | 'memory' | 'basis' = 'activity') {
+async function render(mode: 'activity' | 'memory' | 'basis' = 'activity', extra: Record<string, unknown> = {}) {
     const props = { sessionId: 'workspace', workspaceId, dotId, dotSessionId: 'dotSession', active: true, mode, presence: 'online',
-        onExecution: vi.fn(), onEditMemory: vi.fn(), onForgetMemory: vi.fn(), onAddMemory: vi.fn() };
+        onExecution: vi.fn(), onEditMemory: vi.fn(), onForgetMemory: vi.fn(), onAddMemory: vi.fn(), ...extra };
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(React.createElement(DotObservationPanel, props)); }); renderers.push(renderer);
     const button = (name: string) => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === name);
@@ -179,6 +179,43 @@ it('routes same-key user memories and every edit/forget action to the selected s
     await f.click('添加记忆');
     expect(f.props.onAddMemory).toHaveBeenCalledWith('dot');
 });
+it('opens an initial memory detail with its own scope and reuses edit/forget in that scope', async () => {
+    const f = await render('memory', { initialMemory: { keyDigest, scope: 'user' } });
+    expect(mocks.rpc.mock.calls[0]?.[2]).toMatchObject({ action: 'memory', keyDigest, section: 'versions', scope: 'user' });
+    expect(f.text()).toContain('新版');
+    await f.click('编辑这条记忆');
+    expect(f.props.onEditMemory).toHaveBeenLastCalledWith('偏好', expect.objectContaining({ revision: 2, value: '新版' }), 'user');
+    await f.click('忘记这条记忆');
+    expect(f.props.onForgetMemory).toHaveBeenLastCalledWith('偏好', 2, 'user');
+    const actions = mocks.rpc.mock.calls.map(call => call[2]);
+    expect(actions.some(call => call.action === 'memories')).toBe(false);
+    await f.click('返回观察列表');
+    expect(mocks.rpc.mock.calls.some(call => call[2].action === 'memories' && call[2].scope === 'user')).toBe(true);
+});
+
+it('follows a changed initial memory target and returns to the list when it clears', async () => {
+    const otherDigest = 'sha256:' + 'c'.repeat(64);
+    const f = await render('memory', { initialMemory: { keyDigest, scope: 'dot' } });
+    expect(mocks.rpc.mock.calls[0]?.[2]).toMatchObject({ action: 'memory', keyDigest, scope: 'dot' });
+    await act(async () => {
+        f.renderer.update(React.createElement(DotObservationPanel, { ...f.props, initialMemory: { keyDigest: otherDigest, scope: 'user' } }));
+    });
+    expect(mocks.rpc.mock.calls.some(call => call[2].action === 'memory'
+        && call[2].keyDigest === otherDigest && call[2].scope === 'user')).toBe(true);
+    await act(async () => {
+        f.renderer.update(React.createElement(DotObservationPanel, { ...f.props, initialMemory: null }));
+    });
+    expect(mocks.rpc.mock.calls.some(call => call[2].action === 'memories' && call[2].scope === 'user')).toBe(true);
+});
+
+it('leaves an initial memory detail when the user switches scope', async () => {
+    const f = await render('memory', { initialMemory: { keyDigest: keyDigest, scope: 'user' } });
+    expect(f.text()).toContain('新版');
+    await f.click('Dot级记忆');
+    expect(mocks.rpc.mock.calls.some(call => call[2].action === 'memories' && call[2].scope === 'dot')).toBe(true);
+    expect(f.text()).not.toContain('第 2 版 · 保存或更新 · 当前版本');
+});
+
 it('reads counts from the list reply and keeps work items out of the memory page', async () => {
     const normal = mocks.rpc.getMockImplementation()!;
     const { action: _action, ...facts } = overview() as any;

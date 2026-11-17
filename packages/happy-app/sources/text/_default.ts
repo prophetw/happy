@@ -1330,6 +1330,39 @@ export const en = {
         friendAcceptedGeneric: 'Friend request accepted',
     },
 
+    dots: {
+        // In-conversation hints for the hosted Dot memory tools
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `Found ${count} related ${plural({ count, singular: 'memory', plural: 'memories' })}`,
+            recallEmpty: 'Searched memory · no matches found',
+            recallRunning: 'Searching memory…',
+            recallFailed: 'Memory search failed',
+            recallUnreadable: 'Memory search result could not be read',
+            writeSaved: 'Saved to memory',
+            writeForgotten: 'Forgotten in the current memory',
+            writeRunning: 'Saving to memory…',
+            writeFailed: 'Saving to memory failed',
+            writeUnreadable: 'Memory save result could not be read',
+            writePending: 'Memory operation returned; status needs verification',
+            confirmRunning: 'Confirming memory…',
+            confirmFailed: 'Memory confirmation failed',
+            confirmUnreadable: 'Memory confirmation result could not be read',
+            proposePending: 'Memory change awaits confirmation',
+            proposeRunning: 'Preparing a memory proposal…',
+            proposeFailed: 'Memory proposal failed',
+            proposeUnreadable: 'Memory proposal result could not be read',
+            proposeReturned: 'Memory proposal returned; status needs verification',
+            expand: 'Show details',
+            collapse: 'Hide details',
+            viewMemory: 'View this memory',
+            viewRecallItem: ({ key }: { key: string }) => `View recalled memory: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Source: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Scope: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'User',
+        },
+    },
+
 } as const;
 
 export type Translations = typeof en;

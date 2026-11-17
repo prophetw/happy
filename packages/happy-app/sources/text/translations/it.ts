@@ -1186,7 +1186,39 @@ export const it: TranslationStructure = {
         friendRequestGeneric: 'Nuova richiesta di amicizia',
         friendAccepted: ({ name }: { name: string }) => `Ora sei amico di ${name}`,
         friendAcceptedGeneric: 'Richiesta di amicizia accettata',
-    }
+    },
+
+    dots: {
+        memoryHint: {
+            recallFound: ({ count }: { count: number }) => `Trovati ricordi correlati: ${count}`,
+            recallEmpty: 'Ricerca nella memoria · nessuna corrispondenza',
+            recallRunning: 'Ricerca nella memoria…',
+            recallFailed: 'Ricerca nella memoria non riuscita',
+            recallUnreadable: 'Impossibile leggere il risultato della ricerca',
+            writeSaved: 'Salvato nella memoria',
+            writeForgotten: 'Dimenticato nella memoria corrente',
+            writeRunning: 'Salvataggio nella memoria…',
+            writeFailed: 'Salvataggio nella memoria non riuscito',
+            writeUnreadable: 'Impossibile leggere il risultato del salvataggio',
+            writePending: 'Operazione di memoria restituita; stato da verificare',
+            confirmRunning: 'Conferma della memoria…',
+            confirmFailed: 'Conferma della memoria non riuscita',
+            confirmUnreadable: 'Impossibile leggere il risultato della conferma',
+            proposePending: 'La modifica della memoria attende conferma',
+            proposeRunning: 'Preparazione della proposta di memoria…',
+            proposeFailed: 'Proposta di memoria non riuscita',
+            proposeUnreadable: 'Impossibile leggere il risultato della proposta',
+            proposeReturned: 'Proposta di memoria restituita; stato da verificare',
+            expand: 'Mostra dettagli',
+            collapse: 'Nascondi dettagli',
+            viewMemory: 'Visualizza questo ricordo',
+            viewRecallItem: ({ key }: { key: string }) => `Visualizza ricordo richiamato: ${key}`,
+            sourceValue: ({ source }: { source: string }) => `Origine: ${source}`,
+            scopeValue: ({ scope }: { scope: string }) => `Ambito: ${scope}`,
+            scopeDot: 'Dot',
+            scopeUser: 'Utente',
+        },
+    },
 } as const;
 
 export type TranslationsIt = typeof it;

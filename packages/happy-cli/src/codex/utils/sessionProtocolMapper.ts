@@ -600,6 +600,123 @@ function commandOutcome(message: Record<string, unknown>): { result: string; isE
     };
 }
 
+function stringifyMcpValue(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+        return undefined;
+    }
+    if (typeof value === 'string') {
+        return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+        return String(value);
+    }
+    try {
+        // Never fall back to String(object) here: "[object Object]" hides the
+        // payload the app needs to render.
+        return JSON.stringify(value);
+    } catch {
+        return undefined;
+    }
+}
+
+function mcpContentText(content: unknown): string | undefined {
+    if (!Array.isArray(content)) {
+        return undefined;
+    }
+    const text = content
+        .map((block) => {
+            if (typeof block === 'string') {
+                return block;
+            }
+            if (block && typeof block === 'object' && !Array.isArray(block)) {
+                const record = block as Record<string, unknown>;
+                if (record.type === 'text' && typeof record.text === 'string') {
+                    return record.text;
+                }
+            }
+            return undefined;
+        })
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+        .join('\n');
+    return text.length > 0 ? text : undefined;
+}
+
+function mcpErrorText(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+        return undefined;
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+        const message = (value as Record<string, unknown>).message;
+        if (typeof message === 'string' && message.length > 0) {
+            return message;
+        }
+    }
+    return stringifyMcpValue(value);
+}
+
+function unwrapMcpResult(result: unknown): { value: unknown; error?: unknown } {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return { value: result };
+    }
+    // Rust serializes Result as a single-key Ok/Err object.
+    const keys = Object.keys(result);
+    if (keys.length !== 1) {
+        return { value: result };
+    }
+    const record = result as Record<string, unknown>;
+    if (keys[0] === 'Ok') {
+        return { value: record.Ok };
+    }
+    if (keys[0] === 'Err') {
+        return { value: undefined, error: record.Err };
+    }
+    return { value: result };
+}
+
+/**
+ * Normalizes MCP tool results from both live legacy events and history into
+ * the text payload the session protocol carries. Structured content is the
+ * authoritative form, so it wins over content text; content text is used
+ * verbatim when it is the only payload (it is often complete JSON already).
+ */
+function mcpToolCallOutcome(
+    result: unknown,
+    error: unknown,
+    status: unknown,
+): { result?: string; isError: boolean } {
+    const unwrapped = unwrapMcpResult(result);
+    let isError = status === 'failed' || status === 'declined';
+    let text: string | undefined;
+
+    const value = unwrapped.value;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const record = value as Record<string, unknown>;
+        const structured = record.structuredContent ?? record.structured_content;
+        if (structured !== undefined && structured !== null) {
+            text = stringifyMcpValue(structured);
+        } else if (Array.isArray(record.content)) {
+            text = mcpContentText(record.content) ?? stringifyMcpValue(value);
+        } else {
+            text = stringifyMcpValue(value);
+        }
+        if (record.isError === true) {
+            isError = true;
+        }
+    } else {
+        text = stringifyMcpValue(value);
+    }
+
+    const errorText = mcpErrorText(error) ?? mcpErrorText(unwrapped.error);
+    if (errorText !== undefined) {
+        return { result: errorText, isError: true };
+    }
+
+    return {
+        ...(text !== undefined ? { result: text } : {}),
+        isError,
+    };
+}
+
 function emitHistoricalToolCall(
     envelopes: SessionEnvelope[],
     turn: ThreadTurn,
@@ -740,9 +857,6 @@ export function mapCodexThreadItemToSessionEnvelopes(
         case 'mcpToolCall': {
             const envelopes: SessionEnvelope[] = [];
             const title = `${item.server}.${item.tool}`;
-            const output = item.error !== undefined && item.error !== null
-                ? String(item.error)
-                : (item.result !== undefined && item.result !== null ? String(item.result) : null);
             emitHistoricalToolCall(
                 envelopes,
                 turn,
@@ -754,7 +868,7 @@ export function mapCodexThreadItemToSessionEnvelopes(
                     tool: item.tool,
                     arguments: item.arguments,
                 },
-                output !== null ? { result: output } : {},
+                mcpToolCallOutcome(item.result, item.error, item.status),
                 { startedAt, completedAt },
             );
             return envelopes;
@@ -1253,6 +1367,59 @@ function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unkno
     // exec_approval_request is intentionally NOT mapped here — the permission
     // handler already renders the approval UI via agent state.  Mapping it to
     // tool-call-start too would create a duplicate tool call card.
+    if (type === 'mcp_tool_call_begin') {
+        const call = pickCallId(message);
+        const server = typeof message.server === 'string' ? message.server : '';
+        const tool = typeof message.tool === 'string' ? message.tool : '';
+        const title = `${server}.${tool}`;
+
+        const envelopes: SessionEnvelope[] = [];
+        maybeEmitSubagentStart(subagent, opts, startedSubagents, activeSubagents, subagentTitles, envelopes);
+        envelopes.push(createEnvelope('agent', {
+            t: 'tool-call-start',
+            call,
+            name: 'McpTool',
+            title,
+            description: title,
+            args: {
+                server: message.server,
+                tool: message.tool,
+                arguments: message.arguments,
+            },
+        }, opts));
+        return {
+            currentTurnId: state.currentTurnId,
+            startedSubagents,
+            activeSubagents,
+            providerSubagentToSessionSubagent,
+            subagentTitles,
+            collabReceiverThreadIdsByCall,
+            collabToolByCall,
+            envelopes,
+        };
+    }
+
+    if (type === 'mcp_tool_call_end') {
+        const call = pickCallId(message);
+        const envelopes: SessionEnvelope[] = [];
+        maybeEmitSubagentStart(subagent, opts, startedSubagents, activeSubagents, subagentTitles, envelopes);
+        envelopes.push(createEnvelope('agent', {
+            t: 'tool-call-end',
+            call,
+            ...mcpToolCallOutcome(message.result, message.error, message.status),
+        }, opts));
+        return {
+            currentTurnId: state.currentTurnId,
+            startedSubagents,
+            activeSubagents,
+            providerSubagentToSessionSubagent,
+            subagentTitles,
+            collabReceiverThreadIdsByCall,
+            collabToolByCall,
+            envelopes,
+        };
+    }
+
     if (type === 'exec_command_begin') {
         const call = pickCallId(message);
         const { call_id: _callIdSnake, callId: _callIdCamel, type: _type, ...args } = message;
