@@ -196,6 +196,12 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const button = { minHeight: 44, padding: 12, borderRadius: 10, backgroundColor: colors.surfaceHigh, justifyContent: 'center' as const };
     const action = (label: string, onPress: () => void, disabled = false, compact = false) => <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled}
         onPress={onPress} style={[button, compact && { minHeight: 34, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 }, { opacity: disabled ? 0.5 : 1 }]}><Text style={body}>{label}</Text></Pressable>;
+    // The selected tab owns the only filled chip, so the highlight can never be
+    // mistaken for the page or another tab: weight and color move with it too.
+    const tabButton = (item: Tab, selected: boolean, onPress: () => void, grow = false) => <Pressable key={item}
+        accessibilityRole="tab" aria-selected={selected} accessibilityState={{ selected }} onPress={onPress}
+        style={[button, { alignItems: 'center', backgroundColor: selected ? colors.surfaceSelected : 'transparent' }, grow && { flexGrow: 1 }]}>
+        <Text style={selected ? [body, { fontWeight: '600' as const }] : [body, { color: colors.textSecondary }]}>{tabLabels[item]}</Text></Pressable>;
     const toConversation = (text: string) => {
         setComposeRequest({ id: `${session.id}:${Date.now()}`, text });
         setTab('chat'); setTaskId(null); setMemoryOpen(false); if (!memoryAttempt.current) setMemoryEdit(null);
@@ -265,7 +271,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     </>;
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            {wide && (['work', 'memory'] as const).map(item => <Pressable key={item} accessibilityRole="tab" aria-selected={sideTab === item} accessibilityState={{ selected: sideTab === item }} onPress={() => setSideTab(item)} style={[button, { backgroundColor: sideTab === item ? colors.surfaceHigh : colors.surface }]}><Text style={body}>{tabLabels[item]}</Text></Pressable>)}
+            {wide && (['work', 'memory'] as const).map(item => tabButton(item, sideTab === item, () => setSideTab(item)))}
             {(wide ? sideTab : tab) === 'work' && action('刷新工作项', () => { data.retry(); }, Boolean(data.pending), !wide)}
             {action('诊断详情', () => setDiagnosticMode('activity'), false, !wide)}
             {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming, !wide)}
@@ -291,9 +297,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     return <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, minHeight: 0, paddingTop: topInset }}>
         {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${metadata.dotId}`} sessionId={metadata.workspaceSessionId} workspaceId={metadata.workspaceId} dotId={metadata.dotId} onClose={() => setManagingConnections(false)} />}
         {wide ? <View style={{ alignItems: 'flex-end', paddingHorizontal: 16 }}>{action(expanded ? '收起工作栏' : '展开工作栏', () => setExpanded(value => !value))}</View>
-            : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'work', 'memory'] as Tab[]).map(item => <Pressable key={item} accessibilityRole="tab" aria-selected={tab === item} accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={[button, { paddingHorizontal: 8, flexGrow: 1, alignItems: 'center', backgroundColor: tab === item ? colors.surfaceHigh : colors.surface }]}>
-                <Text style={body}>{tabLabels[item]}</Text>
-            </Pressable>)}</View>}
+            : <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', padding: 8, gap: 4 }}>{(['chat', 'work', 'memory'] as Tab[]).map(item => tabButton(item, tab === item, () => setTab(item), true))}</View>}
         {(data.notice || notice) && <View style={{ marginHorizontal: 14, marginVertical: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.surfaceHigh }}>
             <Text accessibilityLiveRegion="polite" style={[muted, { color: colors.textSecondary }]}>{notice || data.notice}</Text>
         </View>}
