@@ -45,6 +45,8 @@ App 使用加密 workspace RPC `testloop-dot-memory-move` 的 `prepare / move / 
 
 创建默认 `codex / gpt-6.1-sol / xhigh`，工作台创建/管理表单使用宿主实际模型目录，强度按模型校验。设置贯通 testLoop Dot 持久化、宿主设置文件和实际 `turn/start` 的 model/effort；忙碌时下一轮生效，输入栏显示宿主回传的生效值。旧配置缺失 effort 迁移至 xhigh，显式值保留；不更改底层 provider、read-only sandbox 或项目授权。
 
+TestLoop 在共享模型目录缺失或超过一小时时后台查询 Codex `model/list`。成功后原子替换目录，查询失败时保留上一次有效结果并于一分钟后重试。打开或刷新 Dots 工作台可读取新目录。正在运行的 Dot 接到启动目录未收录的新模型或强度后，会向自己的 Codex App Server 重查，再用通过校验的设置派发下一轮。
+
 清空由 testLoop 协调停止旧聊天轮次、轮换加密 Relay session、删除旧 session/messages、切换同一 Dot 绑定及提高 epoch。清除宿主输入输出 journal、原生 transcript 和待发事件，旧任务结果不注入新 epoch。用户级和 Dot 级长期记忆、独立后台任务、身份、模型配置与授权保留。App 清除旧会话缓存和待发消息，离线恢复只接受更高 epoch 的轮换证据。操作有破坏性确认及 requestId 幂等恢复，不使用旧的仅换 thread 清空接口。
 
 assistant 历史审计、既存备份和独立项目任务不是聊天入口；不宣称备份或远端介质物理擦除。非原生旧 Dot 目前明确拒绝真正清空，需先迁移原生宿主。部署/维护时必须同时集成 testLoop 与 Happy，已有宿主在后续受控启动新代码时才应用缺失 effort 的迁移。本次没有部署，也没有重启或清空用户当前真实 Dot。

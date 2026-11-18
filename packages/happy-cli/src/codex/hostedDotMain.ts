@@ -260,14 +260,21 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             }
         }));
         await client.connect();
-        const catalog = await readCodexModelCatalog(client);
-        savePrivate(join(dir, 'models.json'), catalog.options);
+        const modelsFile = join(dir, 'models.json');
+        const readModels = async (connected: CodexAppServerClient) => {
+            const { options } = await readCodexModelCatalog(connected);
+            savePrivate(modelsFile, options);
+            return options;
+        };
+        let models = await readModels(client);
+        const supports = (value: typeof settings) => models.some(m => m.code === value.model && m.thinkingLevels.includes(value.effort));
         const validateSettings = (value: typeof settings) => {
-            if (!catalog.options.some(m => m.code === value.model && m.thinkingLevels.includes(value.effort)))
+            if (!supports(value))
                 throw new Error('hosted_model_effort_unsupported');
         };
         const settingsFile = join(dir, 'settings.json');
-        if (existsSync(settingsFile)) settings = z.object({ model: z.string(), effort: HostedDotConfig.shape.effort }).strict().parse(readPrivate(settingsFile));
+        const settingsSchema = z.object({ model: z.string(), effort: HostedDotConfig.shape.effort }).strict();
+        if (existsSync(settingsFile)) settings = settingsSchema.parse(readPrivate(settingsFile));
         validateSettings(settings);
         const currentThreadHasInput = threadHasDispatchedInput();
         if (state.threadId && currentThreadHasInput) {
@@ -367,9 +374,19 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
             }
             if (stop) break;
             if (!active && existsSync(settingsFile)) {
-                const next = z.object({ model: z.string(), effort: HostedDotConfig.shape.effort }).strict().parse(readPrivate(settingsFile));
-                validateSettings(next); const changed = hash(settings) !== hash(next); settings = next;
-                if (changed) await metadata();
+                const next = settingsSchema.parse(readPrivate(settingsFile));
+                if (next.model !== settings.model || next.effort !== settings.effort) {
+                    if (!supports(next)) {
+                        models = await readModels(client);
+                        // A second edit or stop may have arrived while Codex was listing models.
+                        if (stop || signal?.aborted || existsSync(controlFile) && !state.controls.includes(readPrivate(controlFile).id)) continue;
+                        const latest = settingsSchema.parse(readPrivate(settingsFile));
+                        if (latest.model !== next.model || latest.effort !== next.effort) continue;
+                    }
+                    validateSettings(next);
+                    settings = next;
+                    await metadata();
+                }
             }
             try {
                 await flush();

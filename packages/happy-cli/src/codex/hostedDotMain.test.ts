@@ -6,10 +6,12 @@ import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate, loadHostedState, HostedDotConfig } from './hostedDotState';
 import * as sessionProtocolMapper from './utils/sessionProtocolMapper';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
-    attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any }));
+    attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any,
+    listModels: vi.fn(async () => ({ data: [{ model: 'test', displayName: 'test', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'xhigh', isDefault: true }, { model: 'alternate', displayName: 'Alternate', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high', isDefault: false }] })),
+}));
 vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
     constructor(_: unknown, options: any) { h.options = options; }
-    listModels = async () => ({ data: [{ model: 'test', displayName: 'test', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'xhigh', isDefault: true }, { model: 'alternate', displayName: 'Alternate', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high', isDefault: false }] });
+    listModels = h.listModels;
     connect = async () => {}; disconnect = async () => {};
     setApprovalHandler() {} setEventHandler(fn: any) { h.event = fn; }
     startThread = h.start; injectItems = h.inject;
@@ -345,6 +347,31 @@ it('sends xhigh by default and applies an edit to the next actual turn request',
         h.rows.push(row(2, 'second'));
         await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(2));
         expect(h.send.mock.calls[1][1]).toMatchObject({ model: 'alternate', effort: 'high' });
+        expect(h.listModels).toHaveBeenCalledTimes(1);
+    } finally { await f.stop(); }
+});
+it('refreshes the startup catalog for GPT-6.2 and uses it on the next turn in the same thread', async () => {
+    h.send.mockImplementation(async (id: string) => {
+        emit('turn/started', { turn: { id } });
+        emit('turn/completed', { turn: { id, status: 'completed' } });
+    });
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.listModels).toHaveBeenCalledTimes(1);
+        const original = await h.listModels.mock.settledResults[0].value;
+        h.listModels.mockResolvedValueOnce({ data: [...original.data, {
+            model: 'gpt-6.2-sol', displayName: 'GPT-6.2 Sol', description: '',
+            supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }], defaultReasoningEffort: 'xhigh', isDefault: false,
+        }] });
+        writeFileSync(join(f.config.directory, 'settings.json'), JSON.stringify({ model: 'gpt-6.2-sol', effort: 'xhigh' }));
+        h.rows.push(row(1, 'new model'));
+        await vi.waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+        expect(h.send.mock.calls[0][1]).toMatchObject({ model: 'gpt-6.2-sol', effort: 'xhigh' });
+        expect(f.state().threadId).toBe('native-thread');
+        expect(h.start).toHaveBeenCalledTimes(1);
+        expect(h.listModels).toHaveBeenCalledTimes(2);
+        expect(readPrivate(join(f.config.directory, 'models.json'))).toContainEqual(expect.objectContaining({ code: 'gpt-6.2-sol' }));
     } finally { await f.stop(); }
 });
 it('rejects unsupported effort without dispatching a fallback turn', async () => {
