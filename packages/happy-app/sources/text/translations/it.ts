@@ -112,6 +112,7 @@ export const it: TranslationStructure = {
         title: 'Task notifications',
         open: 'View all notifications',
         close: 'Close notification list',
+        dismiss: 'Nascondi promemoria',
         alwaysPush: 'Always notify my phone',
         alwaysPushDescription: 'Send mobile push notifications even while another device is viewing this conversation.',
         haptics: 'In-app haptic feedback',

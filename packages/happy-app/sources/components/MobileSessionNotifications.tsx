@@ -31,6 +31,7 @@ export function MobileSessionNotificationContent() {
     const navigate = useNavigateToSession();
     const [expanded, setExpanded] = React.useState(false);
     const [banner, setBanner] = React.useState<MobileAttentionItem | null>(null);
+    const [dismissed, setDismissed] = React.useState<ReadonlySet<string>>(() => new Set());
     const seen = React.useRef<Set<string> | null>(null);
 
     React.useEffect(() => {
@@ -57,7 +58,9 @@ export function MobileSessionNotificationContent() {
         return () => clearTimeout(timeout);
     }, [banner]);
 
-    React.useEffect(() => { if (items.length === 0) setExpanded(false); }, [items.length]);
+    React.useEffect(() => {
+        if (items.length === 0) { setExpanded(false); setDismissed(new Set()); }
+    }, [items.length]);
 
     React.useEffect(() => {
         if (Platform.OS !== 'ios') return;
@@ -68,15 +71,24 @@ export function MobileSessionNotificationContent() {
     const completed = items.filter(item => item.status === 'completed').length;
     const action = items.length - completed;
     const summary = t('sessionNotifications.summary', { completed, action });
+    // The summary pill stays above the conversation until the result is read, so
+    // let the user hide it per event; a new or changed reminder brings it back.
+    const itemKeys = items.map(item => `${item.id}:${item.status}:${item.eventId}`);
+    const dismissal = () => { setDismissed(new Set(itemKeys)); setExpanded(false); setBanner(null); };
     return (
         <>
-            {items.length > 0 && active && (
+            {items.length > 0 && active && itemKeys.some(key => !dismissed.has(key)) && (
                 <View style={[styles.overlay, { top: insets.top + 54, maxWidth: width - 32 }]} pointerEvents="box-none">
-                    <Pressable style={styles.pill} onPress={() => setExpanded(true)} accessibilityRole="button" accessibilityLabel={`${summary}. ${t('sessionNotifications.open')}`} testID="mobile-attention-summary">
-                        <Ionicons name="notifications-outline" size={16} color={action ? '#FF9500' : theme.colors.success} />
-                        <Text style={styles.summary}>{summary}</Text>
-                        <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
-                    </Pressable>
+                    <View style={styles.pill}>
+                        <Pressable style={styles.pillMain} onPress={() => setExpanded(true)} accessibilityRole="button" accessibilityLabel={`${summary}. ${t('sessionNotifications.open')}`} testID="mobile-attention-summary">
+                            <Ionicons name="notifications-outline" size={16} color={action ? '#FF9500' : theme.colors.success} />
+                            <Text style={styles.summary}>{summary}</Text>
+                            <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
+                        </Pressable>
+                        <Pressable style={styles.pillClose} onPress={dismissal} accessibilityRole="button" accessibilityLabel={t('sessionNotifications.dismiss')} testID="mobile-attention-dismiss" hitSlop={6}>
+                            <Ionicons name="close" size={14} color={theme.colors.textSecondary} />
+                        </Pressable>
+                    </View>
                     {banner && items.some(item => item.id === banner.id && item.eventId === banner.eventId) && (
                         <View style={[styles.banner, { width: Math.min(340, width - 32) }]} testID="mobile-attention-banner">
                             <Pressable style={styles.bannerOpen} onPress={() => open(banner.id)} accessibilityRole="button">
@@ -132,7 +144,9 @@ function AttentionRow({ item }: { item: MobileAttentionItem }) {
 
 const styles = StyleSheet.create(theme => ({
     overlay: { position: 'absolute', right: 16, zIndex: 1000, alignItems: 'flex-end', gap: 8 },
-    pill: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: theme.colors.surface, borderColor: theme.colors.divider, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9 },
+    pill: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderColor: theme.colors.divider, borderWidth: 1, borderRadius: 20, overflow: 'hidden' },
+    pillMain: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 12, paddingRight: 6, paddingVertical: 9 },
+    pillClose: { paddingHorizontal: 10, paddingVertical: 9, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.divider },
     summary: { ...Typography.default('semiBold'), fontSize: 12, color: theme.colors.text },
     banner: { flexDirection: 'row', maxWidth: 340, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.divider, borderRadius: 12 },
     bannerOpen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },

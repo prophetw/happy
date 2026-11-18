@@ -113,6 +113,7 @@ export const ca: TranslationStructure = {
         title: 'Task notifications',
         open: 'View all notifications',
         close: 'Close notification list',
+        dismiss: 'Amaga els recordatoris',
         alwaysPush: 'Always notify my phone',
         alwaysPushDescription: 'Send mobile push notifications even while another device is viewing this conversation.',
         haptics: 'In-app haptic feedback',

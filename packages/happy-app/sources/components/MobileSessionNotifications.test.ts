@@ -111,6 +111,19 @@ describe('iOS in-app session reminders', () => {
         expect(mocks.badge).toHaveBeenLastCalledWith(1);
     });
 
+    it('hides the persistent summary when dismissed and restores it for a new event', () => {
+        update({ sessions: { a: session('a') }, unreadSessionIds: new Set(['a']) });
+        const pill = () => tree.root.findAllByType('Pressable').find((node: any) => node.props.testID === 'mobile-attention-summary');
+        expect(pill()).toBeTruthy();
+        act(() => button('sessionNotifications.dismiss')!.props.onPress());
+        expect(pill()).toBeUndefined();
+        expect(views('mobile-attention-banner')).toHaveLength(0);
+        update({ sessions: { ...storage.getState().sessions } });
+        expect(pill()).toBeUndefined();
+        update({ sessionAttention: { a: { kind: 'done', eventId: 'done:5:1', seq: 5, at: 50, read: false, version: 0 } } });
+        expect(pill()).toBeTruthy();
+    });
+
     it('opens the reminder list, preserves unread when dismissed, and navigates to the exact conversation', () => {
         update({ sessions: { a: session('a') }, unreadSessionIds: new Set(['a']) });
         const pill = () => tree.root.findAllByType('Pressable').find((node: any) => node.props.testID === 'mobile-attention-summary');

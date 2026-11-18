@@ -131,6 +131,7 @@ export const zhHant: TranslationStructure = {
         title: '任務提醒',
         open: '查看所有提醒',
         close: '關閉提醒列表',
+        dismiss: '關閉提醒',
         alwaysPush: '一律提醒手機',
         alwaysPushDescription: '即使其他裝置正在查看該對話，也傳送系統推播。',
         haptics: 'App 內觸覺提醒',

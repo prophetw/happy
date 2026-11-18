@@ -124,6 +124,7 @@ export const pl: TranslationStructure = {
         title: 'Task notifications',
         open: 'View all notifications',
         close: 'Close notification list',
+        dismiss: 'Ukryj powiadomienia',
         alwaysPush: 'Always notify my phone',
         alwaysPushDescription: 'Send mobile push notifications even while another device is viewing this conversation.',
         haptics: 'In-app haptic feedback',
