@@ -1,5 +1,15 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## 附件下载修复部署（2026-11-18，全局 CLI / daemon 已切换）
+
+`631baefe9 fix(cli): download local attachments through the active relay` 修复的是 CLI 侧附件下载：Relay 通过 `PUBLIC_URL` 宣告 `https://szsp.suitbim.com.cn:7100/home-relay`，旧 CLI 只在 `downloadUrl.startsWith(serverUrl)` 时附带 Bearer，实际 GET 返回 401，用户图片消息只剩文字。8989 开发 Web 已是 `c2fd2e715`，上传成功且 Relay 已落盘，不是 Web 部署旧。
+
+从当次 fetch 与 `fork/main` 一致、工作树干净的个人 `main` `c2fd2e7153186db9d48179650cc56281cb7f1499` 构建 happy-cli / happy-agent / happy-wire，产物位于 `/home/dev/.local/share/happy-releases/stack-20261118-c2fd2e715-attachment-download`（manifest 674 个文件，依赖经符号链接复用 `/home/dev/code/happy/node_modules`）。`~/.local/bin/happy` 已指向新栈；旧栈 `stack-20261117-cb11f3ba-sqlite-receipts` 原样保留，回退只需重指链接并显式重启 daemon。
+
+16:23:25（UTC+8）由独立进程 `setsid` 脚本执行显式停启：新 daemon PID 3901966，实际入口为新栈 `dist/index.mjs`，启动时间晚于构建 mtime；machine-alive 已连接并发布 dsh 模型目录。验证：`apiSession.test.ts` 47 项通过；同一附件 `request-download` 200，无 Bearer 的 GET 401（复现原失败），带 Bearer 的 GET 200 并返回 24543 字节原文。
+
+现有会话进程不会因 daemon 重启更换代码，本会话仍运行旧栈；新会话由新 daemon 从新栈 spawn。新会话图片发送、手机与 Web 双端仍未做真实 E2E。
+
 ## Dot 模型目录刷新（2026-11-18，宿主已部署）
 
 Happy `5fb154905957ac2964d9063a6f0dde5d41129247` 与 TestLoop `8344dcd21d63717f5b26e0bee1c3af8e8b1faaa7` 从当次 fetch 一致的个人 `main` 构建。5 个 Dot 的实际 producer 已切换到 `/home/dev/.local/share/happy-releases/model-catalog-20261118-5fb154905/packages/happy-cli/bin/stream-hosted-dot.mjs`。现有 lifecycle 与 inputAuthority 模块仍由 `bc558206` 提供。
