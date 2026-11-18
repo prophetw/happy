@@ -1,5 +1,20 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Claude 模式切换与恢复修复（2026-11-18，全局 CLI / Worker 已切换）
+
+修复提交 `205d92842d81b316f53a975ee9f6abd8f8324603` 已普通推送个人 `fork/main`。两处行为为：模式切换时显式关闭旧 Claude Query，避免 `pending` 消息卡住；按“已实际投递给 Claude”的本地游标恢复未执行输入，旧版本无游标会话仍跳过历史，避免重放旧指令。
+
+从当次 fetch 一致、工作树干净的个人 `main` 复用已通过构建和定向测试的产物，两个不可变 release 各 681 个文件：
+
+- 全局 CLI：`/home/dev/.local/share/happy-releases/stack-20261118-205d92842-claude-resume`，`~/.local/bin/happy` 已指向该栈。
+- Worker：`/home/dev/.local/share/happy-automation/releases/claude-resume-205d92842`，实际 `ExecStart` 与进程参数已核对。新 Worker PID `3808946`，active/running、`NRestarts=0`，本地 `/status` 为 `connected=true`，机器 ID 保持。
+
+切换使用既有发布协调器和独立维护单元 `happy-automation-maintenance-claude-resume-205d92842.service`，dry-run 核验 28 个现有 drop-in、注册配置、当前 InvocationID 和固定产物后执行。维护单元 `Result=success`、`ExecMainStatus=0`；停写冷备 1106 个文件逐项校验通过，注册配置未改，6 个原会话进程根全部保持，`changedOriginalSessionPIDs=[]`。旧全局栈 `stack-20261118-c2fd2e715-attachment-download` 与原 Worker release 保留；显式 Worker 回退入口为 `/var/lib/happy-automation-maintenance/claude-resume-205d92842/rollback-release.py --launch`，只撤销本次入口并保留当前数据。
+
+验证：核心 6 文件 120 项测试、相关插件/resume/daemon 环境 26 项测试通过，CLI 构建和 TypeScript 检查通过。额外 `run.resume.test.ts` 整组初始化失败已在修改前 `HEAD` 的隔离副本复现，属于既有问题，未计入本次通过项。发布前后队列均有同一个真实存活的全局运行任务，未停止或重派；`waiting=[]`、`uncertain=[]`，没有新增不明占用。未新派付费模型任务，未做真实新消息、手机或真机 E2E。已有会话进程继续运行原 release，新启动会话才使用新代码。未切换 Dot producer、Control、Relay、Web 或 OTA。
+
+`happy --version` 打印 1.2.5 后因继承句柄未退出，未把该命令记作验收；已清理本次产生的孙进程，实际版本入口改由符号链接、进程参数、daemon state 和新代码标记核验。
+
 ## Dot 派发恢复与 Worker 开机修复（2026-11-18，宿主已部署）
 
 09:34（UTC+8）WSL 启动后，Worker 连续三次启动失败，触发 systemd 启动限流。09:35 普通 CLI 检出已退出的 daemon PID，清理旧状态后启动普通 daemon。用线上同版本 Worker 和隔离的旧 state、PID 锁可复现 `AUTOMATION_DAEMON_ALREADY_PRESENT`。恢复前，4 个已授权执行连接均返回 `WORKER_UNAVAILABLE / not_sent`。19:15:31 独立维护单元 `happy-automation-maintenance-dot-worker-20261118.service` 完成交接，接回原机器和已有授权。Worker PID 1363474，运行包为 `attachment-relay-631baefe9`。下方 16:23 条目的普通 daemon 已于本次交接退出。
