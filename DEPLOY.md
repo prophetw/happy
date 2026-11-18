@@ -1,5 +1,17 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 派发恢复与 Worker 开机修复（2026-11-18，宿主已部署）
+
+09:34（UTC+8）WSL 启动后，Worker 连续三次启动失败，触发 systemd 启动限流。09:35 普通 CLI 检出已退出的 daemon PID，清理旧状态后启动普通 daemon。用线上同版本 Worker 和隔离的旧 state、PID 锁可复现 `AUTOMATION_DAEMON_ALREADY_PRESENT`。恢复前，4 个已授权执行连接均返回 `WORKER_UNAVAILABLE / not_sent`。19:15:31 独立维护单元 `happy-automation-maintenance-dot-worker-20261118.service` 完成交接，接回原机器和已有授权。Worker PID 1363474，运行包为 `attachment-relay-631baefe9`。下方 16:23 条目的普通 daemon 已于本次交接退出。
+
+切换时 8 个原会话进程的 PID、启动标记和 cgroup 一致。冷备 1077 个文件逐项通过摘要校验。用密钥与账本对照确认，原 336 份会话密钥和原 593 个任务的请求、会话、指纹及派发证据均保持。第一次只读派发验收因两份交接会话被调度器判为整机独占而超时，已停止该测试会话。用切换前的启动档案、冷备与当前进程身份复核两份会话，通过部署版 `happy-session-process-proof.mjs --record-verified` 登记后，调度器恢复按工作目录分配资源。
+
+19:21 使用「Dot 自研」现有授权创建独立只读 Codex 会话并派发一轮。回执为 `executionDispatched=true`，模型返回预期随机校验串，结果为 `completed`，随后确认测试进程已停止。19:28 从「Dot 自研」的托管工具入口回查 `happy_options` 成功，4 个执行连接各返回 3 个可用 agent，队列回查为 0 个整机独占、0 个等待、0 个未确认阻塞。原业务请求重放数为 0。两个验收 worktree 已通过正式工作区入口登记为无改动。该入口无法核验所有进程的占用，目录仍保留。
+
+开机修复源为 `bc5d46c5c`。宿主已安装 `/etc/tmpfiles.d/happy-automation-worker.conf` 和 `/etc/systemd/system/happy-automation-worker.service.d/50-boot-recovery.conf`。早期开机清理旧 state 和锁，Worker 在 tmpfiles 和 Docker 之后启动，依赖未就绪时每 30 秒重试。加载配置前后的 Worker PID、调用实例与锁 inode 一致。临时根目录验证了日常清理保留活锁、开机清理保留会话数据。独立 systemd 验收单元前三次模拟依赖未就绪，第四次成功，验收后已停止该单元。生产 WSL 整机重启未验证。
+
+维护冷备、配置安装记录和配置回退脚本保存在 `/var/lib/happy-automation-maintenance/dot-worker-boot-20261118/`。同目录 `boot-policy.py --rollback` 逐项校验并撤下本次两份启动配置。派发回执与系统演练记录位于 TestLoop `.e2e-artifacts/dot-worker-boot-20261118/`。常规部署与回查步骤见[服务更新指南](docs/features/dot-parallel-tasks.md#happy-dot-服务更新指南)。
+
 ## 附件下载修复部署（2026-11-18，全局 CLI / daemon 已切换）
 
 `631baefe9 fix(cli): download local attachments through the active relay` 修复的是 CLI 侧附件下载：Relay 通过 `PUBLIC_URL` 宣告 `https://szsp.suitbim.com.cn:7100/home-relay`，旧 CLI 只在 `downloadUrl.startsWith(serverUrl)` 时附带 Bearer，实际 GET 返回 401，用户图片消息只剩文字。8989 开发 Web 已是 `c2fd2e715`，上传成功且 Relay 已落盘，不是 Web 部署旧。
