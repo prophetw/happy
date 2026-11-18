@@ -75,6 +75,14 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 ### Happy Dot 服务更新指南
 
+本机 WSL 把 `/home/dev/.happy` 交给 `happy-automation-worker.service` 管理。这个进程同时提供普通 Happy 会话和 Dot 派发。全局 CLI 与 Worker 各有固定入口，更新时须分别核对。
+
+开机清理复用系统的 `systemd-tmpfiles-setup.service`。将 `deploy/automation/happy-automation-worker.tmpfiles.conf` 安装为 `/etc/tmpfiles.d/happy-automation-worker.conf`，其中两条 `r!` 规则在早期开机阶段移除上次留下的 daemon state 和 PID 锁。安装到运行中的宿主只复制规则，真实 home 上的 `--remove --boot` 会移除当前持有者的文件。可用 `node --test deploy/automation/worker-boot.test.mjs` 在临时根目录验证两种模式。
+
+将同目录的 `happy-automation-worker-boot.conf` 安装为该 Worker 的 `service.d/50-boot-recovery.conf`（完整目录为 `/etc/systemd/system/happy-automation-worker.service.d/`），执行 `systemctl daemon-reload`。Worker 在 Docker 和开机清理之后启动，启动失败后每 30 秒重试，60 秒内的启动上限为 3 次。用 `systemctl show happy-automation-worker.service -p After -p RestartUSec -p StartLimitIntervalUSec -p StartLimitBurst` 核对实际配置。回退只需撤下这两个配置文件并重新加载 systemd。
+
+开机验收包括受管 PID 与 state/lock 一致、原机器连接、签名轮询和原 Dot 授权的 `happy_options`。若实际派发仍为 `waiting-resource`，用 `scripts/check-worker-queue.mjs` 核对占用；普通 daemon 交接来的活会话可用切换前登记、冷备和当前进程身份补齐其任务归属证明。
+
 这次修复覆盖会话保留期、旧版本会话写入和 Worker 重启导致的停止证据丢失。它不保证所有 resource-wait 都消失：真实目录/命名资源冲突、未确认的存活进程、撤权、存储损坏和修复前已丢失的记录仍需分别处理。
 
 1. **确定实际更新对象。** 仅改 Worker/调度时只切 Worker，不顺带停 Dot producer、宿主、Relay 或 Web。用 `systemctl show happy-automation-worker.service -p MainPID -p ExecStart -p DropInPaths -p KillMode` 核对实际 release，不能从源码目录或 CLI 版本号推断。保留 `KillMode=process`，独立业务会话继续运行。

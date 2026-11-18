@@ -198,7 +198,11 @@ EAS 发布成功与手机已经接收分别报告；真机未验证时明确说�
    已指向本仓库且依赖未变时，构建一次、顺序停止 / 启动 daemon、核验 PID 与实际
    `dist/index.mjs` 路径即可，不重复 `npm link`。源码更新可能保持相同版本号，
    不能仅凭版本号认定已更新；已有会话进程不会因此热替换代码，新会话使用新构建。
-   重建 `dist` 后**必须显式重启 daemon**，不要以自交接为由省略：心跳（默认 60 秒，
+   先按 Happy home 核对 daemon 的管理入口。若目标是本机 `/etc/happy-control/worker.json`
+   指定的 home，使用 `happy-automation-worker.service` 的固定发布入口，由独立维护单元
+   切换并验证签名轮询和 `happy_options`。服务 failed 时也沿该入口恢复。普通 daemon
+   的 `happy daemon stop/start` 流程仅适用于由普通 daemon 管理的 home。
+   重建普通 daemon 的 `dist` 后**必须显式重启 daemon**，不要以自交接为由省略：心跳（默认 60 秒，
    `HAPPY_DAEMON_HEARTBEAT_INTERVAL`）确实会在 `dist/index.mjs` 的 mtime 变化时清理状态
    并 spawn 新 daemon（`packages/happy-cli/src/daemon/run.ts:1100`，日志
    “Daemon bundle replaced on disk, handing off to new daemon”），但触发时间不确定，
