@@ -223,6 +223,36 @@ describe('ApiSessionClient v3 messages API migration', () => {
         } finally { await client.close(); }
     });
 
+    it('resumes ordinary input after the delivered cursor without replaying older prompts', async () => {
+        const onUserMessage = vi.fn();
+        const oldPrompt = { role: 'user', content: { type: 'text', text: 'already delivered' } };
+        const pendingPrompt = { role: 'user', content: { type: 'text', text: 'still pending' } };
+        mockAxiosGet.mockResolvedValueOnce({
+            data: {
+                messages: [
+                    (createNewMessageUpdate(40, encryptContent(session, oldPrompt)) as any).body.message,
+                    (createNewMessageUpdate(41, encryptContent(session, pendingPrompt)) as any).body.message,
+                ],
+                hasMore: false,
+            },
+        });
+        const client = new ApiSessionClient('fake-token', session, undefined, {
+            commonHandlers: false,
+            initialReceivedSeq: 40,
+        });
+        client.onUserMessage(onUserMessage);
+        try {
+            emitSocketEvent('connect');
+            await waitForCheck(() => expect(onUserMessage).toHaveBeenCalledTimes(1));
+            expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+                seq: 41,
+                content: { type: 'text', text: 'still pending' },
+            }));
+            expect(mockAxiosGet.mock.calls[0][1].params.after_seq).toBe(40);
+            expect((client as any).lastReceivedSeq).toBe(41);
+        } finally { await client.close(); }
+    });
+
     it('uses the shared outbox with stable identities, encrypted readback and independent receive cursor', async () => {
         const envelope = { id: 'native-item', time: 1000, role: 'agent', turn: 'turn', ev: { t: 'text', text: 'reply' } } as const;
         const client = new ApiSessionClient('fake-token', session);
@@ -1063,7 +1093,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
             }] } });
             await (client as any).fetchMessages();
             await (client as any).fetchMessages();
-            expect(received).toHaveBeenCalledExactlyOnceWith(body);
+            expect(received).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(body));
             expect(mockSocket.emitWithAck).not.toHaveBeenCalled();
             await client.close();
         });
@@ -1074,7 +1104,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
             const received = vi.fn();
             client.onUserMessage(received);
             emitSocketEvent('update', createNewMessageUpdate(1, encryptContent(session, body)));
-            expect(received).toHaveBeenCalledExactlyOnceWith(body);
+            expect(received).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(body));
             expect(mockSocket.emitWithAck).not.toHaveBeenCalled();
             await client.close();
         });
@@ -1120,7 +1150,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
             after_seq: 0,
             limit: 100
         });
-        expect(onUserMessage).toHaveBeenCalledWith(userMessage);
+        expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining(userMessage));
         expect((client as any).lastReceivedSeq).toBe(1);
     });
 
@@ -1247,7 +1277,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
         await (client as any).fetchMessages();
 
         expect(onUserMessage).toHaveBeenCalledTimes(1);
-        expect(onUserMessage).toHaveBeenCalledWith(userMessage);
+        expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining(userMessage));
         expect(onMessage).toHaveBeenCalledTimes(1);
         expect(onMessage).toHaveBeenCalledWith(agentMessage);
     });
@@ -1357,7 +1387,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
         emitSocketEvent('update', createNewMessageUpdate(2, encryptContent(session, userMessage)));
 
         expect(onUserMessage).toHaveBeenCalledTimes(1);
-        expect(onUserMessage).toHaveBeenCalledWith(userMessage);
+        expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining(userMessage));
         expect((client as any).lastReceivedSeq).toBe(2);
         expect(mockAxiosGet).not.toHaveBeenCalled();
     });
@@ -1404,7 +1434,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
             emitSocketEvent('update', createNewMessageUpdate(1, encryptContent(session, firstMessage)));
 
             expect(onUserMessage).toHaveBeenCalledTimes(1);
-            expect(onUserMessage).toHaveBeenCalledWith(firstMessage);
+            expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining(firstMessage));
             expect((client as any).lastReceivedSeq).toBe(1);
             expect(mockAxiosGet).not.toHaveBeenCalled();
         } finally {
@@ -1500,7 +1530,7 @@ describe('ApiSessionClient v3 messages API migration', () => {
         // The catch-up has to start from what we have actually seen, not from
         // the seq our own send happened to be given.
         expect(mockAxiosGet.mock.calls[0][1].params.after_seq).toBe(0);
-        expect(onUserMessage).toHaveBeenCalledWith(prompt);
+        expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining(prompt));
     });
 
     it('flushOutbox tolerates missing response.data.messages and keeps the cursor unchanged', async () => {

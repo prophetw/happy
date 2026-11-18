@@ -281,7 +281,9 @@ export const UserMessageSchema = z.object({
     text: z.string()
   }),
   localKey: z.string().optional(), // Mobile messages include this
-  meta: MessageMetaSchema.optional()
+  meta: MessageMetaSchema.optional(),
+  /** Server log sequence, attached by the CLI receive path for resume checkpoints. */
+  seq: z.number().int().nonnegative().optional()
 })
 
 export type UserMessage = z.infer<typeof UserMessageSchema>

@@ -10,6 +10,8 @@ const {
     mockStartHookServer,
     mockRegisterKillSessionHandler,
     mockDiscoverClaudeModels,
+    mockEnsureSessionDeliveryCursor,
+    mockReadSessionDeliveryCursor,
 } = vi.hoisted(() => ({
     mockApiClientCreate: vi.fn(),
     mockCreateSessionScanner: vi.fn(),
@@ -20,6 +22,8 @@ const {
     mockStartHookServer: vi.fn(),
     mockRegisterKillSessionHandler: vi.fn(),
     mockDiscoverClaudeModels: vi.fn().mockResolvedValue(null),
+    mockEnsureSessionDeliveryCursor: vi.fn(() => 0),
+    mockReadSessionDeliveryCursor: vi.fn(() => null as number | null),
 }));
 
 vi.mock('@/api/api', () => ({
@@ -38,6 +42,11 @@ vi.mock('@/claude/utils/sessionScanner', () => ({
 
 vi.mock('@/claude/loop', () => ({
     loop: mockLoop,
+}));
+
+vi.mock('./sessionDeliveryCursor', () => ({
+    ensureSessionDeliveryCursor: mockEnsureSessionDeliveryCursor,
+    readSessionDeliveryCursor: mockReadSessionDeliveryCursor,
 }));
 
 vi.mock('@/claude/utils/discoverModels', () => ({ discoverClaudeModels: mockDiscoverClaudeModels }));
@@ -129,6 +138,7 @@ async function startRemoteRunClaudeHarness(opts: {
         sessionId: 'happy-session-1',
         suppressNextArchiveSignal: vi.fn(),
         skipExistingMessages: vi.fn(),
+        markUserMessageDelivered: vi.fn(),
         updateMetadata: vi.fn((updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
             metadata = updater(metadata);
         }),
@@ -249,6 +259,8 @@ describe('runClaude remote JSONL scanner', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockDiscoverClaudeModels.mockResolvedValue(null);
+        mockEnsureSessionDeliveryCursor.mockReturnValue(0);
+        mockReadSessionDeliveryCursor.mockReturnValue(null);
         for (const event of processEvents) {
             originalListeners.set(event, process.listeners(event as any) as Array<(...args: any[]) => void>);
         }
@@ -299,6 +311,7 @@ describe('runClaude remote JSONL scanner', () => {
             sessionId: 'happy-session-1',
             suppressNextArchiveSignal: vi.fn(),
             skipExistingMessages: vi.fn(),
+            markUserMessageDelivered: vi.fn(),
             updateMetadata: vi.fn(),
             sendClaudeSessionMessage: vi.fn((message: unknown) => {
                 sentMessages.push(message);
@@ -407,6 +420,7 @@ describe('runClaude remote JSONL scanner', () => {
             sessionId: 'happy-session-1',
             suppressNextArchiveSignal: vi.fn(),
             skipExistingMessages: vi.fn(),
+            markUserMessageDelivered: vi.fn(),
             updateMetadata: vi.fn((updater: (current: typeof metadata) => typeof metadata) => {
                 metadata = updater(metadata);
             }),
@@ -864,6 +878,52 @@ describe('runClaude remote JSONL scanner', () => {
         }
     });
 
+    it('initializes delivery tracking for a new session without skipping its first prompt', async () => {
+        const harness = await startRemoteRunClaudeHarness();
+        expect(mockEnsureSessionDeliveryCursor).toHaveBeenCalledWith('happy-session-1');
+        expect(harness.api.sessionSyncClient).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'happy-session-1' }),
+            { initialReceivedSeq: 0 },
+        );
+        expect(harness.sessionClient.skipExistingMessages).not.toHaveBeenCalled();
+        await harness.finish();
+    });
+
+    it('resumes after the last SDK-delivered prompt instead of skipping pending input', async () => {
+        mockReadSessionDeliveryCursor.mockReturnValue(41);
+        vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', 'happy-session-1');
+        vi.stubEnv('HAPPY_RECONNECT_ENCRYPTION_KEY', Buffer.alloc(32).toString('base64'));
+        vi.stubEnv('HAPPY_RECONNECT_ENCRYPTION_VARIANT', 'legacy');
+        try {
+            const harness = await startRemoteRunClaudeHarness();
+            expect(harness.api.sessionSyncClient).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'happy-session-1' }),
+                { initialReceivedSeq: 41 },
+            );
+            expect(harness.sessionClient.skipExistingMessages).not.toHaveBeenCalled();
+            await harness.finish();
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('keeps legacy resume skip behavior when no delivery cursor exists', async () => {
+        vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', 'happy-session-1');
+        vi.stubEnv('HAPPY_RECONNECT_ENCRYPTION_KEY', Buffer.alloc(32).toString('base64'));
+        vi.stubEnv('HAPPY_RECONNECT_ENCRYPTION_VARIANT', 'legacy');
+        try {
+            const harness = await startRemoteRunClaudeHarness();
+            expect(harness.api.sessionSyncClient).toHaveBeenCalledWith(
+                expect.objectContaining({ id: 'happy-session-1' }),
+                { initialReceivedSeq: 0 },
+            );
+            expect(harness.sessionClient.skipExistingMessages).toHaveBeenCalledOnce();
+            await harness.finish();
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
     it('clears a fixed model when the app selects the host default', async () => {
         const harness = await startRemoteRunClaudeHarness();
         const userMessageHandler = harness.sessionClient.onUserMessage.mock.calls[0][0];
@@ -911,9 +971,11 @@ describe('runClaude remote JSONL scanner', () => {
         await userMessageHandler({
             content: { text: 'add this to the active turn' },
             meta: { deliveryMode: 'steer' },
+            seq: 42,
         });
 
         expect(steer).toHaveBeenCalledWith('add this to the active turn', []);
+        expect(harness.sessionClient.markUserMessageDelivered).toHaveBeenCalledWith(42);
         expect(harness.loopOptions.messageQueue.queue).toEqual([]);
         expect(harness.api.getOrCreateSession).toHaveBeenCalledWith(expect.objectContaining({
             metadata: expect.objectContaining({ claudeCapabilities: { steering: true } }),
@@ -927,7 +989,8 @@ describe('runClaude remote JSONL scanner', () => {
         harness.runtimeSession.steeringHandler = steer;
         const userMessageHandler = harness.sessionClient.onUserMessage.mock.calls[0][0];
 
-        await userMessageHandler({ content: { text: 'turn already ended' }, meta: { deliveryMode: 'steer' } });
+        await userMessageHandler({ content: { text: 'turn already ended' }, meta: { deliveryMode: 'steer' }, seq: 43 });
+        expect(harness.sessionClient.markUserMessageDelivered).not.toHaveBeenCalled();
         expect(harness.loopOptions.messageQueue.queue).toEqual([
             expect.objectContaining({ message: 'turn already ended', isolate: false }),
         ]);

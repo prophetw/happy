@@ -38,7 +38,7 @@ describe('claudeRemote', () => {
 
     async function runMessages(sdkMessages: unknown[]) {
         vi.mocked(query).mockReturnValue({
-            async *[Symbol.asyncIterator]() { yield* sdkMessages; },
+            close: vi.fn(), async *[Symbol.asyncIterator]() { yield* sdkMessages; },
         } as any);
         const onReady = vi.fn();
         const onCompletionEvent = vi.fn();
@@ -103,7 +103,7 @@ describe('claudeRemote', () => {
                 duration_ms: 12000, duration_api_ms: 11000, usage: { input_tokens: 1200, output_tokens: 100 } } },
         ];
         vi.mocked(query).mockImplementation(({ options }) => ({
-            async *[Symbol.asyncIterator]() {
+            close: vi.fn(), async *[Symbol.asyncIterator]() {
                 clock.mockReturnValue(0);
                 options!.onTokenSpeedBoundary!('prompt-submit');
                 for (const { at, message } of messages) {
@@ -161,7 +161,7 @@ describe('claudeRemote', () => {
     it('allows a later user retry in the same session without replaying the failed prompt', async () => {
         const received: unknown[] = [];
         vi.mocked(query).mockImplementation(({ prompt }) => ({
-            async *[Symbol.asyncIterator]() {
+            close: vi.fn(), async *[Symbol.asyncIterator]() {
                 const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
                 received.push((await input.next()).value);
                 yield authAssistant;
@@ -195,11 +195,41 @@ describe('claudeRemote', () => {
         expect(query).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ resume: 'fixture-session' }) }));
     });
 
+    it('closes an idle query when the launcher ends input for a mode restart', async () => {
+        let finishClose!: () => void;
+        const closed = new Promise<void>(resolve => { finishClose = resolve; });
+        const close = vi.fn(() => finishClose());
+        vi.mocked(query).mockImplementation(({ prompt }) => ({
+            close,
+            async *[Symbol.asyncIterator]() {
+                const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+                await input.next();
+                yield { type: 'result', subtype: 'success', is_error: false, result: 'Done' };
+                expect(await input.next()).toMatchObject({ done: true });
+                // Model the real SDK behavior seen in production: EOF alone leaves
+                // the query alive; close() terminates the response iterator.
+                await closed;
+            },
+        }) as any);
+        const nextMessage = vi.fn()
+            .mockResolvedValueOnce({ message: 'Original prompt', mode })
+            .mockResolvedValue(null);
+
+        await claudeRemote({
+            sessionId: null, path: '/fixture/project', allowedTools: [], hookSettingsPath: '/fixture/settings.json',
+            nextMessage, onReady: vi.fn(), onCompletionEvent: vi.fn(), onMessage: vi.fn(), onSDKMetadata: vi.fn(),
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }), isAborted: () => false,
+            onSessionFound: vi.fn(),
+        });
+
+        expect(close).toHaveBeenCalledOnce();
+    }, 250);
+
     it('injects steering into the active input stream and rejects it after the turn', async () => {
         const received: unknown[] = [];
         let steer!: (message: string) => boolean;
         vi.mocked(query).mockImplementation(({ prompt }) => ({
-            async *[Symbol.asyncIterator]() {
+            close: vi.fn(), async *[Symbol.asyncIterator]() {
                 const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
                 received.push((await input.next()).value);
                 expect(steer('Supplement')).toBe(true);
@@ -240,7 +270,7 @@ describe('claudeRemote', () => {
                 finishQueueRead = () => resolve(null);
             }));
         vi.mocked(query).mockImplementation(({ prompt }) => ({
-            async *[Symbol.asyncIterator]() {
+            close: vi.fn(), async *[Symbol.asyncIterator]() {
                 const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
                 await input.next();
                 expect(steer('Steered follow-up')).toBe(true);
@@ -274,7 +304,7 @@ describe('claudeRemote', () => {
 
     it.each(['/clear', 'Ordinary prompt'])('awaits the async ready callback for %s', async prompt => {
         vi.mocked(query).mockReturnValue({
-            async *[Symbol.asyncIterator]() { yield { type: 'result', subtype: 'success', is_error: false, result: 'Done' }; },
+            close: vi.fn(), async *[Symbol.asyncIterator]() { yield { type: 'result', subtype: 'success', is_error: false, result: 'Done' }; },
         } as any);
         const failure = new Error('Fixture ready callback failed');
         const nextMessage = vi.fn().mockResolvedValueOnce({ message: prompt, mode }).mockResolvedValue(null);
@@ -290,7 +320,7 @@ describe('claudeRemote', () => {
 
     it('does not report successful compaction after a provider auth failure', async () => {
         vi.mocked(query).mockReturnValue({
-            async *[Symbol.asyncIterator]() {
+            close: vi.fn(), async *[Symbol.asyncIterator]() {
                 yield authAssistant;
                 yield { type: 'result', subtype: 'success', is_error: true, result: expired };
             },
@@ -348,7 +378,7 @@ describe('claudeRemote', () => {
         const setPermissionMode = vi.fn();
         vi.mocked(query).mockReturnValue({
             setPermissionMode,
-            async *[Symbol.asyncIterator]() {
+            close: vi.fn(), async *[Symbol.asyncIterator]() {
                 yield {
                     type: 'assistant',
                     message: {

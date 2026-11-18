@@ -9,6 +9,8 @@ interface QueueItem<T> {
     isolate?: boolean; // If true, this message must be processed alone
     /** Decoded image attachments owned by *this* message (per-message ownership). */
     attachments?: PendingAttachment[];
+    /** Greatest server log sequence represented by this item. */
+    seq?: number;
 }
 
 /**
@@ -42,7 +44,7 @@ export class MessageQueue2<T> {
      * Push a message to the queue with a mode and an optional list of
      * attachments that travel with this message.
      */
-    push(message: string, mode: T, attachments?: PendingAttachment[]): void {
+    push(message: string, mode: T, attachments?: PendingAttachment[], seq?: number): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -56,6 +58,7 @@ export class MessageQueue2<T> {
             modeHash,
             isolate: false,
             attachments,
+            seq,
         });
 
         // Trigger message handler if set
@@ -78,7 +81,7 @@ export class MessageQueue2<T> {
      * Push a message immediately without batching delay.
      * Does not clear the queue or enforce isolation.
      */
-    pushImmediate(message: string, mode: T): void {
+    pushImmediate(message: string, mode: T, seq?: number): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -90,7 +93,8 @@ export class MessageQueue2<T> {
             message,
             mode,
             modeHash,
-            isolate: false
+            isolate: false,
+            seq
         });
 
         // Trigger message handler if set
@@ -114,7 +118,7 @@ export class MessageQueue2<T> {
      * Clears any pending messages and ensures this message is never batched with others.
      * Used for special commands that require dedicated processing.
      */
-    pushIsolateAndClear(message: string, mode: T, attachments?: PendingAttachment[]): void {
+    pushIsolateAndClear(message: string, mode: T, attachments?: PendingAttachment[], seq?: number): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -131,6 +135,7 @@ export class MessageQueue2<T> {
             modeHash,
             isolate: true,
             attachments,
+            seq,
         });
 
         // Trigger message handler if set
@@ -153,7 +158,7 @@ export class MessageQueue2<T> {
      * Push a message that must be processed alone without discarding
      * already-queued user prompts.
      */
-    pushIsolated(message: string, mode: T, attachments?: PendingAttachment[]): void {
+    pushIsolated(message: string, mode: T, attachments?: PendingAttachment[], seq?: number): void {
         if (this.closed) {
             throw new Error('Cannot push to closed queue');
         }
@@ -167,6 +172,7 @@ export class MessageQueue2<T> {
             modeHash,
             isolate: true,
             attachments,
+            seq,
         });
 
         // Trigger message handler if set
@@ -188,7 +194,7 @@ export class MessageQueue2<T> {
     /**
      * Push a message to the beginning of the queue with a mode.
      */
-    unshift(message: string, mode: T): void {
+    unshift(message: string, mode: T, seq?: number): void {
         if (this.closed) {
             throw new Error('Cannot unshift to closed queue');
         }
@@ -200,7 +206,8 @@ export class MessageQueue2<T> {
             message,
             mode,
             modeHash,
-            isolate: false
+            isolate: false,
+            seq
         });
 
         // Trigger message handler if set
@@ -264,7 +271,7 @@ export class MessageQueue2<T> {
      * Wait for messages and return all messages with the same mode as a single string
      * Returns { message: string, mode: T } or null if aborted/closed
      */
-    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string, attachments?: PendingAttachment[] } | null> {
+    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string, attachments?: PendingAttachment[], seq?: number } | null> {
         // If we have messages, return them immediately
         if (this.queue.length > 0) {
             return this.collectBatch();
@@ -288,7 +295,7 @@ export class MessageQueue2<T> {
     /**
      * Collect a batch of messages with the same mode, respecting isolation requirements
      */
-    private collectBatch(): { message: string, mode: T, hash: string, isolate: boolean, attachments?: PendingAttachment[] } | null {
+    private collectBatch(): { message: string, mode: T, hash: string, isolate: boolean, attachments?: PendingAttachment[], seq?: number } | null {
         if (this.queue.length === 0) {
             return null;
         }
@@ -299,6 +306,7 @@ export class MessageQueue2<T> {
         let mode = firstItem.mode;
         let isolate = firstItem.isolate ?? false;
         const targetModeHash = firstItem.modeHash;
+        let seq = firstItem.seq;
 
         // If the first message requires isolation, only process it alone
         if (firstItem.isolate) {
@@ -314,6 +322,7 @@ export class MessageQueue2<T> {
                 const item = this.queue.shift()!;
                 sameModeMessages.push(item.message);
                 if (item.attachments) collectedAttachments.push(...item.attachments);
+                if (item.seq !== undefined) seq = seq === undefined ? item.seq : Math.max(seq, item.seq);
             }
             logger.debug(`[MessageQueue2] Collected batch of ${sameModeMessages.length} messages with mode hash: ${targetModeHash}`);
         }
@@ -327,6 +336,7 @@ export class MessageQueue2<T> {
             hash: targetModeHash,
             isolate,
             attachments: collectedAttachments.length > 0 ? collectedAttachments : undefined,
+            seq,
         };
     }
 

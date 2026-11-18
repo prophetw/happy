@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { logger } from '@/ui/logger'
 import type { AgentState, CreateSessionResponse, Metadata, Session, Machine, MachineMetadata, DaemonState } from '@/api/types'
-import { ApiSessionClient } from './apiSession';
+import { ApiSessionClient, type SessionClientOptions } from './apiSession';
 import { ApiMachineClient } from './apiMachine';
 import { decodeBase64, encodeBase64, getRandomBytes, encrypt, decrypt, libsodiumEncryptForPublicKey } from './encryption';
 import { PushNotificationClient } from './pushNotifications';
@@ -333,8 +333,8 @@ export class ApiClient {
     }
   }
 
-  sessionSyncClient(session: Session): ApiSessionClient {
-    return new ApiSessionClient(this.credential.token, session, this.credential);
+  sessionSyncClient(session: Session, options: SessionClientOptions = {}): ApiSessionClient {
+    return new ApiSessionClient(this.credential.token, session, this.credential, options);
   }
 
   machineSyncClient(machine: Machine): ApiMachineClient {

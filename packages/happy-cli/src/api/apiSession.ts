@@ -29,6 +29,7 @@ import axios from 'axios';
 import type { Credentials } from '@/persistence';
 import { RelaySwitchController, type RelayTarget } from '@/relay/relaySwitch';
 import { relayRequest, probeRelay, prepareRelayPersistence, waitRelaySocket, wrapRelayKey, withRelayLock, publishRelaySnapshot } from '@/relay/relayConnection';
+import { recordSessionDeliveryCursor } from '@/claude/sessionDeliveryCursor';
 
 /**
  * ACP (Agent Communication Protocol) message data types.
@@ -98,6 +99,8 @@ export type ReceivedSessionMessage = { id: string; seq: number; localId: string 
 export type SessionClientOptions = {
     serverUrl?: string;
     commonHandlers?: boolean;
+    /** Ordinary Claude sessions resume only after prompts actually handed to the SDK. */
+    initialReceivedSeq?: number;
     /** Persist receipt and input together before the shared receive cursor advances. */
     receive?: { afterSeq: number; onMessage: (message: ReceivedSessionMessage) => void | Promise<void> };
 };
@@ -266,7 +269,7 @@ export class ApiSessionClient extends EventEmitter {
     constructor(token: string, session: Session, relayCredential?: Credentials, private readonly options: SessionClientOptions = {}) {
         super()
         this.serverUrl = options.serverUrl ?? configuration.serverUrl;
-        this.lastReceivedSeq = options.receive?.afterSeq ?? 0;
+        this.lastReceivedSeq = options.receive?.afterSeq ?? options.initialReceivedSeq ?? 0;
         this.token = token;
         this.sessionId = session.id;
         this.metadata = session.metadata;
@@ -388,7 +391,7 @@ export class ApiSessionClient extends EventEmitter {
                             ? (body as { content: { type: string } }).content.type
                             : 'unknown',
                     });
-                    this.routeIncomingMessage(body);
+                    this.routeIncomingMessage(body, messageSeq);
                     this.lastReceivedSeq = messageSeq;
                 } else if (data.body.t === 'update-session') {
                     if (data.body.metadata && data.body.metadata.version > this.metadataVersion) {
@@ -692,13 +695,14 @@ export class ApiSessionClient extends EventEmitter {
         };
     }
 
-    private routeIncomingMessage(message: unknown) {
+    private routeIncomingMessage(message: unknown, seq?: number) {
         const userResult = UserMessageSchema.safeParse(message);
         if (userResult.success) {
+            const userMessage = seq === undefined ? userResult.data : { ...userResult.data, seq };
             if (this.pendingMessageCallback) {
-                this.pendingMessageCallback(userResult.data);
+                this.pendingMessageCallback(userMessage);
             } else {
-                this.pendingMessages.push(userResult.data);
+                this.pendingMessages.push(userMessage);
             }
             return;
         }
@@ -771,7 +775,7 @@ export class ApiSessionClient extends EventEmitter {
                     continue;
                 }
                 if (this.options.receive) await this.options.receive.onMessage({ id: message.id, seq: message.seq, localId: message.localId, body });
-                else this.routeIncomingMessage(body);
+                else this.routeIncomingMessage(body, message.seq);
                 this.lastReceivedSeq = Math.max(this.lastReceivedSeq, message.seq);
             }
 
@@ -1155,6 +1159,10 @@ export class ApiSessionClient extends EventEmitter {
      */
     suppressNextArchiveSignal() {
         this.ignoreArchiveSignal = true;
+    }
+
+    markUserMessageDelivered(seq?: number) {
+        if (seq !== undefined) recordSessionDeliveryCursor(this.sessionId, seq);
     }
 
     skipExistingMessages() {

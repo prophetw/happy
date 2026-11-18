@@ -41,6 +41,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RawJSONLinesSchema, type RawJSONLines } from './types';
 import { happyTaskMetadataFromEnvironment } from '@/utils/createSessionMetadata';
+import { ensureSessionDeliveryCursor, readSessionDeliveryCursor } from './sessionDeliveryCursor';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -293,13 +294,19 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // SDK metadata (tools, slash commands) is now extracted from the
     // system.init message in claudeRemote.ts via onSDKMetadata callback
 
-    // Create realtime session
-    const session = api.sessionSyncClient(response);
+    // Create realtime session. A cursor written by this version represents the
+    // last prompt actually handed to Claude, not merely received from Relay.
+    // Legacy sessions have no cursor and retain the old skip-history behavior.
+    const deliveryCursor = reconnectSessionId
+        ? readSessionDeliveryCursor(reconnectSessionId)
+        : ensureSessionDeliveryCursor(response.id);
+    const session = api.sessionSyncClient(response, { initialReceivedSeq: deliveryCursor ?? 0 });
 
-    // On reconnect, un-archive the session and skip replaying old messages.
+    // On reconnect, un-archive the session and skip replaying old messages only
+    // when no delivered cursor exists (upgrading an older session).
     if (reconnectSessionId) {
         session.suppressNextArchiveSignal();
-        session.skipExistingMessages();
+        if (deliveryCursor === null) session.skipExistingMessages();
         session.updateMetadata((meta) => ({
             ...meta,
             lifecycleState: 'running',
@@ -789,14 +796,14 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
         if (specialCommand.type === 'compact') {
             logger.debug('[start] Detected /compact command');
-            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, currentEnhancedMode(), attachmentsForThisMessage);
+            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, currentEnhancedMode(), attachmentsForThisMessage, message.seq);
             logger.debugLargeJson('[start] /compact command pushed to queue:', message);
             return;
         }
 
         if (specialCommand.type === 'clear') {
             logger.debug('[start] Detected /clear command');
-            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, currentEnhancedMode(), attachmentsForThisMessage);
+            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, currentEnhancedMode(), attachmentsForThisMessage, message.seq);
             logger.debugLargeJson('[start] /clear command pushed to queue:', message);
             return;
         }
@@ -848,6 +855,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // the ordinary queue exactly once. Slash commands keep queue ordering.
         const shouldSteer = message.meta?.deliveryMode === 'steer' && !message.content.text.trim().startsWith('/');
         if (shouldSteer && currentSession?.steeringHandler?.(message.content.text, attachmentsForThisMessage)) {
+            try {
+                session.markUserMessageDelivered(message.seq);
+            } catch (error) {
+                // The SDK has already accepted this input; never enqueue a
+                // duplicate when the local checkpoint write fails.
+                logger.debug('[loop] Failed to persist steered message delivery cursor', error);
+            }
             logger.debug('[loop] User message injected into the active Claude turn');
             return;
         }
@@ -856,7 +870,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }
 
         // Push with resolved permission mode, model, system prompts, and tools
-        messageQueue.push(message.content.text, currentEnhancedMode(), attachmentsForThisMessage);
+        messageQueue.push(message.content.text, currentEnhancedMode(), attachmentsForThisMessage, message.seq);
         logger.debugLargeJson('User message pushed to queue:', message)
     });
 

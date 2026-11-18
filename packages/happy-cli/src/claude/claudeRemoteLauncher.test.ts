@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProjectPath } from './utils/path';
+import { MessageQueue2 } from '@/utils/MessageQueue2';
 import kimiTokenSpeed from './utils/__fixtures__/kimi-token-speed.json';
 
 // Exercise the real outgoing queue, SDK converter and protocol mapper without
@@ -25,6 +26,7 @@ vi.mock('./utils/permissionHandler', () => ({
         setOnPermissionRequest = vi.fn();
         getResponseLookup = () => new Map();
         getResponseForToolUseId = vi.fn();
+        handleModeChange = vi.fn();
         handleToolCall = vi.fn();
     },
 }));
@@ -60,6 +62,37 @@ function fixture() {
     const stop = () => { void handlers.get('switch')!(); };
     return { session, state, envelopes, notification, stop };
 }
+
+describe('claudeRemoteLauncher delivery checkpoints', () => {
+    beforeEach(() => { vi.mocked(claudeRemote).mockReset(); });
+
+    it('does not checkpoint a mode-changed message until the restarted query receives it', async () => {
+        const { session, stop } = fixture();
+        const queue = new MessageQueue2<{ permissionMode: string }>(mode => mode.permissionMode);
+        session.queue = queue;
+        const markUserMessageDelivered = vi.fn();
+        (session.client as any).markUserMessageDelivered = markUserMessageDelivered;
+        queue.push('old mode', { permissionMode: 'plan' }, [], 41);
+        queue.push('new mode', { permissionMode: 'bypassPermissions' }, [], 42);
+        const delivered: unknown[] = [];
+
+        vi.mocked(claudeRemote)
+            .mockImplementationOnce(async opts => {
+                delivered.push(await opts.nextMessage());
+                expect(await opts.nextMessage()).toBeNull();
+                expect(markUserMessageDelivered.mock.calls).toEqual([[41]]);
+            })
+            .mockImplementationOnce(async opts => {
+                delivered.push(await opts.nextMessage());
+                stop();
+            });
+
+        await claudeRemoteLauncher(session as any);
+
+        expect(delivered.map(message => (message as any)?.seq)).toEqual([41, 42]);
+        expect(markUserMessageDelivered.mock.calls).toEqual([[41], [42]]);
+    });
+});
 
 describe('claudeRemoteLauncher provider auth', () => {
     beforeEach(() => { vi.mocked(claudeRemote).mockReset(); });

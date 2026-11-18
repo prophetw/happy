@@ -484,6 +484,23 @@ describe('MessageQueue2', () => {
         expect(batch3?.mode.type).toBe('A');
     });
 
+    it('keeps the greatest server sequence in a same-mode batch', async () => {
+        const queue = new MessageQueue2<string>(mode => mode);
+
+        queue.push('first', 'remote', undefined, 40);
+        queue.push('second', 'remote', undefined, 42);
+        queue.push('different mode', 'local', undefined, 43);
+
+        expect(await queue.waitForMessagesAndGetAsString()).toMatchObject({
+            message: 'first\nsecond',
+            seq: 42,
+        });
+        expect(await queue.waitForMessagesAndGetAsString()).toMatchObject({
+            message: 'different mode',
+            seq: 43,
+        });
+    });
+
     it('should differentiate between pushImmediate and pushIsolateAndClear behavior', async () => {
         const queue = new MessageQueue2<{ type: string }>((mode) => mode.type);
         

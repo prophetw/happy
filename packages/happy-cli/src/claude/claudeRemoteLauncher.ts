@@ -297,6 +297,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         let pending: {
             message: MessageParam['content'];
             mode: EnhancedMode;
+            seq?: number;
         } | null = null;
 
         // Track session ID to detect when it actually changes
@@ -342,6 +343,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     nextMessage: async () => {
                         if (pending) {
                             let p = pending;
+                            session.client.markUserMessageDelivered(p.seq);
                             pending = null;
                             permissionHandler.handleModeChange(p.mode.permissionMode);
                             return p;
@@ -360,9 +362,18 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             mode = msg.mode;
                             permissionHandler.handleModeChange(mode.permissionMode);
 
+                            try {
+                                session.client.markUserMessageDelivered(msg.seq);
+                            } catch (error) {
+                                // Keep the prompt for the next launcher pass; an
+                                // uncheckpointed input must not disappear on resume.
+                                pending = msg;
+                                throw error;
+                            }
                             return {
                                 message: claudeMessageContent(msg.message, msg.attachments ?? []),
                                 mode: msg.mode,
+                                seq: msg.seq,
                             };
                         }
 

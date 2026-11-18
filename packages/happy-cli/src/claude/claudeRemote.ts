@@ -38,7 +38,7 @@ export async function claudeRemote(opts: {
     jsRuntime?: JsRuntime,
 
     // Dynamic parameters
-    nextMessage: () => Promise<{ message: MessageParam['content'], mode: EnhancedMode } | null>,
+    nextMessage: () => Promise<{ message: MessageParam['content'], mode: EnhancedMode, seq?: number } | null>,
     onReady: (status?: 'failed') => void | Promise<void>,
     isAborted: (toolCallId: string) => boolean,
 
@@ -197,6 +197,10 @@ export async function claudeRemote(opts: {
     const endInput = () => {
         inputEnded = true;
         messages.end();
+        // EOF alone can leave an idle Claude SDK query alive forever. Closing
+        // the query lets the launcher finish and consume a mode-changed pending
+        // message in a fresh query instead of silently parking it here.
+        response.close();
     };
     const requestNextMessage = () => {
         // A steered message can produce its own result while an earlier queue
