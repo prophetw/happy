@@ -80,6 +80,7 @@ import {
     shouldUseNativeHomeDockMenus,
 } from './homeDockInteraction';
 import { registerHomeDockFocusListener, useHomeDockFocusStore } from './homeDockFocus';
+import { resolveHomeDockProjectSheetMaxHeight } from './homeDockLayout';
 import {
     resolveNewSessionPrimaryAction,
     resolveNewSessionProgressLabel,
@@ -1100,6 +1101,16 @@ export const HomeDock = React.memo(({
             ),
         ),
     }), [safeArea.top, windowHeight]);
+    const projectSheetHeightStyle = useAnimatedStyle(() => ({
+        maxHeight: resolveHomeDockProjectSheetMaxHeight({
+            windowHeight,
+            safeAreaTop: safeArea.top,
+            safeAreaBottom: safeArea.bottom,
+            keyboardHeight: keyboard.height.value,
+            keyboardProgress: keyboard.progress.value,
+            focusedComposerHeight,
+        }),
+    }), [focusedComposerHeight, safeArea.bottom, safeArea.top, windowHeight]);
     const keyboardStyle = useAnimatedStyle(() => ({
         // Keyboard height includes the bottom safe area on iOS. The resting
         // dock keeps that inset, then gives it back while the keyboard opens
@@ -1722,7 +1733,7 @@ export const HomeDock = React.memo(({
             <PickerSheetPanel
                 title={config.title}
                 onClose={closePicker}
-                style={[styles.settingsStack, settingsSheetHeightStyle]}
+                style={[styles.settingsStack, page === 'project' ? projectSheetHeightStyle : settingsSheetHeightStyle]}
             >
                 {page === 'project' ? (
                     <DirectoryBrowser
