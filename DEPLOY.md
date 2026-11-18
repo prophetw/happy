@@ -1,5 +1,13 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 模型目录刷新（2026-11-18，宿主已部署）
+
+Happy `5fb154905957ac2964d9063a6f0dde5d41129247` 与 TestLoop `8344dcd21d63717f5b26e0bee1c3af8e8b1faaa7` 从当次 fetch 一致的个人 `main` 构建。5 个 Dot 的实际 producer 已切换到 `/home/dev/.local/share/happy-releases/model-catalog-20261118-5fb154905/packages/happy-cli/bin/stream-hosted-dot.mjs`。现有 lifecycle 与 inputAuthority 模块仍由 `bc558206` 提供。
+
+08:45:58（UTC+8）独立维护单元 `dot-model-catalog-20261118-attempt3.service` 完成并退出 0。宿主自动刷新目录后，线上加密工作台 RPC 返回 10 个模型，包含 `gpt-6.2-sol` 与 `gpt-6.2-astra`。定向测试 55 项及隔离 Chromium 4 项通过，隔离 Codex 完成一轮 `gpt-6.2-sol / high` 真实推理。线上验收为只读回查，正式账号上的模型切换未验证。
+
+本次范围为 TestLoop 和 Happy Dot producer。配套冷备、回退预检、前两次维护失败及恢复记录见 TestLoop `DEPLOY.md` 和私有证据 `~/.local/state/dot-model-catalog-release-20261118/`。
+
 ## Dot 对话内记忆提示（2026-11-17，producer / Web 已部署，部分验证）
 
 固定发布源 `e10927bb754afb2a036be627b3890a382e2a0802` 已普通推送个人 `fork/main`，从干净 release 构建；后续 `bc558206` 未纳入。5 个 Dot producer 实际进程均运行 `/home/dev/.local/share/happy-releases/memory-visibility-20261117-e10927bb/packages/happy-cli/bin/stream-hosted-dot.mjs`，全局 CLI/daemon、Control、Relay、Worker 和既有 lifecycle/inputAuthority 未切换。宿主为 TestLoop `b87c3af`，最终 activation verified，原输入输出、权限、记忆和 13 个 gateway 保持。
