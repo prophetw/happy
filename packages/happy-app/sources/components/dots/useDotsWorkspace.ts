@@ -3,7 +3,7 @@ import { randomUUID } from 'expo-crypto';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@/auth/AuthContext';
 import { useSessionVisibility } from '@/hooks/useSessionVisibility';
-import { storage, useRealtimeStatus, useSessionMessages } from '@/sync/storage';
+import { storage, useRealtimeStatus, useSessionMessages, useSocketStatus } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { sessionArchiveTestloopDot, sessionUpdateDotIdentity } from '@/sync/ops';
 import { readDotsWorkspace } from '@/sync/dotsWorkspaceRead';
@@ -117,6 +117,7 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
 
     const ready = readyScope === scope && validBinding();
     const realtime = useRealtimeStatus();
+    const { status: socketStatus } = useSocketStatus();
     useSessionVisibility(sessionId, active && ready, Boolean(detailDotId), realtime);
     const refreshDirectory = React.useCallback((): Promise<void> => {
         if (!validBinding() || !active) return Promise.resolve();
@@ -236,13 +237,13 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
 
     const hasPending = waiting.length > 0;
     useFocusEffect(React.useCallback(() => {
-        if (ready && active && realtime === 'connected') void checkPending();
-    }, [ready, active, realtime, checkPending]));
+        if (ready && active && socketStatus === 'connected') void checkPending();
+    }, [ready, active, socketStatus, checkPending]));
     useFocusEffect(React.useCallback(() => {
-        if (!ready || !active || !hasPending || realtime !== 'connected') return;
+        if (!ready || !active || !hasPending || socketStatus !== 'connected') return;
         const timer = setInterval(() => void checkPending(), receiptCheckInterval);
         return () => clearInterval(timer);
-    }, [ready, active, hasPending, realtime, checkPending]));
+    }, [ready, active, hasPending, socketStatus, checkPending]));
 
     React.useEffect(() => {
         if (!ready || !active || !isLoaded || recovered.current || !commandScope) return;

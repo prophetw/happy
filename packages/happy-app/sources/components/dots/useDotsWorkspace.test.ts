@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     archive: vi.fn(), updateIdentity: vi.fn(), read: vi.fn(), loaded: false, token: 'token',
     rpc: vi.fn(), valuesOnDisk: new Map<string, string>(), encryptions: new Map<string, any>(), failStorage: false,
     extraSessions: {} as Record<string, any>,
-    active: true, realtime: 'connected',
+    active: true, realtime: 'connected', socket: 'connected',
 }));
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => listId }));
@@ -38,6 +38,7 @@ vi.mock('react-native-mmkv', () => ({ MMKV: class {
 } }));
 vi.mock('@/sync/storage', () => ({
     useRealtimeStatus: () => mocks.realtime,
+    useSocketStatus: () => ({ status: mocks.socket }),
     useSessionMessages: () => ({ messages: mocks.messages, isLoaded: mocks.loaded }),
     storage: { getState: () => ({ sessions: {
         'workspace-session': { id: 'workspace-session', active: true, metadata: { testloopDots: {
@@ -86,7 +87,7 @@ beforeEach(() => {
     mocks.loaded = false; mocks.token = `token-${++accountSequence}`;
     mocks.valuesOnDisk.clear(); mocks.encryptions.clear(); mocks.failStorage = false;
     mocks.extraSessions = {};
-    mocks.active = true; mocks.realtime = 'connected';
+    mocks.active = true; mocks.realtime = 'disconnected'; mocks.socket = 'connected';
     mocks.rpc.mockReset().mockImplementation(async (_session, _method, request) => ({ ok: true, data: {
         schemaVersion: 1, workspaceId, requestId: request.command.requestId, status: 'queued', error: null,
     } }));
@@ -168,6 +169,38 @@ const readReceipt = async (requestId: string, response: unknown) => {
     await act(async () => { await mocks.values[0].checkReceipt(requestId); });
 };
 
+it('automatically reads the restored original receipt with Relay connected and voice disconnected', async () => {
+    mocks.realtime = 'disconnected';
+    mocks.valuesOnDisk.set(JSON.stringify([mocks.token, 'https://test.invalid', 'workspace-session', workspaceId]),
+        JSON.stringify({ schemaVersion: 1, serverUrl: 'https://test.invalid', sessionId: 'workspace-session',
+            workspaceId, command: clearRequest }));
+    mocks.rpc.mockResolvedValue(applied(clearId));
+    const renderer = await render();
+    expect(mocks.values[0].pendingCommands).toEqual([]);
+    expect(mocks.rpc).toHaveBeenCalledWith('workspace-session', 'testloop-dots-read',
+        { schemaVersion: 1, workspaceId, action: 'receipt', command: clearRequest });
+    expect(writeCalls()).toHaveLength(0);
+    expect(mocks.values[0].projection.receipts[clearId]?.ok).toBe(true);
+    await act(async () => renderer.unmount());
+});
+
+it('polls an original processing request while voice is disconnected and settles when its ledger finishes', async () => {
+    vi.useFakeTimers();
+    mocks.realtime = 'disconnected';
+    const renderer = await render();
+    await act(async () => { await mocks.values[0].submit(clearRequest); });
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(clearRequest);
+    try {
+        mocks.rpc.mockResolvedValueOnce(applied(clearId));
+        await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+        expect(mocks.values[0].pendingCommands).toEqual([]);
+        expect(writeCalls()).toHaveLength(1);
+    } finally {
+        await act(async () => renderer.unmount());
+        vi.useRealTimers();
+    }
+});
+
 it('restores a lost-response command and reads its original receipt without writing after reload', async () => {
     mocks.rpc.mockRejectedValueOnce(new Error('response lost'));
     let renderer = await render();
@@ -203,10 +236,10 @@ it('keeps two targets independent and reconciles the remaining original request 
     await readReceipt(deleteId, applied(clearId, 2, [dot, other]));
     expect(mocks.values[0].pendingFor(other.id)?.message).toContain('暂时无法核对');
 
-    mocks.realtime = 'disconnected'; await update(renderer);
+    mocks.socket = 'disconnected'; await update(renderer);
     mocks.rpc.mockResolvedValueOnce({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: deleteId,
         status: 'rejected', error: 'dot_clear_refused' } });
-    mocks.realtime = 'connected'; await update(renderer);
+    mocks.socket = 'connected'; await update(renderer);
     expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].errorFor(other.id)).toContain('dot_clear_refused');
     expect(mocks.values[0].projection.receipts[clearId]?.ok).toBe(true);
