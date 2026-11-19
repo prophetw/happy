@@ -1,5 +1,17 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 清空回执恢复（2026-11-19，Happy Web 8989 已发布）
+
+12:17（UTC+8）切换实际监听 8989 的 `happy-dev-8989.service`。它从 `/home/dev/code/happy-dev-8989-20261113` 提供 Expo Web。在该工作树原基线 `c2fd2e715` 上只应用个人 main 的 `beb4b254e`，得到 `fc1e053d7`，12 个变更文件逐一与修复提交比对一致。配套 TestLoop 宿主版本为 `6f7eeb9`。本次发布范围为该宿主与 8989。
+
+8989 实际页面连接隔离的临时账号、加密 Relay 与测试 Dot，9 项浏览器验收通过。故意丢弃清空回包后，页面通过原请求编号查得回执并打开新会话，清空只执行一次。另有 10 项候选版浏览器检查通过，覆盖 A 等待回执时仍可编辑、保存、清空 B，以及刷新后恢复旧请求。
+
+| 验收场景 | 截图 |
+| --- | --- |
+| 8989 恢复到测试 Dot 的新会话 | [查看截图](http://100.116.89.36:3210/img-bed/images/e5a5333e-b31c-48b6-9625-4880af47514c.png) |
+
+本机证据根为 `~/.local/state/dot-receipts-8989-20261119/`。Web 版本与模块核验见 `web/activation.json`，浏览器报告在 `candidate-test/.e2e-artifacts/dots-workspace-read/2026-11-19T04-18-35-127Z/report.json`。回退 8989 使用证据根的 `host/launch.py --web-rollback-launch`，通过已核验的 WSL 宿主入口执行。
+
 ## Codex 派活默认模型与强度（2026-11-19，Worker 已部署）
 
 10:28:25（UTC+8）独立维护单元将 `happy-automation-worker.service` 切换到 `~/.local/share/happy-automation/releases/codex-defaults-da90be0aa`，来源为当次 fetch 一致、工作树干净的个人 `main` 提交 `da90be0aa6232a0f19f9affb98fd16a526f11fa4`。MainPID、daemon state 与锁均为 2021337，维护单元退出 0，Worker 签名轮询返回 connected，`NRestarts=0`。
