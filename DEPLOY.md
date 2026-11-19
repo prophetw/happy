@@ -1,5 +1,15 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Codex 派活默认模型与强度（2026-11-19，Worker 已部署）
+
+10:28:25（UTC+8）独立维护单元将 `happy-automation-worker.service` 切换到 `~/.local/share/happy-automation/releases/codex-defaults-da90be0aa`，来源为当次 fetch 一致、工作树干净的个人 `main` 提交 `da90be0aa6232a0f19f9affb98fd16a526f11fa4`。MainPID、daemon state 与锁均为 2021337，维护单元退出 0，Worker 签名轮询返回 connected，`NRestarts=0`。
+
+经 TestLoop 原「Dot 自研」授权入口只读回查，`happy_options` 返回 Codex `defaultModel=gpt-6.2-sol`、`defaultEffort=max`、`defaultPermissionMode=default`，目标模型和强度均在支持列表中。新建执行会话逐项采用默认值，显式选择继续优先；已创建的 Codex 会话在后续派发复核时沿用创建时的模型与强度。CLI 和共享包构建、CLI 产物依赖内联检查及 88 项定向测试通过，隔离测试捕获四种传参组合的实际启动参数。本次真实模型测试任务数为 0。
+
+切换时核验 11 个既有会话根进程，原 PID、启动标识与 cgroup 一致。682 个产物文件和停写冷备的 1154 个文件均通过摘要检查。后续队列快照为 running 1、completed 612、cancelled 16、failed 11，较切换前一项运行任务完成；整机排他、等待和归属不明均为 0，原权限配置与并发策略通过核对。
+
+构建出现 MCP 依赖内联与未使用导入提示，产物身份预检和在线加载通过。私有验证记录位于 `~/.local/state/happy-codex-defaults-20261119/`，冷备与切换记录位于 `/var/lib/happy-automation-maintenance/codex-defaults-da90be0aa/`，其中 `rollback-release.py --launch` 可通过独立维护单元撤回本次 Worker 入口。
+
 ## 最近项目任务工作区清理（2026-11-19，Web / iOS Preview 已发布）
 
 修复提交 `7ccc329db` 由干净、与当次 `fork/main` 一致的 `40e907bdc76be0158bc948927e76b1862e600d7d` 发布。最近项目会过滤已保存和由旧会话回填的 Happy Control 任务工作树路径。可识别来源项目的会话仍使用来源路径。App 类型检查、changelog 一致性和 100 项定向测试通过。
