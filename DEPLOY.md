@@ -1,5 +1,19 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Happy Dot 重启后派发恢复（2026-11-19，WSL Worker 已部署）
+
+11 月 19 日 07:20（UTC+8）WSL 启动。07:21:54 至 07:26:07，受管 Worker 连续 9 次在认证读取 Relay 机器记录时遇到 `ECONNRESET`，每次退出都释放了 Happy home。07:26:33，旧版普通 daemon（PID 82549）在重试间隙取得该目录，已授权的 Dot 随即无法找到执行端。07:43:03 受管 Worker 重新连接时，systemd 已累计重启 41 次。
+
+部署了个人 `fork/main` 的三个修复。提交 `9534c0724` 调整开机顺序，原子发布兼容旧 CLI 的 PID 锁，并让受管 Worker 在 Relay 暂不可达时持锁等待。`e9e537b50` 将账号核验纳入同一启动阶段，两项认证都成功后才开放本地会话操作并连接 Relay。隔离测试还复现了原版在账号读取断线后留下失效 PID 锁的情况。`c540d3ed9` 修正了会话恢复后的调度检查，既有队列记录继续使用原 turn 和请求 ID，本机进程归属通过当前 daemon 的启动记录与 Linux 进程身份核验。
+
+08:47:23 最终切换到 `~/.local/share/happy-automation/releases/boot-identity-e9e537b50`。独立维护单元退出 0，Worker 已启用开机启动。MainPID、daemon state 与锁均为 938262，`NRestarts=0`，签名轮询持续返回 connected。最终切换保留 7 个在线会话根进程，冷备 1137 个文件通过摘要校验。340 份原会话密钥、630 条原任务的请求、会话、指纹和派发证据均通过核对。第一次交接后曾出现 4 个误占整机的历史任务，其中 2 个在修复前自然完成，仍保留完成时的资源快照。08:48 线上快照为整机排他 0、等待 0、归属不明 0，项目并发上限仍为 2。
+
+原「Dot 自研」连接的 `happy_options` 与全部 4 个已授权连接都已验证。使用原 `testLoop` 授权新建独立只读验收任务，工作项 `55b92feb13f1c07af5324ddaf4bed587e13a8dec977685dabb0f5a07e56d4f39` 经过正常排队后派发一次，Codex 返回指定标记，结果为 completed。第一次验收脚本因密集轮询收到 HTTP 429，随后按原请求 ID 回查。最终版本再次读到同一条创建回执、结果和已停止的进程。验收工作树已登记为无变更，常规操作员因进程可见性不足保留工作树。原先登记前被拒绝的业务请求未重发。[验收会话](https://desktop-8ut4p0p.taild92624.ts.net/happy/session/cmwmt3jap02kwuf16he3iirah)
+
+最终发布包在隔离环境中经过开机竞态验收。真实旧 CLI 在机器读取断线时尝试启动，随后账号读取断线并返回 503。原 Worker 保持同一 PID 和锁，Relay 恢复后其 Ed25519 签名轮询通过校验，停止后释放本地状态。另有机器与账号拒绝认证的隔离验收、29 项 CLI 定向测试、47 项调度与进程证明测试、1 项系统启动规则测试及 CLI 构建通过。宿主有在线会话，本次未实际重启整台 WSL。
+
+宿主证据在 `~/.local/state/happy-worker-boot-20261119/`。最终切换和冷备在 `/var/lib/happy-automation-maintenance/boot-identity-e9e537b50/`。该目录的 `rollback-release.py --launch` 可独立撤回最后一次 Worker 入口。前两次切换分别保留在同级的 `boot-sessions-c540d3ed9` 和 `boot-owner-9534c0724`。
+
 ## Claude 模式切换与恢复修复（2026-11-18，全局 CLI / Worker 已切换）
 
 修复提交 `205d92842d81b316f53a975ee9f6abd8f8324603` 已普通推送个人 `fork/main`。两处行为为：模式切换时显式关闭旧 Claude Query，避免 `pending` 消息卡住；按“已实际投递给 Claude”的本地游标恢复未执行输入，旧版本无游标会话仍跳过历史，避免重放旧指令。
