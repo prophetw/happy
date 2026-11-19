@@ -1,5 +1,13 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 自动核对连接状态修正（2026-11-19，8989 已更新）
+
+用户验收发现「E2E 独立测试 Dot」仍显示等待回执。现场只读核对最新清空编号 `301be5c9-86c0-488f-a85a-8d6686127d08` 为 applied，App 快照校验通过。恢复逻辑误用了语音通话的 `realtimeStatus`，没有开启语音时不会自动核对。Happy `364e4bcf6` 改用现有 Relay `socketStatus`，重连、返回页面和定时核对均使用该连接状态。
+
+8989 现有发布工作树已应用该提交，当前为 `4cf1ec2c7`。Metro 自动加载新文件，实际返回的 hook 模块包含 `useSocketStatus`，源码逐字节与 main 修复一致。原 8989 进程 PID 3133125 持续提供服务。此前 Web 回退脚本绑定 `fc1e053d7`，执行它之前须先在干净的发布工作树撤回本次提交至该基线。
+
+65 项定向测试和 App 类型检查通过，新增两个回归在修复前失败。8989 实际页面与临时账号、Relay 的 10 项 Chromium 验收通过，未开启语音时丢清空回包、返回工作台，原加密请求自动结算，清空写 RPC 仍为一次。报告为 `~/.local/state/dot-receipts-8989-20261119/candidate-test/.e2e-artifacts/dots-workspace-read/2026-11-19T06-00-00-376Z/report.json`，页面、Console 和非预期请求错误为空。第一次夹具因发布工作树缺 CLI 测试产物失败，复用主仓 CLI 后通过。PGlite 空响应仅发生于夹具清理信号后。用户已打开标签页的实际恢复仍待验收。
+
 ## Dot 清空回执恢复（2026-11-19，Happy Web 8989 已发布）
 
 12:17（UTC+8）切换实际监听 8989 的 `happy-dev-8989.service`。它从 `/home/dev/code/happy-dev-8989-20261113` 提供 Expo Web。在该工作树原基线 `c2fd2e715` 上只应用个人 main 的 `beb4b254e`，得到 `fc1e053d7`，12 个变更文件逐一与修复提交比对一致。配套 TestLoop 宿主版本为 `6f7eeb9`。本次发布范围为该宿主与 8989。
