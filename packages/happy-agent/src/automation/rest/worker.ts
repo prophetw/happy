@@ -284,6 +284,12 @@ export class ScopedWorker {
         // Bound projected JSON below the worker-result byte budget; cursor advances only over this page.
         if (['sessions.logs', 'sessions.status', 'sessions.result'].includes(String(command.method))) command.limit = Math.min(Number(command.limit ?? 100), 100);
         if (command.method === 'tasks.create') {
+            if (job.createAttempt) {
+                const { version: _version, ...original } = command;
+                if (job.createAttempt.id !== job.id || job.createAttempt.digest !== hash(canonicalBody(original))
+                    || job.createAttempt.titleDigest !== (typeof command.title === 'string' ? hash(command.title) : undefined))
+                    throw new ApiError('REQUEST_ID_CONFLICT', 409);
+            }
             const project = projects.find(p => p.id === command.projectID);
             if (!project || command.machineID !== live.machineID || command.directory !== undefined) throw new ApiError('SCOPE_DENIED', 403);
             delete command.projectID; command.directory = project.directory;
@@ -312,12 +318,12 @@ export class ScopedWorker {
                 return w ? withWorkspaceAccess(this.queue,w.id,send) : send();
             },
             rpc: async (m, input) => {
-                await check(['create','cancel'].includes(String(input.operation))); if (m.id !== live.machineID || (input.directory !== undefined && !permittedDirectory(input.directory))) throw new ApiError('SCOPE_DENIED', 403);
-                const workspace = input.operation === 'create' ? workspaces.find(w => w.id === hash(`${live.id}\n${input.requestID}`) && w.cwd === input.directory) : undefined;
+                await check(['create','withdraw-create','cancel'].includes(String(input.operation))); if (m.id !== live.machineID || (input.directory !== undefined && !permittedDirectory(input.directory))) throw new ApiError('SCOPE_DENIED', 403);
+                const workspace = ['create','withdraw-create'].includes(String(input.operation)) ? workspaces.find(w => w.id === hash(`${live.id}\n${input.requestID}`) && w.cwd === input.directory) : undefined;
                 const call = () => this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port),
                     ...(taskTitle ? { HAPPY_TASK_TITLE: taskTitle, HAPPY_TASK_ROOT: workspace.root } : {}) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) });
                 const used = workspace ?? (typeof input.sessionID==='string'?workspaces.find(w => w.sessionID === input.sessionID):undefined);
-                return used ? withWorkspaceAccess(this.queue,used.id,call) : call();
+                return used && input.operation !== 'withdraw-create' ? withWorkspaceAccess(this.queue,used.id,call) : call();
             },
         };
         // Map reconciliation localIds back into the core's stable logical requestID space.
@@ -392,14 +398,34 @@ export class ScopedWorker {
             }
         }
         const journal = new Journal(join(this.directory, hash(`${live.clientID}\n${live.id}`)));
-        const core = new AutomationControl(wrapped, policy, journal);
+        const attempt = capabilities.operations.includes('withdraw-create') ? job.createAttempt : undefined;
+        const core = new AutomationControl(wrapped, policy, journal, command.method === 'tasks.create' ? attempt : undefined);
         const reply = (data: unknown) => ({ version: 1, ok: true, data });
         const readCore = async (input: unknown) => { const result=await core.handle(input); await check(true); return result; };
         if (!internal && command.method === 'requests.get') {
             const preparing=workspaces.find(w=>w.id===hash(`${live.id}\n${command.requestID}`));
-            if(preparing&&!journal.get(String(command.requestID))) {
-                let ownerAlive=true;try { if(preparing.preparationPID) process.kill(preparing.preparationPID,0); } catch(e) {if((e as NodeJS.ErrnoException).code==='ESRCH')ownerAlive=false;}
-                await check(true);return reply({requestID:command.requestID,taskID:command.requestID,state:'pending',queueReason:preparing.preparationError??(!ownerAlive?'preparation_interrupted':'preparing_worktree'),safeToRetrySameRequestID:!!preparing.preparationError||!ownerAlive});
+            const entry = journal.get(String(command.requestID));
+            // Only the endpoint can exclude a delayed create, even when its normal receipt is absent.
+            let interrupted = false;
+            if (preparing && !entry) {
+                interrupted = !!preparing.preparationError;
+                try { if (preparing.preparationPID) process.kill(preparing.preparationPID, 0); }
+                catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') interrupted = true; }
+            }
+            if (attempt && live.methods.includes('tasks.create') && preparing && projects.some(p => p.id === preparing.projectID && p.directory === preparing.root)
+                && (interrupted || entry?.method === 'tasks.create' && ['unknown','unavailable'].includes(entry.state) && entry.createAttempt && canonicalBody(entry.createAttempt) === canonicalBody(attempt))) {
+                const id = String(command.requestID);
+                const fence = await wrapped.rpc(machine, {version: 1, operation: 'withdraw-create', requestID: id, createAttempt: attempt,
+                    directory: preparing.cwd, options: preparing.options, ...(attempt.titleDigest ? {withdrawRoot:preparing.root} : {})});
+                if (fence.state === 'withdrawn' && fence.requestID === remoteID(id) && canonicalBody(fence.createAttempt) === canonicalBody(attempt)) {
+                    await check(true);
+                    return { ...reply({requestID: id, state: 'pending', safeToRetrySameRequestID: true, queueReason: 'execution_not_reached'}), closedCreate: attempt };
+                }
+            }
+            if (preparing && !entry) {
+                await check(true);
+                return reply({requestID:command.requestID,taskID:command.requestID,state:'pending',
+                    queueReason:preparing.preparationError ?? (interrupted?'preparation_interrupted':'preparing_worktree'),safeToRetrySameRequestID:false});
             }
             const task = this.queue.tasks().find(t => t.grantID === live.id && t.requestID === command.requestID);
             if (task) { await check(true); return reply(this.queue.receipt(task)); }
@@ -514,7 +540,10 @@ export class HTTPWorkerRunner {
         let result: unknown;
         try { result = await this.worker.execute(job); }
         catch (error) { result = { version: 1, ok: false, error: { code: error instanceof ApiError || error instanceof ControlError ? error.code : 'UNAVAILABLE_OR_UNKNOWN', retryable: false } }; }
-        const ack = await this.client.request('POST', '/worker/result', { jobID: job.id, result: projectResponse(result) });
+        const projected = projectResponse(result);
+        if (job.createAttempt && canonicalBody((result as {closedCreate?: unknown}).closedCreate) === canonicalBody(job.createAttempt))
+            projected.closedCreate = job.createAttempt;
+        const ack = await this.client.request('POST', '/worker/result', { jobID: job.id, result: projected });
         if (!ack.ok) throw new ApiError(ack.error?.code ?? 'WORKER_CHANNEL_UNAVAILABLE', 503);
     }
     async pollOnce() {

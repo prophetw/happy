@@ -15,7 +15,7 @@ export const isServiceAuthorization = (value: unknown) => typeof value === 'stri
 /** One 256-bit bearer per approved grant. Only its digest is durable; lost delivery is never replayed. */
 export class ServiceTokens {
     constructor(private store: MetadataStore, private grants: Grants, private clients: ServiceClientRegistration[], private now = Date.now) {}
-    static delete(store: MetadataStore, id: string) { store.delete(`service-token:${id}`); }
+    static delete(store: MetadataStore, id: string) { store.delete(`service-token:${id}`); store.delete(`service-usage:${id}`); }
     private record(id: string) {
         const raw = this.store.get<unknown>(`service-token:${id}`);
         if (raw === null) return null;
@@ -27,11 +27,19 @@ export class ServiceTokens {
         for (const raw of this.store.list<unknown>('service-token:')) {
             const parsed = recordSchema.safeParse(raw);
             if (!parsed.success || !this.record(parsed.data.connectionID)) throw new ApiError('STORE_UNAVAILABLE', 503);
+            // Older Controls strictly validate the credential record. Move usage first so a crash can resume migration.
+            const {lastUsedAt, ...credential} = parsed.data;
+            if (lastUsedAt !== undefined) {
+                const key = `service-usage:${credential.connectionID}`;
+                this.store.set(key, Math.max(lastUsedAt, this.store.get<number>(key) ?? 0));
+                this.store.set(`service-token:${credential.connectionID}`, credential);
+            }
         }
     }
     metadata(id: string) {
         const record = this.record(id);
-        return record ? { issued: true, issuedAt: record.issuedAt, expiresAt: record.expiresAt, ...(record.lastUsedAt !== undefined ? { lastUsedAt: record.lastUsedAt } : {}) } : { issued: false };
+        const lastUsedAt = record && this.store.get<number>(`service-usage:${id}`);
+        return record ? { issued: true, issuedAt: record.issuedAt, expiresAt: record.expiresAt, ...(lastUsedAt ? {lastUsedAt} : {}) } : { issued: false };
     }
     issue(id: string, userID: string) {
         const c = this.grants.owner(id, userID);
@@ -60,14 +68,15 @@ export class ServiceTokens {
         if (!registration || c.credentialMode !== 'service-token-v1' || c.userID !== record.userID || c.clientFingerprint !== record.clientFingerprint
             || c.expiresAt !== record.expiresAt) throw new ApiError('INVALID_SERVICE_TOKEN', 401);
         if (this.now() >= record.expiresAt) throw new ApiError('GRANT_EXPIRED', 403);
-        this.touch(record);
+        this.touch(record.connectionID);
         return { registration, grantID: c.id };
     }
     /** Usage bookkeeping never blocks an authenticated call and never mutates the grant. */
-    private touch(record: { connectionID: string; lastUsedAt?: number } & Record<string, unknown>) {
-        const now = this.now();
-        if (record.lastUsedAt !== undefined && now - record.lastUsedAt < 60000) return;
-        try { this.store.set(`service-token:${record.connectionID}`, { ...record, lastUsedAt: now }); }
-        catch { /* Best-effort only; a bookkeeping write failure must not reject usage. */ }
+    private touch(id: string) {
+        const key = `service-usage:${id}`, now = this.now();
+        try {
+            const previous = this.store.get<number>(key);
+            if (previous === null || now - previous >= 60000) this.store.set(key, now);
+        } catch { /* Best-effort usage metadata. */ }
     }
 }

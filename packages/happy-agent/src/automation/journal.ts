@@ -3,7 +3,9 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, r
 import { join } from 'node:path';
 import { ControlError } from './relay';
 
+export type CreateAttempt = { id: string; digest: string; previous: string | null; titleDigest?: string };
 export type RecordEntry = {
+    createAttempt?: CreateAttempt;
     requestID: string; fingerprint: string; method: string; machineID: string;
     sessionID?: string; directory?: string; state: string; messageID?: string; seq?: number;
     cursor?: number;

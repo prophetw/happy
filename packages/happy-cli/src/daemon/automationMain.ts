@@ -42,3 +42,7 @@ export async function automationWorkerMain(argv: string[]) {
             report: event => { process.stdout.write(JSON.stringify({ event: 'automation-worker', ...event }) + '\n'); } } });
     });
 }
+
+// Use the same execution endpoint as the managed daemon in isolated release acceptance.
+export { createAutomationControl } from './automationControl';
+export { acquireAutomationDaemonLock } from './automationBootstrap';

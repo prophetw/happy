@@ -78,8 +78,14 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   expect((await read()).lastUsedAt).toBe(time);
   const listed=(await r.ownerRequest('/connections')).body.data.find((x:any)=>x.id===c.id);
   expect(listed.serviceToken.lastUsedAt).toBe(time);
+  const key = 'service-token:'+c.id, credential = r.gateway.store.get(key);
+  expect(credential.lastUsedAt).toBeUndefined();
+  // A credential from the intermediate release migrates without replacing the issued token.
+  r.gateway.store.set(key,{...credential,lastUsedAt:time-1000});
   await r.restartGateway();
+  expect(r.gateway.store.get(key)).toEqual(credential);
   expect((await read()).lastUsedAt).toBe(time);
+  expect((await request(r,token,'/projects')).status).toBe(200);
  });
  it('rejects in-place edits for pending, cross-user, non-service, empty and over-cap requests',async()=>{
   const r=await setup(),c=await pending(r);

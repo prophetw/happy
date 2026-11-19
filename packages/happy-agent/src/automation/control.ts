@@ -55,7 +55,7 @@ export function projectMessage(message: { id: string; seq: number; content: unkn
 }
 
 export class AutomationControl {
-    constructor(private transport: Transport, private policy: Policy, private journal: Journal) {}
+    constructor(private transport: Transport, private policy: Policy, private journal: Journal, private createAttempt?: RecordEntry['createAttempt']) {}
     private allowedMachine(machineID: string) {
         const machine = this.policy.machines.find(m => m.id === machineID);
         if (!machine) throw new ControlError('FORBIDDEN');
@@ -102,6 +102,7 @@ export class AutomationControl {
         this.allowedEntry(entry);
         const reply = await this.transport.rpc(await this.machine(entry.machineID), {
             version: 1, operation, requestID: entry.requestID, directory: entry.directory, sessionID: entry.sessionID,
+            ...(operation === 'create' && entry.createAttempt ? {createAttempt: entry.createAttempt} : {}),
             ...(entry.options ? { options: entry.options } : {}),
         });
         if (reply.errorCode === 'NOT_FOUND' && operation === 'request') return { state: 'unavailable', safeToRetrySameRequestID: true };
@@ -130,7 +131,8 @@ export class AutomationControl {
         const reply = await this.rpc(entry, 'request');
         if (reply.sessionID !== undefined) entry.sessionID = id(reply.sessionID);
         entry.state = receiptState(reply.state);
-        this.journal.save(entry);
+        // A delayed response must not undo a later attempt's durable registration.
+        if (!entry.createAttempt || this.journal.get(entry.requestID)?.createAttempt?.id === entry.createAttempt.id) this.journal.save(entry);
         return { ...this.receipt(entry), process: processState(reply.process), safeToRetrySameRequestID: reply.safeToRetrySameRequestID === true,
             ...(entry.method === 'tasks.create' && reply.options && typeof reply.options === 'object' ? {options:reply.options} : {}) };
     }
@@ -228,7 +230,7 @@ export class AutomationControl {
             if (!parsed.success) throw new ControlError('INVALID_REQUEST');
             // Fixed key order keeps the idempotency fingerprint stable across callers.
             const options = { agent: parsed.data.agent, model: parsed.data.model, permissionMode: parsed.data.permissionMode, effort: parsed.data.effort };
-            entry = { requestID, method, machineID, directory, options,
+            entry = { requestID, method, machineID, directory, options, createAttempt: this.createAttempt,
                 fingerprint: hash(JSON.stringify({ method, machineID, directory, options })), state: 'unknown' };
         } else {
             const session = await this.session(sessionID!);
@@ -239,6 +241,12 @@ export class AutomationControl {
         if (!this.journal.claim(entry)) {
             const prior = this.journal.get(requestID)!;
             if (prior.fingerprint !== entry.fingerprint) throw new ControlError('REQUEST_ID_CONFLICT');
+            if (method === 'tasks.create' && this.createAttempt && this.createAttempt.id !== prior.createAttempt?.id) {
+                if (!prior.createAttempt || this.createAttempt.previous !== prior.createAttempt.id
+                    || this.createAttempt.digest !== prior.createAttempt.digest) throw new ControlError('REQUEST_ID_CONFLICT');
+                prior.createAttempt = this.createAttempt;
+                this.journal.save(prior);
+            }
             if (!['unknown', 'unavailable'].includes(prior.state)) return this.lookup(prior);
             // An explicit repeat of the SAME payload/key can use the receiver's durable deduplication.
             // requests.get itself stays read-only and never retries a mutation.
@@ -253,7 +261,8 @@ export class AutomationControl {
         const reply = await this.rpc(entry, method === 'tasks.create' ? 'create' : 'cancel');
         if (reply.sessionID !== undefined) entry.sessionID = id(reply.sessionID);
         entry.state = receiptState(reply.state);
-        this.journal.save(entry);
+        // A delayed response must not undo a later attempt's durable registration.
+        if (!entry.createAttempt || this.journal.get(entry.requestID)?.createAttempt?.id === entry.createAttempt.id) this.journal.save(entry);
         // The daemon echoes the fully-resolved launch selection on create.
         return { ...this.receipt(entry), process: processState(reply.process),
             ...(method === 'tasks.create' && reply.options && typeof reply.options === 'object' ? { options: reply.options } : {}) };

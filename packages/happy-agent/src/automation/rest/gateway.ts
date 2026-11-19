@@ -1,7 +1,7 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { createPublicKey, randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
-import { hash } from '../journal';
+import { hash, type CreateAttempt } from '../journal';
 import { canonicalBody, serviceClientFingerprint, verifyProof } from './auth';
 import { DirectorySelections, resolveDirectoriesSchema } from './directories';
 import { ServiceTokens, isServiceAuthorization } from './serviceTokens';
@@ -12,8 +12,8 @@ import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
 import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectionLabelUpdateSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
-export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null };
-export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
+export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null; closedCreateAttempt?: string; createTitleDigest?: string };
+export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; createAttempt?: CreateAttempt; deadline: number };
 type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer: ReturnType<typeof setTimeout>; delivered: boolean };
 export type GatewayOptions = {
     directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
@@ -124,7 +124,8 @@ export function createGateway(options: GatewayOptions) {
     const unsent = (intent: Intent) => ({ version: 1, ok: false, dispatch: 'not_sent',
         data: pendingReceipt(intent), error: { code: 'WORKER_UNAVAILABLE', retryable: true } });
     const unknown = () => failure('UNAVAILABLE_OR_UNKNOWN');
-    async function dispatch(c: Connection, command: Record<string, unknown>, intent?: Intent): Promise<any> {
+    const verifiedWithdrawal = Symbol('verified create withdrawal');
+    async function dispatch(c: Connection, command: Record<string, unknown>, intent?: Intent, lookupIntent?: Intent): Promise<any> {
         grants.active(c.id, c.clientID);
         if (!lastSeen.has(c.workerID) || lastSeen.get(c.workerID)! < now() - 5000) {
             if (intent) return unsent(intent);
@@ -133,9 +134,13 @@ export function createGateway(options: GatewayOptions) {
         if (c.scopeVersion === 3 && !directoryScopeWorkers.has(c.workerID)) throw new ApiError('WORKER_DIRECTORY_SCOPE_UPGRADE_REQUIRED', 426);
         if (c.scopeVersion !== undefined && !projectScopeWorkers.has(c.workerID)) throw new ApiError('WORKER_PROJECT_SCOPE_UPGRADE_REQUIRED', 426);
         const jobID = randomUUID();
+        const bound = intent ?? lookupIntent;
+        const id = intent ? jobID : lookupIntent?.claimID;
+        const createAttempt = bound?.method === 'tasks.create' && bound.fingerprint.startsWith('claim-v1:') && id
+            ? { id, digest: bound.fingerprint.slice('claim-v1:'.length), previous: bound.closedCreateAttempt ?? null, ...(bound.createTitleDigest ? {titleDigest:bound.createTitleDigest} : {}) } : undefined;
         return new Promise(resolve => {
             const timeout = Math.min(options.timeoutMs ?? 15000, Math.max(1, c.expiresAt - now()));
-            const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, deadline: now() + timeout, delivered: false,
+            const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, createAttempt, deadline: now() + timeout, delivered: false,
                 resolve, timer: setTimeout(() => {
                     // Keep delivered jobs briefly: a dispatched OS operation may still finish.
                     if (!job.delivered) jobs.delete(jobID);
@@ -159,6 +164,7 @@ export function createGateway(options: GatewayOptions) {
                     // but cannot dispatch this ID behind our durable claim boundary on downgrade.
                     intent = { requestID: String(requestID), method: String(command.method), grantID: c.id, fingerprint: claimedProtocolFingerprint,
                         projectID: typeof command.projectID === 'string' ? command.projectID : undefined,
+                        ...(command.method === 'tasks.create' && typeof command.title === 'string' ? {createTitleDigest:hash(command.title)} : {}),
                         sessionID: typeof command.sessionID === 'string' ? command.sessionID : undefined, state: 'unknown', claimID: null };
                     if (!store.claim(key, intent)) throw new ApiError('STORE_UNAVAILABLE', 503);
                 }
@@ -181,7 +187,7 @@ export function createGateway(options: GatewayOptions) {
             }
         }
         let result;
-        try { result = await dispatch(c, { version: 1, ...command }, lookup ? undefined : intent); }
+        try { result = await dispatch(c, { version: 1, ...command }, lookup ? undefined : intent, lookup ? intent : undefined); }
         catch (error) {
             if (mutation && lookup && error instanceof ApiError && error.code === 'WORKER_UNAVAILABLE') return unknown();
             throw error;
@@ -201,15 +207,23 @@ export function createGateway(options: GatewayOptions) {
         if (result?.ok === true && result.data && typeof result.data === 'object') {
             const requestID = command.requestID;
             const record = typeof requestID === 'string' ? store.get<Intent>(intentKey(c, requestID)) : null;
-            const preparationProof = lookup && record?.method === 'tasks.create' && result.data.state === 'pending' && result.data.safeToRetrySameRequestID === true;
-            if (record && preparationProof && (!intent || record.claimID !== intent.claimID || result.data.requestID !== requestID
-                || record.claimID && jobs.has(record.claimID))) return unknown();
+            if (lookup && record?.method === 'tasks.create' && result.data.safeToRetrySameRequestID === true) {
+                // Only the signed worker-result handler can attach this internal receipt.
+                const closed = result[verifiedWithdrawal];
+                if (!closed || closed !== intent?.claimID || record.claimID !== closed
+                    || result.data.requestID !== requestID) return unknown();
+                const live = grants.active(c.id, c.clientID);
+                grants.checkMethod(live, 'tasks.create');
+                if (!record.projectID || !scopeProjectIDs(live).includes(record.projectID)) throw new ApiError('SCOPE_DENIED', 403);
+                const old = jobs.get(closed);
+                if (old) { clearTimeout(old.timer); jobs.delete(closed); old.resolve(unknown()); }
+                record.closedCreateAttempt = closed;
+                record.claimID = null;
+                record.state = 'pending';
+                store.set(intentKey(c, record.requestID), record);
+                return ok({ requestID, state: 'pending', safeToRetrySameRequestID: true, queueReason: 'execution_not_reached' });
+            }
             if (record && intent && record.claimID === intent.claimID) {
-                // A Worker may explicitly certify interrupted worktree preparation.
-                if (preparationProof) {
-                    record.claimID = null;
-                    if (!record.fingerprint.startsWith('claim-v1:')) record.fingerprint = 'claim-v1:' + record.fingerprint;
-                }
                 if (typeof result.data.sessionID === 'string') record.sessionID = identifier.parse(result.data.sessionID);
                 record.state = typeof result.data.state === 'string' ? result.data.state : 'unknown';
                 store.set(intentKey(c, record.requestID), record);
@@ -443,7 +457,7 @@ export function createGateway(options: GatewayOptions) {
             job.intent.claimID = job.id;
         }
         job.delivered = true;
-        return ok({ id: job.id, workerID: job.workerID, grantID: job.grantID, command: job.command, deadline: job.deadline });
+        return ok({ id: job.id, workerID: job.workerID, grantID: job.grantID, command: job.command, createAttempt: job.createAttempt, deadline: job.deadline });
     });
     app.post(`${base}/worker/directory-check`, async req => {
         const p = proof(req, 'worker'), id = workerCheckSchema.parse(req.body).jobID;
@@ -472,6 +486,10 @@ export function createGateway(options: GatewayOptions) {
         if (!job || job.workerID !== p.registration.id || !job.delivered) throw new ApiError('JOB_UNAVAILABLE', 403);
         grants.active(job.grantID);
         const result = projectResponse(body.result);
+        const attempt = job.createAttempt;
+        const closed = (body.result as { closedCreate?: unknown }).closedCreate;
+        if (job.command.method === 'requests.get' && attempt && closed
+            && canonicalBody(closed) === canonicalBody(attempt)) Object.defineProperty(result, verifiedWithdrawal, { value: attempt.id });
         clearTimeout(job.timer); jobs.delete(job.id); job.resolve(result); return ok({ accepted: true });
     });
     app.addHook('onClose', async () => { for (const job of jobs.values()) { clearTimeout(job.timer); job.resolve(failure('UNAVAILABLE_OR_UNKNOWN')); } jobs.clear(); directories.close(); directoryScopeWorkers.clear(); lastSeen.clear(); projectScopeWorkers.clear(); unlock(); });

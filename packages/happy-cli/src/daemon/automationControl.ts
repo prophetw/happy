@@ -4,12 +4,23 @@ import { join } from 'node:path';
 import { OptionsDenied, resolveTaskOptions, taskOptionsSchema, type LaunchOptionsPolicy, type OptionCatalogEntry, type ResolvedTaskOptions } from 'happy-agent/automation';
 import { CODEX_AUTOMATION_DEFAULTS } from './automationOptions';
 
+type CreateAttempt = { id: string; digest: string; previous: string | null; titleDigest?: string };
+function createAttempt(value: unknown): CreateAttempt {
+    const attempt = object(value);
+    if (typeof attempt.digest !== 'string' || !/^[a-f0-9]{64}$/.test(attempt.digest)) throw new Error('INVALID_REQUEST');
+    const id = identifier(attempt.id), previous = attempt.previous === null ? null : identifier(attempt.previous);
+    if (id === previous) throw new Error('INVALID_REQUEST');
+    if (attempt.titleDigest !== undefined && (typeof attempt.titleDigest !== 'string' || !/^[a-f0-9]{64}$/.test(attempt.titleDigest))) throw new Error('INVALID_REQUEST');
+    return {id, digest: attempt.digest, previous, ...(typeof attempt.titleDigest === 'string' ? {titleDigest:attempt.titleDigest} : {})};
+}
+
 type Receipt = {
+    createAttempt?: CreateAttempt;
     version: 1;
     requestID: string;
     fingerprint: string;
     operation: 'create' | 'cancel';
-    state: 'pending' | 'confirmed' | 'cancel_requested' | 'failed' | 'unknown';
+    state: 'withdrawn' | 'pending' | 'confirmed' | 'cancel_requested' | 'failed' | 'unknown';
     sessionID?: string;
     errorCode?: string;
     /** Fully-resolved launch selection; IDs only, never prompts or keys. */
@@ -107,7 +118,7 @@ export function createAutomationControl(deps: Dependencies) {
         try {
             const req = object(input);
             if (req.version !== 1) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
-            if (req.operation === 'capabilities') return { version: 1, operations: ['create', 'request', 'status', 'cancel', ...(deps.options ? ['options'] : [])] };
+            if (req.operation === 'capabilities') return { version: 1, operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', ...(deps.options ? ['options'] : [])] };
             if (req.operation === 'options') {
                 // Keys-only catalog; the scoped worker narrows it per grant.
                 if (!deps.options) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
@@ -120,8 +131,10 @@ export function createAutomationControl(deps: Dependencies) {
                 const receipt = read(requestID);
                 return receipt ? view(receipt) : { version: 1, errorCode: 'NOT_FOUND' };
             }
-            if (req.operation !== 'create' && req.operation !== 'cancel') throw new Error('INVALID_REQUEST');
-            const operation = req.operation;
+            const attempt = req.createAttempt === undefined ? undefined : createAttempt(req.createAttempt);
+            const withdrawing = req.operation === 'withdraw-create';
+            const operation = withdrawing ? 'create' : req.operation;
+            if (operation !== 'create' && operation !== 'cancel') throw new Error('INVALID_REQUEST');
             const directory = operation === 'create' && typeof req.directory === 'string' && req.directory.startsWith('/') && req.directory.length <= 4096
                 ? req.directory : undefined;
             const sessionID = operation === 'cancel' ? identifier(req.sessionID) : undefined;
@@ -147,11 +160,35 @@ export function createAutomationControl(deps: Dependencies) {
             const fingerprint = digest(JSON.stringify({ operation, directory, sessionID, options: requested,
                 ...(taskTitle ? { task: { title: taskTitle, root: taskRoot } } : {}) }));
             const previous = read(requestID);
-            if (previous) return previous.fingerprint === fingerprint ? view(previous) : { version: 1, errorCode: 'REQUEST_ID_CONFLICT' };
-            const receipt: Receipt = { version: 1, requestID, fingerprint, operation, state: 'pending', sessionID,
+            // Bind a fence to the real process launch arguments as well as the logical gateway command.
+            const titleDigest = withdrawing ? attempt?.titleDigest : taskTitle && digest(taskTitle);
+            const root = withdrawing ? req.withdrawRoot : taskRoot;
+            if (attempt && (titleDigest !== attempt.titleDigest || (!!titleDigest !== !!root)
+                || root !== undefined && (typeof root !== 'string' || !root.startsWith('/')))) return {version:1,errorCode:'REQUEST_ID_CONFLICT'};
+            const launchBinding = 'withdrawn:'+digest(JSON.stringify([directory, requested, titleDigest, root,
+                environment?.HAPPY_TASK_ID, environment?.HAPPY_TASK_PORT, environment?.TMPDIR, environment?.TMP, environment?.TEMP]));
+            if (withdrawing) {
+                if (!attempt) throw new Error('INVALID_REQUEST');
+                // No await separates reading and fsyncing the fence or the competing create's pending receipt.
+                if (previous && previous.state !== 'withdrawn') return view(previous);
+                if (previous && (previous.createAttempt?.digest !== attempt.digest || previous.fingerprint !== launchBinding))
+                    return {version:1,errorCode:'REQUEST_ID_CONFLICT'};
+                if (previous?.createAttempt?.id === attempt.id) return view(previous);
+                if ((previous?.createAttempt?.id ?? null) !== attempt.previous) return {version:1,errorCode:'REQUEST_ID_CONFLICT'};
+                const closed: Receipt = {version:1,requestID,operation:'create',fingerprint:launchBinding,state:'withdrawn',createAttempt:attempt};
+                persist(closed, !previous); return view(closed);
+            }
+            if (previous?.state === 'withdrawn') {
+                if (operation !== 'create' || !attempt || previous.fingerprint !== launchBinding || previous.createAttempt?.id !== attempt.previous
+                    || previous.createAttempt.digest !== attempt.digest) return {version: 1, errorCode: 'REQUEST_ID_CONFLICT'};
+            } else if (previous) {
+                return previous.fingerprint === fingerprint && (!attempt || !previous.createAttempt || attempt.digest === previous.createAttempt.digest)
+                    ? view(previous) : { version: 1, errorCode: 'REQUEST_ID_CONFLICT' };
+            } else if (attempt?.previous) return {version: 1, errorCode: 'REQUEST_ID_CONFLICT'};
+            const receipt: Receipt = { version: 1, requestID, fingerprint, operation, state: 'pending', sessionID, createAttempt: attempt,
                 ...(operation === 'create' ? { options: launch } : {}) };
-            // Durable intent BEFORE any process mutation. An existing file is never overwritten here.
-            persist(receipt, true);
+            // Only an exactly matched withdrawal may be replaced by a fresh pending receipt.
+            persist(receipt, !previous);
             inFlight.add(requestID);
             try {
                 if (operation === 'create') {

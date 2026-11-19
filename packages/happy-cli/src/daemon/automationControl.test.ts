@@ -133,10 +133,10 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
     }
     it('advertises the options capability only with a catalog and serves keys-only entries', async () => {
         const legacy = setup();
-        expect(await legacy.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'request', 'status', 'cancel'] });
+        expect(await legacy.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'withdraw-create', 'request', 'status', 'cancel'] });
         expect(await legacy.control({ version: 1, operation: 'options' })).toMatchObject({ errorCode: 'UNSUPPORTED_VERSION' });
         const s = optionSetup(policy);
-        expect(await s.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'request', 'status', 'cancel', 'options'] });
+        expect(await s.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', 'options'] });
         const reply = await s.control({ version: 1, operation: 'options' }) as any;
         expect(reply.defaultAgent).toBe('codex');
         const codex = reply.agents.find((a: any) => a.agent === 'codex');
@@ -175,4 +175,24 @@ it('passes only fixed task-local environment keys without changing launch permis
     for(const file of readdirSync(s.directory))expect(readFileSync(join(s.directory,file),'utf8')).not.toContain('可读任务');
     const rejected=setup();expect(await rejected.control({...create,taskEnvironment:{NODE_OPTIONS:'--require /untrusted'}})).toMatchObject({errorCode:'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE'});expect(rejected.spawn).not.toHaveBeenCalled();
     const invalid=setup();expect(await invalid.control({...create,taskEnvironment:{HAPPY_TASK_ID:'task-a',HAPPY_TASK_ROOT:'relative',HAPPY_TASK_TITLE:'标题'}})).toMatchObject({errorCode:'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE'});expect(invalid.spawn).not.toHaveBeenCalled();
+});
+
+it('persists an exact withdrawal before delayed, mismatched and competing creates, including after restart', async () => {
+    const fixture = setup(), attempt = {id:'attempt-a',digest:'a'.repeat(64),previous:null};
+    const close = {...create,operation:'withdraw-create',createAttempt:attempt};
+    expect(await fixture.control(close)).toMatchObject({state:'withdrawn',createAttempt:attempt,requestID:create.requestID});
+    const restarted = createAutomationControl(fixture);
+    for (const createAttempt of [undefined, attempt, {...attempt,id:'b'}, {...attempt,id:'b',previous:attempt.id,digest:'b'.repeat(64)}])
+        expect(await restarted({...create,createAttempt})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
+    const next = {id:'attempt-b',digest:attempt.digest,previous:attempt.id};
+    expect(await restarted({...create,directory:'/different-directory',createAttempt:next})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
+    expect(await restarted({...close,createAttempt:next})).toMatchObject({state:'withdrawn',createAttempt:next});
+    expect(await restarted({...create,createAttempt:next})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
+    expect(await restarted({...close,createAttempt:attempt})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
+    expect(fixture.spawn).toHaveBeenCalledTimes(0);
+    const final = {...create,createAttempt:{id:'attempt-c',digest:attempt.digest,previous:next.id}};
+    const [created, raced] = await Promise.all([restarted(final),restarted({...close,createAttempt:final.createAttempt})]);
+    expect(created).toMatchObject({state:'confirmed'}); expect(raced).toMatchObject({state:'pending'});
+    expect(await createAutomationControl(fixture)({...close,createAttempt:final.createAttempt})).toMatchObject({state:'confirmed'});
+    expect(fixture.spawn).toHaveBeenCalledTimes(1);
 });

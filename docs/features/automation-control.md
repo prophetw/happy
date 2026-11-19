@@ -77,6 +77,8 @@ Claude Code 和 Codex 使用 Happy 选择器读取的 `machine.claudeModels/code
 
 兼容性：daemon `capabilities.operations` 只有在新版才包含 `options`；缺此能力时，发现与任何带覆盖的创建都返回 426 `UNSUPPORTED_VERSION`，纯默认创建不受影响。目录只含键（模型 ID、模式 ID），不经过自由文本投影；Claude 会话同 Codex 一样支持后续 send/status/logs（其他 flavor 仍 `UNSUPPORTED_AGENT`）。白名单约束的是"覆盖值"，owner 已配置的环境默认启动始终有效。另注意：创建回执的幂等 fingerprint 现在包含规范化后的请求选项，daemon 升级前写入的旧回执若用同一 `requestID` 重发创建，会返回 `REQUEST_ID_CONFLICT` 而不是直接重放；按原 `requestID` 查询回执即可核实原结果，不要换新 ID 重派。
 
+对于已被 Worker 领取但尚未到达 daemon 的 create，支持 `withdraw-create` 的执行端在原回执位置持久登记已撤回的尝试。记录绑定授权作用域内的原 requestID、命令摘要、启动参数和前序尝试编号。领取与撤回在同一 daemon 的同步回执写入区间完成。已开始启动时返回原回执，迟到的旧 create 会被拒绝。网关核对签名 Worker 回传的证明并复核授权，后续可用原 ID 和相同内容重新派发。对端缺少这项证明时保持查询原回执。服务令牌的最后使用时间单独存储，旧 Control 可以读取凭据原记录。
+
 ## 独立助手连接协议
 
 签名 REST 通道使用 Node Ed25519 的持有证明，不签发 OAuth Bearer/refresh token。外部 HTTP MCP 可保留独立 OAuth resource-server 适配（AS 必须由已有受控服务提供），也可显式启用 `service-token-v1` 模式，直接复用同一服务令牌与 grant/scope；两种模式都不使用 Happy 全账号 Bearer 执行任务。签名客户端、worker 的公钥由受控注册表预置，私钥由平台/用户主机的 secret provider 托管。库不会隐式发现或创建密钥；OAuth MCP 仅在显式配置后从安全 provider 获取 signer，service-token MCP 不需要签名私钥或 OAuth AS。

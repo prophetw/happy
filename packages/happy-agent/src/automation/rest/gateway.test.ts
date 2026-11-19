@@ -425,3 +425,60 @@ describe('durable dispatch evidence', () => {
         expect(r.spawnCount).toBe(0);
     });
 });
+
+it('closes a registered create at the execution endpoint before retrying the original ID after gateway restart', async () => {
+    const r = await setup(), grant = await r.connect(), rpc = r.transport.rpc;
+    let delayed: (() => Promise<any>) | undefined;
+    r.transport.rpc = async (machine: any, command: any) => {
+        if (command.operation === 'create' && !delayed) {
+            delayed = () => rpc(machine, command);
+            throw Error('fixture_create_did_not_arrive');
+        }
+        return rpc(machine, command);
+    };
+    await r.startWorker();
+    const post = () => r.client.request('POST','/tasks',{requestID:'closed-create',machineID:'machineA',projectID:'projectA',title:'registered original'},grant);
+    await post(); expect(delayed).toBeDefined(); expect(r.spawnCount).toBe(0);
+    await r.restartGateway(); await r.startWorker();
+    for (let i = 0; i < 4; i++) await post();
+    expect(r.spawnCount, 'four same-ID submissions after restart').toBe(1);
+    const result = await post();
+    expect(result.data).toMatchObject({ requestID: 'closed-create', state: 'confirmed' });
+    await delayed!();
+    await Promise.all([post(), post(), post()]);
+    expect(r.spawnCount).toBe(1);
+});
+
+it.each(['revoked', 'changed-content', 'missing-proof', 'wrong-remote-id', 'wrong-attempt', 'wrong-digest', 'concurrent'])('guards a withdrawn create against %s', async scenario => {
+    const r = await setup(), grant = await r.connect(), rpc = r.transport.rpc;
+    let delayed: (() => Promise<any>) | undefined;
+    r.transport.rpc = async (machine: any, command: any) => {
+        if (command.operation === 'create' && !delayed) { delayed = () => rpc(machine, command); throw Error('isolated transport drop'); }
+        if (command.operation === 'withdraw-create' && scenario === 'missing-proof')
+            return {version:1,state:'pending',safeToRetrySameRequestID:true};
+        if (command.operation === 'withdraw-create' && scenario.startsWith('wrong-')) {
+            const attempt = {...command.createAttempt};
+            if (scenario === 'wrong-attempt') attempt.id = 'different-attempt';
+            if (scenario === 'wrong-digest') attempt.digest = 'f'.repeat(64);
+            return {version:1,state:'withdrawn',requestID:scenario === 'wrong-remote-id' ? 'other-remote' : command.requestID,createAttempt:attempt};
+        }
+        return rpc(machine, command);
+    };
+    await r.startWorker(); await create(r,grant);
+    const status = await r.client.request('GET','/requests/create1',undefined,grant);
+    if (scenario === 'missing-proof' || scenario.startsWith('wrong-')) {
+        expect(status.data?.safeToRetrySameRequestID).not.toBe(true);
+        await create(r,grant); await create(r,grant); expect(r.spawnCount).toBe(0); return;
+    }
+    expect(status.data).toMatchObject({queueReason:'execution_not_reached',requestID:'create1'});
+    expect(await delayed!()).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'}); expect(r.spawnCount).toBe(0);
+    if (scenario === 'revoked') {
+        await r.ownerRequest('/connections/'+grant,'DELETE');
+        expect((await create(r,grant)).error.code).toBe('GRANT_REVOKED');
+    } else if (scenario === 'changed-content') {
+        expect((await r.client.request('POST','/tasks',{requestID:'create1',machineID:'machineA',projectID:'projectA',title:'changed'},grant)).error.code).toBe('REQUEST_ID_CONFLICT');
+    } else {
+        await Promise.all([create(r,grant),create(r,grant),create(r,grant)]);
+    }
+    expect(r.spawnCount).toBe(scenario === 'concurrent' ? 1 : 0);
+});
