@@ -12,6 +12,14 @@ export type DaemonTransportBindings = {
     sessions: () => DecryptedSession[];
     control: (input: unknown) => Promise<unknown>;
 };
+function sessionProcessID(localMetadata: unknown, relayMetadata: unknown, machineID: string): number | undefined {
+    const local = localMetadata as { machineId?: unknown; path?: unknown; hostPid?: unknown; startedBy?: unknown; startedFromDaemon?: unknown } | null;
+    const relay = relayMetadata as { machineId?: unknown; path?: unknown } | null;
+    if (local?.startedBy === 'daemon' && local.startedFromDaemon === true && local.machineId === machineID
+        && relay?.machineId === machineID && typeof local.path === 'string' && local.path === relay.path
+        && typeof local.hostPid === 'number' && Number.isSafeInteger(local.hostPid) && local.hostPid > 0) return local.hostPid;
+    return undefined;
+}
 /** Adapter seam for run.ts's machine, tracked/persisted session records and existing control callback. */
 export function createDaemonTransport(bindings: DaemonTransportBindings): Transport {
     const records = recordMessageTransport(bindings.serverUrl, bindings.token);
@@ -23,10 +31,13 @@ export function createDaemonTransport(bindings: DaemonTransportBindings): Transp
             if (cursor !== undefined && !/^cursor_v1_[A-Za-z0-9_-]+$/.test(cursor)) throw new ControlError('INVALID_CURSOR');
             const { data } = await http.get<{ sessions: RawSession[]; nextCursor: string | null }>('/v2/sessions', { params: { cursor, limit } });
             const known = new Map(bindings.sessions().map(s => [s.id, s]));
+            const machineID = bindings.machine().id;
             return { nextCursor: data.nextCursor, sessions: data.sessions.flatMap(raw => {
                 const local = known.get(raw.id); if (!local || local.encryption.variant !== 'dataKey') return [];
+                const metadata = decryptField(raw.metadata, local.encryption);
                 return [{ ...local, active: raw.active, activeAt: raw.activeAt, seq: raw.seq,
-                    metadata: decryptField(raw.metadata, local.encryption), agentState: decryptField(raw.agentState, local.encryption) }];
+                    metadata, daemonProcessID: sessionProcessID(local.metadata, metadata, machineID),
+                    agentState: decryptField(raw.agentState, local.encryption) }];
             }) };
 
         },

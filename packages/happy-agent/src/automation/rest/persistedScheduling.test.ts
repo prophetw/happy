@@ -45,12 +45,12 @@ function fixture() {
     const trustPreviousOwnedChild = (worker: ScopedWorker, id: string) => { const value = session(id), pid = value.metadata.hostPid, stat = readFileSync('/proc/' + pid + '/stat', 'utf8'), fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/); expect(Number(fields[1])).toBe(process.pid);
         // The pre-restart owner is this test's real child, not a mocked running PID.
         const owned = observeOwnedProcess({ pid, owned: Number(fields[1]) === process.pid, stopping: false }); expect(owned).toBe('running'); expect(worker.processProofs.recordRunning(value, owned)).toBe(true); };
-    const ordinaryLiveSession = async () => {
+    const ordinaryLiveSession = async (relayPID?: number) => {
         const machine = (await f.transport.machines())[0], created = await f.transport.rpc(machine, { version: 1, operation: 'create', requestID: 'legacy-direct', directory: repoA });
         const id = String(created.sessionID); await f.transport.send(session(id), 'old-authorized-input', 'legacy-work.txt');
         await until(() => f.messages(id).some(row => row.content?.content?.ev?.t === 'turn-start'));
         const input = f.messages(id).find(row => row.localId), turn = f.messages(id).find(row => row.content?.content?.ev?.t === 'turn-start').content.content.turn;
-        const task = f.worker.queue.adoptLegacy({ requestID: hash(`legacy:${id}:${turn}`), workerID: 'worker', grantID: 'legacy-import', sessionID: id, authorization: '', text: '', resources: [{ key: 'machine', mode: 'exclusive' }], legacy: true, seq: input.seq, turnID: turn, processID: session(id).metadata.hostPid }); return { id, task };
+        const task = f.worker.queue.adoptLegacy({ requestID: hash(`legacy:${id}:${turn}`), workerID: 'worker', grantID: 'legacy-import', sessionID: id, authorization: '', text: '', resources: [{ key: 'machine', mode: 'exclusive' }], legacy: true, seq: input.seq, turnID: turn, processID: relayPID ?? session(id).metadata.hostPid }); return { id, task };
     };
     return { ...f, root, repoA, repoB, saved, restore, call, create, send, session, cliStatus, trustPreviousOwnedChild, ordinaryLiveSession, noKillAuthorityCalls: () => noKillAuthorityCalls };
 }
@@ -69,6 +69,33 @@ it('uses a durable scheduling proof across the real persisted CLI unknown status
     expect(retained.id).toBe(legacy.task.id); expect(retained.processID).toBe(legacy.task.processID); expect(retained.turnID).toBe(legacy.task.turnID);
     expect(restarted.queue.tasks().find(task => task.requestID === 'other-project-send')!.state).toBe('running');
     expect(f.messages(queued.sessionID).filter(row => row.localId)).toHaveLength(1); expect(f.messages(legacy.id).filter(row => row.localId)).toHaveLength(1);
+}, 20000);
+
+it('records the current child of a resumed session and verifies it after handoff despite a stale Relay PID', async () => {
+    const relayPID = 99999999, f = fixture(), legacy = await f.ordinaryLiveSession(relayPID), queued = await f.create('other-repo');
+    const current = f.session(legacy.id), list = f.transport.sessions, rpc = f.transport.rpc;
+    f.transport.sessions = async (...args) => {
+        const page = await list(...args);
+        return { ...page, sessions: page.sessions.map(s => s.id === legacy.id
+            ? { ...s, metadata: { ...current.metadata, hostPid: relayPID }, daemonProcessID: current.metadata.hostPid } : s) };
+    };
+    const identity = readLinuxProcess(current.metadata.hostPid)!;
+    f.transport.rpc = async (machine, input) => input.operation === 'status' && input.sessionID === legacy.id
+        ? { version: 1, process: observeOwnedProcess({ pid: identity.pid, owned: true, stopping: false }) } : rpc(machine, input);
+    await f.worker.tick();
+    expect(f.worker.processProofs.verify(current)).toBe(true);
+    f.transport.rpc = rpc;
+    f.trustPreviousOwnedChild(f.worker, queued.sessionID);
+    await f.send(f.worker, queued.sessionID, 'after-resume');
+    const restarted = f.restore();
+    await restarted.tick();
+    const retained = restarted.queue.tasks().find(t => t.id === legacy.task.id)!;
+    expect(retained.processID).toBe(relayPID);
+    expect(retained.resources).toContainEqual({ key: 'machine', mode: 'shared' });
+    expect(await f.cliStatus(legacy.id)).toBe('unknown');
+    expect(restarted.queue.tasks().find(t => t.requestID === 'after-resume')?.state).toBe('running');
+    expect(f.messages(queued.sessionID).filter(row => row.localId)).toHaveLength(1);
+    expect(f.noKillAuthorityCalls()).toBe(0);
 }, 20000);
 
 it('delivers a pre-restart queued session exactly once using reviewed proof while CLI lifecycle status remains unknown', async () => {

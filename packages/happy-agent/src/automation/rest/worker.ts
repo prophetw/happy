@@ -6,7 +6,7 @@ import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult,
 import { realpathSync, statSync } from 'node:fs';
 import { AutomationControl, projectMessage, type Policy } from '../control';
 import { Journal, hash } from '../journal';
-import { ControlError, type Transport } from '../relay';
+import { ControlError, type Transport, type TransportSession } from '../relay';
 import { canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { projectResponse } from './projection';
@@ -15,7 +15,6 @@ import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskO
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
 import { SessionProcessProofs } from './sessionProcessProofs';
-import type { DecryptedSession } from '../../api';
 
 /**
  * Queue lease pins grant identity only. Owner in-place edits (renewal, scope,
@@ -100,12 +99,16 @@ export class ScopedWorker {
         } while (cursor);
         throw new ApiError('NOT_FOUND', 404);
     }
-    private schedulingProof(session: { id: string; metadata: unknown }, process: string) {
-        if (process === 'running') this.processProofs.recordRunning(session, process);
-        const sessionOwnerVerified = process === 'running' || this.processProofs.verify(session);
+    private schedulingProof(session: TransportSession, process: string) {
+        // A resumed session retains its Relay turn binding while the local child gets a new PID.
+        const target = session.daemonProcessID === undefined ? session : {
+            id: session.id, metadata: { ...(session.metadata as object), hostPid: session.daemonProcessID },
+        };
+        if (process === 'running') this.processProofs.recordRunning(target, process);
+        const sessionOwnerVerified = process === 'running' || this.processProofs.verify(target);
         return { sessionOwnerVerified, dispatchable: process === 'unknown' && sessionOwnerVerified };
     }
-    private async observeLegacy(sessionID: string, listedSession?: DecryptedSession): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
+    private async observeLegacy(sessionID: string, listedSession?: TransportSession): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
         const session = listedSession ?? await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
         if (!machine) throw new ApiError('MACHINE_UNAVAILABLE', 503);
         const process = await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID });

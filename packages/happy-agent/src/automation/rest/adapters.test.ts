@@ -44,6 +44,21 @@ describe('daemon, SDK and contract adapters', () => {
         expect(control).not.toHaveBeenCalled();
         expect(await adapter.rpc(machine, { version: 1, operation: 'status', sessionID: 'known' })).toMatchObject({ process: 'unknown' });
     });
+    it('keeps the Relay PID for turn correlation and supplies a matching local daemon PID only for process proofs', async () => {
+        const key = new Uint8Array(32).fill(11), encryption = { key, variant: 'dataKey' as const };
+        const metadata = { machineId: 'machine', path: '/repo', hostPid: 22, startedBy: 'daemon', startedFromDaemon: true };
+        const locals = [metadata, { ...metadata, path: '/elsewhere' }, { ...metadata, machineId: 'foreign' },
+            { ...metadata, startedBy: 'terminal' }, { ...metadata, startedFromDaemon: false }, { ...metadata, hostPid: 0 }];
+        const sessions = locals.map((local, i) => ({ id: String(i), metadata: local, encryption } as DecryptedSession));
+        const remote = { machineId: 'machine', path: '/repo', hostPid: 11, daemonProcessID: 99 };
+        http.get.mockResolvedValue({ data: { nextCursor: null, sessions: sessions.map(({ id }) => ({
+            id, metadata: encodeBase64(encrypt(key, 'dataKey', remote)), agentState: null,
+        })) } });
+        const adapter = createDaemonTransport({ serverUrl: 'https://relay.invalid', token: 'test', machine: () => ({ id: 'machine' } as DecryptedMachine), sessions: () => sessions, control: vi.fn() });
+        const page = await adapter.sessions();
+        expect(page.sessions.map(s => s.metadata)).toEqual(locals.map(() => remote));
+        expect(page.sessions.map(s => s.daemonProcessID)).toEqual([22, undefined, undefined, undefined, undefined, undefined]);
+    });
     it('uses real MCP SDK discovery/calls with fixed REST mappings', async () => {
         const request = vi.fn(async () => ({ version: 1, ok: true, data: { machines: [] } }));
         const server = createControlMcp({ request } as unknown as ProofClient, () => 'approved-grant');

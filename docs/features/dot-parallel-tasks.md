@@ -83,6 +83,8 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 开机验收包括受管 PID 与 state/lock 一致、原机器连接、签名轮询和原 Dot 授权的 `happy_options`。若实际派发仍为 `waiting-resource`，用 `scripts/check-worker-queue.mjs` 核对占用；普通 daemon 交接来的活会话可用切换前登记、冷备和当前进程身份补齐其任务归属证明。
 
+会话恢复后，Relay 可能仍保留原 PID。调度器用它关联已登记的 turn 和队列记录。校验当前进程时，Worker 从同一会话、机器和目录的本机 daemon 启动记录读取 PID，并复核 Linux 启动标识、进程启动时间、用户、目录和进程组等身份信息。这样 Worker 交接时可以保留真实的目录占用，其他项目也能继续派发。
+
 这次修复覆盖会话保留期、旧版本会话写入和 Worker 重启导致的停止证据丢失。它不保证所有 resource-wait 都消失：真实目录/命名资源冲突、未确认的存活进程、撤权、存储损坏和修复前已丢失的记录仍需分别处理。
 
 1. **确定实际更新对象。** 仅改 Worker/调度时只切 Worker，不顺带停 Dot producer、宿主、Relay 或 Web。用 `systemctl show happy-automation-worker.service -p MainPID -p ExecStart -p DropInPaths -p KillMode` 核对实际 release，不能从源码目录或 CLI 版本号推断。保留 `KillMode=process`，独立业务会话继续运行。

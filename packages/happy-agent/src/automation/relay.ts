@@ -6,9 +6,13 @@ import { decodeBase64, encodeBase64, encrypt, decrypt } from '../encryption';
 import type { Credentials } from '../credentials';
 
 export type MessagePage = { messages: { id: string; seq: number; localId: string | null; content: unknown }[]; hasMore: boolean };
+export type TransportSession = DecryptedSession & {
+    /** Local daemon launch record used to corroborate scheduling ownership after resume. */
+    daemonProcessID?: number;
+};
 export interface Transport {
     machines(): Promise<DecryptedMachine[]>;
-    sessions(cursor?: string, limit?: number): Promise<{ sessions: DecryptedSession[]; nextCursor: string | null }>;
+    sessions(cursor?: string, limit?: number): Promise<{ sessions: TransportSession[]; nextCursor: string | null }>;
     rpc(machine: DecryptedMachine, input: Record<string, unknown>): Promise<Record<string, unknown>>;
     messages(session: DecryptedSession, cursor: number, limit: number): Promise<MessagePage>;
     send(session: DecryptedSession, requestID: string, text: string): Promise<{ id: string; seq: number }>;
