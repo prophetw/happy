@@ -9,6 +9,11 @@ export function isWorktreePath(path: string): boolean {
     return path.includes(WORKTREE_PATH_MARKER);
 }
 
+/** Whether the path is in a task checkout created by Happy Control on Linux or WSL. */
+export function isHappyControlWorktreePath(path: string): boolean {
+    return /^\/(?:[^/]+\/)*\.local\/state\/happy-control\/machines\/[0-9a-f]{64}\/worktrees\/[0-9a-f]{64}(?:\/|$)/.test(path);
+}
+
 /** Extract the main repository checkout path from a possibly-worktree path. */
 export function getRepoPath(path: string): string {
     const idx = path.indexOf(WORKTREE_PATH_MARKER);

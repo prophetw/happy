@@ -1,4 +1,5 @@
 import type { Machine, Session } from './storageTypes';
+import { isHappyControlWorktreePath } from '@/utils/worktreePaths';
 
 /**
  * Somewhere a new session can be started: a directory, or a project, and whatever is known about it.
@@ -110,7 +111,7 @@ export function collectSessionPlaces(options: {
         // publishes no path of its own, so such a session can say nothing about where its project
         // lives. Offering the checkout here would put a worktree in the project list, so the
         // project is remembered by identity instead and offered without a path below.
-        if (metadata?.workspace !== undefined) {
+        if (metadata?.workspace !== undefined || isHappyControlWorktreePath(path)) {
             if (project !== undefined && project.id.length > 0) {
                 byProject.set(project.id, project.name);
             }

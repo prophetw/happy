@@ -123,6 +123,23 @@ describe('where a Happy Agent session may be started', () => {
         expect(places).toEqual([{ key: '/home/steve/projects/happy', name: '/home/steve/projects/happy', path: '/home/steve/projects/happy' }]);
     });
 
+    it('never suggests a managed task checkout from a legacy session as the project directory', () => {
+        const path = `/home/steve/.local/state/happy-control/machines/${'a'.repeat(64)}/worktrees/${'b'.repeat(64)}`;
+        const places = collectSessionPlaces({
+            machineIds: [CLI],
+            sessions: [
+                session({ machineId: CLI, path }),
+                session({ machineId: CLI, path, project: { id: 'project-7', name: 'Happy' } }),
+                session({ machineId: CLI, path: '/home/steve/worktrees/daily' }),
+            ],
+        });
+
+        expect(places).toEqual([
+            { key: '/home/steve/worktrees/daily', name: '/home/steve/worktrees/daily', path: '/home/steve/worktrees/daily' },
+            { key: 'project:project-7', name: 'Happy', path: null, projectId: 'project-7' },
+        ]);
+    });
+
     it('keeps a workspace out of the project list, since it is a checkout inside one', () => {
         const places = collectSessionPlaces({
             machineIds: [RIG],

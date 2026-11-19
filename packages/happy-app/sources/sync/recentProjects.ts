@@ -4,7 +4,7 @@ import type { MachineChoice } from './machineChoices';
 import type { SessionPlace } from './agentSessionPlaces';
 import { projectPlaceKey } from './agentSessionPlaces';
 import { getSessionActivityAt } from '@/utils/sessionActivity';
-import { getRepoPath, isWorktreePath } from '@/utils/worktreePaths';
+import { getRepoPath, isHappyControlWorktreePath, isWorktreePath } from '@/utils/worktreePaths';
 
 export const RECENT_PROJECT_LIMIT = 100;
 export const RecentProjectSchema = z.object({
@@ -38,11 +38,12 @@ export function projectName(path: string): string {
     return path.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || path;
 }
 
-/** History survives the chats it was learned from; only the size limit evicts it. */
+/** Keep project history after its chats disappear, dropping any saved task checkouts. */
 export function mergeRecentProjects(history: readonly RecentProject[], incoming: readonly RecentProject[]): RecentProject[] {
     const entries = new Map<string, RecentProject>();
     for (const project of [...history, ...incoming]) {
         if (!project.machineId || (!project.path && !project.projectId)) continue;
+        if (project.path && isHappyControlWorktreePath(project.path)) continue;
         const key = recentProjectKey(project);
         const previous = entries.get(key);
         const merged = previous && previous.lastUsedAt > project.lastUsedAt

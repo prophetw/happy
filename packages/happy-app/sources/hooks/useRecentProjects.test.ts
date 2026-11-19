@@ -31,6 +31,24 @@ describe.each(['web', 'ios'])('%s recent project recording', (platform) => {
         expect(mocks.applySettings).toHaveBeenCalledOnce();
     });
 
+    it('removes saved task checkouts and ignores old sessions that report only the checkout path', () => {
+        const worktreeRoot = `/home/dev/.local/state/happy-control/machines/${'a'.repeat(64)}/worktrees`;
+        const oldSession = {
+            ...session,
+            metadata: { ...session.metadata!, path: `${worktreeRoot}/${'b'.repeat(64)}/src` },
+        };
+        const project = { machineId: 'computer', path: '/code/happy', name: 'happy', lastUsedAt: 20 };
+        mocks.saved = [
+            { ...project, path: `${worktreeRoot}/${'c'.repeat(64)}` },
+            project,
+        ];
+
+        expect(useRecentProjects([oldSession], [choice])).toEqual([project]);
+        expect(mocks.applySettings).toHaveBeenCalledExactlyOnceWith({ recentProjects: [project] });
+        expect(useRecentProjects([oldSession], [choice])).toEqual([project]);
+        expect(mocks.applySettings).toHaveBeenCalledOnce();
+    });
+
     it('records a successful empty session and a catalog-only project without inventing a path', () => {
         rememberRecentProject({ machineId: 'computer', path: '/code/happy' });
         rememberRecentProject({ machineId: 'computer', path: null, projectId: 'catalog' });
