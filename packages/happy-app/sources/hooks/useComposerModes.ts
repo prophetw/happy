@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+    effortDisplayName,
     getAvailableModels,
     getAvailablePermissionModes,
     getEffortLevelsForModel,
@@ -92,12 +93,18 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
     const availableEffortLevels = React.useMemo<EffortLevel[]>(() => (
         getEffortLevelsForModel(flavor, modelKey, metadata, machine?.metadata)
     ), [flavor, modelKey, metadata, machine?.metadata]);
-    const effortLevel = React.useMemo<EffortLevel | null>(() => (
-        resolveCurrentOption(availableEffortLevels, [
-            session?.effortLevel,
+    const savedEffort = session?.effortLevel;
+    const effortLevel = React.useMemo<EffortLevel | null>(() => {
+        // Codex publishes its catalog after registering the session. Keep the
+        // saved choice visible while the supported options are loading.
+        if (!isRig && flavor === 'codex' && savedEffort && !availableEffortLevels.some(level => level.key === savedEffort)) {
+            return { key: savedEffort, name: effortDisplayName(savedEffort) };
+        }
+        return resolveCurrentOption(availableEffortLevels, [
+            savedEffort,
             isRig ? getRigReasoningSelection(metadata, modelKey) : effectiveAgentDefaults.effortLevel,
-        ])
-    ), [availableEffortLevels, session?.effortLevel, effectiveAgentDefaults.effortLevel, metadata, modelKey, isRig]);
+        ]);
+    }, [availableEffortLevels, savedEffort, effectiveAgentDefaults.effortLevel, metadata, modelKey, isRig, flavor]);
 
     return {
         availableModes,

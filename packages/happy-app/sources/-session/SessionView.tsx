@@ -33,12 +33,13 @@ import { dismissPendingChat, getPendingChat, setPendingChatDraft, submitPendingC
 import { claimComposerFocus } from '@/utils/composerFocus';
 import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
 import { useSession } from '@/sync/storage';
+import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
 import { getSessionForkSource } from '@/utils/sessionFork';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { useAuth } from '@/auth/AuthContext';
 import { getServerUrl } from '@/sync/serverConfig';
 import { HappyError } from '@/utils/errors';
-import { Session } from '@/sync/storageTypes';
+import { Session, type SessionAgentModesPatch } from '@/sync/storageTypes';
 import { sync } from '@/sync/sync';
 import { supportsImageAttachmentsForFlavor } from '@/sync/attachmentSupport';
 import { t } from '@/text';
@@ -982,15 +983,20 @@ export function SessionViewLoaded({
 
     const updateModelMode = React.useCallback((mode: ModelMode) => {
         if (!session || !sessionId) return;
-        const nextEffortLevels = mode.thinkingLevels?.map(key => ({ key }))
-            ?? getEffortLevelsForModel(flavor, mode.key, session.metadata);
-        const currentEffortSupported = session.effortLevel
-            ? nextEffortLevels.some((level) => level.key === session.effortLevel)
-            : true;
-        sessionSetAgentModes(sessionId, {
-            modelMode: mode.key,
-            ...(!currentEffortSupported ? { effortLevel: mode.defaultThinkingLevel ?? null } : {}),
-        });
+        const nextEffortLevels = mode.thinkingLevels
+            ?? getEffortLevelsForModel(flavor, mode.key, session.metadata).map(level => level.key);
+        const patch: SessionAgentModesPatch = { modelMode: mode.key };
+        if (session.effortLevel && !nextEffortLevels.includes(session.effortLevel)) {
+            patch.effortLevel = mode.defaultThinkingLevel ?? null;
+            if (flavor === 'codex' && !patch.effortLevel) {
+                // This switch invalidates a known choice. Pick a supported level
+                // so the next turn cannot inherit the incompatible old effort.
+                const defaults = resolveAgentDefaultConfig(storage.getState().settings.agentDefaultOverrides, flavor, session.metadata?.version);
+                patch.effortLevel = defaults.effortLevel && nextEffortLevels.includes(defaults.effortLevel)
+                    ? defaults.effortLevel : nextEffortLevels[0] ?? null;
+            }
+        }
+        sessionSetAgentModes(sessionId, patch);
     }, [sessionId, flavor, session]);
 
     const updateEffortLevel = React.useCallback((level: EffortLevel) => {

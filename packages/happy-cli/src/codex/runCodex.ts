@@ -163,6 +163,11 @@ export async function runCodex(opts: {
     //
 
     const initialPermissionMode = opts.permissionMode ?? DEFAULT_CODEX_PERMISSION_MODE;
+    const launchMode = {
+        permissionMode: initialPermissionMode,
+        model: opts.model ?? (opts.resumeThreadId ? undefined : DEFAULT_CODEX_MODEL),
+        effort: opts.effort ?? (opts.resumeThreadId ? undefined : DEFAULT_CODEX_EFFORT),
+    };
     // Lineage from the daemon's spawn RPC (set by app-side fork / duplicate).
     const forkedFromSessionId = process.env.HAPPY_FORKED_FROM_SESSION_ID;
     const forkedFromMessageId = process.env.HAPPY_FORKED_FROM_MESSAGE_ID;
@@ -193,9 +198,10 @@ export async function runCodex(opts: {
     const reconnectSeq = process.env.HAPPY_RECONNECT_SEQ;
     const reconnectMetadataVersion = process.env.HAPPY_RECONNECT_METADATA_VERSION;
     const reconnectAgentStateVersion = process.env.HAPPY_RECONNECT_AGENT_STATE_VERSION;
+    const reconnecting = reconnectSessionId && reconnectKeyBase64 && reconnectVariant;
 
     let response: ApiSession | null;
-    if (reconnectSessionId && reconnectKeyBase64 && reconnectVariant) {
+    if (reconnecting) {
         logger.debug(`[START] Reconnecting to existing session ${reconnectSessionId}`);
         response = {
             id: reconnectSessionId,
@@ -208,6 +214,8 @@ export async function runCodex(opts: {
             agentStateVersion: parseInt(reconnectAgentStateVersion || '0', 10),
         };
     } else {
+        metadata.modelMode = launchMode.model;
+        metadata.effortLevel = launchMode.effort;
         response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
     }
 
@@ -225,7 +233,10 @@ export async function runCodex(opts: {
         sessionTag,
         metadata,
         state,
-        response,
+        // On reconnect the version came from the daemon, but this metadata was
+        // built locally. Force a version mismatch so the first write rebases
+        // onto the Relay snapshot even if the daemon had its latest version.
+        response: reconnecting && response ? { ...response, metadataVersion: -1 } : response,
         onSessionSwap: (newSession) => {
             session = newSession;
             // Update permission handler with new session to avoid stale reference
@@ -238,11 +249,12 @@ export async function runCodex(opts: {
     session = initialSession;
 
     // On reconnect, un-archive the session and skip replaying old messages.
-    if (reconnectSessionId) {
+    if (reconnecting) {
         session.suppressNextArchiveSignal();
         session.skipExistingMessages();
         session.updateMetadata((meta) => ({
             ...meta,
+            hostPid: metadata.hostPid,
             lifecycleState: 'running',
             archivedBy: undefined,
         }));
@@ -284,11 +296,7 @@ export async function runCodex(opts: {
 
     // Track current overrides to apply per message
     // Use shared PermissionMode type from api/types for cross-agent compatibility
-    const remoteModeState = new CodexRemoteModeState({
-        permissionMode: initialPermissionMode,
-        model: opts.model ?? DEFAULT_CODEX_MODEL,
-        effort: opts.effort ?? DEFAULT_CODEX_EFFORT,
-    });
+    const remoteModeState = new CodexRemoteModeState(launchMode);
     let currentAppendSystemPrompt: string | undefined = undefined;
 
     const resetCurrentModeDefaults = () => {
@@ -297,8 +305,8 @@ export async function runCodex(opts: {
         // a safety guarantee by itself — for plain `happy codex` the launch
         // mode IS yolo; the post-abort grace window is protected by the
         // approval handler only trusting explicitly-picked modes.
-        // Model and effort deliberately remain sticky. Current apps also
-        // reassert all three visible values on the next message.
+        // Model and effort deliberately remain sticky when the next message
+        // has no saved pick to send.
         remoteModeState.resetAfterAbort();
         currentAppendSystemPrompt = undefined;
         logger.debug('[Codex] Reset current mode defaults after abort');

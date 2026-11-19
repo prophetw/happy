@@ -126,19 +126,21 @@ export function resolveMessageModeMeta(
         return mode;
     };
 
-    // Codex and Agy turns always run with a concrete permission, model, and
-    // effort. Send the same effective defaults the composer displays instead
-    // of omitting them: Codex can reset to its launch mode during an abort, and
-    // Agy maps its model + effort pair independently at the provider boundary.
-    // In either case an omitted fallback could execute differently from the UI.
     if (flavor === 'codex' || flavor === 'agy') {
         const defaults = resolveAgentDefaultConfig(settings?.agentDefaultOverrides, flavor, cliVersion);
         meta.permissionMode = supported(retirePermissionMode(session.permissionMode ?? defaults.permissionMode));
 
-        const modelMode = session.modelMode ?? defaults.modelMode;
-        meta.model = modelMode === 'default' ? null : modelMode;
-
-        meta.effort = session.effortLevel ?? defaults.effortLevel;
+        // Older Codex sessions may be running with launch choices unknown to
+        // the app. A missing pick leaves that field in the CLI's control.
+        const useDefaults = flavor === 'agy' || options?.isNewSession === true;
+        const modelMode = session.modelMode ?? (useDefaults ? defaults.modelMode : undefined);
+        if (modelMode !== undefined) {
+            meta.model = modelMode === 'default' ? null : modelMode;
+        }
+        const effort = session.effortLevel ?? (useDefaults ? defaults.effortLevel : undefined);
+        if (effort !== undefined) {
+            meta.effort = effort;
+        }
         return meta;
     }
 

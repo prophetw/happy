@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     createApi: vi.fn(),
+    createSession: vi.fn(),
+    setupSession: vi.fn(),
     connect: vi.fn(),
     resumeThread: vi.fn(),
     disconnect: vi.fn(),
@@ -19,6 +21,8 @@ const mocks = vi.hoisted(() => ({
         onFileEvent: vi.fn(),
         keepAlive: vi.fn(),
         updateMetadata: vi.fn(),
+        suppressNextArchiveSignal: vi.fn(),
+        skipExistingMessages: vi.fn(),
         updateAgentState: vi.fn(),
         sendSessionProtocolMessage: vi.fn(),
         sendSessionEvent: vi.fn(),
@@ -44,7 +48,7 @@ vi.mock('@/utils/createSessionMetadata', () => ({
     createSessionMetadata: () => ({ metadata: { hostPid: process.pid, flavor: 'codex' }, state: {} }),
 }));
 vi.mock('@/utils/setupOfflineReconnection', () => ({
-    setupOfflineReconnection: () => ({ session: mocks.session }),
+    setupOfflineReconnection: mocks.setupSession,
 }));
 vi.mock('@/utils/serverConnectionErrors', () => ({ connectionState: { setBackend: vi.fn() } }));
 vi.mock('@/utils/MessageQueue2', () => ({
@@ -85,15 +89,17 @@ describe('Codex resume startup readiness', () => {
         mocks.session.getAgentState.mockReturnValue({});
         vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', '');
         vi.stubEnv('HAPPY_FORK_CODEX_THREAD_ID', '');
+        mocks.setupSession.mockReturnValue({ session: mocks.session });
+        mocks.createSession.mockResolvedValue({
+            id: 'happy-resumed',
+            encryptionKey: new Uint8Array(32),
+            encryptionVariant: 'legacy',
+            seq: 0, metadataVersion: 0, agentStateVersion: 0,
+        });
         mocks.createApi.mockResolvedValue({
             push: () => ({ sendSessionNotification: mocks.notify }),
             getOrCreateMachine: vi.fn().mockResolvedValue({}),
-            getOrCreateSession: vi.fn().mockResolvedValue({
-                id: 'happy-resumed',
-                encryptionKey: new Uint8Array(32),
-                encryptionVariant: 'legacy',
-                seq: 0, metadataVersion: 0, agentStateVersion: 0,
-            }),
+            getOrCreateSession: mocks.createSession,
         });
         mocks.connect.mockResolvedValue(undefined);
         mocks.resumeThread.mockResolvedValue({ threadId: 'native-thread', model: 'gpt-5.6-sol' });
@@ -120,6 +126,9 @@ describe('Codex resume startup readiness', () => {
         expect(mocks.notifyStarted).toHaveBeenCalledWith(
             'happy-resumed', expect.objectContaining({ codexThreadId: 'native-thread' }), expect.any(Object),
         );
+        const { metadata } = mocks.createSession.mock.calls[0][0];
+        expect(metadata.modelMode).toBeUndefined();
+        expect(metadata.effortLevel).toBeUndefined();
         expect(mocks.notifyFailed).not.toHaveBeenCalled();
     });
 
@@ -145,11 +154,36 @@ describe('Codex resume startup readiness', () => {
         expect(mocks.notifyFailed).toHaveBeenCalledWith(process.pid, 'Codex transport failed');
     });
 
-    it('keeps normal new-session registration unchanged', async () => {
-        await runCodex({ credentials, startedBy: 'daemon' });
-        expect(mocks.notifyStarted).toHaveBeenCalledOnce();
+    it.each([
+        [{ model: 'gpt-6.2-sol', effort: 'max' } as const, 'gpt-6.2-sol', 'max'],
+        [{}, 'gpt-6.1-sol', 'medium'],
+    ] as const)('publishes resolved launch modes in the first session snapshot for %j', async (options, model, effort) => {
+        await runCodex({ credentials, startedBy: 'daemon', ...options });
+        expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: expect.objectContaining({ flavor: 'codex', modelMode: model, effortLevel: effort }),
+        }));
+        expect(mocks.createSession).toHaveBeenCalledBefore(mocks.notifyStarted);
         expect(mocks.resumeThread).not.toHaveBeenCalled();
-        expect(mocks.notifyFailed).not.toHaveBeenCalled();
+    });
+
+    it('keeps the latest user picks and metadata when resuming an existing Happy session', async () => {
+        vi.stubEnv('HAPPY_RECONNECT_SESSION_ID', 'happy-resumed');
+        vi.stubEnv('HAPPY_RECONNECT_ENCRYPTION_KEY', Buffer.alloc(32).toString('base64'));
+        vi.stubEnv('HAPPY_RECONNECT_ENCRYPTION_VARIANT', 'legacy');
+        vi.stubEnv('HAPPY_RECONNECT_METADATA_VERSION', '7');
+        await runCodex({
+            credentials, startedBy: 'daemon', resumeThreadId: 'native-thread',
+            model: 'gpt-6.1-sol', effort: 'low',
+        });
+
+        expect(mocks.createSession).not.toHaveBeenCalled();
+        const { response } = mocks.setupSession.mock.calls[0][0];
+        expect(response.metadataVersion).toBeLessThan(0);
+        expect(response.metadata).not.toHaveProperty('modelMode');
+        expect(response.metadata).not.toHaveProperty('effortLevel');
+        const latest = { modelMode: 'gpt-6.2-sol', effortLevel: 'max', name: 'User title', lifecycleState: 'archived' };
+        const merged = mocks.session.updateMetadata.mock.calls.reduce((metadata, [apply]) => apply(metadata), latest);
+        expect(merged).toMatchObject({ ...latest, lifecycleState: 'running', codexThreadId: 'native-thread' });
     });
 
     it('sends failure with its type, then success for a successful retry', async () => {

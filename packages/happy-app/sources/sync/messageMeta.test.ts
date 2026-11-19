@@ -72,19 +72,18 @@ describe('resolveMessageDeliveryMeta', () => {
 });
 
 describe('resolveMessageModeMeta', () => {
-    it('reasserts the displayed codex defaults after abort clears session overrides', () => {
-        const meta = resolveMessageModeMeta({
-            permissionMode: null,
-            modelMode: null,
-            effortLevel: null,
-            metadata: { flavor: 'codex' },
-        } as any);
+    it.each([
+        { modelMode: null, effortLevel: null, expected: {} },
+        { modelMode: 'gpt-6.2-sol', effortLevel: null, expected: { model: 'gpt-6.2-sol' } },
+        { modelMode: null, effortLevel: 'max', expected: { effort: 'max' } },
+        { modelMode: 'default', effortLevel: null, expected: { model: null } },
+    ])('sends only the saved Codex choices for an existing session ($modelMode, $effortLevel)', ({ modelMode, effortLevel, expected }) => {
+        const meta = resolveMessageModeMeta(
+            { permissionMode: null, modelMode, effortLevel, metadata: { flavor: 'codex' } } as any,
+            { agentDefaultOverrides: { codex: { modelMode: 'gpt-6.1-sol', effortLevel: 'medium' } } },
+        );
 
-        expect(meta).toEqual({
-            permissionMode: 'auto',
-            model: 'gpt-6.1-sol',
-            effort: 'medium',
-        });
+        expect(meta).toEqual({ permissionMode: 'auto', ...expected });
     });
 
     it('always sends the displayed Agy model and effort pair', () => {
@@ -310,11 +309,10 @@ describe('resolveMessageModeMeta', () => {
         expect(meta).toEqual({
             permissionMode: 'auto',
             model: 'my-workspace-model',
-            effort: 'medium',
         });
     });
 
-    it('uses a custom codex model saved in agent settings', () => {
+    it('uses a custom codex model saved in agent settings for a new session', () => {
         const meta = resolveMessageModeMeta({
             permissionMode: null,
             modelMode: null,
@@ -324,7 +322,7 @@ describe('resolveMessageModeMeta', () => {
             agentDefaultOverrides: {
                 codex: { modelMode: 'my-workspace-model' },
             },
-        } as any);
+        } as any, { isNewSession: true });
 
         expect(meta).toEqual({
             permissionMode: 'auto',
@@ -333,10 +331,10 @@ describe('resolveMessageModeMeta', () => {
         });
     });
 
-    it('fills unset codex fields from settings while preserving session picks', () => {
+    it('fills unset new-session Codex fields from settings while preserving session picks', () => {
         const meta = resolveMessageModeMeta({
             permissionMode: 'read-only',
-            modelMode: null,
+            modelMode: 'gpt-6.2-sol',
             effortLevel: null,
             metadata: { flavor: 'codex' },
         } as any, {
@@ -347,11 +345,11 @@ describe('resolveMessageModeMeta', () => {
                     effortLevel: 'high',
                 },
             },
-        } as any);
+        } as any, { isNewSession: true });
 
         expect(meta).toEqual({
             permissionMode: 'read-only',
-            model: 'gpt-5.6-terra',
+            model: 'gpt-6.2-sol',
             effort: 'high',
         });
     });

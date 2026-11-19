@@ -55,7 +55,9 @@
 4. 最终配置写入新会话的 `Session.modelMode`、`Session.permissionMode`、`Session.effortLevel`。
 5. 发送消息时，`sync.ts` 读取会话上的值并写入 `message.meta.model` / `message.meta.permissionMode`。
 
-对于 Claude 既有会话，未显式选择模型时省略 `meta.model`，由 CLI 保持当前运行模型；修改全局默认模型不会在普通消息或 steering 消息中覆盖它。仅新会话首条消息（`source: 'new_session'`）允许在会话未保存模型选择时使用全局默认模型。显式选择具体模型仍发送对应 key，选择 `default` 仍发送 `meta.model = null` 清除覆盖。Codex、Agy 与 Rig 的发送逻辑保持各自原有的配置解析方式。
+对于 Claude 既有会话，未显式选择模型时省略 `meta.model`，由 CLI 保持当前运行模型。修改全局默认模型不会在普通消息或 steering 消息中覆盖它。仅新会话首条消息（`source: 'new_session'`）允许在会话未保存模型选择时使用全局默认模型。显式选择具体模型仍发送对应 key，选择 `default` 仍发送 `meta.model = null` 清除覆盖。
+
+Codex CLI 注册新会话时将已解析的启动模型和强度写入 `metadata.modelMode` 和 `metadata.effortLevel`。输入框从会话读取选择。旧会话发送消息时逐项使用已保存的模型和强度，缺失的字段由 CLI 延用当前值。恢复同一 Happy 会话时保留 Relay 中的选项和其他元数据。
 
 ### Claude 宿主机模型
 
