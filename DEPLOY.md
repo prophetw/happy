@@ -1,5 +1,15 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Codex 派活模型与推理强度同步（2026-11-19，Worker 和 8989 已更新）
+
+Worker 使用个人 `fork/main` 提交 `853f592b4d16d78bcedfd40bcaace35f55fb0461` 的固定产物 `codex-session-mode-853f592b4`。独立维护单元 `happy-automation-maintenance-codex-session-mode-853f592b4.service` 成功退出，新 Worker PID 为 `3056137`，签名轮询和原授权的 `happy_options` 均成功。26 个原会话进程根身份保持，1231 个停写冷备文件和 682 个发布文件通过摘要校验。发布后排队、整机独占和未确认占用均为零。
+
+8989 在原工作树 `/home/dev/code/happy-dev-8989-20261113` 保留现场基线 `4cf1ec2c7`，应用目标提交的 4 个 Web 文件后切换到 `27247be1132afc52f43b8088f27cc45b5644f11d`。实际监听进程 PID 为 `3065747`，浏览器与服务端回读的入口 bundle SHA-256 均为 `1fd1e4609bbe66c989a0808c96d0b2764a3e1e084173ce3232e7c9ce0e61d04c`。既有 Dot 回执恢复模块仍在产物中。
+
+使用现有授权通过 `happy_create_task` 创建一份独立只读测试会话。显式目标 `gpt-6.2-sol / max` 与 Worker、daemon 记录、新 CLI argv、Relay `modelMode` / `effortLevel` 和 8989 首屏一致。从网页发送一次最小测试消息，Codex `0.170.0` 的原生 `turn_context` 记为 `gpt-6.2-sol / max`，该轮完成且回显匹配。浏览器页面、Console 和非预期 HTTP 错误均为零。测试进程随后经原授权入口停止。
+
+前版 Worker 产物 `codex-defaults-da90be0aa` 保留。Worker 冷备与回退入口位于 `/var/lib/happy-automation-maintenance/codex-session-mode-853f592b4/`，其中 `rollback-release.py --launch` 由独立单元只撤销本次入口。8989 的旧 bundle、启动配置哈希和核验记录保存在私有证据目录 `~/.local/state/happy-codex-mode-release-853f592b4.sb3ODdZL/`。同目录的 `host/launch.py --web-rollback-launch` 通过已核验的 WSL 宿主入口恢复前版。两项回退入口均已准备，本次上线无需执行回退。
+
 ## Dot 自动核对连接状态修正（2026-11-19，8989 已更新）
 
 用户验收发现「E2E 独立测试 Dot」仍显示等待回执。现场只读核对最新清空编号 `301be5c9-86c0-488f-a85a-8d6686127d08` 为 applied，App 快照校验通过。恢复逻辑误用了语音通话的 `realtimeStatus`，没有开启语音时不会自动核对。Happy `364e4bcf6` 改用现有 Relay `socketStatus`，重连、返回页面和定时核对均使用该连接状态。
