@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OptionsDenied, resolveTaskOptions, taskOptionsSchema, type LaunchOptionsPolicy, type OptionCatalogEntry, type ResolvedTaskOptions } from 'happy-agent/automation';
+import { CODEX_AUTOMATION_DEFAULTS } from './automationOptions';
 
 type Receipt = {
     version: 1;
@@ -23,13 +24,10 @@ type Dependencies = {
     observe: (sessionID: string) => 'running' | 'stopping' | 'stopped' | 'unknown';
     /**
      * Live launch catalog plus the owner's allowlist (worker registration).
-     * Absent = legacy fixed launch; any requested override is rejected.
+     * Absent = fixed defaults; any requested override is rejected.
      */
     options?: () => { defaultAgent: string; catalog: OptionCatalogEntry[]; policy?: LaunchOptionsPolicy };
 };
-
-/** Launch used by automation before options existed; identical session for legacy callers. */
-const LEGACY_LAUNCH: ResolvedTaskOptions = { agent: 'codex', model: 'gpt-6.1-sol', permissionMode: 'default', effort: 'high' };
 
 /** Only a daemon-owned child and ESRCH for both parent/group can prove stopped. */
 export function observeOwnedProcess(
@@ -131,7 +129,7 @@ export function createAutomationControl(deps: Dependencies) {
             // Final enforcement point: the daemon re-resolves overrides against
             // the owner's allowlist and the live agent catalog. A worker-side
             // check alone is never trusted with permission elevation.
-            let launch = LEGACY_LAUNCH;
+            let launch: ResolvedTaskOptions = CODEX_AUTOMATION_DEFAULTS;
             const parsed = taskOptionsSchema.safeParse(req.options ?? {});
             if (!parsed.success) throw new Error('INVALID_REQUEST');
             if (deps.options) {

@@ -269,7 +269,7 @@ curl -sS -X POST "$BASE/tasks" \
 
 - 每个显式给出的值都必须同时在 **worker 白名单**和**本 grant 的 options 子集**内，否则返回 `OPTION_DENIED`，不会创建任何会话；
 - `permissionMode: "yolo"`（Codex）/ `"bypassPermissions"`（Claude）等放权模式只有 owner 在白名单中显式列出才可用，调用方不能借此提权；
-- 不传 `options` 时保持原固定默认启动（Codex + `gpt-6.1-sol` + `default` + `high`），旧调用方行为不变；
+- 省略 `options` 时，新建会话使用 Codex、`gpt-6.2-sol`、`default` 权限模式和 `max` 推理强度；
 - worker 未配置白名单时，任何 `options` 覆盖都返回 `OPTION_DENIED`；daemon 不支持 options 能力时返回 426 `UNSUPPORTED_VERSION`；
 - 成功响应的 `data.options` 回显完整解析后的启动选择（含默认值），可据此核对实际生效配置。
 
@@ -284,12 +284,12 @@ curl -sS -X POST "$BASE/tasks" \
     "agents": [
       {
         "agent": "codex",
-        "models": ["gpt-6.1-sol", "gpt-6-sol"],
+        "models": ["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-sol"],
         "permissionModes": ["default", "auto", "yolo"],
-        "efforts": ["low", "medium", "high"],
-        "defaultModel": "gpt-6.1-sol",
+        "efforts": ["low", "medium", "high", "max"],
+        "defaultModel": "gpt-6.2-sol",
         "defaultPermissionMode": "default",
-        "defaultEffort": "high"
+        "defaultEffort": "max"
       }
     ]
   }

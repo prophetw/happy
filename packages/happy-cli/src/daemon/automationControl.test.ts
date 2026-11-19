@@ -139,7 +139,10 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
         expect(await s.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'request', 'status', 'cancel', 'options'] });
         const reply = await s.control({ version: 1, operation: 'options' }) as any;
         expect(reply.defaultAgent).toBe('codex');
-        expect(reply.agents.find((a: any) => a.agent === 'codex').models).toContain('gpt-6.1-sol');
+        const codex = reply.agents.find((a: any) => a.agent === 'codex');
+        expect(codex).toMatchObject({ defaultModel: 'gpt-6.2-sol', defaultPermissionMode: 'default', defaultEffort: 'max' });
+        expect(codex.models).toEqual(expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.1-sol']));
+        expect(codex.efforts).toContain('max');
         expect(reply.agents.find((a: any) => a.agent === 'claude').defaultEffort).toBe('');
     });
     it('spawns with resolved allowlisted overrides and echoes the selection in the receipt', async () => {
@@ -150,13 +153,13 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
         expect(await s.control({ ...create, options: { agent: 'claude', permissionMode: 'acceptEdits' } })).toMatchObject({ errorCode: 'REQUEST_ID_CONFLICT' });
         expect(s.spawn).toHaveBeenCalledTimes(1);
     });
-    it('denies unlisted or unknown overrides without spawning, and keeps legacy defaults', async () => {
+    it('denies unlisted or unknown overrides without spawning, and permits default launches', async () => {
         const s = optionSetup(policy);
         for (const options of [{ permissionMode: 'safe-yolo' }, { model: 'gpt-9' }, { permissionMode: 'bypassPermissions' }, { effort: 'ultra' }, { model: 42 }, { agent: 'gemini' }]) {
             expect(await s.control({ ...create, options })).toMatchObject({ errorCode: expect.stringMatching(/OPTION_DENIED|INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE/) });
         }
         expect(s.spawn).not.toHaveBeenCalled();
-        expect(await s.control(create)).toMatchObject({ state: 'confirmed', options: { agent: 'codex', model: 'gpt-6.1-sol', permissionMode: 'default', effort: 'high' } });
+        expect(await s.control(create)).toMatchObject({ state: 'confirmed', options: { agent: 'codex', model: 'gpt-6.2-sol', permissionMode: 'default', effort: 'max' } });
         const noPolicy = optionSetup(undefined);
         expect(await noPolicy.control({ ...create, options: { permissionMode: 'yolo' } })).toMatchObject({ errorCode: 'OPTION_DENIED' });
         expect(noPolicy.spawn).not.toHaveBeenCalled();
@@ -166,7 +169,7 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
 it('passes only fixed task-local environment keys without changing launch permissions', async()=>{
     const s=setup(),environment={TMPDIR:'/fixture/task-temp',HAPPY_TASK_ID:'task-a',HAPPY_TASK_PORT:'20001',HAPPY_TASK_ROOT:'/fixture',HAPPY_TASK_TITLE:'可读任务'};
     expect(await s.control({...create,taskEnvironment:environment})).toMatchObject({state:'confirmed'});
-    expect(s.spawn.mock.calls[0]).toEqual(['/fixture',{agent:'codex',model:'gpt-6.1-sol',permissionMode:'default',effort:'high'},environment]);
+    expect(s.spawn.mock.calls[0]).toEqual(['/fixture',{agent:'codex',model:'gpt-6.2-sol',permissionMode:'default',effort:'max'},environment]);
     expect(await s.control({...create,taskEnvironment:{...environment,HAPPY_TASK_TITLE:'另一标题'}})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
     expect(s.spawn).toHaveBeenCalledTimes(1);
     for(const file of readdirSync(s.directory))expect(readFileSync(join(s.directory,file),'utf8')).not.toContain('可读任务');

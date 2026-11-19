@@ -11,7 +11,7 @@ import { canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { projectResponse } from './projection';
 import { ApiError, cancelSchema, sendSchema, checkBoundProjects, taskTitleSchema, type Connection, type WorkerRegistration } from './schema';
-import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog } from './options';
+import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog, type ResolvedTaskOptions } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
 import { SessionProcessProofs } from './sessionProcessProofs';
@@ -378,10 +378,17 @@ export class ScopedWorker {
             verifyWorkspace(w);
             if (internal && (command.method === 'sessions.send' || launchCheck) && w.resolvedOptions) {
                 const available = await catalog();
-                let resolved;
-                try { resolved = resolveTaskOptions(taskOptionsSchema.parse(w.options ?? {}), this.registration.launchOptions, live.options, available.defaultAgent, available.agents); }
-                catch { throw new ApiError('OPTION_DENIED', 403); }
-                if (canonicalBody(resolved) !== canonicalBody(w.resolvedOptions)) throw new ApiError('OPTION_DENIED', 403);
+                try {
+                    const requested = taskOptionsSchema.parse(w.options ?? {});
+                    const resolved = resolveTaskOptions(requested, this.registration.launchOptions, live.options, available.defaultAgent, available.agents);
+                    const launched = w.resolvedOptions as Partial<ResolvedTaskOptions>;
+                    // Omitted Codex model and effort were settled when this session was created.
+                    if (resolved.agent === 'codex') {
+                        if (requested.model === undefined && typeof launched.model === 'string') resolved.model = launched.model;
+                        if (requested.effort === undefined && typeof launched.effort === 'string') resolved.effort = launched.effort;
+                    }
+                    if (canonicalBody(resolved) !== canonicalBody(launched)) throw new OptionsDenied();
+                } catch { throw new ApiError('OPTION_DENIED', 403); }
             }
         }
         const journal = new Journal(join(this.directory, hash(`${live.clientID}\n${live.id}`)));

@@ -1,13 +1,12 @@
 import type { MachineMetadata } from '@/api/types';
-import { AGY_EFFORTS } from '@/agyStream/constants';
+import { AGY_EFFORTS } from '../agyStream/constants';
 
 /**
  * Launch option catalog for delegated (automation REST) sessions.
  *
  * The catalog is derived from the same machine metadata the app pickers use
- * (`codexModels` / `claudeModels`, refreshed by ApiMachineClient). The ambient
- * defaults are exactly what automation spawned before options existed, so an
- * old caller that sends no options gets an identical session.
+ * (`codexModels` / `claudeModels`, refreshed by ApiMachineClient). The Codex
+ * defaults also apply when the caller cannot discover launch options.
  */
 export type AutomationOption = { key: string; name: string; description?: string | null };
 export type AutomationAgentCatalog = {
@@ -23,6 +22,12 @@ export type AutomationAgentCatalog = {
 };
 
 export const AUTOMATION_DEFAULT_AGENT = 'codex' as const;
+export const CODEX_AUTOMATION_DEFAULTS = {
+    agent: AUTOMATION_DEFAULT_AGENT,
+    model: 'gpt-6.2-sol',
+    permissionMode: 'default',
+    effort: 'max',
+} as const;
 
 const CODEX_PERMISSION_MODES: AutomationOption[] = [
     { key: 'auto', name: 'Auto', description: 'Codex reviews its own calls and asks when needed' },
@@ -38,15 +43,16 @@ const CLAUDE_PERMISSION_MODES: AutomationOption[] = [
     { key: 'bypassPermissions', name: 'Yolo', description: 'Bypass all permission prompts' },
     { key: 'default', name: 'Default', description: 'No harness override' },
 ];
-const CODEX_EFFORTS_FALLBACK = ['low', 'medium', 'high', 'xhigh'];
+const CODEX_EFFORTS_FALLBACK = ['low', 'medium', 'high', 'xhigh', CODEX_AUTOMATION_DEFAULTS.effort];
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export function buildAutomationCatalog(metadata: MachineMetadata | null | undefined): AutomationAgentCatalog[] {
     const codexModels: AutomationOption[] = (metadata?.codexModels?.options ?? [])
         .map(m => ({ key: m.code, name: m.value, description: m.description ?? null }));
-    // The pre-options automation launch pinned gpt-6.1-sol; keep it selectable
-    // even before the first catalog refresh lands.
+    // Keep the current and previous automation defaults available during catalog refresh.
     if (!codexModels.some(m => m.key === 'gpt-6.1-sol')) codexModels.unshift({ key: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' });
+    if (!codexModels.some(m => m.key === CODEX_AUTOMATION_DEFAULTS.model))
+        codexModels.unshift({ key: CODEX_AUTOMATION_DEFAULTS.model, name: 'GPT-6.2 Sol' });
     const codexEfforts = new Set<string>(CODEX_EFFORTS_FALLBACK);
     for (const m of metadata?.codexModels?.options ?? []) for (const level of m.thinkingLevels) codexEfforts.add(level);
     const claudeModels: AutomationOption[] = [
@@ -56,7 +62,8 @@ export function buildAutomationCatalog(metadata: MachineMetadata | null | undefi
     ];
     const agents: AutomationAgentCatalog[] = [
         { agent: 'codex', models: codexModels, permissionModes: CODEX_PERMISSION_MODES, efforts: [...codexEfforts],
-            defaultModel: 'gpt-6.1-sol', defaultPermissionMode: 'default', defaultEffort: 'high' },
+            defaultModel: CODEX_AUTOMATION_DEFAULTS.model, defaultPermissionMode: CODEX_AUTOMATION_DEFAULTS.permissionMode,
+            defaultEffort: CODEX_AUTOMATION_DEFAULTS.effort },
         { agent: 'claude', models: claudeModels, permissionModes: CLAUDE_PERMISSION_MODES, efforts: CLAUDE_EFFORTS,
             defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '' },
     ];

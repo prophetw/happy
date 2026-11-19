@@ -122,6 +122,27 @@ const create = (r: any, grant: string, requestID: string, options?: unknown) =>
     r.client.request('POST', '/tasks', { requestID, machineID: 'machineA', projectID: 'projectA', ...(options ? { options } : {}) }, grant);
 
 describe('REST option discovery and allowlisted task creation', () => {
+    it('uses new defaults for new Codex sessions and keeps prior sessions dispatchable', async () => {
+        let live = catalog;
+        const r = await setup({ launchOptions: policy, catalog: () => live });
+        const grant = await r.connect();
+        await r.startWorker();
+        const { callControlTool } = await import('./mcp');
+        const previous = await callControlTool(r.client, grant, 'happy_create_task', { requestID: 'before', machineID: 'machineA', projectID: 'projectA' });
+        expect(previous.data.options).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+
+        live = [{ ...catalog[0], models: [...catalog[0].models, 'gpt-6.2-sol'], efforts: [...catalog[0].efforts, 'max'],
+            defaultModel: 'gpt-6.2-sol', defaultEffort: 'max' }, catalog[1]];
+        const discovered = await callControlTool(r.client, grant, 'happy_options', { machineID: 'machineA' });
+        expect(discovered.data.agents[0]).toMatchObject({ defaultModel: 'gpt-6.2-sol', defaultEffort: 'max', defaultPermissionMode: 'default' });
+        const next = await callControlTool(r.client, grant, 'happy_create_task', { requestID: 'after', machineID: 'machineA', projectID: 'projectA' });
+        expect(next.data.options).toMatchObject({ model: 'gpt-6.2-sol', effort: 'max', permissionMode: 'default' });
+
+        const sent = await callControlTool(r.client, grant, 'happy_send', { requestID: 'follow-up', sessionID: previous.data.sessionID, text: 'Fixture follow-up' });
+        expect(sent.data.state).toBe('queued');
+        await r.waitForSubmitted(grant, 'follow-up');
+        expect(r.sendCount).toBe(1);
+    });
     it('serves all three live catalogs and admits Agy while the same policy tracks directory changes', async () => {
         const model = 'Gemini Future (High)';
         let live = [...catalog, { ...catalog[1], agent: 'agy', models: ['default', model], defaultModel: 'default', defaultEffort: '' }];

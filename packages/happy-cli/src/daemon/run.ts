@@ -1095,8 +1095,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     // Set RPC handlers
     const automationControl = createAutomationControl({
         directory: join(configuration.happyHomeDir, 'automation-receipts', machineId),
-        // Delegated launches stay inside the owner's allowlist; omitted options
-        // reproduce the original fixed codex launch exactly.
+        // Forward the resolved automation launch options to the child CLI.
         spawn: (directory, launch, environmentVariables) => spawnSession({ directory, environmentVariables, agent: launch.agent as SpawnSessionOptions['agent'],
           approvedNewDirectoryCreation: false, permissionMode: launch.permissionMode,
           modelMode: launch.model, effortLevel: launch.effort || undefined }),

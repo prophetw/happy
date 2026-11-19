@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   webhook: null as any,
   startupFailed: null as any,
   children: null as any,
+  happyHomeDir: '/test-only',
   tmuxAvailable: false,
   tmuxSpawn: vi.fn(),
   persisted: {} as Record<string, any>,
@@ -28,7 +32,7 @@ vi.mock('os', async (importOriginal) => {
 });
 vi.mock('fs/promises', () => ({ default: { access: mocks.access } }));
 vi.mock('@/ui/logger', () => ({ logger: mocks.logger }));
-vi.mock('@/configuration', () => ({ configuration: { serverUrl: 'http://test.invalid', happyHomeDir: '/test-only' } }));
+vi.mock('@/configuration', () => ({ configuration: { serverUrl: 'http://test.invalid', get happyHomeDir() { return mocks.happyHomeDir; } } }));
 vi.mock('@/ui/auth', () => ({ authAndSetupMachineIfNeeded: async () => ({ credentials: { token: 'test-token' }, machineId: 'machine-1' }) }));
 vi.mock('@/ui/doctor', () => ({ getEnvironmentInfo: () => ({}) }));
 vi.mock('@/utils/caffeinate', () => ({ startCaffeinate: () => false, stopCaffeinate: vi.fn() }));
@@ -40,9 +44,12 @@ vi.mock('@/utils/tmux', () => ({
 }));
 vi.mock('@/resume/localHappyAgentAuth', () => ({ detectResumeSupport: () => ({}), hasLocalHappyAgentAuth: () => false }));
 vi.mock('./happyTerminalBoot', () => ({ startHappyTerminalDaemon: vi.fn() }));
+vi.mock('./automationWorker', () => ({ startDaemonAutomation: vi.fn() }));
 vi.mock('@/persistence', () => ({
   readPersistedSessions: () => mocks.persisted,
   readPersistedSession: (id: string) => { mocks.lookupSession(id); return mocks.persisted[id]; },
+  readPersistedSessionProcess: (id: string) => { mocks.lookupSession(id); return mocks.persisted[id]; },
+  archivePersistedSessionProcesses: vi.fn(),
   persistSession: mocks.persistSession, markSessionStopped: vi.fn(), writeDaemonState: vi.fn(), readDaemonState: vi.fn(),
   acquireDaemonLock: async () => ({}), releaseDaemonLock: vi.fn(),
 }));
@@ -77,8 +84,8 @@ const fallback = {
 };
 const realKill = process.kill.bind(process);
 
-async function boot() {
-  await expect(startDaemon()).rejects.toThrow('test exit');
+async function boot(options?: Parameters<typeof startDaemon>[0]) {
+  await expect(startDaemon(options)).rejects.toThrow('test exit');
 }
 
 describe('daemon resume fallback', () => {
@@ -118,6 +125,40 @@ describe('daemon resume fallback', () => {
     expect(vi.mocked(process.kill).mock.calls).toEqual([[12344, 0], [-12344, 0]]);
     expect(mocks.lookupSession).toHaveBeenCalledExactlyOnceWith('old-session');
     expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it('passes Codex automation defaults and independent overrides to the session CLI', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'happy-automation-spawn-'));
+    mocks.happyHomeDir = home;
+    try {
+      await boot({ automation: {
+        endpoint: 'https://fixture.invalid/happy-control/v1', report: vi.fn(),
+        identity: { id: 'worker', sign: async () => Buffer.alloc(0) },
+        registration: {
+          id: 'worker', userID: 'owner', name: 'Fixture Worker', publicKey: 'fixture', machineID: 'machine-1',
+          projects: [], methods: [], protocol: 1,
+          launchOptions: { version: 1, agents: [{ agent: 'codex', modelSource: 'machine', models: [], permissionModes: [] }] },
+        },
+      } });
+      const cases = [
+        { options: undefined, model: 'gpt-6.2-sol', effort: 'max' },
+        { options: { model: 'gpt-6.1-sol' }, model: 'gpt-6.1-sol', effort: 'max' },
+        { options: { effort: 'medium' }, model: 'gpt-6.2-sol', effort: 'medium' },
+        { options: { model: 'gpt-6.1-sol', effort: 'high' }, model: 'gpt-6.1-sol', effort: 'high' },
+      ];
+      for (const [index, { options, model, effort }] of cases.entries()) {
+        expect(await mocks.handlers.automationControl({ version: 1, operation: 'create', requestID: `launch-${index}`, directory: '/project',
+          ...(options ? { options } : {}) })).toMatchObject({ state: 'confirmed', options: { agent: 'codex', model, effort, permissionMode: 'default' } });
+        expect(mocks.spawn).toHaveBeenLastCalledWith(
+          ['codex', '--happy-starting-mode', 'remote', '--started-by', 'daemon', '--permission-mode', 'default', '--model', model, '--effort', effort],
+          expect.objectContaining({ cwd: '/project' }),
+        );
+      }
+      expect(mocks.spawn).toHaveBeenCalledTimes(cases.length);
+    } finally {
+      mocks.happyHomeDir = '/test-only';
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it.each(['regular', 'tmux'])('returns a native Codex startup failure to the caller in %s mode', async (mode) => {
