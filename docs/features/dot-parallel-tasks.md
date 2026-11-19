@@ -122,6 +122,20 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 ## 集成发布顺序
 
+### 派发、崩溃与容量的隔离验收
+
+Control 按授权和 requestID 登记命令摘要。Worker 领取前，Control 先持久化领取编号。超时撤回与领取共用原有独占网关。撤回后才签发含原 requestID、`safeToRetrySameRequestID`、`worker_not_reached` 的回执。已领取、旧格式记录或存储结果不确定时，重复写入转为查询原回执。撤权、越权与有效载荷冲突继续拒绝。新登记的摘要带协议前缀，旧 Control 对这些 ID 的写入会报 `REQUEST_ID_CONFLICT`，仍可读取已有回执。
+
+现场 Control `d5e0adc87` 的服务凭据记录早于 `lastUsedAt` 字段。它会拒绝打开含该字段的新版账本。隔离验收同时检查原样回读的结果，并在单独副本中使用切换前的测试凭据记录核验旧写入者对原 ID 的保护。
+
+Linux 受管 Worker 在原 PID 锁旁记录本次开机、PID 命名空间、进程启动时刻和锁的设备号及 inode。同一次开机重启时，只有确认原 PID 已消失、状态属主与锁一致，启动者才可在独占 flock 内接管。PID 已复用、仍活跃或旧锁缺少身份信息时保留原文件。
+
+机器队列最多接受 1000 条活跃任务，blocked 占名额，completed、failed、cancelled 保留在原加密账本供去重和迟到回执使用。TestLoop 宿主还有每工作区 1000 条任务、5000 条操作的独立总量限制。旧 Worker 读取超过 1000 条记录的新版账本会拒绝打开，回退前须核对账本兼容性并保留新写入。
+
+发布前在 TestLoop 执行 `pnpm test:dot-dispatch-release`，并将生成的隔离报告交给发布清单预检。脚本用隔离凭据和进程覆盖两组单边升级、双候选、掉线、领取边界、Worker 崩溃、容量及目标执行取消。运行入口和报告字段见 TestLoop 的 `E2Etest.md`。
+
+### 集成步骤
+
 1. 审查并集成两仓库独立提交到各自个人 main；fetch 核对远端并保留最近记忆移动、启动清理和已有发布配置。本文不授权合并/推送/发布。
 2. 在隔离发布目录构建 happy-wire、happy-agent、CLI、宿主及 App/Web；准备所有候选产物，再选维护窗口。不能重启正在执行本任务的 Worker 来测试。
 3. 核验机器身份与 root/grant 绑定，协调保存宿主账本、Worker journal/receipts、新机器队列及 worktree。新旧版本不可混跑。V1 → V2 的一次持久迁移将历史默认机器 2 改为项目 2、机器无默认硬上限；未知任务的保守资源保持到取得真实归属/结束证据；精确匹配的已知自动租约可按上述规则原地收窄。尚未执行的旧队列按新项目域调度。显式旧 registration.maxConcurrency（含 2）仍映射为机器硬上限；非默认持久额度 1/3/4 必须配置匹配的 machineConcurrency 才迁移，禁止无解释放宽。后续修改策略须停所有相关 Worker、确认没有未终态任务，以原策略打开 TaskQueue，调用 configureConcurrency(新策略)，再按新配置启动；禁止绕过 QUEUE_IN_USE。V2 密文和密钥须一起备份，旧 V1 reader 无法读取 V2，不可直接回退。

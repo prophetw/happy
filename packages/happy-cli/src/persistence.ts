@@ -4,6 +4,7 @@
  * Handles settings and private key storage in ~/.happy/ or local .happy/
  */
 
+import { withDaemonOwnershipGuard } from './daemon/daemonOwnershipGuard';
 import { FileHandle } from 'node:fs/promises'
 import { readFile, writeFile, mkdir, open, unlink, rename, stat } from 'node:fs/promises'
 import { existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, linkSync, statSync, openSync, fstatSync, closeSync } from 'node:fs'
@@ -329,6 +330,9 @@ export function writeDaemonState(state: DaemonLocallyPersistedState): void {
  * Clean up daemon state file and lock file
  */
 export async function clearDaemonState(): Promise<void> {
+  return withDaemonOwnershipGuard(configuration.daemonLockFile, false, clearOrdinaryDaemonState);
+}
+async function clearOrdinaryDaemonState(): Promise<void> {
   if (existsSync(configuration.daemonStateFile)) {
     await unlink(configuration.daemonStateFile);
   }
@@ -351,6 +355,9 @@ export async function acquireDaemonLock(
   maxAttempts: number = 5,
   delayIncrementMs: number = 200
 ): Promise<FileHandle | null> {
+  return withDaemonOwnershipGuard(configuration.daemonLockFile, false, () => acquireOrdinaryDaemonLock(maxAttempts, delayIncrementMs));
+}
+async function acquireOrdinaryDaemonLock(maxAttempts: number, delayIncrementMs: number): Promise<FileHandle | null> {
   // Lock creation is atomic INCLUDING the PID payload: the PID is written to
   // a private temp file first and hard-linked into place (link fails with
   // EEXIST exactly like O_EXCL). A lock file therefore never exists in an
@@ -412,14 +419,12 @@ export async function acquireDaemonLock(
  */
 export async function releaseDaemonLock(lockHandle: FileHandle): Promise<void> {
   try {
-    await lockHandle.close();
-  } catch { }
-
-  try {
-    if (existsSync(configuration.daemonLockFile)) {
-      unlinkSync(configuration.daemonLockFile);
-    }
-  } catch { }
+    await withDaemonOwnershipGuard(configuration.daemonLockFile, false, async () => {
+      const held = await lockHandle.stat(), current = await stat(configuration.daemonLockFile);
+      if (held.dev === current.dev && held.ino === current.ino) await unlink(configuration.daemonLockFile);
+    });
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  finally { await lockHandle.close(); }
 }
 
 // ─── Session persistence (survives daemon restarts) ───

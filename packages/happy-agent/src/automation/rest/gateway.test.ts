@@ -171,7 +171,9 @@ describe('loopback REST → worker → existing core/daemon', () => {
     it('recovers durable message ack and rejects changed payload', async () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker(); const sid = (await create(r, grant)).data.sessionID;
         r.loseSendAck(); const body = { requestID: 'send1', text: 'fixture private instruction' };
-        expect((await r.client.request('POST', `/sessions/${sid}/messages`, body, grant)).data.state).toBe('queued');
+        const accepted = await r.client.request('POST', `/sessions/${sid}/messages`, body, grant);
+        expect(accepted.data).toMatchObject({requestID:'send1', sessionID:sid});
+        expect(['queued','preparing','submitted']).toContain(accepted.data.state);
         await r.waitForSubmitted(grant, 'send1');
         expect((await r.client.request('GET', '/requests/send1', undefined, grant)).data.state).toBe('submitted');
         expect((await r.client.request('POST', `/sessions/${sid}/messages`, body, grant)).data.state).toBe('submitted'); expect(r.sendCount).toBe(1);
@@ -202,7 +204,9 @@ describe('loopback REST → worker → existing core/daemon', () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker();
         const input = { requestID: 'parent', machineID: 'machineA', projectID: 'projectA', text: 'fixture task' };
         const first = await startTask(r.client, grant, input), again = await startTask(r.client, grant, input);
-        expect(first.result.data.state).toBe('queued'); await r.waitForSubmitted(grant, first.requests.send); expect(again.requests).toEqual(first.requests); expect(r.spawnCount).toBe(1); expect(r.sendCount).toBe(1);
+        expect(first.result.data.requestID).toBe(first.requests.send);
+        expect(['queued','preparing','submitted']).toContain(first.result.data.state);
+        await r.waitForSubmitted(grant, first.requests.send); expect(again.requests).toEqual(first.requests); expect(r.spawnCount).toBe(1); expect(r.sendCount).toBe(1);
         expect((await callControlTool(r.client, grant, 'happy_machines', {})).ok).toBe(true);
         await expect(callControlTool(r.client, grant, 'happy_send', { sessionID: first.sessionID, requestID: 'bad', text: 'x', shell: 'arbitrary' })).rejects.toThrow();
         expect(Object.keys(toolContracts).some(n => /shell|fetch|exec/.test(n))).toBe(false);
@@ -349,5 +353,75 @@ describe('bounded concurrent worker observation', () => {
             expect(receipt.data.state).toBe('pending'); expect(r.spawnCount).toBe(1);
         } finally { release(); }
         expect((await pending).data.state).toBe('confirmed');
+    });
+});
+
+describe('durable dispatch evidence', () => {
+    it('withdraws an unclaimed timeout before certifying the registered request, across restart', async () => {
+        const r = await setup({ timeoutMs: 120 }), grant = await r.connect();
+        const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });
+        await poll();
+        const result = await create(r, grant, 'withdrawn');
+        expect(result).toMatchObject({ dispatch: 'not_sent', error: { retryable: true }, data: { requestID: 'withdrawn', safeToRetrySameRequestID: true } });
+        expect((await poll()).data).toBeNull();
+        await r.restartGateway();
+        const read = (id: string) => r.client.request('GET', '/requests/' + id, undefined, grant);
+        expect((await read('withdrawn')).data).toMatchObject({ requestID: 'withdrawn', state: 'pending', safeToRetrySameRequestID: true });
+        expect((await read('never-registered')).error.code).toBe('NOT_FOUND');
+        r.gatewayOptions.timeoutMs = 3000; await r.startWorker();
+        const [a,b] = await Promise.all([create(r, grant, 'withdrawn'), create(r, grant, 'withdrawn')]);
+        expect(a.ok || b.ok).toBe(true); expect((await read('withdrawn')).data.state).toBe('confirmed');
+        expect(r.spawnCount).toBe(1);
+    });
+    it('keeps an offered job ambiguous until withdrawn and treats legacy intents as lookup-only', async () => {
+        const r = await setup({ timeoutMs: 250 }), grant = await r.connect();
+        await r.workerClient.request('POST', '/worker/poll', { protocol: 1, busy: true });
+        const offered = create(r, grant, 'offered'), key = 'intent:' + grant + ':offered';
+        for (let i = 0; !r.gateway.store.get(key) && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 1));
+        const peek = await r.client.request('GET','/requests/offered',undefined,grant);
+        expect(peek).not.toHaveProperty('data.safeToRetrySameRequestID',true);
+        expect((await offered).dispatch).toBe('not_sent');
+        const legacy = r.gateway.store.get(key);
+        delete legacy.claimID; legacy.fingerprint = legacy.fingerprint.slice('claim-v1:'.length); r.gateway.store.set(key, legacy);
+        await r.restartGateway(); await r.startWorker();
+        const prior = await create(r, grant, 'offered');
+        expect(prior).not.toHaveProperty('dispatch'); expect(prior.data?.safeToRetrySameRequestID).not.toBe(true);
+        expect(r.spawnCount).toBe(0);
+        await r.ownerRequest('/connections/' + grant, 'DELETE');
+        expect((await create(r, grant, 'offered')).error.code).toBe('GRANT_REVOKED');
+    });
+    it('only looks up a claimed request after loss, even if the worker never returned a receipt', async () => {
+        const r = await setup({ timeoutMs: 200 }), grant = await r.connect();
+        const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });
+        await poll();
+        const pending = create(r, grant, 'lost');
+        let job;
+        do { job = (await poll()).data; } while (!job);
+        expect(job.command.method).toBe('tasks.create');
+        expect(await pending).toMatchObject({ error: { code: 'UNAVAILABLE_OR_UNKNOWN' } });
+        await r.restartGateway();
+        expect(await create(r, grant, 'lost')).not.toHaveProperty('dispatch');
+        expect(await r.client.request('GET','/requests/lost',undefined,grant)).not.toHaveProperty('dispatch');
+        r.gatewayOptions.timeoutMs = 3000;
+        await r.startWorker();
+        await create(r, grant, 'lost');
+        expect(r.spawnCount).toBe(0);
+    });
+    it('never certifies non-delivery when the claim write has an ambiguous outcome', async () => {
+        const r = await setup({ timeoutMs: 1200 }), grant = await r.connect();
+        const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });
+        await poll();
+        const key = 'intent:'+grant+':disk', pending = create(r, grant, 'disk'), store = r.gateway.store;
+        for (let i=0; !store.get(key) && i<100; i++) await new Promise(resolve=>setTimeout(resolve,2));
+        const save = store.set.bind(store);
+        store.set = (id:string, value:any) => { save(id,value); if (id === key) throw Error('post-rename-fsync'); };
+        try {
+            expect((await poll()).ok).toBe(false);
+            expect(await pending).toMatchObject({error:{code:'UNAVAILABLE_OR_UNKNOWN'}});
+        } finally { store.set = save; }
+        expect((await poll()).data).toBeNull();
+        await r.restartGateway();
+        expect(await create(r,grant,'disk')).not.toHaveProperty('dispatch');
+        expect(r.spawnCount).toBe(0);
     });
 });

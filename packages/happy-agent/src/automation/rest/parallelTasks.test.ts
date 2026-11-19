@@ -229,6 +229,20 @@ it('authenticates durable payloads, refuses corrupt state, and reconfigures only
     queue.transaction(s=>{s.tasks=Array.from({length:1000},(_,order)=>{const value={...input,requestID:`capacity-${order}`};return {...template,...value,order,id:hash(`${value.grantID}\n${value.requestID}`),fingerprint:hash(canonicalBody(value))};});s.nextOrder=1000;});
     expect(()=>queue.adoptLegacy({...input,requestID:'legacy-overflow'})).toThrow('QUEUE_CAPACITY_EXCEEDED');
     expect(new TaskQueue(join(f.root,'queue'),2).tasks()).toHaveLength(1000);
+    expect(() => queue.enqueue({...input, requestID:'active-overflow'})).toThrow('QUEUE_CAPACITY_EXCEEDED');
+    queue.transaction(s => { for (const task of s.tasks) { task.state = 'completed'; task.dispatched = true; task.seq = 1; } });
+    expect(queue.cancel('grant-a','fixture-session','past-cancel')).toEqual([]);
+    expect(queue.enqueue({...input, requestID:'after-history'}).order).toBe(1000);
+    const reopened = new TaskQueue(join(f.root,'queue'), 2);
+    expect(reopened.tasks()).toHaveLength(1001);
+    expect(reopened.cancel('grant-a','fixture-session','past-cancel')).toEqual([]);
+    expect(reopened.enqueue(input)).toMatchObject({ id: template.id, state: 'completed' });
+    expect(reopened.claim('worker')?.requestID).toBe('after-history');
+    expect(reopened.claim('worker')).toBeNull();
+    reopened.update(template.id, row => { row.turnID = 'late-original-turn'; });
+    expect(reopened.receipt(reopened.enqueue(input))).toMatchObject({ executionState:'completed', turnID:'late-original-turn' });
+    expect(() => reopened.enqueue({...input, text:'changed'})).toThrow('REQUEST_ID_CONFLICT');
+    expect(reopened.enqueue({...input, grantID:'another-grant'}).id).not.toBe(template.id);
     queue.transaction(s=>{s.tasks=[];}); // Isolated fixture only: restore an idle ledger for the encryption checks.
     queue.configureConcurrency(3);expect(new TaskQueue(join(f.root,'queue'),3).maxConcurrency).toBe(3);
     const file=readdirSync(join(f.root,'queue')).find(p=>p.endsWith('.json'))!,path=join(f.root,'queue',file);const data=JSON.parse(readFileSync(path,'utf8'));const original=structuredClone(data),key=readFileSync(join(f.root,'queue/.payload-key')),bytes=Buffer.from(data.value.sealed,'base64'),decipher=createDecipheriv('aes-256-gcm',key,bytes.subarray(0,12));decipher.setAuthTag(bytes.subarray(12,28));const plain=JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)),decipher.final()]).toString());plain.nextOrder='corrupt';const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv),payload=Buffer.concat([cipher.update(JSON.stringify(plain)),cipher.final()]);data.value.sealed=Buffer.concat([iv,cipher.getAuthTag(),payload]).toString('base64');writeFileSync(path,JSON.stringify(data));expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CORRUPT');Object.assign(data,original);data.value.sealed=data.value.sealed.slice(0,-10)+'AAAAAAAAAA';writeFileSync(path,JSON.stringify(data));expect(()=>new TaskQueue(join(f.root,'queue'),3)).toThrow('QUEUE_CORRUPT');

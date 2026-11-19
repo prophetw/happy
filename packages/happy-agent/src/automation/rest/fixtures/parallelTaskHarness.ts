@@ -4,26 +4,27 @@ import { spawn } from 'node:child_process';
 import { ScopedWorker } from '../worker';
 import { hash } from '../../journal';
 import type { Transport } from '../../relay';
+import type { OptionCatalog } from '../options';
 
 // Actual independent session processes. Idle sessions survive dispatcher SIGKILL;
 // each accepted message executes once, in the recorded cwd, behind a file gate.
 const sessionProgram = `
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
-const [dir,cwd]=process.argv.slice(1);let current=null;const seen=new Set();
+const [dir,cwd,turnModule]=process.argv.slice(1);let current=null;const seen=new Set();
 const events=()=>fs.readFileSync(path.join(dir,'events'),'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse);
 const append=content=>{const seq=events().length+1;fs.appendFileSync(path.join(dir,'events'),JSON.stringify({id:'m'+seq,seq,content})+'\\n');};
 setInterval(()=>{if(current)return;const m=events().find(m=>m.localId&&!seen.has(m.localId));if(!m)return;seen.add(m.localId);current=m;
  const turn='turn'+m.seq;append({role:'session',content:{role:'agent',turn,ev:{t:'turn-start'}}});
  const timer=setInterval(()=>{if(!fs.existsSync(path.join(dir,'release-'+m.seq)))return;clearInterval(timer);
- try{const file=m.content.content.text;fs.writeFileSync(path.join(cwd,file),'child '+process.pid);cp.execFileSync('git',['add','--',file],{cwd});cp.execFileSync('git',['commit','-m','fixture '+file],{cwd,stdio:'ignore'});
- append({role:'session',content:{role:'agent',turn,ev:{t:'text',text:'wrote '+file}}});
- append({role:'session',content:{role:'agent',turn,ev:{t:'turn-end',status:'completed'}}});}catch(e){append({role:'session',content:{role:'agent',turn,ev:{t:'turn-end',status:'failed'}}});}
+ try{const file=m.content.content.text;let result=turnModule?require(turnModule)(file,cwd,dir):null;
+ if(result==null){fs.writeFileSync(path.join(cwd,file),'child '+process.pid);cp.execFileSync('git',['add','--',file],{cwd});cp.execFileSync('git',['commit','-m','fixture '+file],{cwd,stdio:'ignore'});result='wrote '+file;}
+ append({role:'session',content:{role:'agent',turn,ev:{t:'text',text:result}}});
+ append({role:'session',content:{role:'agent',turn,ev:{t:'turn-end',status:'completed'}}});}catch(e){append({role:'session',content:{role:'agent',turn,ev:{t:'turn-end',status:'failed'}}});
+ if(turnModule){fs.writeFileSync(path.join(dir,'fixture-error'),e.message);process.exit(1);}}
  current=null;},10);
 },10);setTimeout(()=>process.exit(0),60000);
 `;
-export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: string, Worker = ScopedWorker) {
-    const config = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
-    const registration = { ...config.registration, ...(workerID ? { id: workerID } : {}) };
+export function fixtureSessionTransport(root: string, registration: { machineID: string }, fixture: { catalog?: OptionCatalog; turnModule?: string } = {}) {
     const sessionsRoot = join(root, 'sessions'); mkdirSync(sessionsRoot, { recursive: true });
     const sessions = () => readdirSync(sessionsRoot).map(id => JSON.parse(readFileSync(join(sessionsRoot, id, 'metadata'), 'utf8')));
     const messages = (id: string) => readFileSync(join(sessionsRoot, id, 'events'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -43,7 +44,8 @@ export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: stri
         messages: async (s, cursor = 0, limit = 100) => { const all = messages(s.id).filter(m => m.seq > cursor); return { messages: all.slice(0, limit), hasMore: all.length > limit }; },
         send: async (s, id, text) => { const sent = append(s.id, 'automation:' + id, text); const flag = join(root, 'lose-ack'); if (existsSync(flag)) { (await import('node:fs')).unlinkSync(flag); throw Error('fixture_ack_lost'); } return sent; },
         rpc: async (_m, input) => {
-            if (input.operation === 'capabilities') return { version: 1, operations: ['create','request','cancel','status'] };
+            if (input.operation === 'capabilities') return { version: 1, operations: ['create','request','cancel','status',...(fixture.catalog ? ['options'] : [])] };
+            if (input.operation === 'options' && fixture.catalog) return fixture.catalog;
             if (input.operation === 'status') return { version: 1, process: state(String(input.sessionID)) };
             const receiptPath=join(root,'native-receipt-'+hash(String(input.requestID)));
             if(input.operation==='request'&&existsSync(receiptPath)){const r=JSON.parse(readFileSync(receiptPath,'utf8'));return {...r,process:state(r.sessionID)};}
@@ -57,7 +59,7 @@ export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: stri
             if (input.operation === 'create') {
                 if (!existsSync(dir)) {
                     mkdirSync(dir); writeFileSync(join(dir, 'events'), '');
-                    const child = spawn(process.execPath, ['-e', sessionProgram, dir, String(input.directory)], { cwd: String(input.directory), stdio: 'ignore', detached: true }); child.unref();
+                    const child = spawn(process.execPath, ['-e', sessionProgram, dir, String(input.directory), ...(fixture.turnModule ? [fixture.turnModule] : [])], { cwd: String(input.directory), stdio: 'ignore', detached: true }); child.unref();
                     writeFileSync(join(dir, 'metadata'), JSON.stringify({ id, metadata: { machineId: registration.machineID, path: input.directory, flavor: 'codex', hostPid: child.pid }, agentState: {}, active: true }));
                 }
                 return { version: 1, state: 'confirmed', sessionID: id };
@@ -65,6 +67,12 @@ export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: stri
             throw Error('fixture_unknown_operation');
         },
     };
+    return { transport, sessions, messages, state };
+}
+export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: string, Worker = ScopedWorker) {
+    const config = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
+    const registration = { ...config.registration, ...(workerID ? { id: workerID } : {}) };
+    const { transport, sessions, messages, state } = fixtureSessionTransport(root, registration);
     const grant = (id: string) => JSON.parse(readFileSync(join(root, 'grants.json'), 'utf8'))[id];
     const worker = new Worker(registration, transport, join(root, 'worker'), async () => grant(grantID), Date.now, undefined, async id => grant(id), join(root, 'queue'));
     const call = (method: string, values: Record<string, unknown>) => worker.execute({ id: 'job', workerID: registration.id, grantID, deadline: Date.now() + 60000, command: { version: 1, method, ...values } }) as Promise<any>;

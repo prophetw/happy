@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import { cleanupAutomationDaemon } from './automationShutdown';
 import { createAutomationControl, observeOwnedProcess, observePersistedProcess } from './automationControl';
-import { existingAutomationAuth, bundleReplacementAction, assertNoAutomationDaemonState, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock, verifyManagedStartupMachine } from './automationBootstrap';
+import { existingAutomationAuth, bundleReplacementAction, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock, verifyManagedStartupMachine } from './automationBootstrap';
 import { startDaemonAutomation, type DaemonAutomationOptions } from './automationWorker';
 import os from 'os';
 import * as tmp from 'tmp';
@@ -143,9 +143,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
 
   // Check if already running
   // Check if running daemon version matches current CLI version
-  if (options.existingOnly) {
-    await assertNoAutomationDaemonState(configuration.daemonStateFile);
-  } else {
+  if (!options.existingOnly) {
     const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledHappyVersion();
     if (!runningDaemonVersionMatches) {
       // TODO: This hand-rolled self-restart path is awkward to reason about and awkward to test.
@@ -162,7 +160,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
   }
 
   // Acquire exclusive lock (proves daemon is running)
-  const daemonLockHandle = options.existingOnly ? await acquireAutomationDaemonLock(configuration.daemonLockFile) : await acquireDaemonLock(5, 200);
+  const daemonLockHandle = options.existingOnly ? await acquireAutomationDaemonLock(configuration.daemonLockFile, configuration.daemonStateFile) : await acquireDaemonLock(5, 200);
   if (!daemonLockHandle) {
     logger.warn('[DAEMON RUN] Failed to acquire daemon lock; daemon startup did not complete');
     process.exit(1);

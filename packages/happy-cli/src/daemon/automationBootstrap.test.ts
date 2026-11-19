@@ -125,3 +125,51 @@ describe('managed machine verification after local state creation', () => {
         } finally { await f.handle.close(); }
     });
 });
+
+describe('same-boot managed worker crash', () => {
+    it('retains the original numeric lock when PID reuse, missing permission or missing identity prevents proof', async () => {
+        const f = fixture(), state = join(f.dir, 'state'), lock = state + '.lock';
+        const held = await acquireAutomationDaemonLock(lock, state);
+        const marker = JSON.parse(readFileSync(lock + '.guard', 'utf8'));
+        writeFileSync(state, JSON.stringify({ pid:process.pid }));
+        try {
+            writeFileSync(lock + '.guard', JSON.stringify({...marker, startTicks: String(BigInt(marker.startTicks) - 1n)}));
+            await expect(acquireAutomationDaemonLock(lock, state)).rejects.toThrow();
+            writeFileSync(lock + '.guard', JSON.stringify(marker));
+            const probe = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(Error(), {code:'EPERM'}); });
+            try { await expect(acquireAutomationDaemonLock(lock, state)).rejects.toThrow(); }
+            finally { probe.mockRestore(); }
+            writeFileSync(lock + '.guard', '{}');
+            await expect(acquireAutomationDaemonLock(lock, state)).rejects.toThrow();
+            expect(readFileSync(lock, 'utf8')).toBe(String(process.pid));
+            expect(JSON.parse(readFileSync(state,'utf8')).pid).toBe(process.pid);
+        } finally { await held.close(); }
+    });
+    it('serializes replacement after SIGKILL and retains live, reused or unverifiable ownership', async () => {
+        const f = fixture(), state = join(f.dir, 'daemon.state.json'), lock = state + '.lock';
+        const { spawn } = await import('node:child_process');
+        const entry = new URL('./automationBootstrap.ts', import.meta.url).href;
+        const source = `import { acquireAutomationDaemonLock } from ${JSON.stringify(entry)};
+            import { writeFileSync } from 'node:fs';
+            await acquireAutomationDaemonLock(process.argv[1], process.argv[2]);
+            writeFileSync(process.argv[2],JSON.stringify({pid:process.pid}));
+            process.send('owned'); setInterval(()=>{},1000);`;
+        const owner = spawn(process.execPath, ['--import','tsx','--input-type=module','-e',source,lock,state], { stdio:['ignore','ignore','inherit','ipc'] });
+        try {
+            await new Promise<void>((resolve, reject) => {
+                owner.once('message', () => resolve()); owner.once('error', reject);
+                owner.once('exit', () => reject(Error('fixture_owner_exited')));
+            });
+            await expect(acquireAutomationDaemonLock(lock, state)).rejects.toThrow();
+            const exit = new Promise<void>(resolve => owner.once('exit', () => resolve())); owner.kill('SIGKILL'); await exit;
+            const attempts = await Promise.allSettled([acquireAutomationDaemonLock(lock, state), acquireAutomationDaemonLock(lock, state)]);
+            expect(attempts.filter(a => a.status === 'fulfilled')).toHaveLength(1);
+            expect(existsSync(state)).toBe(false);
+            const winner = attempts.find(a => a.status === 'fulfilled')!;
+            if (winner.status === 'fulfilled') await releaseOwnedAutomationLock(state, lock, winner.value);
+            writeFileSync(lock, String(process.pid)); writeFileSync(state, JSON.stringify({pid:process.pid}));
+            await expect(acquireAutomationDaemonLock(lock, state)).rejects.toThrow();
+            expect(readFileSync(lock, 'utf8')).toBe(String(process.pid));
+        } finally { if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL'); }
+    });
+});

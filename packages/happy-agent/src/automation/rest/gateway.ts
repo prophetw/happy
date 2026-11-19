@@ -12,9 +12,9 @@ import { openapi } from './openapi';
 import { lockGateway } from './gatewayLock';
 import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectionLabelUpdateSchema, createTaskSchema, emptyQuerySchema, identifier, mutationSchema, querySchema, sendSchema, serviceConnectionSchema, serviceTokensConfigSchema, scopeProjectIDs, taskOptionsQuerySchema, MAX_SCOPE_PROJECTS, workerPollSchema, workerCheckSchema, workerResultSchema, additionalBrowserOriginsSchema, parseBrowserOrigin, type Connection, type Registration, type WorkerRegistration, type ServiceTokensConfig } from './schema';
 
-export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; sessionID?: string; state: string };
+export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; deadline: number };
-type PendingJob = Job & { resolve: (value: any) => void; timer: ReturnType<typeof setTimeout>; delivered: boolean };
+type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer: ReturnType<typeof setTimeout>; delivered: boolean };
 export type GatewayOptions = {
     directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
     verifyOwner: (authorization: string | undefined) => Promise<string>;
@@ -73,7 +73,8 @@ export function createGateway(options: GatewayOptions) {
     app.setErrorHandler((error, _req, reply) => {
         const status = error instanceof ApiError ? error.status : error instanceof ZodError ? 400 : (error as { statusCode?: number })?.statusCode === 413 ? 413 : (error as { statusCode?: number })?.statusCode === 400 ? 400 : 503;
         const code = error instanceof ApiError ? error.code : status === 413 ? 'PAYLOAD_TOO_LARGE' : status === 400 ? 'INVALID_REQUEST' : 'INTERNAL_ERROR';
-        reply.code(status).send({ ...failure(code), ...(code === 'WORKER_UNAVAILABLE' ? { dispatch: 'not_sent' } : {}) });
+        reply.code(status).send({ ...failure(code), ...(code === 'WORKER_UNAVAILABLE' && _req.method === 'GET'
+            && _req.routeOptions.url !== base+'/requests/:id' ? { dispatch: 'not_sent' } : {}) });
     });
     app.setNotFoundHandler((_req, reply) => reply.code(404).send(failure('NOT_FOUND')));
     const ok = (data: unknown) => ({ version: 1, ok: true, data });
@@ -118,37 +119,76 @@ export function createGateway(options: GatewayOptions) {
     function target(c: Connection, sessionID: string) {
         if (!c.sessionIDs.includes(sessionID) && !store.list<Intent>(`intent:${c.id}:`).some(i => i.method === 'tasks.create' && i.sessionID === sessionID)) throw new ApiError('SCOPE_DENIED', 403);
     }
-    async function dispatch(c: Connection, command: Record<string, unknown>): Promise<any> {
+    const pendingReceipt = (intent: Intent) => ({ requestID: intent.requestID, sessionID: intent.sessionID,
+        state: 'pending', safeToRetrySameRequestID: true, queueReason: 'worker_not_reached' });
+    const unsent = (intent: Intent) => ({ version: 1, ok: false, dispatch: 'not_sent',
+        data: pendingReceipt(intent), error: { code: 'WORKER_UNAVAILABLE', retryable: true } });
+    const unknown = () => failure('UNAVAILABLE_OR_UNKNOWN');
+    async function dispatch(c: Connection, command: Record<string, unknown>, intent?: Intent): Promise<any> {
         grants.active(c.id, c.clientID);
-        if ((lastSeen.get(c.workerID) ?? 0) < now() - 5000) throw new ApiError('WORKER_UNAVAILABLE', 503);
+        if (!lastSeen.has(c.workerID) || lastSeen.get(c.workerID)! < now() - 5000) {
+            if (intent) return unsent(intent);
+            throw new ApiError('WORKER_UNAVAILABLE', 503);
+        }
         if (c.scopeVersion === 3 && !directoryScopeWorkers.has(c.workerID)) throw new ApiError('WORKER_DIRECTORY_SCOPE_UPGRADE_REQUIRED', 426);
         if (c.scopeVersion !== undefined && !projectScopeWorkers.has(c.workerID)) throw new ApiError('WORKER_PROJECT_SCOPE_UPGRADE_REQUIRED', 426);
         const jobID = randomUUID();
         return new Promise(resolve => {
             const timeout = Math.min(options.timeoutMs ?? 15000, Math.max(1, c.expiresAt - now()));
-            const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, deadline: now() + timeout, delivered: false,
+            const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, deadline: now() + timeout, delivered: false,
                 resolve, timer: setTimeout(() => {
                     // Keep delivered jobs briefly: a dispatched OS operation may still finish.
                     if (!job.delivered) jobs.delete(jobID);
-                    resolve({ version: 1, ok: false, error: { code: 'UNAVAILABLE_OR_UNKNOWN', retryable: false } });
+                    resolve(!job.delivered && intent ? unsent(intent) : unknown());
                 }, timeout) };
             jobs.set(jobID, job);
         });
     }
     async function invoke(c: Connection, command: Record<string, unknown>, mutation = false) {
-        let intent: Intent | undefined;
-        if (mutation) {
-            const requestID = identifier.parse(command.requestID), key = intentKey(c, requestID);
-            intent = { requestID, method: String(command.method), grantID: c.id, fingerprint: hash(canonicalBody(command)),
-                sessionID: typeof command.sessionID === 'string' ? command.sessionID : undefined, state: 'unknown' };
-            const previous = store.get<Intent>(key);
-            if (previous && previous.fingerprint !== intent.fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409);
-            if (!previous) store.claim(key, intent);
-            else intent = previous;
+        const requestID = command.requestID;
+        let intent: Intent | undefined, lookup = command.method === 'requests.get';
+        if (mutation || lookup) {
+            const key = intentKey(c, identifier.parse(requestID));
+            intent = store.get<Intent>(key) ?? undefined;
+            if (mutation) {
+                const fingerprint = hash(canonicalBody(command));
+                const claimedProtocolFingerprint = 'claim-v1:' + fingerprint;
+                if (intent && intent.fingerprint !== fingerprint && intent.fingerprint !== claimedProtocolFingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409);
+                if (!intent) {
+                    // An older gateway compares only the bare digest. It can still read receipts
+                    // but cannot dispatch this ID behind our durable claim boundary on downgrade.
+                    intent = { requestID: String(requestID), method: String(command.method), grantID: c.id, fingerprint: claimedProtocolFingerprint,
+                        projectID: typeof command.projectID === 'string' ? command.projectID : undefined,
+                        sessionID: typeof command.sessionID === 'string' ? command.sessionID : undefined, state: 'unknown', claimID: null };
+                    if (!store.claim(key, intent)) throw new ApiError('STORE_UNAVAILABLE', 503);
+                }
+            }
+            if (!intent) throw new ApiError('NOT_FOUND', 404);
+            // The single gateway owner serializes admission, poll and withdrawal without an await.
+            // A receipt must not certify an undelivered job that a later poll could still take.
+            const waiting = [...jobs.values()].some(j => !j.delivered && j.grantID === c.id && j.intent?.requestID === requestID);
+            if (waiting) return unknown();
+            if (lookup && intent.claimID === null) {
+                grants.checkMethod(c, intent.method);
+                if (intent.projectID && !scopeProjectIDs(c).includes(intent.projectID)) throw new ApiError('SCOPE_DENIED', 403);
+                if (intent.sessionID) target(c, intent.sessionID);
+                return ok(pendingReceipt(intent));
+            }
+            if (mutation && intent.claimID !== null) {
+                // Legacy intents and already handed-out jobs can only consult the worker's original receipt.
+                if (!c.methods.includes('requests.get')) return unknown();
+                command = { method: 'requests.get', requestID }; lookup = true;
+            }
         }
-        const result = await dispatch(c, { version: 1, ...command });
+        let result;
+        try { result = await dispatch(c, { version: 1, ...command }, lookup ? undefined : intent); }
+        catch (error) {
+            if (mutation && lookup && error instanceof ApiError && error.code === 'WORKER_UNAVAILABLE') return unknown();
+            throw error;
+        }
         // Preserve a settled revocation even when permanent record deletion follows it immediately.
         if (result?.error?.code !== 'GRANT_REVOKED') grants.active(c.id, c.clientID); // Revocation during an in-flight call must not return content.
+        if (mutation && result?.dispatch === 'not_sent') return result;
         if (result?.ok === false) {
             const code = typeof result.error?.code === 'string' && /^[A-Z_]+$/.test(result.error.code) ? result.error.code : 'INVALID_WORKER_RESPONSE';
             if (code !== 'UNAVAILABLE_OR_UNKNOWN' || !mutation) {
@@ -161,7 +201,15 @@ export function createGateway(options: GatewayOptions) {
         if (result?.ok === true && result.data && typeof result.data === 'object') {
             const requestID = command.requestID;
             const record = typeof requestID === 'string' ? store.get<Intent>(intentKey(c, requestID)) : null;
-            if (record) {
+            const preparationProof = lookup && record?.method === 'tasks.create' && result.data.state === 'pending' && result.data.safeToRetrySameRequestID === true;
+            if (record && preparationProof && (!intent || record.claimID !== intent.claimID || result.data.requestID !== requestID
+                || record.claimID && jobs.has(record.claimID))) return unknown();
+            if (record && intent && record.claimID === intent.claimID) {
+                // A Worker may explicitly certify interrupted worktree preparation.
+                if (preparationProof) {
+                    record.claimID = null;
+                    if (!record.fingerprint.startsWith('claim-v1:')) record.fingerprint = 'claim-v1:' + record.fingerprint;
+                }
                 if (typeof result.data.sessionID === 'string') record.sessionID = identifier.parse(result.data.sessionID);
                 record.state = typeof result.data.state === 'string' ? result.data.state : 'unknown';
                 store.set(intentKey(c, record.requestID), record);
@@ -328,14 +376,14 @@ export function createGateway(options: GatewayOptions) {
         if (body.machineID !== c.machineID || !scopeProjectIDs(c).includes(body.projectID)) throw new ApiError('SCOPE_DENIED', 403);
         const result = await invoke(c, { method: 'tasks.create', requestID: body.requestID, machineID: c.machineID, projectID: body.projectID,
             ...(body.title ? { title: body.title } : {}), ...(body.options ? { options: body.options } : {}), ...(body.execution ? { execution: body.execution } : {}) }, true);
-        return reply.code(result?.ok ? 200 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
+        return reply.code(result?.ok ? 200 : result?.dispatch === 'not_sent' ? 503 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
     });
     for (const [suffix, methodName] of [['messages', 'sessions.send'], ['cancel', 'sessions.cancel']] as const) {
         app.post<{ Params: { id: string } }>(`${base}/sessions/:id/${suffix}`, async (req, reply) => {
             const c = active(req, methodName), sessionID = identifier.parse(req.params.id); target(c, sessionID);
             const body = methodName === 'sessions.send' ? sendSchema.parse(req.body) : cancelSchema.parse(req.body);
             const result = await invoke(c, { method: methodName, sessionID, ...body }, true);
-            return reply.code(result?.ok ? 200 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
+            return reply.code(result?.ok ? 200 : result?.dispatch === 'not_sent' ? 503 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
         });
     }
     for (const [suffix, methodName] of [['status', 'sessions.status'], ['events', 'sessions.logs'], ['result', 'sessions.result']] as const) {
@@ -352,7 +400,6 @@ export function createGateway(options: GatewayOptions) {
     });
     app.get<{ Params: { id: string } }>(`${base}/requests/:id`, async req => {
         const c = active(req, 'requests.get'), requestID = identifier.parse(req.params.id);
-        if (!store.get<Intent>(intentKey(c, requestID))) throw new ApiError('NOT_FOUND', 404);
         return invoke(c, { method: 'requests.get', requestID });
     });
     app.post(`${base}/worker/poll`, async req => {
@@ -364,7 +411,10 @@ export function createGateway(options: GatewayOptions) {
         if (body.directoryScopes === 1 && registration.directorySelection) directoryScopeWorkers.add(registration.id); else directoryScopeWorkers.delete(registration.id);
         if (body.busy) return ok(null);
         if (body.directoryScopes === 1) { const selection = directories.poll(registration.id); if (selection) return ok(selection); }
-        for (const [id, job] of jobs) if (job.deadline + 120000 < now()) { clearTimeout(job.timer); jobs.delete(id); }
+        for (const [id, job] of jobs) if (job.deadline + 120000 < now()) {
+            clearTimeout(job.timer); jobs.delete(id);
+            job.resolve(!job.delivered && job.intent ? unsent(job.intent) : unknown());
+        }
         const job = [...jobs.values()].find(j => j.workerID === registration.id && !j.delivered && j.deadline > now());
         if (!job) return ok(null);
         try { grants.active(job.grantID); } catch (error) {
@@ -376,6 +426,21 @@ export function createGateway(options: GatewayOptions) {
         }
         if (grants.get(job.grantID).scopeVersion !== undefined && body.projectScopes !== 1) {
             jobs.delete(job.id); clearTimeout(job.timer); job.resolve(failure('WORKER_PROJECT_SCOPE_UPGRADE_REQUIRED')); return ok(null);
+        }
+        if (job.intent) {
+            const key = intentKey(grants.get(job.grantID), job.intent.requestID);
+            try {
+                const current = store.get<Intent>(key);
+                if (!current || current.claimID !== null || current.fingerprint !== job.intent.fingerprint)
+                    throw new ApiError('STORE_UNAVAILABLE', 503);
+                // The Worker can see the command only after its claim is durable.
+                current.claimID = job.id;
+                store.set(key, current);
+            } catch (error) {
+                clearTimeout(job.timer); jobs.delete(job.id); job.resolve(unknown());
+                throw error;
+            }
+            job.intent.claimID = job.id;
         }
         job.delivered = true;
         return ok({ id: job.id, workerID: job.workerID, grantID: job.grantID, command: job.command, deadline: job.deadline });

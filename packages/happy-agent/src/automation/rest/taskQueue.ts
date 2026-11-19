@@ -41,7 +41,10 @@ const workspaceSchema = z.object({ id: digest, grantID: identifier, projectID: i
 const cancellationSchema = z.object({ requestID: identifier, grantID: identifier, sessionID: identifier, sendRequestID: identifier.optional(), fingerprint: digest, taskIDs: z.array(digest).max(1000) }).strict();
 const legacyStateSchema = z.object({ version: z.literal(1), maxConcurrency: z.number().int().min(1).max(4), nextOrder: z.number().int().nonnegative(),
     schedulers: z.record(z.string(),z.object({lastSeen:z.number().nonnegative()}).strict()), workspaces: z.array(workspaceSchema).max(40001), tasks: z.array(taskSchema).max(1000), cancellations: z.array(cancellationSchema).max(5000) }).strict();
-const stateSchema = legacyStateSchema.omit({version:true,maxConcurrency:true}).extend({version:z.literal(2),policy:concurrencyPolicySchema}).strict();
+const activeTaskLimit = 1000;
+const stateSchema = legacyStateSchema.omit({version:true,maxConcurrency:true}).extend({
+    version: z.literal(2), policy: concurrencyPolicySchema, tasks: z.array(taskSchema),
+}).strict();
 const taskFingerprint = (t: Pick<QueueTask,'requestID'|'grantID'|'workerID'|'sessionID'|'authorization'|'text'|'resources'|'workspaceID'|'legacy'>) => hash(canonicalBody({
     requestID: t.requestID, grantID: t.grantID, workerID: t.workerID, sessionID: t.sessionID, authorization: t.authorization, text: t.text, resources: t.resources, workspaceID: t.workspaceID, legacy: t.legacy }));
 export const terminalTask = (t: QueueTask) => ['completed', 'failed', 'cancelled'].includes(t.state);
@@ -109,7 +112,7 @@ export class TaskQueue {
                 }
                 migrated=true;
             } else state = (saved ?? { version: 2, policy: this.policy, nextOrder: 0, schedulers: {}, cancellations: [], workspaces: [], tasks: [] }) as State;
-            if (!stateSchema.safeParse(state).success) throw new ApiError('QUEUE_CORRUPT',503);
+            if (!stateSchema.safeParse(state).success || state.tasks.filter(t => !terminalTask(t)).length > activeTaskLimit) throw new ApiError('QUEUE_CORRUPT',503);
             if (canonicalBody(state.policy) !== canonicalBody(this.policy)) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
             if (new Set(state.tasks.map(t => t.id)).size !== state.tasks.length || new Set(state.workspaces.map(w => w.id)).size !== state.workspaces.length
                 || new Set(state.tasks.map(t => t.order)).size !== state.tasks.length || state.tasks.some(t => t.id !== hash(`${t.grantID}\n${t.requestID}`) || t.fingerprint !== taskFingerprint(t) || t.order >= state.nextOrder)) throw new ApiError('QUEUE_CORRUPT', 503);
@@ -120,7 +123,7 @@ export class TaskQueue {
             if (!saved || migrated || JSON.stringify(state) !== before) {
                 // Migration and cancellation also write through this boundary. Never persist
                 // a ledger which the next process would reject, even when an enqueue is bypassed.
-                if (state.tasks.length > 1000 || state.workspaces.length > 40001 || state.cancellations.length > 5000) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
+                if (state.tasks.filter(t => !terminalTask(t)).length > activeTaskLimit || state.workspaces.length > 40001 || state.cancellations.length > 5000) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
                 if (!stateSchema.safeParse(state).success) throw new ApiError('QUEUE_STATE_INVALID',503);
                 if (Buffer.byteLength(JSON.stringify(state)) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
                 const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -161,7 +164,6 @@ export class TaskQueue {
             if (previous) { if (previous.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409); return previous; }
             if (s.workspaces.find(w => w.id === input.workspaceID)?.retirement) throw new ApiError('WORKSPACE_RETIRED',409);
             const task: QueueTask = { ...input, id, fingerprint, order: s.nextOrder++, state: 'queued', reason: 'scheduler-ready', dispatched: false, cursor: 0, createdAt: Date.now() };
-            if (s.tasks.length >= 1000 || Buffer.byteLength(JSON.stringify(s)) + Buffer.byteLength(JSON.stringify(task)) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED', 503);
             s.tasks.push(task); return task;
         });
     }
@@ -232,8 +234,8 @@ export class TaskQueue {
             const fingerprint = hash(canonicalBody({ sessionID, requestID }));
             const prior = s.cancellations.find(c => c.grantID === grantID && c.requestID === mutationID);
             if (prior && prior.fingerprint !== fingerprint || s.tasks.some(t => t.grantID === grantID && t.requestID === mutationID) || s.workspaces.some(w => w.id === hash(`${grantID}\n${mutationID}`))) throw new ApiError('REQUEST_ID_CONFLICT', 409);
-            const tasks = prior ? s.tasks.filter(t => prior.taskIDs.includes(t.id)) : s.tasks.filter(t => t.grantID === grantID && t.sessionID === sessionID && (!requestID || t.requestID === requestID));
-            if (!tasks.length) return [];
+            const tasks = prior ? s.tasks.filter(t => prior.taskIDs.includes(t.id)) : s.tasks.filter(t => t.grantID === grantID && t.sessionID === sessionID && (requestID ? t.requestID === requestID : !terminalTask(t)));
+            if (!tasks.length && (prior || requestID || !s.tasks.some(t => t.grantID === grantID && t.sessionID === sessionID))) return [];
             if (!prior) s.cancellations.push({ requestID: mutationID, grantID, sessionID, sendRequestID: requestID, fingerprint, taskIDs: tasks.map(t => t.id) });
             for (const t of tasks) if (!terminalTask(t)) {
                 if (!t.dispatched) { t.state = 'cancelled'; t.finishedAt = Date.now(); }
