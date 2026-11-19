@@ -41,7 +41,7 @@ vi.mock('./DotRecoveryNotice', () => ({ DotRecoveryNotice: () => null }));
 vi.mock('./DotObservationPanel', async () => {
     const module = await import('react'); return { DotObservationPanel: (props: any) => module.createElement('ObservationPanel', props) };
 });
-vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({ ready: true, pending: null, error: null, notice: null, retry: vi.fn(), submit: mocks.submit,
+vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({ ready: true, pendingFor: () => mocks.data?.pending, error: null, notice: null, refresh: vi.fn(), checkReceipt: vi.fn(), submit: mocks.submit,
     projection: { snapshot: { dots: [{ id: '22222222-2222-4222-8222-222222222222', sessionId: 'dot-session' }] }, details: { '22222222-2222-4222-8222-222222222222': { asOf: '2026-11-05T00:00:00Z',
         data: { dotId: '22222222-2222-4222-8222-222222222222', taskTotal: 0, tasks: [], memory: { access: ['read', 'write', 'forget'], total: 0, items: [], omittedCount: 0 } } } } },
     ...(mocks.data ?? {}),
@@ -110,8 +110,8 @@ it('confirms clear and stays in the current page until the host confirms a repla
     await act(async () => renderer.unmount());
 });
 
-it('disables clearing while a host request is pending', async () => {
-    mocks.data = { pending: { request: { action: 'inspect' }, timedOut: false } };
+it('disables clearing while a write to this Dot is pending', async () => {
+    mocks.data = { pending: { request: { action: 'update' }, checking: false } };
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
         renderer = create(React.createElement(DotSessionContent, {
@@ -132,12 +132,16 @@ it('waits for the clear receipt before following a replacement visible in the di
         metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111', workspaceSessionId: 'workspace-session', dotId: '22222222-2222-4222-8222-222222222222' },
         children: () => React.createElement('Composer') };
     const projection = { snapshot: { ok: true, dots: [{ id: props.metadata.dotId, sessionId: 'replacement' }] } };
-    mocks.data = { projection, pending: { request: { action: 'clear' }, timedOut: true } };
+    mocks.data = { projection, pending: { request: { action: 'clear' }, checking: false } };
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
     expect(mocks.navigate).not.toHaveBeenCalled();
+    await act(async () => renderer.update(React.createElement(DotSessionContent, { ...props, retired: true })));
+    expect(renderer.root.findAllByType('Composer')).toHaveLength(0);
+    expect(renderer.root.findAllByType('Pressable').some((node: any) => node.props.accessibilityLabel === '核对回执')).toBe(true);
+    expect(mocks.navigate).not.toHaveBeenCalled();
     mocks.data = { projection, pending: null };
-    await act(async () => renderer.update(React.createElement(DotSessionContent, props)));
+    await act(async () => renderer.update(React.createElement(DotSessionContent, { ...props, retired: true })));
     expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith('replacement');
     await act(async () => renderer.unmount());
 });

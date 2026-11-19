@@ -35,6 +35,8 @@ import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSession
 import { useSession } from '@/sync/storage';
 import { getSessionForkSource } from '@/utils/sessionFork';
 import { useHappyAction } from '@/hooks/useHappyAction';
+import { useAuth } from '@/auth/AuthContext';
+import { getServerUrl } from '@/sync/serverConfig';
 import { HappyError } from '@/utils/errors';
 import { Session } from '@/sync/storageTypes';
 import { sync } from '@/sync/sync';
@@ -82,7 +84,7 @@ import { RigActivityBar } from '@/components/RigActivityBar';
 import { AnimatedFade } from '@/components/AnimatedOverlay';
 import { DotsWorkspacePanel, DotWorkspaceHeaderLink } from './DotsWorkspacePanel';
 import { DotSessionContent } from '@/components/dots/DotSessionContent';
-import { readTestloopDotsMetadata } from '@/sync/testloopDots';
+import { readTestloopDotsMetadata, type TestloopDotsMetadata } from '@/sync/testloopDots';
 
 export const SessionView = React.memo((props: { id: string }) => {
     const routeId = props.id;
@@ -103,7 +105,20 @@ export const SessionView = React.memo((props: { id: string }) => {
     // a chat that was asked for has not arrived.
     const sessionId = pendingChat ? pendingChat.sessionId : routeId;
     const session = useSession(sessionId ?? '');
-    const testloopDots = readTestloopDotsMetadata(session?.metadata);
+    const { credentials } = useAuth();
+    const server = getServerUrl();
+    const routeBinding = React.useMemo(() => ({}), [routeId, credentials?.token, credentials?.secret, server]);
+    const lastDot = React.useRef<{ scope: object; session: Pick<Session, 'id' | 'presence'>;
+        metadata: Extract<TestloopDotsMetadata, { kind: 'dot' }> } | null>(null);
+    const liveDotMetadata = readTestloopDotsMetadata(session?.metadata);
+    if (session && liveDotMetadata?.kind === 'dot') {
+        lastDot.current = { scope: routeBinding, session: { id: session.id, presence: session.presence }, metadata: liveDotMetadata };
+    }
+    // Relay can delete the chat before the workspace ledger records the clear's terminal receipt.
+    const retiredDot = !session && credentials?.token && lastDot.current?.scope === routeBinding
+        && lastDot.current.session.id === sessionId ? lastDot.current : null;
+    const testloopDots = liveDotMetadata ?? retiredDot?.metadata;
+    const dotSession = session ?? retiredDot?.session;
     const avatar = useSessionAvatar(sessionId ?? '');
     /**
      * A chat that does not exist yet cannot speak for its checkout, so the
@@ -448,8 +463,8 @@ export const SessionView = React.memo((props: { id: string }) => {
             </Pressable>
         )
         : null;
-    const dotHeaderRight = session && testloopDots?.kind === 'dot'
-        ? <DotWorkspaceHeaderLink metadata={testloopDots} sessionId={session.id} active={isFocused} />
+    const dotHeaderRight = dotSession && testloopDots?.kind === 'dot'
+        ? <DotWorkspaceHeaderLink metadata={testloopDots} sessionId={dotSession.id} active={isFocused} />
         : null;
     const dotSubtitle = testloopDots?.kind === 'dot'
         ? testloopDots.instruction?.replace(/\s+/g, ' ').trim() || '专属对话 · 独立任务与记忆'
@@ -494,7 +509,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                     </View>
-                ) : session || pendingChat ? (
+                ) : session || pendingChat || retiredDot ? (
                     // Keyed on the route rather than on the chat, because the
                     // chat arrives into this screen rather than replacing it:
                     // the composer here is the one the user has been typing in
@@ -508,11 +523,11 @@ export const SessionView = React.memo((props: { id: string }) => {
                             active={isFocused}
                             topInset={contentRunsUnderHeader ? safeArea.top + mobileHeaderHeight + tabStripHeight
                                 + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0) : 0}
-                        /> : session && testloopDots?.kind === 'dot' ? <DotSessionContent key={routeId} session={session}
-                            metadata={testloopDots} active={isFocused}
+                        /> : dotSession && testloopDots?.kind === 'dot' ? <DotSessionContent key={routeId} session={dotSession}
+                            metadata={testloopDots} active={isFocused} retired={Boolean(retiredDot)}
                             topInset={contentRunsUnderHeader ? safeArea.top + mobileHeaderHeight + tabStripHeight
                                 + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0) : 0}>
-                            {request => <SessionViewLoaded sessionId={sessionId} session={session} active={isFocused} parentHandlesInsets composeRequest={request} />}
+                            {request => session && <SessionViewLoaded sessionId={sessionId} session={session} active={isFocused} parentHandlesInsets composeRequest={request} />}
                         </DotSessionContent> : <SessionViewLoaded
                             key={routeId}
                             sessionId={sessionId}

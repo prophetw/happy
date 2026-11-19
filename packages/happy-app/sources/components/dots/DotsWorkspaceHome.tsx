@@ -17,8 +17,8 @@ import { useDotsWorkspace } from './useDotsWorkspace';
 import type { Session } from '@/sync/storageTypes';
 import { readTestloopDotsMetadata, testloopDotsLimitsText, testloopWorkStatus, type TestloopDot } from '@/sync/testloopDots';
 
-function DotRow({ dot, onOpen, onEdit, disabled, editDisabled }: {
-    dot: TestloopDot; onOpen: () => void; onEdit: () => void; disabled: boolean; editDisabled: boolean;
+function DotRow({ dot, onOpen, onEdit, disabled }: {
+    dot: TestloopDot; onOpen: () => void; onEdit: () => void; disabled: boolean;
 }) {
     const { theme } = useUnistyles();
     const session = useSession(dot.sessionId);
@@ -35,8 +35,8 @@ function DotRow({ dot, onOpen, onEdit, disabled, editDisabled }: {
                 <Text style={{ color: session?.thinking ? theme.colors.textLink : theme.colors.textSecondary, fontSize: 12 }}>{status}{dot.settings ? ` · codex / ${dot.settings.model} / ${dot.settings.effort}` : ''}</Text>
             </View><Ionicons name="chevron-forward" size={17} color={theme.colors.textSecondary} />
         </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel={`管理 ${dot.name}`} disabled={editDisabled} onPress={onEdit}
-            style={({ pressed }) => ({ padding: 12, opacity: editDisabled || pressed ? 0.5 : 1 })}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`管理 ${dot.name}`} disabled={disabled} onPress={onEdit}
+            style={({ pressed }) => ({ padding: 12, opacity: disabled || pressed ? 0.5 : 1 })}>
             <Ionicons name="create-outline" size={19} color={theme.colors.textSecondary} />
         </Pressable>
     </View>;
@@ -65,8 +65,9 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     const [editName, setEditName] = React.useState(''), [editInstruction, setEditInstruction] = React.useState('');
     const [opening, setOpening] = React.useState<string | null>(null), [openError, setOpenError] = React.useState<string | null>(null);
     const [deleteConfirming, setDeleteConfirming] = React.useState(false);
-    const formSubmitting = React.useRef(false);
-    const createId = React.useRef<string | null>(null), updateId = React.useRef<string | null>(null), deleteId = React.useRef<string | null>(null);
+    const formSubmitting = React.useRef(new Set<string | undefined>());
+    const createId = React.useRef<string | null>(null), deleteId = React.useRef<string | null>(null);
+    const updateIds = React.useRef(new Map<string, string>());
     const compact = width < 760;
     useFocusEffect(React.useCallback(() => {
         navigation.update(`${session.id}:${workspaceId}`, active); setOpening(null); setOpenError(null);
@@ -78,8 +79,13 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         }
     }, [data.projection]);
     React.useEffect(() => {
-        if (updateId.current && data.projection?.receipts[updateId.current]?.ok) {
-            updateId.current = null; setEditing(null); setEditName(''); setEditInstruction('');
+        for (const [dotId, requestId] of updateIds.current) {
+            const receipt = data.projection?.receipts[requestId];
+            if (!receipt) continue;
+            updateIds.current.delete(dotId);
+            if (receipt.ok && editingRef.current?.id === dotId) {
+                setEditing(null); setEditName(''); setEditInstruction('');
+            }
         }
     }, [data.projection]);
     React.useEffect(() => {
@@ -109,12 +115,13 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     };
     const closeEdit = () => { setEditing(null); setEditName(''); setEditInstruction(''); };
     const saveForm = async () => {
-        if (formSubmitting.current || currentData.current.pending) return;
-        formSubmitting.current = true;
+        const target = editing?.id;
+        if (!currentData.current.ready || formSubmitting.current.has(target) || currentData.current.pendingFor(target)) return;
+        formSubmitting.current.add(target);
         try {
             const requestId = randomUUID();
             if (editing) {
-                updateId.current = requestId;
+                updateIds.current.set(editing.id, requestId);
                 await currentData.current.submit({ schemaVersion: 1, requestId, action: 'update', dotId: editing.id,
                     name: editName.trim(), instruction: editInstruction.trim(), ...(editing.settings ? { settings: { agent: 'codex' as const, model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } } : {}) });
             } else {
@@ -122,17 +129,17 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 await currentData.current.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim(),
                     settings: { agent: 'codex', model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } });
             }
-        } finally { formSubmitting.current = false; }
+        } finally { formSubmitting.current.delete(target); }
     };
     const deleteDot = async () => {
         const target = editingRef.current;
-        if (!target || deleteConfirming || currentData.current.pending) return;
+        if (!target || deleteConfirming || currentData.current.pendingFor(target.id)) return;
         setDeleteConfirming(true);
         try {
             const confirmed = await GlobalModal.confirm(`删除「${target.name}」？`,
                 '删除后该 Dot 会从工作台消失，并解除本地 REST/MCP 绑定。Happy 会话与历史审计会保留，不会物理删除。',
                 { confirmText: '删除 Dot', destructive: true });
-            if (!confirmed || currentData.current.pending || editingRef.current?.id !== target.id) return;
+            if (!confirmed || currentData.current.pendingFor(target.id) || editingRef.current?.id !== target.id) return;
             const current = currentData.current.projection?.snapshot;
             if (!current?.dots.some(dot => dot.id === target.id && dot.sessionId === target.sessionId)) return;
             const requestId = randomUUID();
@@ -143,9 +150,11 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         }
     };
     const editUnchanged = !!editing && editName.trim() === editing.name && editInstruction.trim() === editing.instruction && (!editing.settings || model === editing.settings.model && effort === editing.settings.effort);
-    const canSubmit = editing
-        ? !!editName.trim() && !!editInstruction.trim() && !editUnchanged && !data.pending
-        : !!name.trim() && !!instruction.trim() && !data.pending;
+    const formPending = data.pendingFor(editing?.id);
+    const formError = data.errorFor(editing?.id) || openError;
+    const canSubmit = data.ready && !formPending && (editing
+        ? !!editName.trim() && !!editInstruction.trim() && !editUnchanged
+        : !!name.trim() && !!instruction.trim());
     const snapshot = data.projection?.snapshot;
     const attention = snapshot?.workbench?.dots.flatMap(dot => dot.tasks
         .filter(task => task.needsReview || ['awaiting_user', 'awaiting_approval', 'blocked', 'failed'].includes(task.status))
@@ -166,9 +175,9 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
         <ScrollView contentContainerStyle={s.page} keyboardShouldPersistTaps="handled">
             <View style={[s.row, { justifyContent: 'space-between' }]}><View style={{ gap: 7, flex: 1, minWidth: 160 }}>
                 <Text accessibilityRole="header" style={s.title}>Dots</Text><Text style={s.muted}>你的长期助理与正在推进的工作。</Text>
-            </View><Pressable accessibilityRole="button" accessibilityLabel="新建 Dot" disabled={!data.ready || Boolean(data.pending)} onPress={() => { setModel('gpt-6.1-sol'); setEffort('xhigh'); setCreating(true); }}
-                style={[s.button, { backgroundColor: '#6650b7', opacity: data.ready && !data.pending ? 1 : 0.5 }]}><Text style={{ color: '#fff', fontWeight: '600' }}>＋ 新建 Dot</Text></Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={Boolean(data.pending) || data.refreshing} onPress={() => data.retry()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
+            </View><Pressable accessibilityRole="button" accessibilityLabel="新建 Dot" disabled={!data.ready} onPress={() => { setModel('gpt-6.1-sol'); setEffort('xhigh'); setCreating(true); }}
+                style={[s.button, { backgroundColor: '#6650b7', opacity: data.ready ? 1 : 0.5 }]}><Text style={{ color: '#fff', fontWeight: '600' }}>＋ 新建 Dot</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel="刷新 Dot 列表" disabled={data.refreshing} onPress={() => void data.refresh()} style={s.button}><Text style={s.muted}>刷新</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel="连接与授权" onPress={() => setManagingConnections(true)} style={s.button}><Text style={s.muted}>连接与授权</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel={t('workspaces.title')} disabled={!active} onPress={() => setManagingWorkspaces(true)} style={s.button}>
                     <Text style={s.muted}>{t('workspaces.title')}</Text></Pressable>
@@ -180,18 +189,20 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                     <Text style={s.muted}>{data.archivePending ? '正在归档…' : '重试本地归档'}</Text></Pressable></View>}
             {data.notice && <Text accessibilityLiveRegion="polite" style={s.muted}>{data.notice}</Text>}
             {data.refreshing && <View style={s.row}><ActivityIndicator /><Text style={s.muted}>正在刷新{snapshot ? '，当前显示上次读取的内容' : ' Dots 列表'}…</Text></View>}
-            {data.pending && <View style={s.row}>{!data.pending.timedOut && <ActivityIndicator />}
-                <Text style={s.muted}>等待后台回执{data.pending.request.action === 'create' ? `：创建「${data.pending.request.name}」`
-                    : data.pending.request.action === 'update' ? `：更新「${data.pending.request.name}」`
-                    : data.pending.request.action === 'clear' ? '：清空当前对话上下文'
-                    : data.pending.request.action === 'delete' ? `：删除「${editing?.name ?? 'Dot'}」` : ''}</Text>
-                {data.pending.timedOut && <Pressable accessibilityRole="button" accessibilityLabel="重试上次请求" onPress={() => data.retry()} style={s.button}><Text style={s.muted}>重试上次请求</Text></Pressable>}
-            </View>}
+            {data.pendingCommands.map(({ request, message, checking }) => {
+                const name = 'dotId' in request ? snapshot?.dots.find(dot => dot.id === request.dotId)?.name ?? 'Dot' : request.name;
+                const operation = { create: '创建', update: '更新', clear: '清空对话', delete: '删除' }[request.action];
+                const label = `${operation}「${name}」`;
+                return <View style={s.row} key={request.requestId}>
+                    <Text accessibilityLiveRegion="polite" style={s.muted}>{label}。{message}</Text>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`核对${label}的回执`} disabled={checking}
+                        onPress={() => void data.checkReceipt(request.requestId)} style={s.button}><Text style={s.muted}>核对回执</Text></Pressable>
+                </View>;
+            })}
             <View style={{ flexDirection: compact ? 'column' : 'row', gap: 30, alignItems: 'flex-start' }}>
                 <View style={{ flex: 1, width: '100%', minWidth: 0, gap: 8 }}><Text style={s.heading}>助理目录{snapshot ? ` · ${snapshot.dots.length}` : ''}</Text>
                     {!snapshot ? <Text style={s.muted}>正在读取 Dots 列表…</Text> : !snapshot.dots.length ? <Text style={[s.muted, { paddingVertical: 24 }]}>还没有 Dot，创建第一个助理开始交办。</Text>
-                        : snapshot.dots.map(dot => <DotRow key={dot.id} dot={dot} disabled={opening !== null}
-                            editDisabled={opening !== null || Boolean(data.pending && !['list', 'inspect'].includes(data.pending.request.action))} onOpen={() => void openDot(dot)}
+                        : snapshot.dots.map(dot => <DotRow key={dot.id} dot={dot} disabled={opening !== null} onOpen={() => void openDot(dot)}
                             onEdit={() => openEdit(dot)} />)}
                 </View>
                 <View style={[s.attention, { width: compact ? '100%' : 280 }]}><Text style={s.heading}>需要你处理</Text>
@@ -215,20 +226,20 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                 <ScrollView keyboardShouldPersistTaps="handled" style={{ width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: theme.colors.surface, borderRadius: 18 }} contentContainerStyle={{ padding: 24, gap: 18 }}>
                     <Text accessibilityRole="header" style={s.heading}>{editing ? '管理 Dot' : '创建一个 Dot'}</Text>
                     <Text style={s.muted}>名称</Text><TextInput accessibilityLabel="Dot 名称" value={editing ? editName : name}
-                        onChangeText={editing ? setEditName : setName} maxLength={80} editable={!data.pending} style={s.input} />
+                        onChangeText={editing ? setEditName : setName} maxLength={80} editable={!formPending} style={s.input} />
                     {(!editing || editing.settings) && <>
                     <Text style={s.muted}>Agent：codex · 后续轮次设置（当前轮次完成后应用）</Text>
                     <Text style={s.muted}>模型：{model} · 推理强度：{effort}</Text>
                     {(snapshot?.modelOptions ?? []).map(option => <Pressable key={option.code} accessibilityRole="button" accessibilityLabel={`模型 ${option.code}`}
-                        disabled={Boolean(data.pending)} onPress={() => { setModel(option.code); if (!option.thinkingLevels.includes(effort)) setEffort(option.defaultThinkingLevel); }} style={s.button}>
+                        disabled={Boolean(formPending)} onPress={() => { setModel(option.code); if (!option.thinkingLevels.includes(effort)) setEffort(option.defaultThinkingLevel); }} style={s.button}>
                         <Text style={s.muted}>{model === option.code ? '● ' : ''}{option.value}</Text></Pressable>)}
                     <View style={s.row}>{(snapshot?.modelOptions?.find(o => o.code === model)?.thinkingLevels ?? []).map(level => <Pressable key={level}
-                        accessibilityRole="button" accessibilityLabel={`推理强度 ${level}`} disabled={Boolean(data.pending)} onPress={() => setEffort(level)} style={s.button}>
+                        accessibilityRole="button" accessibilityLabel={`推理强度 ${level}`} disabled={Boolean(formPending)} onPress={() => setEffort(level)} style={s.button}>
                         <Text style={s.muted}>{effort === level ? '● ' : ''}{level}</Text></Pressable>)}</View>
                     {!snapshot?.modelOptions?.length && <Text style={s.muted}>宿主尚未提供模型目录，请等待宿主启动后刷新。不会静默回退模型或强度。</Text>}
                     </>}
                     <Text style={s.muted}>长期职责</Text><TextInput accessibilityLabel="Dot 长期职责" value={editing ? editInstruction : instruction}
-                        onChangeText={editing ? setEditInstruction : setInstruction} maxLength={2000} multiline editable={!data.pending}
+                        onChangeText={editing ? setEditInstruction : setInstruction} maxLength={2000} multiline editable={!formPending}
                         style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} />
                     <Text style={s.muted}>{editing
                         ? '模型设置在当前轮次完成后应用。长期职责调整暂需停机维护；模型调整保留任务、记忆和授权。'
@@ -236,19 +247,19 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                     {editing && <View style={{ gap: 10, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.divider }}>
                         <Text style={s.heading}>危险操作</Text>
                         <Text style={s.muted}>删除会逻辑停用 Dot 并解除本地 REST/MCP 绑定；不会删除 Happy 会话、旧聊天或历史审计。</Text>
-                        <Pressable accessibilityRole="button" accessibilityLabel="删除 Dot" disabled={Boolean(data.pending) || deleteConfirming}
+                        <Pressable accessibilityRole="button" accessibilityLabel="删除 Dot" disabled={!data.ready || Boolean(formPending) || deleteConfirming}
                             onPress={() => void deleteDot()} style={[s.button, { borderWidth: 1, borderColor: '#c43c32',
-                                opacity: data.pending || deleteConfirming ? 0.5 : 1 }]}>
+                                opacity: formPending || deleteConfirming ? 0.5 : 1 }]}>
                             <Text style={{ color: '#c43c32', fontWeight: '600' }}>{deleteConfirming ? '等待确认…' : '删除 Dot'}</Text>
                         </Pressable>
                     </View>}
                     {data.refreshing && <View style={s.row}><ActivityIndicator /><Text style={s.muted}>正在刷新{snapshot ? '，当前显示上次读取的内容' : ' Dots 列表'}…</Text></View>}
-            {data.pending && <View style={{ gap: 10 }}>
-                        <Text accessibilityLiveRegion="polite" style={s.muted}>正在等待后台回执，当前显示上次读取的配置；收到回执后可保存修改。</Text>
-                        {data.pending.timedOut && <Pressable accessibilityRole="button" accessibilityLabel="重试编辑表单刷新" onPress={() => data.retry()} style={s.button}>
-                            <Text style={s.muted}>重试刷新</Text></Pressable>}
+                    {formPending && <View style={{ gap: 10 }}>
+                        <Text accessibilityLiveRegion="polite" style={s.muted}>{formPending.message}</Text>
+                        <Pressable accessibilityRole="button" accessibilityLabel="核对编辑表单的回执" disabled={formPending.checking}
+                            onPress={() => void data.checkReceipt(formPending.request.requestId)} style={s.button}><Text style={s.muted}>核对回执</Text></Pressable>
                     </View>}
-                    {(data.error || openError) && <Text accessibilityRole="alert" style={s.muted}>{data.error || openError}</Text>}
+                    {formError && <Text accessibilityRole="alert" style={s.muted}>{formError}</Text>}
                     <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || Boolean(editing.settings)) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => void saveForm()}
                         style={[s.button, { backgroundColor: '#6650b7', opacity: canSubmit ? 1 : 0.5 }]}><Text style={{ color: '#fff' }}>{editing ? '保存修改' : '创建 Dot'}</Text></Pressable>
                     <Pressable accessibilityRole="button" accessibilityLabel={editing ? '关闭编辑表单' : '关闭创建表单'}

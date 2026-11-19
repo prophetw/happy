@@ -40,11 +40,12 @@ vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
 vi.mock('./DotsWorkspacesPanel', () => ({ DotsWorkspacesPanel: () => null }));
 vi.mock('@/text', () => ({ t: (key:string) => key==='workspaces.title'?'工作区':key }));
 vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({
-    ready: true, pending: null, error: null, notice: null, archiveError: null, archivePending: false,
-    submit: mocks.submit, retry: vi.fn(), retryArchive: vi.fn(),
+    ready: true, pendingCommands: [], pendingFor: (dotId?: string) => mocks.data?.pending?.request.dotId === dotId ? mocks.data?.pending : undefined,
+    error: null, errorFor: () => mocks.data?.error, notice: null, archiveError: null, archivePending: false,
+    submit: mocks.submit, refresh: vi.fn(), checkReceipt: vi.fn(), retryArchive: vi.fn(),
     projection: {
         snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 1, requestId: 'list-request', ok: true, dots: [dot] },
-        receipts: {}, deletions: {}, details: {}, pendingRequest: null,
+        receipts: {}, deletions: {}, details: {}, pendingRequests: [],
     },
     ...(mocks.data ?? {}),
 }) }));
@@ -76,7 +77,7 @@ const management = (renderer: ReturnType<typeof create>) => renderer.root.findBy
 it.each(['create', 'update'] as const)('keeps the first %s request and receipt when the form is pressed twice before rerender', async action => {
     const projection = { snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 1, requestId: 'list', ok: true,
         dots: [dot], modelOptions: [{ code: 'gpt-6.1-sol', value: 'GPT 6.1 Sol', thinkingLevels: ['xhigh'], defaultThinkingLevel: 'xhigh' }] },
-        receipts: {}, deletions: {}, details: {}, pendingRequest: null };
+        receipts: {}, deletions: {}, details: {}, pendingRequests: [] };
     mocks.data = { projection };
     mocks.uuid.mockReturnValueOnce(deleteRequest.requestId).mockReturnValue('44444444-4444-4444-8444-444444444444');
     let complete!: (value: boolean) => void;
@@ -139,7 +140,7 @@ it('keeps deletion behind confirmation and pending, preserves failures, and clos
         projection: {
             snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 2, requestId: deleteRequest.requestId, ok: false, dots: [dot] },
             receipts: { [deleteRequest.requestId]: { ok: false, error: 'delete_failed', dots: [dot] } },
-            deletions: {}, details: {}, pendingRequest: null,
+            deletions: {}, details: {}, pendingRequests: [],
         },
     };
     await act(async () => renderer.update(React.createElement(DotsWorkspacePanel, {
@@ -153,7 +154,7 @@ it('keeps deletion behind confirmation and pending, preserves failures, and clos
         projection: {
             snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 2, requestId: deleteRequest.requestId, ok: true, dots: [dot] },
             receipts: { [deleteRequest.requestId]: { ok: true, revision: 2, dots: [], deletedDot } },
-            deletions: {}, details: {}, pendingRequest: null,
+            deletions: {}, details: {}, pendingRequests: [],
         },
     };
     await act(async () => renderer.update(React.createElement(DotsWorkspacePanel, {
@@ -167,7 +168,7 @@ it('keeps deletion behind confirmation and pending, preserves failures, and clos
         projection: {
             snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 2, requestId: deleteRequest.requestId, ok: true, dots: [], deletedDot },
             receipts: { [deleteRequest.requestId]: { ok: true, revision: 2, dots: [], deletedDot } },
-            deletions: { [deleteRequest.requestId]: { ...deleteRequest, ...deletedDot, revision: 2 } }, details: {}, pendingRequest: null,
+            deletions: { [deleteRequest.requestId]: { ...deleteRequest, ...deletedDot, revision: 2 } }, details: {}, pendingRequests: [],
         },
     };
     await act(async () => renderer.update(React.createElement(DotsWorkspacePanel, {
@@ -194,8 +195,8 @@ it('shows archive mirror failure separately with an explicit idempotent retry co
     await act(async () => renderer.unmount());
 });
 
-it('opens the cached edit form during a delayed list refresh without permitting writes', async () => {
-    mocks.data = { pending: { request: { action: 'list', requestId: 'refresh' }, timedOut: true } };
+it('opens the cached edit form during a delayed list refresh', async () => {
+    mocks.data = { refreshing: true };
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, {
         session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true,
@@ -205,19 +206,22 @@ it('opens the cached edit form during a delayed list refresh without permitting 
     expect(management(renderer).props.visible).toBe(true);
     expect(renderer.root.findAllByType('TextInput').find((n: any) => n.props.accessibilityLabel === 'Dot 名称')?.props.value).toBe(dot.name);
     expect(button(renderer, '保存 Dot').props.disabled).toBe(true);
-    expect(button(renderer, '删除 Dot').props.disabled).toBe(true);
-    expect(button(renderer, '重试编辑表单刷新')).toBeTruthy();
+    expect(button(renderer, '删除 Dot').props.disabled).toBe(false);
     expect(mocks.submit).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });
 
-it.each(['create', 'update', 'delete', 'clear'])('keeps editing disabled while %s is unconfirmed', async action => {
-    mocks.data = { pending: { request: { action, requestId: 'write' }, timedOut: true } };
+it.each(['create', 'update', 'delete', 'clear'])('opens the editor with target-specific guards while %s is unconfirmed', async action => {
+    mocks.data = { pending: { request: { action, requestId: 'write', dotId: action === 'create' ? undefined : dot.id }, checking: false } };
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, {
         session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true,
     })); });
-    expect(button(renderer, '管理 写作助理').props.disabled).toBe(true);
+    expect(button(renderer, '管理 写作助理').props.disabled).toBe(false);
+    expect(button(renderer, '刷新 Dot 列表').props.disabled).toBeFalsy();
+    await press(button(renderer, '管理 写作助理'));
+    expect(management(renderer).props.visible).toBe(true);
+    expect(button(renderer, '删除 Dot').props.disabled).toBe(action !== 'create');
     expect(mocks.submit).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });
@@ -228,7 +232,7 @@ it('opens the native edit modal, loads settings, and saves effort through the wo
     const snapshot = { schemaVersion: 1, workspaceId: 'workspace-id', revision: 1, requestId: 'list', ok: true,
         dots: [configuredDot], modelOptions: [{ code: 'gpt-6.1-sol', value: 'GPT 6.1 Sol',
             thinkingLevels: ['high', 'xhigh'], defaultThinkingLevel: 'xhigh' }] };
-    const projection = { snapshot, receipts: {}, deletions: {}, details: {}, pendingRequest: null };
+    const projection = { snapshot, receipts: {}, deletions: {}, details: {}, pendingRequests: [] };
     mocks.data = { projection };
     const props = { session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true };
     let renderer!: ReturnType<typeof create>;

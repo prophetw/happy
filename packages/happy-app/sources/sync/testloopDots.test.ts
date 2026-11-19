@@ -60,7 +60,7 @@ describe('TestLoop Dots directory protocol', () => {
         const result = projectTestloopDotsMessages([user(), agent(snapshot()), agent(snapshot({ requestId: otherRequest }), { id: 'agent-2', createdAt: 12 })], workspaceId);
         expect(result.snapshot?.dots).toEqual([dot]);
         expect(result.receipts[requestId].ok).toBe(true);
-        expect(result.pendingRequest).toBeNull();
+        expect(result.pendingRequests).toEqual([]);
     });
 
     it('does not treat user content, other agent sources or another workspace as a directory', () => {
@@ -85,14 +85,14 @@ describe('TestLoop Dots directory protocol', () => {
         const messages = [user(), agent(snapshot({ requestId: otherRequest }))];
         const before = projectTestloopDotsMessages(messages, workspaceId);
         const afterReload = projectTestloopDotsMessages(JSON.parse(JSON.stringify(messages)), workspaceId);
-        expect(before.pendingRequest).toEqual(request);
-        expect(testloopDotsCommand(afterReload.pendingRequest!)).toBe(testloopDotsCommand(request));
+        expect(before.pendingRequests).toEqual([request]);
+        expect(testloopDotsCommand(afterReload.pendingRequests[0])).toBe(testloopDotsCommand(request));
     });
 
     it('recognizes an explicit host rejection without pretending the create succeeded', () => {
         const result = projectTestloopDotsMessages([user(), agent(snapshot({ ok: false, error: 'dot_name_required', dots: [] }))], workspaceId);
         expect(result.receipts[requestId]).toMatchObject({ ok: false, error: 'dot_name_required' });
-        expect(result.pendingRequest).toBeNull();
+        expect(result.pendingRequests).toEqual([]);
     });
 
     it('projects a successful delete only with its matching deletedDot tombstone', () => {
@@ -102,7 +102,7 @@ describe('TestLoop Dots directory protocol', () => {
         const result = projectTestloopDotsMessages([command, agent(receipt)], workspaceId);
         expect(result.deletions[requestId]).toEqual({ requestId, revision: 2, id: dot.id, sessionId: dot.sessionId });
         expect(result.snapshot?.dots).toEqual([]);
-        expect(result.pendingRequest).toBeNull();
+        expect(result.pendingRequests).toEqual([]);
     });
 
     it('rejects deletedDot on failures or while the target binding remains active', () => {
@@ -128,7 +128,7 @@ describe('TestLoop Dots directory protocol', () => {
             const scoped = { schemaVersion: 1 as const, requestId: otherRequest, action, dotId: dot.id };
             const command = { kind: 'user-text', id: `command-${action}`, createdAt: 5, text: testloopDotsCommand(scoped) };
             const result = projectTestloopDotsMessages([command, agent(snapshot())], workspaceId);
-            expect(result.pendingRequest).toEqual(scoped);
+            expect(result.pendingRequests).toEqual([scoped]);
         }
         const deletion = { schemaVersion: 1 as const, requestId, action: 'delete' as const, dotId: dot.id };
         const command = { kind: 'user-text', id: 'delete-command', createdAt: 5, text: testloopDotsCommand(deletion) };

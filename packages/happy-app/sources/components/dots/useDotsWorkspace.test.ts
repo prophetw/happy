@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     archive: vi.fn(), updateIdentity: vi.fn(), read: vi.fn(), loaded: false, token: 'token',
     rpc: vi.fn(), valuesOnDisk: new Map<string, string>(), encryptions: new Map<string, any>(), failStorage: false,
     extraSessions: {} as Record<string, any>,
-    active: true,
+    active: true, realtime: 'connected',
 }));
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => listId }));
@@ -32,11 +32,12 @@ vi.mock('@/sync/serverConfig', () => ({ getServerUrl: () => 'https://test.invali
 vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
 vi.mock('react-native-mmkv', () => ({ MMKV: class {
     getString(key: string) { return mocks.valuesOnDisk.get(key); }
+    getAllKeys() { return [...mocks.valuesOnDisk.keys()]; }
     set(key: string, value: string) { if (mocks.failStorage) throw new Error('disk full'); mocks.valuesOnDisk.set(key, value); }
     delete(key: string) { mocks.valuesOnDisk.delete(key); }
 } }));
 vi.mock('@/sync/storage', () => ({
-    useRealtimeStatus: () => 'connected',
+    useRealtimeStatus: () => mocks.realtime,
     useSessionMessages: () => ({ messages: mocks.messages, isLoaded: mocks.loaded }),
     storage: { getState: () => ({ sessions: {
         'workspace-session': { id: 'workspace-session', active: true, metadata: { testloopDots: {
@@ -85,11 +86,13 @@ beforeEach(() => {
     mocks.loaded = false; mocks.token = `token-${++accountSequence}`;
     mocks.valuesOnDisk.clear(); mocks.encryptions.clear(); mocks.failStorage = false;
     mocks.extraSessions = {};
-    mocks.active = true;
+    mocks.active = true; mocks.realtime = 'connected';
     mocks.rpc.mockReset().mockImplementation(async (_session, _method, request) => ({ ok: true, data: {
         schemaVersion: 1, workspaceId, requestId: request.command.requestId, status: 'queued', error: null,
     } }));
-    mocks.read.mockReset().mockRejectedValue(new Error('offline'));
+    mocks.read.mockReset().mockImplementation(async (_session, request) => ({
+        schemaVersion: 1, workspaceId, revision: 0, requestId: request.requestId, ok: true, dots: [],
+    }));
     mocks.values = [];
     mocks.sendMessage.mockReset().mockResolvedValue(true);
     mocks.ensureSessionReady.mockReset().mockResolvedValue(undefined);
@@ -123,7 +126,7 @@ it('applies a management RPC receipt immediately without sending or waiting for 
     const renderer = await render();
     await act(async () => { await mocks.values[0].submit(request); });
     expect(mocks.sendMessage).not.toHaveBeenCalled();
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
     expect(mocks.values[0].notice).toContain('已创建');
     expect(mocks.messages).toEqual([]);
@@ -155,23 +158,60 @@ it('finds cross-device deletion proofs in bounded batches without requiring comm
     await act(async () => renderer.unmount());
 });
 
-it('restores a lost-response command after reload and retries its original ID and payload', async () => {
+const applied = (requestId: string, revision = 1, dots: unknown[] = [dot], extra = {}) => ({
+    ok: true, data: { schemaVersion: 1, workspaceId, requestId, status: 'applied', error: null,
+        snapshot: { schemaVersion: 1, workspaceId, revision, requestId, ok: true, dots, ...extra } },
+});
+const writeCalls = () => mocks.rpc.mock.calls.filter(([, method]) => method === 'testloop-dots-command');
+const readReceipt = async (requestId: string, response: unknown) => {
+    mocks.rpc.mockResolvedValueOnce(response);
+    await act(async () => { await mocks.values[0].checkReceipt(requestId); });
+};
+
+it('restores a lost-response command and reads its original receipt without writing after reload', async () => {
     mocks.rpc.mockRejectedValueOnce(new Error('response lost'));
     let renderer = await render();
     await act(async () => { await mocks.values[0].submit(clearRequest); });
-    expect(mocks.values[0].pending).toMatchObject({ request: clearRequest, timedOut: true });
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(clearRequest);
     await act(async () => renderer.unmount());
     renderer = await render();
-    expect(mocks.values[0].pending).toMatchObject({ request: clearRequest, timedOut: true });
-    expect(mocks.rpc).toHaveBeenCalledTimes(1);
-    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
-        snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [dot] },
-    } });
-    await act(async () => { await mocks.values[0].retry(); });
-    expect(mocks.rpc).toHaveBeenLastCalledWith('workspace-session', 'testloop-dots-command', { schemaVersion: 1, workspaceId, command: clearRequest });
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(clearRequest);
+    await readReceipt(clearId, applied(clearId));
+    expect(mocks.rpc).toHaveBeenLastCalledWith('workspace-session', 'testloop-dots-read',
+        { schemaVersion: 1, workspaceId, action: 'receipt', command: clearRequest });
+    expect(writeCalls()).toHaveLength(1);
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].notice).toContain('已清空');
     expect(mocks.sendMessage).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+});
+
+it('keeps two targets independent and reconciles the remaining original request on reconnect', async () => {
+    const other = { ...dot, id: '77777777-7777-4777-8777-777777777777', name: 'B', sessionId: 'other-session' };
+    const second = { ...clearRequest, dotId: other.id, requestId: deleteId };
+    let finishA!: (reply: unknown) => void;
+    mocks.rpc.mockImplementationOnce(() => new Promise(resolve => { finishA = resolve; }));
+    const renderer = await render();
+    await act(async () => { void mocks.values[0].submit(clearRequest); });
+    await act(async () => { await mocks.values[0].submit(second); });
+    expect(mocks.values[0].pendingCommands.map(({ request }: { request: { requestId: string } }) => request.requestId))
+        .toEqual([clearId, deleteId]);
+    await act(async () => { expect(await mocks.values[0].submit({ ...clearRequest, requestId: listId })).toBe(false); });
+    await act(async () => finishA(applied(clearId, 2, [dot, other])));
+    expect(mocks.values[0].pendingFor(dotId)).toBeUndefined();
+    expect(mocks.values[0].pendingFor(other.id)?.request).toEqual(second);
+    await readReceipt(deleteId, applied(clearId, 2, [dot, other]));
+    expect(mocks.values[0].pendingFor(other.id)?.message).toContain('暂时无法核对');
+
+    mocks.realtime = 'disconnected'; await update(renderer);
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: deleteId,
+        status: 'rejected', error: 'dot_clear_refused' } });
+    mocks.realtime = 'connected'; await update(renderer);
+    expect(mocks.values[0].pendingCommands).toEqual([]);
+    expect(mocks.values[0].errorFor(other.id)).toContain('dot_clear_refused');
+    expect(mocks.values[0].projection.receipts[clearId]?.ok).toBe(true);
+    expect(mocks.values[0].projection.receipts[deleteId]?.ok).toBe(false);
+    expect(writeCalls()).toHaveLength(2);
     await act(async () => renderer.unmount());
 });
 
@@ -180,7 +220,7 @@ it('does not send a command if its recovery intent cannot be saved', async () =>
     mocks.failStorage = true;
     await act(async () => { expect(await mocks.values[0].submit(clearRequest)).toBe(false); });
     expect(mocks.rpc).not.toHaveBeenCalled();
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].error).toContain('未发送新操作');
     await act(async () => renderer.unmount());
 });
@@ -196,24 +236,26 @@ it('keeps a successful receipt through blur and consumes it when the same worksp
     } }));
     mocks.active = true; await update(renderer);
     expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
-    expect(mocks.values[0].pending).toBeNull();
-    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(mocks.values[0].pendingCommands).toEqual([]);
+    expect(writeCalls()).toHaveLength(1);
     await act(async () => renderer.unmount());
 });
 
-it('persists an old chat command receipt so it does not become pending again before history reloads', async () => {
+it('recovers an old chat command from the ledger before history reloads', async () => {
     mocks.loaded = true; mocks.messages = [command(clearRequest)];
     let renderer = await render();
-    expect(mocks.values[0].pending?.request).toEqual(clearRequest);
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(clearRequest);
     mocks.messages = [command(clearRequest), receipt(clearId, 1, [dot])];
     await update(renderer);
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(clearRequest);
+    await readReceipt(clearId, applied(clearId));
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     await act(async () => renderer.unmount());
     mocks.loaded = false; mocks.messages = [];
     renderer = await render();
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
-    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(writeCalls()).toHaveLength(0);
     await act(async () => renderer.unmount());
 });
 
@@ -227,7 +269,7 @@ it('does not replace a new account pending command with an old account response'
     await act(async () => finish({ ok: true, data: { schemaVersion: 1, workspaceId, requestId: clearId, status: 'applied', error: null,
         snapshot: { schemaVersion: 1, workspaceId, revision: 1, requestId: clearId, ok: true, dots: [dot] },
     } }));
-    expect(mocks.values[0].pending?.request).toEqual(deleteRequest);
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(deleteRequest);
     expect(mocks.values[0].projection.receipts[clearId]).toBeUndefined();
     expect(mocks.values[0].notice).toBeNull();
     await act(async () => renderer.unmount());
@@ -279,7 +321,9 @@ it('announces clear only while the current host projection retains the same Dot/
     });
     mocks.messages = [command(clearRequest), receipt(clearId, 1, [dot])];
     await update(renderer);
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingFor(dotId)?.request).toEqual(clearRequest);
+    await readReceipt(clearId, applied(clearId));
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].error).toBeNull();
     expect(mocks.values[0].notice).toContain('已清空旧聊天并重置模型上下文');
     expect(mocks.archive).not.toHaveBeenCalled();
@@ -304,7 +348,8 @@ it('waits for the latest projection before confirming deletion, then separately 
         receipt(listId, 3, [dot]),
     ];
     await update(renderer);
-    expect(mocks.values[0].pending).toBeNull();
+    await readReceipt(deleteId, applied(deleteId, 2, [], { deletedDot: { id: dotId, sessionId: dot.sessionId } }));
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].error).toContain('等待最新列表确认目标已消失');
     expect(mocks.values[0].notice).toBeNull();
     expect(mocks.archive).not.toHaveBeenCalled();
@@ -361,7 +406,7 @@ it('opens with a read RPC instead of a chat command, without waiting for chat hi
     const renderer = await render();
     expect(mocks.read).toHaveBeenCalledTimes(1);
     expect(mocks.sendMessage).not.toHaveBeenCalled();
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
     await act(async () => renderer.unmount());
 });
@@ -373,7 +418,7 @@ it('keeps cached directory and mutations usable during a slow refresh and retain
     const renderer = await render();
     expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
     expect(mocks.values[0].refreshing).toBe(true);
-    expect(mocks.values[0].pending).toBeNull();
+    expect(mocks.values[0].pendingCommands).toEqual([]);
     await act(async () => reject(new Error('offline')));
     expect(mocks.values[0].projection.snapshot.dots).toEqual([dot]);
     expect(mocks.values[0].refreshing).toBe(false);
@@ -390,6 +435,7 @@ it('does not let a late read resurrect a Dot removed by a newer mutation receipt
     await act(async () => { await mocks.values[0].submit(deleteRequest); });
     mocks.messages = [command(deleteRequest), receipt(deleteId, 2, [], { deletedDot: { id: dotId, sessionId: dot.sessionId } })];
     await update(renderer);
+    await readReceipt(deleteId, applied(deleteId, 2, [], { deletedDot: { id: dotId, sessionId: dot.sessionId } }));
     await act(async () => finish({ schemaVersion: 1, workspaceId, revision: 1, requestId: listId, ok: true, dots: [dot] }));
     expect(mocks.values[0].projection.snapshot.dots).toEqual([]);
     expect(mocks.values[0].notice).toContain('已删除');

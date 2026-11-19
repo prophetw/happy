@@ -7,13 +7,17 @@ import { storage, useRealtimeStatus, useSessionMessages } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { sessionArchiveTestloopDot, sessionUpdateDotIdentity } from '@/sync/ops';
 import { readDotsWorkspace } from '@/sync/dotsWorkspaceRead';
-import { loadDotsWorkspaceCommandState, requestDotsWorkspaceCommand, saveDotsWorkspaceCommand, settleDotsWorkspaceCommand,
-    subscribeDotsWorkspaceCommand, type DotsWorkspaceCommandState } from '@/sync/dotsWorkspaceCommand';
+import { isTerminalDotsWorkspaceResult, loadDotsWorkspaceCommandStates, readDotsWorkspaceCommandReceipt, requestDotsWorkspaceCommand,
+    saveDotsWorkspaceCommand, settleDotsWorkspaceCommand, subscribeDotsWorkspaceCommand, type DotsWorkspaceCommandState } from '@/sync/dotsWorkspaceCommand';
 import { getServerUrl } from '@/sync/serverConfig';
-import { retiredDotSessionIds, projectTestloopDotsMessages, readTestloopDotsMetadata, mergeDotsWorkspaceRead, mergeDotsWorkspaceReceipt, type TestloopDotsSnapshot, type TestloopDotsRequest } from '@/sync/testloopDots';
+import { dotsWorkspaceCommandTarget, retiredDotSessionIds, projectTestloopDotsMessages, readTestloopDotsMetadata,
+    mergeDotsWorkspaceRead, mergeDotsWorkspaceReceipt, type TestloopDotsSnapshot, type DotsWorkspaceCommand } from '@/sync/testloopDots';
 
-type Pending = { request: TestloopDotsRequest; attempt: number; timedOut: boolean };
+type ReceiptCheck = { checking: boolean; message: string };
+type CommandFeedback = { target: string | undefined; error?: string; notice?: string };
 type Deletion = { requestId: string; revision: number; id: string; sessionId: string };
+const emptyJournal: DotsWorkspaceCommandState[] = [];
+const receiptCheckInterval = 5000;
 
 // Cache only bounded views, keyed by credentials, relay, workspace and detail.
 const readResults = new Map<string, TestloopDotsSnapshot>();
@@ -46,35 +50,32 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     const encryption = sync.encryption;
     const commandScope = React.useMemo(() => encryption?.anonID ? { encryption, serverUrl: server, sessionId, workspaceId } : null,
         [encryption, server, sessionId, workspaceId]);
-    const [journal, setJournal] = React.useState<{ scope: typeof commandScope; state: DotsWorkspaceCommandState | null } | null>(null);
-    const currentCommandScope = React.useRef(commandScope); currentCommandScope.current = commandScope;
+    const [journal, setJournal] = React.useState<{ scope: typeof commandScope; states: DotsWorkspaceCommandState[] } | null>(null);
+    const states = journal && journal.scope === commandScope ? journal.states : emptyJournal;
     const journalRead = React.useRef(0);
     const [live, setLive] = React.useState<{ key: string; snapshot: TestloopDotsSnapshot } | null>(null);
     const raw = React.useMemo(() => {
         const read = mergeDotsWorkspaceRead(history, live?.key === readKey ? live.snapshot : readResults.get(readKey));
-        const state = journal?.scope === commandScope ? journal.state : null;
-        if (!state?.result) return read;
-        const receipt = state.result.snapshot ?? { schemaVersion: 1 as const, workspaceId, requestId: state.command.requestId,
-            revision: read.snapshot?.revision ?? 0, ok: false, error: state.result.error ?? undefined, dots: read.snapshot?.dots ?? [] };
-        return mergeDotsWorkspaceReceipt(read, state.command, receipt);
-    }, [history, live, readKey, journal, commandScope, workspaceId]);
+        return states.reduce((projection, { command, result }) => {
+            if (!result) return projection;
+            const receipt = result.snapshot ?? { schemaVersion: 1 as const, workspaceId, requestId: command.requestId,
+                revision: projection.snapshot?.revision ?? 0, ok: false, error: result.error ?? undefined, dots: projection.snapshot?.dots ?? [] };
+            return mergeDotsWorkspaceReceipt(projection, command, receipt);
+        }, read);
+    }, [history, live, readKey, states, workspaceId]);
     const [refreshing, setRefreshing] = React.useState(false);
     const [readError, setReadError] = React.useState<string | null>(null);
-    const readAttempt = React.useRef(0), recovered = React.useRef(false);
     const inFlightRead = React.useRef<{ epoch: number; promise: Promise<void> } | null>(null);
-    const [pending, setPending] = React.useState<Pending | null>(null);
     const [error, setError] = React.useState<string | null>(null);
-    const [notice, setNotice] = React.useState<string | null>(null);
+    const [checks, setChecks] = React.useState<Record<string, ReceiptCheck>>({});
     const [archiveErrors, setArchiveErrors] = React.useState<Record<string, string>>({});
     const [archivePendingIds, setArchivePendingIds] = React.useState<string[]>([]);
-    const generation = React.useRef(0), initialized = React.useRef(false), mounted = React.useRef(true);
-    const pendingId = React.useRef<string | null>(null);
-    const writing = React.useRef<{ scope: typeof commandScope } | null>(null);
-    const savingReceipts = React.useRef(new Set<string>());
+    const generation = React.useRef(0), recovered = React.useRef(false), mounted = React.useRef(true);
+    const receiptChecks = React.useMemo(() => new Map<string, Promise<void>>(), [scope]);
+    // Feedback is for operations observed by this view. Historical receipts still update the directory.
+    const observed = React.useMemo(() => new Set<string>(), [scope]);
+    const mirroredUpdates = React.useMemo(() => new Set<string>(), [scope]);
     const latestProjection = React.useRef(raw);
-    const announcedDeletions = React.useRef(new Set<string>());
-    // Only a deletion this view asked for is feedback the user is waiting on.
-    const requestedDeletions = React.useRef(new Set<string>());
     latestProjection.current = raw;
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
     const sameAccount = React.useCallback(() => !!token && auth.isAuthenticated
@@ -88,9 +89,8 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     const restoreJournal = React.useCallback(async () => {
         if (!commandScope) throw new Error('dots_command_encryption_unavailable');
         const version = ++journalRead.current;
-        const state = await loadDotsWorkspaceCommandState(commandScope);
-        if (version === journalRead.current && mounted.current && currentCommandScope.current === commandScope && validBinding())
-            setJournal({ scope: commandScope, state });
+        const loaded = await loadDotsWorkspaceCommandStates(commandScope);
+        if (version === journalRead.current && mounted.current && validBinding()) setJournal({ scope: commandScope, states: loaded });
     }, [commandScope, validBinding]);
     React.useEffect(() => commandScope ? subscribeDotsWorkspaceCommand(commandScope, () => {
         void restoreJournal().catch(() => {
@@ -100,9 +100,9 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
 
     useFocusEffect(React.useCallback(() => {
         const epoch = ++generation.current;
-        initialized.current = false; recovered.current = false; pendingId.current = null;
-        readAttempt.current++; inFlightRead.current = null; setRefreshing(false); setReadError(null);
-        setReadyScope(null); setPending(null); setError(null); setNotice(null); setArchiveErrors({});
+        recovered.current = false;
+        inFlightRead.current = null; setRefreshing(false); setReadError(null);
+        setReadyScope(null); setChecks({}); setError(null); setArchiveErrors({});
         if (active && sameAccount()) void sync.ensureSessionReady(sessionId).then(async () => {
             if (epoch !== generation.current || !mounted.current) return;
             if (!validBinding()) throw new Error('workspace_binding_changed');
@@ -118,12 +118,11 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     const ready = readyScope === scope && validBinding();
     const realtime = useRealtimeStatus();
     useSessionVisibility(sessionId, active && ready, Boolean(detailDotId), realtime);
-    const refresh = React.useCallback((): Promise<void> => {
+    const refreshDirectory = React.useCallback((): Promise<void> => {
         if (!validBinding() || !active) return Promise.resolve();
         const epoch = generation.current;
         if (inFlightRead.current?.epoch === epoch) return inFlightRead.current.promise;
-        const attempt = ++readAttempt.current;
-        const current = () => mounted.current && generation.current === epoch && readAttempt.current === attempt && validBinding();
+        const current = () => mounted.current && generation.current === epoch && validBinding();
         setRefreshing(true); setReadError(null);
         const archiveSessionIds = Object.values(storage.getState().sessions).flatMap(session => {
             const binding = readTestloopDotsMetadata(session.metadata);
@@ -156,90 +155,120 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         return promise;
     }, [sessionId, workspaceId, detailDotId, readKey, active, validBinding]);
 
-    const submit = React.useCallback(async (request: TestloopDotsRequest): Promise<boolean> => {
-        if (!ready || !commandScope || !validBinding() || !active || writing.current?.scope === commandScope
-            || pendingId.current && pendingId.current !== request.requestId || request.action === 'list' || request.action === 'inspect') return false;
-        const attempt = { scope: commandScope }; writing.current = attempt;
-        readAttempt.current++; inFlightRead.current = null; setRefreshing(false); setReadError(null);
+    const checkCommand = React.useCallback((command: DotsWorkspaceCommand): Promise<void> => {
+        if (!commandScope || !validBinding()) return Promise.resolve();
+        const { requestId } = command;
+        const existing = receiptChecks.get(requestId);
+        if (existing) return existing;
         const epoch = generation.current;
-        const current = () => mounted.current && generation.current === epoch && currentCommandScope.current === commandScope && validBinding();
-        if (request.action === 'delete') requestedDeletions.current.add(request.requestId);
-        pendingId.current = request.requestId;
-        setPending(previous => ({ request, attempt: (previous?.attempt ?? 0) + 1, timedOut: false }));
-        setError(null); setNotice(null);
-        let saved = false;
+        const report = (message: string, checking = false) => {
+            if (mounted.current && generation.current === epoch && validBinding())
+                setChecks(previous => ({ ...previous, [requestId]: { checking, message } }));
+        };
+        report('正在核对原请求回执…', true);
+        const attempt = (async () => {
+            try {
+                const result = await readDotsWorkspaceCommandReceipt(sessionId, workspaceId, command);
+                if (!validBinding()) return;
+                if (isTerminalDotsWorkspaceResult(result)) {
+                    await settleDotsWorkspaceCommand(commandScope, command, result);
+                    if (mounted.current && generation.current === epoch && validBinding()) void refreshDirectory();
+                } else {
+                    report(result.status === 'unknown' ? '宿主尚未找到原请求，已保留请求编号。'
+                        : '宿主已登记原请求，仍在处理中。');
+                }
+            } catch {
+                report('暂时无法核对回执，已保留原请求。可检查连接与宿主版本后再核对。');
+            } finally {
+                receiptChecks.delete(requestId);
+            }
+        })();
+        receiptChecks.set(requestId, attempt);
+        return attempt;
+    }, [commandScope, validBinding, sessionId, workspaceId, receiptChecks, refreshDirectory]);
+
+    const waiting = React.useMemo(() => states.filter(state => !state.result).map(state => state.command), [states]);
+    const latestWaiting = React.useRef(waiting);
+    latestWaiting.current = waiting;
+    const checkPending = React.useCallback(async () => {
+        await Promise.all(latestWaiting.current.map(checkCommand));
+    }, [checkCommand]);
+    const checkReceipt = (requestId: string) => {
+        const command = latestWaiting.current.find(item => item.requestId === requestId);
+        return command ? checkCommand(command) : Promise.resolve();
+    };
+
+    const submit = React.useCallback(async (request: DotsWorkspaceCommand): Promise<boolean> => {
+        if (!ready || !commandScope || !validBinding() || !active) return false;
+        const epoch = generation.current;
+        const current = () => mounted.current && generation.current === epoch && validBinding();
+        if (current()) setError(null);
         try {
-            await saveDotsWorkspaceCommand(commandScope, request);
-            saved = true;
-            if (!current()) return true;
+            if (!await saveDotsWorkspaceCommand(commandScope, request)) return false;
+        } catch (cause) {
+            if (current()) {
+                setError(cause instanceof Error && cause.message === 'dots_command_pending'
+                    ? '这个目标已有待核对的操作，请先核对原请求。'
+                    : '本机无法保存操作恢复记录，未发送新操作。请检查设备存储后重试。');
+            }
+            return false;
+        }
+        observed.add(request.requestId);
+        if (!validBinding()) return true;
+        try {
             const result = await requestDotsWorkspaceCommand(sessionId, workspaceId, request);
-            if (result.status === 'applied' || result.status === 'rejected') {
-                // A reply still belongs to this encrypted journal after blur/unmount.
-                // New credentials or another workspace cannot receive its UI effects.
+            if (!validBinding()) return true;
+            if (isTerminalDotsWorkspaceResult(result)) {
                 await settleDotsWorkspaceCommand(commandScope, request, result);
-                if (current()) { await restoreJournal(); void refresh(); }
-            } else if (current()) {
-                setPending(previous => previous?.request.requestId === request.requestId ? { ...previous, timedOut: true } : previous);
-                setError('后台已登记原请求，结果仍在处理中；可沿用原请求核对。');
+                if (current()) void refreshDirectory();
+                return true;
             }
         } catch {
-            if (current()) {
-                if (!saved) {
-                    pendingId.current = null; setPending(null);
-                    setError('本机无法保存操作恢复记录，未发送新操作。请检查存储，或恢复上次请求。');
-                    await restoreJournal().catch(() => {});
-                } else if (pendingId.current === request.requestId) {
-                    setError('请求结果尚未确认，重试会保留原请求编号与内容。');
-                    setPending(previous => previous?.request.requestId === request.requestId ? { ...previous, timedOut: true } : previous);
-                }
-            }
-        } finally { if (writing.current === attempt) writing.current = null; }
-        return saved;
-    }, [ready, commandScope, sessionId, workspaceId, validBinding, active, restoreJournal, refresh]);
+            // A transport failure leaves the original request journaled.
+        }
+        if (current()) void checkCommand(request);
+        return true;
+    }, [ready, commandScope, validBinding, active, observed, sessionId, workspaceId, refreshDirectory, checkCommand]);
 
     React.useEffect(() => {
-        if (!ready || !active || initialized.current) return;
-        initialized.current = true;
-        void refresh();
-    }, [ready, active, refresh]);
-    React.useEffect(() => {
-        if (!ready || !active || journal?.scope !== commandScope) return;
-        const request = journal.state?.result ? null : journal.state?.command;
-        if (request && pendingId.current !== request.requestId) {
-            if (request.action === 'delete') requestedDeletions.current.add(request.requestId);
-            pendingId.current = request.requestId;
-            setPending({ request, attempt: 0, timedOut: true });
-            setError('上次请求尚无处理回执，可以重试同一请求核对结果。');
-        }
-    }, [ready, active, journal, commandScope]);
+        if (ready && active) void refreshDirectory();
+    }, [ready, active, refreshDirectory]);
+
+    const hasPending = waiting.length > 0;
+    useFocusEffect(React.useCallback(() => {
+        if (ready && active && realtime === 'connected') void checkPending();
+    }, [ready, active, realtime, checkPending]));
+    useFocusEffect(React.useCallback(() => {
+        if (!ready || !active || !hasPending || realtime !== 'connected') return;
+        const timer = setInterval(() => void checkPending(), receiptCheckInterval);
+        return () => clearInterval(timer);
+    }, [ready, active, hasPending, realtime, checkPending]));
+
     React.useEffect(() => {
         if (!ready || !active || !isLoaded || recovered.current || !commandScope) return;
         recovered.current = true;
-        const request = history.pendingRequest;
-        if (request && request.action !== 'list' && request.action !== 'inspect' && !pendingId.current
-            && !(journal?.scope === commandScope && journal.state?.result && journal.state.command.requestId === request.requestId)) {
-            if (request.action === 'delete') requestedDeletions.current.add(request.requestId);
-            pendingId.current = request.requestId;
-            setPending({ request, attempt: 0, timedOut: true });
-            setError('上次请求尚无处理回执，可以重试同一请求核对结果。');
-            void saveDotsWorkspaceCommand(commandScope, request).catch(() => {
+        const occupied = new Set(states.map(state => dotsWorkspaceCommandTarget(state.command)));
+        // Legacy chat commands are already sent. Recover the latest unanswered intent per target.
+        for (const request of [...history.pendingRequests].reverse()) {
+            const target = dotsWorkspaceCommandTarget(request);
+            if (occupied.has(target)) continue;
+            occupied.add(target);
+            void saveDotsWorkspaceCommand(commandScope, request).then(saved => {
+                if (saved) void checkCommand(request);
+            }).catch(() => {
                 if (mounted.current && validBinding()) setError('旧请求恢复记录尚未保存在本机，请检查设备存储后重试。');
             });
         }
-    }, [ready, active, isLoaded, history.pendingRequest, commandScope, journal, validBinding]);
-
-    const confirmedDeletions = React.useMemo(() => confirmedDeletionsOf(raw), [raw]);
+    }, [ready, active, isLoaded, history.pendingRequests, commandScope, states, validBinding, checkCommand]);
 
     React.useEffect(() => {
-        if (!ready) return;
-        for (const deletion of confirmedDeletions) {
-            if (!requestedDeletions.current.has(deletion.requestId)) continue;
-            if (announcedDeletions.current.has(deletion.requestId)) continue;
-            announcedDeletions.current.add(deletion.requestId);
-            setError(previous => previous?.startsWith('后台已接受删除') ? null : previous);
-            setNotice('已删除 Dot，历史对话与记录已保留。');
+        if (!ready || !active) return;
+        for (const request of waiting) {
+            if (!detailDotId || dotsWorkspaceCommandTarget(request) === detailDotId) observed.add(request.requestId);
         }
-    }, [ready, confirmedDeletions]);
+    }, [ready, active, waiting, detailDotId, observed]);
+
+    const confirmedDeletions = React.useMemo(() => confirmedDeletionsOf(raw), [raw]);
 
     React.useEffect(() => {
         const snapshot = raw.snapshot;
@@ -315,81 +344,67 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         }
     }, [confirmedDeletions, archiveErrors, reconcileArchive]);
     React.useEffect(() => {
-        if (!ready || !pending) return;
-        const receipt = raw.receipts[pending.request.requestId];
-        if (!receipt) return;
-        const request = pending.request;
-        if (commandScope && request.action !== 'list' && request.action !== 'inspect'
-            && !(journal?.scope === commandScope && journal.state?.result && journal.state.command.requestId === request.requestId)) {
-            const key = JSON.stringify([server, token, secret, sessionId, workspaceId, request.requestId]);
-            if (!savingReceipts.current.has(key)) {
-                savingReceipts.current.add(key);
-                void settleDotsWorkspaceCommand(commandScope, request, { schemaVersion: 1, workspaceId, requestId: request.requestId,
-                    status: receipt.ok ? 'applied' : 'rejected', error: receipt.ok ? null : receipt.error ?? 'dots_command_rejected', snapshot: receipt,
-                }).catch(() => {
-                    if (!mounted.current || !validBinding()) return;
-                    setError('后台回执已收到，但本机恢复记录未能更新；请检查设备存储并保留原请求。');
-                    setPending(previous => previous?.request.requestId === request.requestId && !previous.timedOut ? { ...previous, timedOut: true } : previous);
-                }).finally(() => savingReceipts.current.delete(key));
-            }
-            return;
+        if (!ready || !active) return;
+        for (const { command, result } of states) {
+            if (command.action !== 'update' || result?.status !== 'applied'
+                || !observed.has(command.requestId) || mirroredUpdates.has(command.requestId)) continue;
+            mirroredUpdates.add(command.requestId);
+            const dot = result.snapshot?.dots.find(item => item.id === command.dotId);
+            if (!dot || dot.name !== command.name || dot.instruction !== command.instruction) continue;
+            void sync.ensureSessionReady(dot.sessionId).then(() => {
+                if (!validBinding()) return;
+                const current = latestProjection.current.snapshot;
+                const currentDot = current?.ok ? current.dots.find(item => item.id === dot.id) : undefined;
+                if (!currentDot || currentDot.sessionId !== dot.sessionId || currentDot.name !== dot.name
+                    || currentDot.instruction !== dot.instruction) return;
+                const binding = readTestloopDotsMetadata(storage.getState().sessions[dot.sessionId]?.metadata);
+                if (binding?.kind !== 'dot' || binding.dotId !== dot.id || binding.workspaceId !== workspaceId
+                    || binding.workspaceSessionId !== sessionId) throw new Error('dot_binding_changed');
+                return sessionUpdateDotIdentity(dot.sessionId, dot.name, dot.instruction);
+            }).catch(error => console.error(`Failed to sync Dot identity for session ${dot.sessionId}`, error));
         }
-        pendingId.current = null; setPending(null);
-        if (!receipt.ok) setError(`后台未接受本次操作${receipt.error ? `（${receipt.error}）` : ''}。`);
-        else if (request.action === 'inspect' && receipt.workbench?.detail?.dotId !== request.dotId)
-            setError('后台未提供对应 Dot 的工作与记忆数据，请核对宿主版本后刷新。');
-        else if (request.action === 'clear') {
-            const receiptDot = receipt.dots.find(dot => dot.id === request.dotId);
-            const currentDot = raw.snapshot?.ok
-                ? raw.snapshot.dots.find(dot => dot.id === request.dotId) : undefined;
-            if (!receiptDot || !currentDot || receiptDot.sessionId !== currentDot.sessionId) {
-                setError('后台已接受清空，但最新列表尚未确认原 Dot 与会话仍存在，请刷新核对。');
-            } else {
-                setError(null);
-                setNotice('已清空旧聊天并重置模型上下文；长期记忆、Dot 身份、模型设置、授权和独立任务保留。');
-            }
-        } else if (request.action === 'delete') {
-            if (receipt.deletedDot?.id !== request.dotId) {
-                setError('后台删除回执缺少对应 Dot 的删除确认，请刷新核对。');
-            } else if (!confirmedDeletions.some(deletion => deletion.requestId === request.requestId)) {
-                setError('后台已接受删除，正在等待最新列表确认目标已消失。');
-            } else setError(null);
-        } else {
-            setError(null);
-            if (request.action === 'create') setNotice(`已创建「${request.name}」。`);
-            if (request.action === 'update') {
-                setNotice(`已更新「${request.name}」。`);
-                const dot = receipt.dots.find(item => item.id === request.dotId);
-                if (dot) void sync.ensureSessionReady(dot.sessionId)
-                    .then(() => {
-                        if (!validBinding()) return;
-                        const current = latestProjection.current.snapshot;
-                        const currentDot = current?.ok ? current.dots.find(item => item.id === dot.id) : undefined;
-                        if (!currentDot || currentDot.sessionId !== dot.sessionId || currentDot.name !== dot.name
-                            || currentDot.instruction !== dot.instruction) return;
-                        const binding = readTestloopDotsMetadata(storage.getState().sessions[dot.sessionId]?.metadata);
-                        if (binding?.kind !== 'dot' || binding.dotId !== dot.id || binding.workspaceId !== workspaceId
-                            || binding.workspaceSessionId !== sessionId) throw new Error('dot_binding_changed');
-                        return sessionUpdateDotIdentity(dot.sessionId, dot.name, dot.instruction);
-                    })
-                    .catch(error => console.error(`Failed to sync Dot identity for session ${dot.sessionId}`, error));
-            }
-        }
-    }, [raw.receipts, raw.snapshot, pending, ready, confirmedDeletions, sessionId, workspaceId, commandScope, journal, server, token, secret, validBinding]);
-    React.useEffect(() => {
-        if (!pending || pending.timedOut) return;
-        const id = pending.request.requestId;
-        const timer = setTimeout(() => {
-            if (pendingId.current !== id) return;
-            setPending(previous => previous?.request.requestId === id ? { ...previous, timedOut: true } : previous);
-            setError('仍未收到后台回执，可以重试上次请求。');
-        }, 15000);
-        return () => clearTimeout(timer);
-    }, [pending?.request.requestId, pending?.attempt, pending?.timedOut]);
+    }, [active, ready, states, observed, mirroredUpdates, validBinding, sessionId, workspaceId]);
 
-    return { ready, projection: ready ? raw : null, pending: ready ? pending : null, refreshing: ready && refreshing, error: error ?? (ready ? readError : null), notice: ready ? notice : null,
+    const visible = (command: DotsWorkspaceCommand) => !detailDotId || dotsWorkspaceCommandTarget(command) === detailDotId;
+    const pendingCommands = ready ? waiting.filter(visible).map(request => ({
+        request, checking: checks[request.requestId]?.checking ?? false,
+        message: checks[request.requestId]?.message ?? '正在等待后台回执，可核对原请求。',
+    })) : [];
+    const pendingFor = (dotId?: string) => pendingCommands.find(({ request }) => dotsWorkspaceCommandTarget(request) === dotId);
+
+    const feedback = ready ? states.flatMap<CommandFeedback>(({ command, result }) => {
+        if (!result || !visible(command) || !observed.has(command.requestId)) return [];
+        const target = dotsWorkspaceCommandTarget(command);
+        if (result.status === 'rejected') return [{ target, error: `后台未接受本次操作（${result.error}）。` }];
+        if (command.action === 'delete') {
+            return confirmedDeletions.some(deletion => deletion.requestId === command.requestId)
+                ? [{ target, notice: '已删除 Dot，历史对话与记录已保留。' }]
+                : [{ target, error: '后台已接受删除，正在等待最新列表确认目标已消失。' }];
+        }
+        if (command.action === 'clear') {
+            const receiptDot = result.snapshot?.dots.find(dot => dot.id === command.dotId);
+            const currentDot = raw.snapshot?.ok ? raw.snapshot.dots.find(dot => dot.id === command.dotId) : undefined;
+            return receiptDot && currentDot?.sessionId === receiptDot.sessionId
+                ? [{ target, notice: '已清空旧聊天并重置模型上下文；长期记忆、Dot 身份、模型设置、授权和独立任务保留。' }]
+                : [{ target, error: '后台已接受清空，但最新列表尚未确认原 Dot 与会话仍存在，请刷新核对。' }];
+        }
+        return [{ target, notice: command.action === 'create' ? `已创建「${command.name}」。` : `已更新「${command.name}」。` }];
+    }) : [];
+    const workspaceError = error ?? (ready ? readError : null);
+    const errorFor = (dotId?: string) => feedback.find(result => result.target === dotId)?.error ?? workspaceError;
+    const refresh = () => {
+        if (!ready) {
+            setReload(value => value + 1);
+            return Promise.resolve();
+        }
+        return Promise.all([refreshDirectory(), checkPending()]).then(() => {});
+    };
+    return {
+        ready, projection: ready ? raw : null, pendingCommands, pendingFor, refreshing: ready && refreshing,
+        error: feedback.findLast(result => result.error)?.error ?? workspaceError, errorFor,
+        notice: feedback.findLast(result => result.notice)?.notice ?? null,
         archiveError: ready ? Object.values(archiveErrors)[0] ?? null : null,
         archivePending: ready && archivePendingIds.length > 0,
-        submit, refresh, retryArchive,
-        retry: () => !ready ? setReload(value => value + 1) : pending ? submit(pending.request) : refresh() };
+        submit, refresh, checkReceipt, retryArchive,
+    };
 }

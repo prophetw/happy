@@ -5,11 +5,12 @@ const mocks = vi.hoisted(() => ({ rpc: vi.fn(), values: new Map<string, string>(
 vi.mock('./apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
 vi.mock('react-native-mmkv', () => ({ MMKV: class {
     getString(key: string) { return mocks.values.get(key); }
+    getAllKeys() { return [...mocks.values.keys()]; }
     set(key: string, value: string) { if (mocks.failStorage) throw new Error('disk full'); mocks.values.set(key, value); }
     delete(key: string) { if (mocks.failStorage) throw new Error('disk full'); mocks.values.delete(key); }
 } }));
 
-import { loadDotsWorkspaceCommand, loadDotsWorkspaceCommandState, saveDotsWorkspaceCommand, settleDotsWorkspaceCommand,
+import { loadDotsWorkspaceCommandStates, saveDotsWorkspaceCommand, settleDotsWorkspaceCommand,
     subscribeDotsWorkspaceCommand, requestDotsWorkspaceCommand } from './dotsWorkspaceCommand';
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';
@@ -79,9 +80,9 @@ function scope(account = 'account-a', serverUrl = 'https://relay.example') {
 
 it('restores the original encrypted intent after remount without exposing it to another account or relay', async () => {
     await saveDotsWorkspaceCommand(scope(), command);
-    await expect(loadDotsWorkspaceCommand(scope())).resolves.toEqual(command);
-    await expect(loadDotsWorkspaceCommand(scope('account-b'))).resolves.toBeNull();
-    await expect(loadDotsWorkspaceCommand(scope('account-a', 'https://other.example'))).resolves.toBeNull();
+    await expect(loadDotsWorkspaceCommandStates(scope())).resolves.toEqual([{ command }]);
+    await expect(loadDotsWorkspaceCommandStates(scope('account-b'))).resolves.toEqual([]);
+    await expect(loadDotsWorkspaceCommandStates(scope('account-a', 'https://other.example'))).resolves.toEqual([]);
     expect([...mocks.values.values()].join('')).not.toContain('整理通知');
     expect([...mocks.values.values()].join('')).not.toContain(requestId);
 });
@@ -92,9 +93,25 @@ it('keeps one immutable pending command when two workspace views submit concurre
         saveDotsWorkspaceCommand(scope(), command), saveDotsWorkspaceCommand(scope(), other),
     ]);
     expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
-    await expect(loadDotsWorkspaceCommand(scope())).resolves.toEqual(command);
+    await expect(loadDotsWorkspaceCommandStates(scope())).resolves.toEqual([{ command }]);
     await expect(saveDotsWorkspaceCommand(scope(), { ...command, instruction: '改变的草稿' })).rejects.toThrow('dots_command_request_conflict');
-    await expect(saveDotsWorkspaceCommand(scope(), command)).resolves.toBeUndefined();
+    await expect(saveDotsWorkspaceCommand(scope(), command)).resolves.toBe(false);
+});
+
+it('recovers a legacy clear while persisting an independent Dot write and settling both in either order', async () => {
+    const bound = scope();
+    const clear = { schemaVersion: 1 as const, requestId, action: 'clear' as const, dotId };
+    const other = { ...clear, requestId: dotId, dotId: workspaceId };
+    mocks.values.set(JSON.stringify([bound.encryption.anonID, bound.serverUrl, bound.sessionId, workspaceId]),
+        await bound.encryption.encryptRaw({ schemaVersion: 1, serverUrl: bound.serverUrl,
+            sessionId: bound.sessionId, workspaceId, command: clear }));
+    await expect(saveDotsWorkspaceCommand(bound, other)).resolves.toBe(true);
+    await expect(saveDotsWorkspaceCommand(bound, { ...clear, requestId: workspaceId })).rejects.toThrow('dots_command_pending');
+    await settleDotsWorkspaceCommand(bound, clear, applied);
+    await expect(loadDotsWorkspaceCommandStates(bound)).resolves.toEqual(expect.arrayContaining([{ command: clear, result: applied }, { command: other }]));
+    await settleDotsWorkspaceCommand(bound, other, { ...applied, requestId: other.requestId,
+        snapshot: { ...snapshot, requestId: other.requestId } });
+    expect((await loadDotsWorkspaceCommandStates(bound)).map(state => state.result?.requestId).sort()).toEqual([requestId, other.requestId].sort());
 });
 
 it('shares and restores the terminal receipt without allowing a stale receipt to clear a newer intent', async () => {
@@ -102,13 +119,12 @@ it('shares and restores the terminal receipt without allowing a stale receipt to
     const off = subscribeDotsWorkspaceCommand(scope(), listener), offForeign = subscribeDotsWorkspaceCommand(scope('account-b'), foreign);
     await saveDotsWorkspaceCommand(scope(), command);
     await settleDotsWorkspaceCommand(scope(), command, applied);
-    await expect(loadDotsWorkspaceCommand(scope())).resolves.toBeNull();
-    await expect(loadDotsWorkspaceCommandState(scope())).resolves.toEqual({ command, result: applied });
+    await expect(loadDotsWorkspaceCommandStates(scope())).resolves.toEqual([{ command, result: applied }]);
     expect(listener).toHaveBeenCalledTimes(2);
     expect(foreign).not.toHaveBeenCalled();
     const next = { ...command, requestId: dotId, name: '下一次' };
     await saveDotsWorkspaceCommand(scope(), next);
     await settleDotsWorkspaceCommand(scope(), command, applied);
-    await expect(loadDotsWorkspaceCommand(scope())).resolves.toEqual(next);
+    await expect(loadDotsWorkspaceCommandStates(scope())).resolves.toEqual([{ command: next }]);
     off(); offForeign();
 });

@@ -34,15 +34,17 @@ type MemoryTarget = DotMemoryTarget & { nonce: number };
 const memoryDraftKey = (draft: Pick<MemoryDraft, 'scope' | 'key'>) => JSON.stringify([draft.scope, draft.key.trim().normalize('NFC')]);
 
 /** Keep Happy's real conversation mounted while its host-backed work/memory panel changes. */
-export function DotSessionContent({ session, metadata, active, children, topInset = 0 }: {
-    session: Session; metadata: DotMetadata; active: boolean; children: (request: { id: string; text: string } | null) => React.ReactNode; topInset?: number;
+export function DotSessionContent({ session, metadata, active, children, topInset = 0, retired = false }: {
+    session: Pick<Session, 'id' | 'presence'>; metadata: DotMetadata; active: boolean; retired?: boolean;
+    children: (request: { id: string; text: string } | null) => React.ReactNode; topInset?: number;
 }) {
     const { theme } = useUnistyles();
     const { credentials, isAuthenticated } = useAuth(), server = getServerUrl();
     const colors = theme.colors;
     const realtime = useRealtimeStatus();
-    useSessionVisibility(session.id, active, false, realtime);
+    useSessionVisibility(session.id, active && !retired, false, realtime);
     const data = useDotsWorkspace(metadata.workspaceSessionId, metadata.workspaceId, active, metadata.dotId);
+    const pending = data.pendingFor(metadata.dotId);
     const currentDots = React.useRef(data);
     currentDots.current = data;
     const navigate = useNavigateToSession();
@@ -58,7 +60,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [memoryOpen, setMemoryOpen] = React.useState(false);
     const [memoryTarget, setMemoryTarget] = React.useState<MemoryTarget | null>(null);
     const memoryBinding = React.useMemo(() => ({}), [session.id, metadata.workspaceId, metadata.workspaceSessionId, metadata.dotId,
-        credentials?.token, credentials?.secret, server, isAuthenticated]);
+        credentials?.token, credentials?.secret, server, isAuthenticated, retired]);
     const memoryCurrent = React.useRef({ binding: memoryBinding, active });
     memoryCurrent.current = { binding: memoryBinding, active };
     const memoryAttempt = React.useRef<{ binding: object; request: DotMemoryEditRequest; running: boolean; uncertain: boolean } | null>(null);
@@ -100,7 +102,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const memoryBindingIsCurrent = () => memoryCurrent.current.binding === memoryBinding
         && isAuthenticated && Boolean(credentials?.token) && sync.getCredentials()?.token === credentials?.token
         && sync.getCredentials()?.secret === credentials?.secret && getServerUrl() === server;
-    const memoryIsCurrent = () => memoryBindingIsCurrent() && memoryCurrent.current.active
+    const memoryIsCurrent = () => !retired && memoryBindingIsCurrent() && memoryCurrent.current.active
         && currentDots.current.ready && currentDots.current.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
     const beginMemoryEdit = (draft: Omit<MemoryDraft, 'binding'>) => {
         if (!memoryIsCurrent()) { setNotice('工作台数据还没就绪，稍后再处理这条记忆。'); return; }
@@ -209,15 +211,15 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     };
     const replacement = data.projection?.snapshot?.ok ? data.projection.snapshot.dots.find(d => d.id === metadata.dotId)?.sessionId : undefined;
     React.useEffect(() => {
-        if (!active || !replacement || replacement === session.id || data.pending?.request.action === 'clear') return;
+        if (!active || !replacement || replacement === session.id || pending?.request.action === 'clear') return;
         const operation = navigation.begin();
         if (!operation) return;
         void operation.afterReady(() => sync.ensureSessionReady(replacement), () => {
             if (currentDots.current.projection?.snapshot?.dots.find(d => d.id === metadata.dotId)?.sessionId === replacement) navigate(replacement);
         }).catch(() => { if (operation.isCurrent()) setError('新对话暂时无法打开，请返回工作台刷新重试。'); });
-    }, [active, replacement, session.id, navigation, metadata.dotId, navigate, data.pending?.request.action, memoryBinding]);
+    }, [active, replacement, session.id, navigation, metadata.dotId, navigate, pending?.request.action, memoryBinding]);
     const clearConversation = async () => {
-        if (clearConfirming || currentDots.current.pending) return;
+        if (clearConfirming || currentDots.current.pendingFor(metadata.dotId)) return;
         const current = currentDots.current.projection?.snapshot;
         const dot = current?.dots.find(item => item.id === metadata.dotId && item.sessionId === session.id);
         if (!dot) return;
@@ -228,7 +230,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             const confirmed = await GlobalModal.confirm('清空当前对话？',
                 '将删除当前聊天记录并重置模型上下文，正在进行的聊天轮次会停止。用户与 Dot 长期记忆、身份、模型设置和授权保留；独立后台任务继续运行，旧任务回报不注入新对话。此操作不可撤销。',
                 { confirmText: '清空对话' });
-            if (!confirmed || !operation.isCurrent() || currentDots.current.pending) return;
+            if (!confirmed || !operation.isCurrent() || currentDots.current.pendingFor(metadata.dotId)) return;
             const latestDot = currentDots.current.projection?.snapshot?.dots
                 .find(item => item.id === metadata.dotId && item.sessionId === session.id);
             if (!latestDot) return;
@@ -272,16 +274,16 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const panel = <View style={{ flex: 1, minHeight: 0 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
             {wide && (['work', 'memory'] as const).map(item => tabButton(item, sideTab === item, () => setSideTab(item)))}
-            {(wide ? sideTab : tab) === 'work' && action('刷新工作项', () => { data.retry(); }, Boolean(data.pending), !wide)}
+            {(wide ? sideTab : tab) === 'work' && action('刷新工作项', () => void data.refresh(), data.refreshing, !wide)}
             {action('诊断详情', () => setDiagnosticMode('activity'), false, !wide)}
-            {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(data.pending) || clearConfirming, !wide)}
+            {action('清空当前对话', () => void clearConversation(), !data.ready || !own || Boolean(pending) || clearConfirming, !wide)}
             {action('可用连接与项目', () => setManagingConnections(true), false, !wide)}
         </View>
         <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }}>
             {data.refreshing && <Text style={body}>正在刷新工作与记忆…</Text>}
-            {data.pending && !data.pending.timedOut && <ActivityIndicator />}
+            {pending && <Text accessibilityLiveRegion="polite" style={body}>{pending.message}</Text>}
             {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
-            {data.pending?.timedOut && action('重试上次请求', () => { data.retry(); })}
+            {pending && action('核对回执', () => void data.checkReceipt(pending.request.requestId), pending.checking)}
             {(wide ? sideTab : tab) !== 'work' ? observationPanel('memory') : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
                     <Text style={heading}>工作项 · {detail.taskTotal}</Text>
                     <Text style={muted}>不同项目可以同时执行，同一项目默认最多 2 项，其余按排队顺序开始。</Text>
@@ -293,6 +295,14 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                 </>}
             {view && <Text style={muted}>更新于 {new Date(view.asOf).toLocaleString()}</Text>}
         </ScrollView>
+    </View>;
+    if (retired) return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, paddingTop: topInset, gap: 12 }}>
+        <Text accessibilityRole="header" style={body}>旧对话已删除</Text>
+        {pending && <>
+            <Text accessibilityLiveRegion="polite" style={body}>{pending.message}</Text>
+            {action('核对回执', () => void data.checkReceipt(pending.request.requestId), pending.checking)}
+        </>}
+        {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
     </View>;
     return <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, minHeight: 0, paddingTop: topInset }}>
         {managingConnections && active && <DotsConnectionsPanel key={`${session.id}:${metadata.dotId}`} sessionId={metadata.workspaceSessionId} workspaceId={metadata.workspaceId} dotId={metadata.dotId} onClose={() => setManagingConnections(false)} />}

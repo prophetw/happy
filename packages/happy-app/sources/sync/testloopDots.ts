@@ -29,6 +29,16 @@ export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('inspect'), dotId: uuid }).strict(),
 ]);
 export type TestloopDotsRequest = z.infer<typeof TestloopDotsRequestSchema>;
+export type DotsWorkspaceCommand = Exclude<TestloopDotsRequest, { action: 'list' | 'inspect' }>;
+
+export function isDotsWorkspaceCommand(request: TestloopDotsRequest): request is DotsWorkspaceCommand {
+    return request.action !== 'list' && request.action !== 'inspect';
+}
+
+// Creation uses the workspace's capacity. Updates, deletes and clears conflict on their Dot ID.
+export function dotsWorkspaceCommandTarget(command: DotsWorkspaceCommand) {
+    return command.action === 'create' ? undefined : command.dotId;
+}
 
 export function testloopDotsCommand(raw: TestloopDotsRequest): string {
     return '/dots ' + JSON.stringify(TestloopDotsRequestSchema.parse(raw));
@@ -128,8 +138,9 @@ export function projectTestloopDotsMessages(messages: readonly WorkspaceMessage[
         if (!receipt.ok || !receipt.deletedDot || request?.action !== 'delete' || request.dotId !== receipt.deletedDot.id) continue;
         deletions[receiptId] = { requestId: receiptId, revision: receipt.revision, ...receipt.deletedDot };
     }
-    const pending = commands.filter(row => !receipts[row.request.requestId]).at(-1)?.request ?? null;
-    return { snapshot: received.at(-1)?.snapshot ?? null, receipts, deletions, details, pendingRequest: pending };
+    const pendingRequests = [...requests.values()].filter((request): request is DotsWorkspaceCommand =>
+        isDotsWorkspaceCommand(request) && !receipts[request.requestId]);
+    return { snapshot: received.at(-1)?.snapshot ?? null, receipts, deletions, details, pendingRequests };
 }
 
 /** Reads update the directory and explicit deletion proofs, never an unrelated pending mutation. */
@@ -150,7 +161,9 @@ export function mergeDotsWorkspaceRead(history: ReturnType<typeof projectTestloo
 
 /** A validated terminal RPC receipt replaces waiting for a synthetic chat reply. */
 export function mergeDotsWorkspaceReceipt(history: ReturnType<typeof projectTestloopDotsMessages>, request: TestloopDotsRequest, receipt: TestloopDotsSnapshot) {
-    const next = mergeDotsWorkspaceRead(history, receipt);
+    // Ledger lookups can confirm a mutation independently of the current model catalog.
+    const modelOptions = receipt.modelOptions ?? history.snapshot?.modelOptions;
+    const next = mergeDotsWorkspaceRead(history, modelOptions && !receipt.modelOptions ? { ...receipt, modelOptions } : receipt);
     const deletions = { ...next.deletions };
     if (receipt.ok && request.action === 'delete' && receipt.deletedDot?.id === request.dotId)
         deletions[request.requestId] = { requestId: request.requestId, revision: receipt.revision, ...receipt.deletedDot };
