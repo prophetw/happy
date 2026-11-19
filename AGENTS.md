@@ -55,18 +55,19 @@
 
 “preview prophet” / “prophetw preview” 指下面的个人项目与渠道，
 不是名为 `prophet` 的 Git 分支或 EAS channel。
-下表是当前发布约定：Git 来源统一为个人 `main`；Expo 身份依据既有发布记录
-（最近核对到 2026-10-23），每次发布仍要核验实际目标。
+常规发布使用个人 `main`。下表的 Expo 身份与渠道于 2026-11-19 通过构建记录和
+在服 manifest 核对，每次发布仍要核验实际目标。
 
 | 项目 | 个人发布约定 |
 | --- | --- |
 | Git 来源 | 个人 `main`，与 `fork/main` 一致 |
 | Expo owner / slug | `prophetwayen` / `happy`（`@prophetwayen/happy`） |
 | EAS project ID | `1d018bd8-34db-4b57-a0a9-61f24671153e` |
+| App 显示名 | `Happy (preview)` |
 | App variant | `APP_ENV=preview` |
 | EAS environment | `preview` |
 | EAS channel | `preview` |
-| EAS update branch | `preview` |
+| EAS update branch | `preview-prophet` |
 | iOS bundle identifier | `com.prophetwayen.happy.preview` |
 | 已有原生 runtime | `21`，以手机安装包和构建记录为准 |
 
@@ -113,8 +114,8 @@ runtime，并用 `eas project:info` 核对目标。只输出必要的非敏感�
 3. 将 HEAD 与该个人渠道最近一次发布的提交比较，确认不会遗漏已发布功能。
    发现分叉或缺失提交先调查，不能靠“最后发布的 OTA 会覆盖旧包”掩盖功能回退。
 4. 核验个人 Expo 项目、渠道映射、平台、bundle identifier 和 runtime。
-   历史记录中个人 `production` channel 曾与 `preview` 指向同一 update branch；
-   发布前检查实际映射并说明影响范围，不擅自修改 channel 映射。
+   2026-11-19 将 `preview` channel 切到 `preview-prophet`，`production` 保持指向旧 `preview` 分支。
+   发布前检查实际映射并说明影响范围。映射变更需用户授权。
 5. 完成与变更相匹配的验证。在 App 目录运行
    `pnpm exec tsx sources/scripts/parseChangelog.ts`，确认生成的
    `sources/changelog/changelog.json` 与已提交版本一致；有差异时先按授权处理源码提交，
@@ -141,18 +142,18 @@ runtime 不必永远固定为 `21`：纯 JS 更新保持兼容 runtime，原生�
 
 ```bash
 pnpm typecheck &&
-  eas update --branch preview --environment preview --platform ios \
+  eas update --branch preview-prophet --environment preview --platform ios \
     --message "<本次变更说明> (<来源短 SHA>)" --non-interactive
 ```
 
-不要用 `--auto` 代替明确的 EAS branch；Git 发布分支为 `main`，
-EAS update branch / channel 仍为 `preview`，无需为了统一 Git 主线而改名。
-不使用指向 production workflow 的 `pnpm ota:production` 代替个人 preview 发布。
+个人 Preview 使用上面的显式 EAS 命令。Git 发布分支为 `main`，EAS 更新分支为
+`preview-prophet`，原生构建的 EAS channel 仍为 `preview`。
+现有 `pnpm ota` 指向旧 `preview` 分支，`pnpm ota:production` 指向 production workflow。
 
 发布后在同一个人项目下回读：
 
 ```bash
-eas update:list --branch preview --limit 1 --non-interactive --json
+eas update:list --branch preview-prophet --platform ios --limit 1 --non-interactive --json
 ```
 
 核对最新 update 的来源 SHA、平台、runtime 与本次发布一致，记录 update ID 和链接。

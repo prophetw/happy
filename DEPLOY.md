@@ -1,5 +1,22 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Codex 模型与推理强度同步（2026-11-19，Preview prophet iOS 热更）
+
+19:38（UTC+8）将个人 `@prophetwayen/happy` 的 `preview` channel 切到独立分支 `preview-prophet`，分支 ID 为 `01a1f396-f844-7e92-a6d4-5820de520bd9`。`Happy (preview)` 的 iOS bundle ID 为 `com.prophetwayen.happy.preview`，已核验内部构建为 `1.8.0 (4)` 和 `1.7.0 (1、3)`，使用 runtime `21`。`production` 保持指向原 `preview` 分支，分支 ID 为 `01a032d2-3992-7a93-8b29-055bacb97671`。
+
+在 iOS 在服基线 `40e907bdc` 上合入 `853f592b4` 的四个 App 文件，复用候选 `0cf0f2d0f7d52a2aef3f763bd43c4b58b62c9e6c` 的 Hermes 包，仅发布 iOS runtime `21`。切换前按更新 ID 下载验证，切换后以 `preview` 和 `production` 原生请求参数回读。Preview iOS 启动包 SHA-256 为 `7ab7bb6aebb5adce5c8c6e8cad9ab2106e5b525c57b06ab12a20ff0046f602ac`。曾加载前一更新的 Preview 请求也返回新 manifest。真机加载未验证。[iOS 更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/455216e6-839e-4f49-a2d0-71fa45437224)
+
+| 渠道与平台（runtime `21`） | 切换后实际更新 ID | 版本 |
+| --- | --- | --- |
+| `preview` iOS | `01a1f399-37f7-7c10-9644-8387e0145413` | `0cf0f2d0f` |
+| `production` iOS | `01a1f14d-1850-70e3-b627-9c861cd3f8d0` | 原组 `b4498665-755c-46b8-91f1-723cf665f3af` |
+| `preview` Android | `01a1f397-614d-7e31-8b0c-01c73419a05b` | `8ca54cde9` 的现有包，启动包及 612 项资源哈希相同 |
+| `production` Android | `01a1d2da-e9d5-7bab-ab61-2ff5aede7b44` | 原组 `fd277973-51d7-40e4-aaa4-a76334af1fcb` |
+
+原分支的 92 个更新组均为 runtime `21`。两渠道的 iOS 和 Android 对抽查的 runtime `20`、`22` 在切换前后均返回 HTTP `204`。原 iOS 更新另复制在专用分支的 `832bcd7f-bcdb-4b9b-a109-e6fae965c51c` 组，启动包及 605 项资源哈希相同。
+
+需要恢复服务端原路由时，可将 `preview` channel 指回 `preview` 分支。需要替换已经缓存候选的 iOS 客户端时，保持 Preview 在专用分支，从 `832bcd7f-bcdb-4b9b-a109-e6fae965c51c` 组向 `preview-prophet` 重发 iOS 更新并回读两个渠道。发布和回退证据保存在 `~/.local/state/happy-ios-codex-mode-853f592b4.0VB1nwOV/preview-release.bEluWUI8/release-verification.json`。
+
 ## Codex 派活模型与推理强度同步（2026-11-19，Worker 和 8989 已更新）
 
 Worker 使用个人 `fork/main` 提交 `853f592b4d16d78bcedfd40bcaace35f55fb0461` 的固定产物 `codex-session-mode-853f592b4`。独立维护单元 `happy-automation-maintenance-codex-session-mode-853f592b4.service` 成功退出，新 Worker PID 为 `3056137`，签名轮询和原授权的 `happy_options` 均成功。26 个原会话进程根身份保持，1231 个停写冷备文件和 682 个发布文件通过摘要校验。发布后排队、整机独占和未确认占用均为零。
