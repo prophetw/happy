@@ -1,5 +1,15 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## 最近项目任务工作区清理（2026-11-19，Web / iOS Preview 已发布）
+
+修复提交 `7ccc329db` 由干净、与当次 `fork/main` 一致的 `40e907bdc76be0158bc948927e76b1862e600d7d` 发布。最近项目会过滤已保存和由旧会话回填的 Happy Control 任务工作树路径。可识别来源项目的会话仍使用来源路径。App 类型检查、changelog 一致性和 100 项定向测试通过。
+
+- 线上 Web 原地切换静态入口。本机、Tailscale 和公网回读的首页 SHA256 均为 `5036d0f730d0c732504c012b6aec62df42b1840cfe8e0fc1ba77cf9a946907d4`，引用的三个启动 JS 逐字节与导出一致。真实账号的项目搜索可找到普通项目，搜索历史任务编号返回空，页面、Console 和请求错误数为零。
+- 个人 `@prophetwayen/happy` 的 iOS Preview OTA 使用 runtime 21，更新 ID 为 `01a1f14d-1850-70e3-b627-9c861cd3f8d0`。现有 `preview` 与 `production` 映射同一分支，两边实际 manifest 和启动包均核对通过。启动包 SHA256 为 `eb0a6d2c5e606cb99632df8028b8a9eb2ef24599fe1dc4baebc55e2e517b0d69`。iPhone 真机加载未验证。[EAS 更新组](https://expo.dev/accounts/prophetwayen/projects/happy/updates/b4498665-755c-46b8-91f1-723cf665f3af)
+- 两端发布核验后，通过版本校验更新账号的 `recentProjects`。从 81 条中移除 37 条任务工作树历史，保留其余 44 条。写入后逐字段核对通过，延迟回读版本 2888 仍为 44 条，其中任务工作树历史为 0。清理前加密备份保存在 `~/.local/state/happy-recent-projects-backups/20261119T005945689793Z-settings-v2887.json`。
+
+私有证据在 `~/.local/state/happy-recent-projects-release-20261119.Y7Q6qis7`。Web 旧版保存在 `previous-web/`，回退预检通过。Web 候选包曾因 Metro 缓存携带旧提交标记被预检拒绝，隔离缓存重建后才切换。EAS 上传连接中断后自动重试成功。匿名浏览器等待渲染后复验通过，首次检查结果另存。
+
 ## Happy Dot 重启后派发恢复（2026-11-19，WSL Worker 已部署）
 
 11 月 19 日 07:20（UTC+8）WSL 启动。07:21:54 至 07:26:07，受管 Worker 连续 9 次在认证读取 Relay 机器记录时遇到 `ECONNRESET`，每次退出都释放了 Happy home。07:26:33，旧版普通 daemon（PID 82549）在重试间隙取得该目录，已授权的 Dot 随即无法找到执行端。07:43:03 受管 Worker 重新连接时，systemd 已累计重启 41 次。
