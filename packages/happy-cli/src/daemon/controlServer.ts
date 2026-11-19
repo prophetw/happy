@@ -20,6 +20,7 @@ export function startDaemonControlServer({
   onHappySessionWebhook,
   onHappySessionStartupFailed,
   getConnectionStatus,
+  isMachineVerified,
 }: {
   getChildren: () => TrackedSession[];
   stopSession: (sessionId: string) => boolean;
@@ -28,6 +29,7 @@ export function startDaemonControlServer({
   onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
   onHappySessionStartupFailed?: (pid: number, errorMessage: string) => void;
   getConnectionStatus?: () => { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
+  isMachineVerified?: () => boolean;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = fastify({
@@ -38,6 +40,14 @@ export function startDaemonControlServer({
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>();
+    if (isMachineVerified) {
+      app.addHook('onRequest', async (request, reply) => {
+        // Older CLIs probe /list for daemon ownership while the Relay is starting.
+        if (!isMachineVerified() && !['/list', '/status', '/stop'].includes(request.routeOptions.url ?? '')) {
+          return reply.code(503).send({ error: 'AUTOMATION_MACHINE_NOT_READY' });
+        }
+      });
+    }
 
     typed.post('/status', async () => getConnectionStatus?.() ?? { machineId: null, connected: false });
 

@@ -1,4 +1,5 @@
-import { lstat, open } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { link, lstat, open, unlink } from 'node:fs/promises';
 import type { Credentials } from '@/persistence';
 import { cleanupAutomationDaemon } from './automationShutdown';
 /** No login callback exists in this production path. Missing data always rejects. */
@@ -21,8 +22,20 @@ export async function assertNoAutomationDaemonState(path: string) {
 
 /** Dedicated managed entry never steals an unreadable/stale/EPERM lock. */
 export async function acquireAutomationDaemonLock(path: string) {
-    try { const fd = await open(path, 'wx', 0o600); await fd.writeFile(String(process.pid)); await fd.sync(); return fd; }
-    catch { throw new Error('AUTOMATION_DAEMON_LOCK_UNAVAILABLE'); }
+    // The legacy CLI reclaims empty locks. Publish the PID and inode together.
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    const fd = await open(temporary, 'wx', 0o600).catch(() => { throw new Error('AUTOMATION_DAEMON_LOCK_UNAVAILABLE'); });
+    try {
+        await fd.writeFile(String(process.pid));
+        await fd.sync();
+        await link(temporary, path);
+        return fd;
+    } catch {
+        await fd.close();
+        throw new Error('AUTOMATION_DAEMON_LOCK_UNAVAILABLE');
+    } finally {
+        await unlink(temporary);
+    }
 }
 
 async function ownedAutomationLock(path: string, handle: Awaited<ReturnType<typeof open>>, pid: number) {

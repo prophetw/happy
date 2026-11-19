@@ -81,11 +81,13 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
   // In case the setup malfunctions - our signal handlers will not properly
   // shut down. We will force exit the process with code 1.
   let shutdownRequested = false;
+  const startupAbort = new AbortController();
   let requestShutdown: (source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
   let resolvesWhenShutdownRequested = new Promise<({ source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string })>((resolve) => {
     requestShutdown = (source, errorMessage) => {
       if (shutdownRequested) return;
       shutdownRequested = true;
+      startupAbort.abort();
       logger.debug(`[DAEMON RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
 
       // Fallback - in case startup malfunctions - we will force exit the process with code 1
@@ -1019,8 +1021,10 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     };
 
     let connectionReady = () => false;
+    let machineVerified = false;
     // Start control server
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
+      isMachineVerified: options.existingOnly ? () => machineVerified : undefined,
       getChildren: getCurrentChildren,
       stopSession,
       spawnSession,
@@ -1074,7 +1078,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     };
 
     // Get or create machine
-    const machine = options.existingOnly ? await verifyManagedStartupMachine(() => api.getExistingAutomationMachine(machineId), {
+    const machine = options.existingOnly ? await verifyManagedStartupMachine(() => api.getExistingAutomationMachine(machineId, startupAbort.signal), {
       statePath: configuration.daemonStateFile, lockPath: configuration.daemonLockFile, handle: daemonLockHandle,
       stopControl: stopControlServer, closeCredentials: options.closeAutomationCredentials, stopCaffeinate,
       report: (phase, outcome) => logger.debug(`[DAEMON RUN] Managed startup cleanup ${phase}: ${outcome}`),
@@ -1084,6 +1088,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       daemonState: initialDaemonState
     });
     if (options.existingOnly) machine.daemonState = initialDaemonState;
+    machineVerified = true;
     logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
     // Create realtime machine session

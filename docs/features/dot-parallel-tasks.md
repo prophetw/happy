@@ -79,7 +79,7 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 开机清理复用系统的 `systemd-tmpfiles-setup.service`。将 `deploy/automation/happy-automation-worker.tmpfiles.conf` 安装为 `/etc/tmpfiles.d/happy-automation-worker.conf`，其中两条 `r!` 规则在早期开机阶段移除上次留下的 daemon state 和 PID 锁。安装到运行中的宿主只复制规则，真实 home 上的 `--remove --boot` 会移除当前持有者的文件。可用 `node --test deploy/automation/worker-boot.test.mjs` 在临时根目录验证两种模式。
 
-将同目录的 `happy-automation-worker-boot.conf` 安装为该 Worker 的 `service.d/50-boot-recovery.conf`（完整目录为 `/etc/systemd/system/happy-automation-worker.service.d/`），执行 `systemctl daemon-reload`。Worker 在 Docker 和开机清理之后启动，启动失败后每 30 秒重试，60 秒内的启动上限为 3 次。用 `systemctl show happy-automation-worker.service -p After -p RestartUSec -p StartLimitIntervalUSec -p StartLimitBurst` 核对实际配置。回退只需撤下这两个配置文件并重新加载 systemd。
+将同目录的 `happy-automation-worker-boot.conf` 安装为该 Worker 的 `service.d/50-boot-recovery.conf`（完整目录为 `/etc/systemd/system/happy-automation-worker.service.d/`），执行 `systemctl daemon-reload`。Worker 在开机清理后即可取得 Happy home 的 PID 锁，Docker 可以同时启动。Relay 的 HTTPS 连接暂时中断或网关返回 502/503/504 时，同一 Worker 每 5 秒重试已有机器的认证读取并持续持锁。旧 CLI 可通过本地 `/list` 识别持有者。机器身份通过验证前，本地会话操作返回 503。认证被拒、证书不受信任或机器记录无效时，Worker 按原流程退出，由 systemd 每 30 秒重新启动。用 `systemctl show happy-automation-worker.service -p After -p RestartUSec -p StartLimitIntervalUSec -p StartLimitBurst` 和本次启动日志核对配置与实际持有者。
 
 开机验收包括受管 PID 与 state/lock 一致、原机器连接、签名轮询和原 Dot 授权的 `happy_options`。若实际派发仍为 `waiting-resource`，用 `scripts/check-worker-queue.mjs` 核对占用；普通 daemon 交接来的活会话可用切换前登记、冷备和当前进程身份补齐其任务归属证明。
 

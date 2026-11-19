@@ -13,10 +13,13 @@ import { notifyDaemonSessionStarted, notifyDaemonSessionStartupFailed } from './
 
 describe('daemon startup notifications over HTTP', () => {
     let server: Awaited<ReturnType<typeof startDaemonControlServer>>;
+    let machineVerified: boolean;
 
     beforeEach(async () => {
         vi.clearAllMocks();
+        machineVerified = true;
         server = await startDaemonControlServer({
+            isMachineVerified: () => machineVerified,
             getChildren: () => [],
             stopSession: () => false,
             spawnSession: async () => ({ type: 'error', errorMessage: 'unused' }),
@@ -28,6 +31,22 @@ describe('daemon startup notifications over HTTP', () => {
     });
 
     afterEach(async () => { await server.stop(); });
+
+    it('keeps the owner visible to older CLIs while rejecting session writes until verification', async () => {
+        machineVerified = false;
+        const post = (path: string, body: object) => fetch(`http://127.0.0.1:${server.port}${path}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        expect((await post('/list', {})).status).toBe(200);
+        expect(await (await post('/status', {})).json()).toMatchObject({connected:false});
+        expect((await post('/spawn-session', {directory:'/tmp'})).status).toBe(503);
+        const report = {pid:42,errorMessage:'fixture'};
+        expect((await post('/session-startup-failed', report)).status).toBe(503);
+        expect(mocks.startupFailed).not.toHaveBeenCalled();
+        machineVerified = true;
+        expect((await post('/session-startup-failed', report)).status).toBe(200);
+        expect(mocks.startupFailed).toHaveBeenCalledOnce();
+    });
 
     it('delivers the provider startup error without registering a ready session', async () => {
         const errorMessage = 'Codex thread native-thread already has an active writer';
