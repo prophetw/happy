@@ -9,6 +9,7 @@ vi.mock('../api/apiMachine',()=>({ApiMachineClient:class{}}));
 vi.mock('../api/pushNotifications',()=>({PushNotificationClient:class{}}));
 vi.mock('../api/encryption',()=>({decodeBase64:(s:string)=>s,decrypt:mocks.decrypt}));
 import { ApiClient } from '../api/api';
+import { verifyAutomationWorkerOwner } from '../api/automationIdentity';
 const credentials={token:'fixture-only-bearer',encryption:{type:'dataKey' as const,publicKey:new Uint8Array(32),machineKey:new Uint8Array(32)}};
 beforeEach(()=>{vi.resetAllMocks();mocks.decrypt.mockReturnValue({host:'fixture-machine'});});
 describe('existing machine production GET-only preflight',()=>{
@@ -23,6 +24,21 @@ describe('existing machine production GET-only preflight',()=>{
         for (const [url, options] of mocks.get.mock.calls) {
             expect(url).toBe('https://relay.fixture.invalid/v1/machines');
             expect(options).toMatchObject({signal,maxRedirects:0,headers:{Authorization:'Bearer fixture-only-bearer'}});
+        }
+        expect(mocks.post).not.toHaveBeenCalled();
+    });
+    it('keeps checking the original account through a temporary failure and refuses a different owner or denial', async () => {
+        const { signal } = new AbortController();
+        const verify = () => verifyAutomationWorkerOwner('https://relay.fixture.invalid', credentials.token, 'owner', signal);
+        mocks.get.mockRejectedValueOnce({ isAxiosError: true, response: { status: 503 } }).mockResolvedValueOnce({ data: { id: 'owner' } });
+        await expect(verify()).resolves.toBeUndefined();
+        mocks.get.mockResolvedValueOnce({ data: { id: 'other' } }).mockRejectedValueOnce({ isAxiosError: true, response: { status: 403 } });
+        await expect(verify()).rejects.toThrow('AUTOMATION_WORKER_OWNER_UNVERIFIED');
+        await expect(verify()).rejects.toThrow('AUTOMATION_WORKER_OWNER_UNVERIFIED');
+        expect(mocks.pause).toHaveBeenCalledTimes(1);
+        for (const [url, options] of mocks.get.mock.calls) {
+            expect(url).toBe('https://relay.fixture.invalid/v1/account/profile');
+            expect(options).toMatchObject({ signal, maxRedirects: 0, headers: { Authorization: 'Bearer fixture-only-bearer' } });
         }
         expect(mocks.post).not.toHaveBeenCalled();
     });

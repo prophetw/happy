@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { setTimeout as delay } from 'node:timers/promises'
+import { readAutomationIdentity } from './automationIdentity'
 import { logger } from '@/ui/logger'
 import type { AgentState, CreateSessionResponse, Metadata, Session, Machine, MachineMetadata, DaemonState } from '@/api/types'
 import { ApiSessionClient, type SessionClientOptions } from './apiSession';
@@ -178,36 +178,12 @@ export class ApiClient {
     }
   }
 
-  /**
-   * Register or update machine with the server
-   * Returns the current machine state from the server with decrypted metadata and daemonState
-   */
   /** Production automation preflight: never registers/recreates a missing machine or downgrades offline. */
   async getExistingAutomationMachine(machineId: string, signal?: AbortSignal): Promise<Machine> {
     try {
       if (this.credential.encryption.type !== 'dataKey') throw new Error();
-      const readMachines = () => axios.get(`${this.serverUrl}/v1/machines`, {
-        headers: { Authorization: `Bearer ${this.credential.token}` }, timeout: 10000, maxRedirects: 0, signal,
-      });
-      let response: Awaited<ReturnType<typeof readMachines>>;
-      let waiting = false;
-      for (;;) {
-        signal?.throwIfAborted();
-        try {
-          response = await readMachines();
-          break;
-        } catch (error) {
-          if (!signal || signal.aborted || !axios.isAxiosError(error)) throw error;
-          const transient = error.response ? [502, 503, 504].includes(error.response.status)
-            : isNetworkError(error.code) || error.code === 'EAI_AGAIN' || error.code === 'ECONNABORTED';
-          if (!transient) throw error;
-          if (!waiting) logger.debug('[DAEMON RUN] Waiting for Relay before existing-machine verification');
-          waiting = true;
-          await delay(5000, undefined, { signal });
-        }
-      }
-      signal?.throwIfAborted();
-      const raw = response.data.find((m: { id: string }) => m.id === machineId);
+      const machines = await readAutomationIdentity(this.serverUrl, this.credential.token, '/v1/machines', signal);
+      const raw = machines.find((m: { id: string }) => m.id === machineId);
       if (!raw?.dataEncryptionKey || !raw.metadata) throw new Error();
       const key = this.credential.encryption.machineKey;
       const metadata = decrypt(key, 'dataKey', decodeBase64(raw.metadata));

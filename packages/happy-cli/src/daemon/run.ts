@@ -1077,18 +1077,15 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       startedAt: Date.now()
     };
 
-    // Get or create machine
-    const machine = options.existingOnly ? await verifyManagedStartupMachine(() => api.getExistingAutomationMachine(machineId, startupAbort.signal), {
+    const beforeRelayConnect = <T>(verify: () => Promise<T>) => options.existingOnly ? verifyManagedStartupMachine(verify, {
       statePath: configuration.daemonStateFile, lockPath: configuration.daemonLockFile, handle: daemonLockHandle,
       stopControl: stopControlServer, closeCredentials: options.closeAutomationCredentials, stopCaffeinate,
       report: (phase, outcome) => logger.debug(`[DAEMON RUN] Managed startup cleanup ${phase}: ${outcome}`),
-    }) : await api.getOrCreateMachine({
-      machineId,
-      metadata: initialMachineMetadata,
-      daemonState: initialDaemonState
-    });
+    }) : verify();
+    const machine = options.existingOnly
+      ? await beforeRelayConnect(() => api.getExistingAutomationMachine(machineId, startupAbort.signal))
+      : await api.getOrCreateMachine({ machineId, metadata: initialMachineMetadata, daemonState: initialDaemonState });
     if (options.existingOnly) machine.daemonState = initialDaemonState;
-    machineVerified = true;
     logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
     // Create realtime machine session
@@ -1130,12 +1127,14 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       requestShutdown: () => requestShutdown('happy-app')
     });
 
-    // Connect to server
-    apiMachine.connect();
-    const automationWorker = options.automation ? await startDaemonAutomation(options.automation, {
+    const automation = options.automation;
+    const automationWorker = automation ? await beforeRelayConnect(() => startDaemonAutomation(automation, {
       machine, token: credentials.token, serverUrl: configuration.serverUrl, happyHomeDir: configuration.happyHomeDir,
       sessions: () => [...sessionIdToFinishedSession.values(), ...getCurrentChildren()], control: automationControl,
-    }) : null;
+      startupSignal: options.existingOnly ? startupAbort.signal : undefined,
+    })) : null;
+    machineVerified = true;
+    apiMachine.connect();
 
     // Every 60 seconds:
     // 1. Prune stale sessions

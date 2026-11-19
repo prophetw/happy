@@ -65,9 +65,9 @@ export async function releaseOwnedAutomationLock(statePath: string, lockPath: st
     await unlink(lockPath); await handle.close();
 }
 
-/** The existing-machine read happens after local state/listener creation. A rejected
+/** Machine and account verification happen after local state/listener creation. A rejected
  * read must not poison every subsequent supervised retry with our own stale state.
- * This seam is only for that pre-connection phase: no worker or relay client exists.
+ * The listener stays read-only and the Relay socket stays disconnected until both succeed.
  */
 export async function verifyManagedStartupMachine<T>(verify: () => Promise<T>, ownership: {
     statePath: string; lockPath: string; handle: Awaited<ReturnType<typeof open>>;

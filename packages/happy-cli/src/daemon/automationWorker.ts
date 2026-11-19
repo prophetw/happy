@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import axios from 'axios';
+import { verifyAutomationWorkerOwner } from '@/api/automationIdentity';
 import { createDaemonTransport, HTTPWorkerRunner, ProofClient, type ProofIdentity, type WorkerRegistration } from 'happy-agent/automation';
 import type { Machine } from '@/api/types';
 import type { TrackedSession } from './types';
@@ -12,13 +12,11 @@ export type DaemonAutomationOptions = {
 export async function startDaemonAutomation(options: DaemonAutomationOptions, bindings: {
     machine: Machine; token: string; serverUrl: string; happyHomeDir: string;
     sessions: () => TrackedSession[]; control: (input: unknown) => Promise<unknown>;
+    startupSignal?: AbortSignal;
 }) {
     if (options.registration.id !== options.identity.id || options.registration.machineID !== bindings.machine.id
         || bindings.machine.encryptionVariant !== 'dataKey') throw new Error('AUTOMATION_WORKER_IDENTITY_MISMATCH');
-    try {
-        const profile = await axios.get(`${bindings.serverUrl}/v1/account/profile`, { headers: { Authorization: `Bearer ${bindings.token}` }, timeout: 10000, maxRedirects: 0 });
-        if (profile.data.id !== options.registration.userID) throw new Error('mismatch');
-    } catch { throw new Error('AUTOMATION_WORKER_OWNER_UNVERIFIED'); }
+    await verifyAutomationWorkerOwner(bindings.serverUrl, bindings.token, options.registration.userID, bindings.startupSignal);
     const machine = bindings.machine;
     const transport = createDaemonTransport({ ...bindings,
         machine: () => ({ ...machine, seq: 0, createdAt: 0, updatedAt: 0, active: true, activeAt: Date.now(), daemonState: null, dataEncryptionKey: null,
