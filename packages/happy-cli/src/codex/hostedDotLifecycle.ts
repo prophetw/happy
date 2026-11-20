@@ -5,17 +5,21 @@ import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { z } from 'zod';
 import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, hash, HostedDotJournal, savePrivate } from './hostedDotState';
 import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend } from './hostedDotStorage';
+import { withLockedHostedAdmission } from './hostedDotAdmission';
 
 export const HOSTED_DOT_LIFECYCLE_VERSION = 1 as const;
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const Binding = z.strictObject({ directory: z.string().startsWith('/'), dotId: z.string().uuid(), sessionId: z.string().min(1) });
 export type HostedDotBinding = z.infer<typeof Binding>;
 const Identity = HostedAuthorityMetadata.shape.producer;
+const HeldRecovery = z.strictObject({ binding: Binding, owner: Identity, epoch: integer, revision: integer.positive(),
+    operationId: z.string().min(1).max(160), journalSHA256: z.string().regex(/^[0-9a-f]{64}$/) });
 const Clear = Binding.extend({ requestId: z.string().min(1).max(200), epoch: integer.positive(), codexHome: z.string().startsWith('/') });
 type ClearRequest = z.infer<typeof Clear>;
 const settingsSchema = HostedDotConfig.pick({ model: true, effort: true });
 const recoverable = new Set(['hosted_start_or_recovery_failed', 'hosted_mcp_refresh_failed']);
 const uncertain = new Set(['dispatching', 'accepted', 'unknown']);
+const settledInputs = new Set(['completed', 'interrupted', 'rejected', 'failed']);
 const backoff = [0, 30_000, 120_000, 600_000, 1_800_000];
 function safePath(path: string) {
     if (!isAbsolute(path) || resolve(path) !== path) throw Error('hosted_lifecycle_path_invalid');
@@ -144,6 +148,15 @@ function unfenced(b: HostedDotBinding) {
     const control = join(b.directory, 'control.json');
     if (present(control) && read(control).action === 'delete') throw Error('hosted_lifecycle_deleted');
 }
+function beginRecovery(b: HostedDotBinding, state: NonNullable<ReturnType<typeof readHostedStorage>>) {
+    const file = join(b.directory, 'recovery.json');
+    const prior = present(file) ? z.strictObject({ attempts: integer.positive(), lastAttemptAt: integer }).parse(read(file)) : { attempts: 0, lastAttemptAt: 0 };
+    if (prior.attempts && Date.now() - prior.lastAttemptAt < backoff[Math.min(prior.attempts, backoff.length - 1)]) return { recovered: false, reason: 'backoff' };
+    // Account the attempt first. A crash may delay recovery, never erase backoff.
+    write(file, { attempts: prior.attempts + 1, lastAttemptAt: Date.now() });
+    saveHostedStorage(join(b.directory, 'state.json'), { ...state, status: 'starting', error: null });
+    return { recovered: true };
+}
 function recoverLocked(b: HostedDotBinding) {
     unfenced(b);
     const status = statusHostedDot(b);
@@ -152,14 +165,43 @@ function recoverLocked(b: HostedDotBinding) {
     try {
         const config = configFor(b), state = journalFor(b, config, true);
         if (!state || state.status !== 'blocked' || !recoverable.has(state.error ?? '') || state.bootstrap?.stage === 'injecting' || state.inputs.some(row => uncertain.has(row.status))) return { recovered: false, reason: 'not_safe' };
-        const file = join(b.directory, 'recovery.json');
-        const prior = present(file) ? z.strictObject({ attempts: integer.positive(), lastAttemptAt: integer }).parse(read(file)) : { attempts: 0, lastAttemptAt: 0 };
-        if (prior.attempts && Date.now() - prior.lastAttemptAt < backoff[Math.min(prior.attempts, backoff.length - 1)]) return { recovered: false, reason: 'backoff' };
-        // Account the attempt first. A crash may delay recovery, never erase backoff.
-        write(file, { attempts: prior.attempts + 1, lastAttemptAt: Date.now() });
-        saveHostedStorage(join(b.directory, 'state.json'), { ...state, status: 'starting', error: null });
-        return { recovered: true };
+        return beginRecovery(b, state);
     } finally { release(); }
+}
+/** Explicit local maintenance of a stopped producer. The caller supplies the digest
+ * of its complete cold journal. A fresh producer must still acknowledge the pause. */
+export function recoverHeldHostedDot(raw: z.infer<typeof HeldRecovery>) {
+    const proof = HeldRecovery.parse(raw), b = binding(proof.binding);
+    const refuse = { recovered: false, reason: 'not_safe' };
+    const releaseLaunch = lock(join(b.directory, 'launch.lock'));
+    try {
+        unfenced(b);
+        return withLockedHostedAdmission({ ...b, epoch: proof.epoch }, ({ desired, status }) => {
+            if (desired?.operation.action !== 'pause' || desired.operation.id !== proof.operationId || desired.revision !== proof.revision
+                || status?.phase !== 'stopped' || status.revision !== proof.revision || status.operationId !== proof.operationId
+                || hash(status.owner) !== hash(proof.owner) || alive(proof.owner)) return refuse;
+            const releaseRuntime = lock(join(b.directory, 'runtime.lock'), 0);
+            try {
+                const ownerFile = join(b.directory, 'owner.json'), controlFile = join(b.directory, 'control.json');
+                if (!present(ownerFile) || hash(Identity.parse(read(ownerFile))) !== hash(proof.owner)) return refuse;
+                const config = configFor(b), stored = readHostedStorage(join(b.directory, 'state.json'));
+                if (!config || !stored || hash(stored) !== proof.journalSHA256) return refuse;
+                const state = HostedDotJournal.parse(stored);
+                if (!state.authority || hash(state.authority.producer) !== hash(proof.owner) || state.binding !== hash(config)
+                    || state.epoch !== proof.epoch || state.epoch < floor(b.directory) || !state.threadId || state.creating
+                    || state.status !== 'blocked' || state.error !== 'hosted_admission_file_invalid' || state.bootstrap?.stage === 'injecting') return refuse;
+                if (state.inputs.some(i => !i.id || !settledInputs.has(i.status)) || state.outputs.some(o => !o.sent || !o.localId)
+                    || new Set(state.inputs.map(i => i.id)).size !== state.inputs.length
+                    || new Set(state.outputs.map(o => o.localId)).size !== state.outputs.length) return refuse;
+                if (present(controlFile)) {
+                    const control = read(controlFile);
+                    if (control.action !== 'stop' || !state.controls.includes(control.id)) return refuse;
+                }
+                // Preserve historical fields and receipts that a schema projection could omit.
+                return beginRecovery(b, stored);
+            } finally { releaseRuntime(); }
+        });
+    } finally { releaseLaunch(); }
 }
 export function recoverHostedDot(raw: HostedDotBinding) {
     const b = binding(raw); mkdirSync(b.directory, { recursive: true, mode: 0o700 });

@@ -110,6 +110,11 @@ export function readHostedAdmission(raw: AdmissionBinding) {
         acknowledged: Boolean(status && status.phase !== 'stopped' && alive(status.owner) && status.revision === (desired?.revision ?? 0)),
         expired: Boolean(desired?.operation.action === 'pause' && desired.operation.leaseUntil < Date.now()) };
 }
+/** Serialize a local lifecycle operation with native pause/resume requests. */
+export function withLockedHostedAdmission<T>(raw: AdmissionBinding, action: (admission: ReturnType<typeof readHostedAdmission>) => T): T {
+    const b = check(raw), release = lock(b.directory, 'admission.lock');
+    try { return action(readHostedAdmission(b)); } finally { release(); }
+}
 /** CAS command. A stopped runtime can be boot-held explicitly; a legacy live runtime is refused. */
 export function requestHostedAdmission(raw: AdmissionBinding & { operation: z.infer<typeof Operation>; bootstrapStopped?: boolean }) {
     const b = check({ directory: raw.directory, dotId: raw.dotId, sessionId: raw.sessionId, epoch: raw.epoch }), op = Operation.parse(raw.operation), release = lock(b.directory, 'admission.lock');
