@@ -357,6 +357,69 @@ describe('bounded concurrent worker observation', () => {
 });
 
 describe('durable dispatch evidence', () => {
+    it('observes a concurrent same-ID retry without withdrawing its live create', async () => {
+        const r = await setup({ timeoutMs: 150 }), grant = await r.connect();
+        await r.workerClient.request('POST', '/worker/poll', { protocol: 1 });
+        expect((await create(r, grant, 'in-flight')).data.safeToRetrySameRequestID).toBe(true);
+        await r.restartGateway();
+        r.gatewayOptions.timeoutMs = 4000;
+        const rpc = r.transport.rpc;
+        let arrived!: () => void, release!: () => void;
+        const atEndpoint = new Promise<void>(resolve => { arrived = resolve; });
+        const resume = new Promise<void>(resolve => { release = resolve; });
+        let withdrawals = 0;
+        r.transport.rpc = async (machine: any, command: any) => {
+            if (command.operation === 'create') { arrived(); await resume; }
+            if (command.operation === 'withdraw-create') withdrawals++;
+            return rpc(machine, command);
+        };
+        await r.startWorker();
+        const original = create(r, grant, 'in-flight');
+        const receipt = () => r.client.request('GET', '/requests/in-flight', undefined, grant);
+        try {
+            await atEndpoint;
+            for (const reply of [await create(r, grant, 'in-flight'), await receipt()]) {
+                expect(reply.data?.safeToRetrySameRequestID).not.toBe(true);
+            }
+            expect(withdrawals).toBe(0);
+            expect(r.spawnCount).toBe(0);
+        } finally { release(); await original; }
+        expect((await receipt()).data.state).toBe('confirmed');
+        expect(r.spawnCount).toBe(1);
+    });
+
+    it('can fence a delayed create after its original gateway waiter times out', async () => {
+        const r = await setup({ timeoutMs: 1200 }), grant = await r.connect();
+        const rpc = r.transport.rpc;
+        let arrived!: () => void, release!: () => void, finish!: (reply: any) => void;
+        const atEndpoint = new Promise<void>(resolve => { arrived = resolve; });
+        const resume = new Promise<void>(resolve => { release = resolve; });
+        const finished = new Promise<any>(resolve => { finish = resolve; });
+        let delayFirst = true;
+        r.transport.rpc = async (machine: any, command: any) => {
+            if (command.operation !== 'create' || !delayFirst) return rpc(machine, command);
+            delayFirst = false;
+            arrived();
+            await resume;
+            const reply = await rpc(machine, command);
+            finish(reply);
+            return reply;
+        };
+        await r.startWorker();
+        const original = create(r, grant, 'expired-waiter');
+        try {
+            await atEndpoint;
+            expect((await original).error.code).toBe('UNAVAILABLE_OR_UNKNOWN');
+            r.gatewayOptions.timeoutMs = 4000;
+            const receipt = await r.client.request('GET', '/requests/expired-waiter', undefined, grant);
+            expect(receipt.data).toMatchObject({ safeToRetrySameRequestID: true, queueReason: 'execution_not_reached' });
+        } finally { release(); }
+        expect((await finished).errorCode).toBe('REQUEST_ID_CONFLICT');
+        expect(r.spawnCount).toBe(0);
+        expect((await create(r, grant, 'expired-waiter')).data.state).toBe('confirmed');
+        expect(r.spawnCount).toBe(1);
+    });
+
     it('withdraws an unclaimed timeout before certifying the registered request, across restart', async () => {
         const r = await setup({ timeoutMs: 120 }), grant = await r.connect();
         const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });

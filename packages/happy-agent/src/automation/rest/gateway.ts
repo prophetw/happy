@@ -14,7 +14,7 @@ import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectio
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null; closedCreateAttempt?: string; createTitleDigest?: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; createAttempt?: CreateAttempt; deadline: number };
-type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer: ReturnType<typeof setTimeout>; delivered: boolean };
+type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer?: ReturnType<typeof setTimeout>; delivered: boolean };
 export type GatewayOptions = {
     directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
     verifyOwner: (authorization: string | undefined) => Promise<string>;
@@ -136,12 +136,16 @@ export function createGateway(options: GatewayOptions) {
         const jobID = randomUUID();
         const bound = intent ?? lookupIntent;
         const id = intent ? jobID : lookupIntent?.claimID;
-        const createAttempt = bound?.method === 'tasks.create' && bound.fingerprint.startsWith('claim-v1:') && id
+        // While the original caller is awaiting its result, a concurrent lookup may
+        // observe the receipt. Supplying its attempt would also allow the Worker to withdraw it.
+        const originalJob = lookupIntent?.claimID ? jobs.get(lookupIntent.claimID) : undefined;
+        const createAttempt = bound?.method === 'tasks.create' && bound.fingerprint.startsWith('claim-v1:') && id && originalJob?.timer === undefined
             ? { id, digest: bound.fingerprint.slice('claim-v1:'.length), previous: bound.closedCreateAttempt ?? null, ...(bound.createTitleDigest ? {titleDigest:bound.createTitleDigest} : {}) } : undefined;
         return new Promise(resolve => {
             const timeout = Math.min(options.timeoutMs ?? 15000, Math.max(1, c.expiresAt - now()));
             const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, createAttempt, deadline: now() + timeout, delivered: false,
                 resolve, timer: setTimeout(() => {
+                    job.timer = undefined;
                     // Keep delivered jobs briefly: a dispatched OS operation may still finish.
                     if (!job.delivered) jobs.delete(jobID);
                     resolve(!job.delivered && intent ? unsent(intent) : unknown());
