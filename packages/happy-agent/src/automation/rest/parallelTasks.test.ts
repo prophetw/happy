@@ -473,16 +473,28 @@ it('does not hide a legacy running turn behind a newly queued follow-up on that 
 it('prepares a slow actual worktree outside the global queue lock without executing checkout hooks',async()=>{
     const f=setup(),a=await f.create('a'),marker=join(f.root,'hook-ran');writeFileSync(join(f.repo,'.git/hooks/post-checkout'),'#!/bin/sh\ntouch '+marker+'\n',{mode:0o755});
     const previousPath=process.env.PATH!,realGit=realpathSync(previousPath.split(':').map(dir=>join(dir,'git')).find(existsSync)!),bin=join(f.root,'git-bin');mkdirSync(bin);
-    // Controlled latency only; the shim execs the real Git, inheriting the workspace flock.
-    writeFileSync(join(bin,'git'),'#!'+process.execPath+'\nconst{spawn}=require("node:child_process");const run=()=>{const p=spawn('+JSON.stringify(realGit)+',process.argv.slice(2),{stdio:["inherit","inherit","inherit",3]});p.on("exit",code=>process.exit(code??1));};if(process.argv.includes("worktree")&&process.argv.includes("add"))setTimeout(run,2000);else run();\n',{mode:0o755});
+    const entered=join(f.root,'git-entered'), release=join(f.root,'git-release');
+    // Prove send can finish while checkout is still held, independently of CPU load.
+    writeFileSync(join(bin,'git'),`#!${process.execPath}
+const {spawn}=require('node:child_process');
+const {writeFileSync,existsSync}=require('node:fs');
+const run=()=>{
+    const p=spawn(${JSON.stringify(realGit)},process.argv.slice(2),{stdio:['inherit','inherit','inherit',3]});
+    p.on('exit',code=>process.exit(code??1));
+};
+if(process.argv.includes('worktree')&&process.argv.includes('add')){
+    writeFileSync(${JSON.stringify(entered)},'started');
+    const timer=setInterval(()=>{if(existsSync(${JSON.stringify(release)})){clearInterval(timer);run();}},20);
+}else run();
+`,{mode:0o755});
     process.env.PATH=bin+':'+previousPath;
     let pending:Promise<any>|undefined;
-    try{pending=f.create('slow');await until(()=>f.worker.queue.workspaces('grant-a').some(w=>w.stage==='preparing'));
-        const started=Date.now();await f.send(a.sessionID,'one');expect(Date.now()-started).toBeLessThan(500);expect(f.state('one')).toBe('queued');
+    try{pending=f.create('slow');await until(()=>existsSync(entered));
+        await f.send(a.sessionID,'one');expect(f.state('one')).toBe('queued');
         const during=await f.call('requests.get',{requestID:'slow'});expect(during.data.state).toBe('pending');expect(during.data.sessionID).toBeUndefined();
-    }finally{try{await pending;}finally{process.env.PATH=previousPath;}}
+    }finally{writeFileSync(release,'continue');try{await pending;}finally{process.env.PATH=previousPath;}}
     expect(existsSync(marker)).toBe(false);
-});
+},25000);
 it('retries an old core cancellation without cancelling any later queue item',async()=>{
     const f=setup(),a=await f.create('a');await f.call('sessions.cancel',{requestID:'old-cancel',sessionID:a.sessionID});await f.send(a.sessionID,'later');
     const repeated=await f.call('sessions.cancel',{requestID:'old-cancel',sessionID:a.sessionID});expect(repeated.data.state).toBe('cancel_requested');expect(f.state('later')).toBe('queued');

@@ -69,7 +69,7 @@ function pendingCodexInputs(agentState: unknown) {
         const nativeTurn = /^codex-input:[^:]+:([A-Za-z0-9_-]{1,128}):[^:]+:.+$/.exec(key)?.[1];
         const turnID = form.turnId ?? nativeTurn;
         if (typeof turnID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(turnID) || nativeTurn && nativeTurn !== turnID) return [];
-        return [{ inputID: hash(key), turnID }];
+        return [{ inputID: hash(key), turnID, blocking: form.isBlocking !== false && !key.startsWith('codex-async:') }];
     });
     return pending.length <= 500 ? pending : undefined;
 }
