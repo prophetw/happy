@@ -10,8 +10,10 @@ import { canonicalBody } from './auth';
 import { z } from 'zod';
 import { checkoutDigest, executionSchema, objectID, testEvidenceSchema, type TestEvidence } from './execution';
 import { concurrencyPolicySchema, normalizeConcurrency, type ConcurrencyPolicy } from './concurrency';
+import { decodeCandidates, encodeCandidates, holdsReviewCheckout } from './taskQueueCompatibility';
 
 export { executionSchema } from './execution';
+export { holdsReviewCheckout } from './taskQueueCompatibility';
 import type { Execution } from './execution';
 export type Resource = { key: string; mode: 'shared' | 'exclusive' };
 export type LegacyCheck = { sessionID: string; resources: Resource[] };
@@ -56,7 +58,6 @@ export const terminalTask = (t: QueueTask) => ['completed', 'failed', 'cancelled
 export const occupiesSlot = (t: QueueTask) => !terminalTask(t) && !['queued', 'waiting-resource'].includes(t.state);
 const conflicts = (a: Resource[], b: Resource[]) => a.some(x => b.some(y => x.key === y.key && (x.mode === 'exclusive' || y.mode === 'exclusive')));
 const pendingConflict = (task: QueueTask, check: LegacyCheck) => check.sessionID !== task.sessionID && conflicts(task.resources, check.resources);
-export const holdsReviewCheckout = (t: QueueTask) => t.state === 'completed' && !!t.checkoutDigest && !t.reviewReleased;
 const reviewSource = (s: State, workspace?: Workspace) => {
     const candidate = workspace?.execution.candidate;
     if (candidate?.kind !== 'checkout') return;
@@ -138,6 +139,7 @@ export class TaskQueue {
             if (canonicalBody(state.policy) !== canonicalBody(this.policy)) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
             if (new Set(state.tasks.map(t => t.id)).size !== state.tasks.length || new Set(state.workspaces.map(w => w.id)).size !== state.workspaces.length
                 || new Set(state.tasks.map(t => t.order)).size !== state.tasks.length || state.tasks.some(t => t.id !== hash(`${t.grantID}\n${t.requestID}`) || t.fingerprint !== taskFingerprint(t) || t.order >= state.nextOrder)) throw new ApiError('QUEUE_CORRUPT', 503);
+            decodeCandidates(state);
             const before = readOnly ? '' : JSON.stringify(state);
             state.cancellations ??= [];
             const result = fn(state);
@@ -145,11 +147,13 @@ export class TaskQueue {
             if (!saved || migrated || JSON.stringify(state) !== before) {
                 // Migration and cancellation also write through this boundary. Never persist
                 // a ledger which the next process would reject, even when an enqueue is bypassed.
-                if (state.tasks.filter(t => !terminalTask(t)).length > activeTaskLimit || state.workspaces.length > 40001 || state.cancellations.length > 5000) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
                 if (!stateSchema.safeParse(state).success) throw new ApiError('QUEUE_STATE_INVALID',503);
-                if (Buffer.byteLength(JSON.stringify(state)) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
+                const persisted = encodeCandidates(state);
+                if (persisted.tasks.filter(t => !terminalTask(t)).length > activeTaskLimit || state.workspaces.length > 40001 || state.cancellations.length > 5000) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
+                const payloadJSON = JSON.stringify(persisted);
+                if (Buffer.byteLength(payloadJSON) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
                 const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
-                const payload = Buffer.concat([cipher.update(JSON.stringify(state),'utf8'),cipher.final()]);
+                const payload = Buffer.concat([cipher.update(payloadJSON,'utf8'),cipher.final()]);
                 this.store.set('queue', { sealed: Buffer.concat([iv,cipher.getAuthTag(),payload]).toString('base64') });
             }
             key.fill(0);

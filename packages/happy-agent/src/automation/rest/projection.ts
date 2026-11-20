@@ -4,7 +4,7 @@ import { launchModelValue } from './options';
 
 const fields = new Set(['version','ok','requestID','data','error','code','retryable','instruction','taskID','machineID','sessionID','state',
     'messageID','seq','process','safeToRetrySameRequestID','hasMore','reconciliationCursor','machines','sessions','availability','activeAt',
-    'nextCursor','turn','kind','turnID','waitingForPermission','messages','text','truncated','attribution','ready','outcome',
+    'nextCursor','turn','kind','turnID','waitingForPermission','pendingInputs','inputID','messages','text','truncated','attribution','ready','outcome',
     // Launch-option discovery and the resolved tasks.create selection. Keys only.
     'options','agents','agent','models','permissionModes','efforts','defaultAgent','defaultModel','defaultPermissionMode','defaultEffort',
     'model','permissionMode','effort','execution','executionState','executionDispatched','queueID','queueReason','canCancel','recovery','mode','directory','branch','baseCommit','projectID','port','resources','resultCommit','dirty','workspaceState','retainedRef','retainedCommit',

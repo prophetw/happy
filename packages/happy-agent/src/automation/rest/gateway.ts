@@ -120,7 +120,9 @@ export function createGateway(options: GatewayOptions) {
         if (!c.sessionIDs.includes(sessionID) && !store.list<Intent>(`intent:${c.id}:`).some(i => i.method === 'tasks.create' && i.sessionID === sessionID)) throw new ApiError('SCOPE_DENIED', 403);
     }
     const pendingReceipt = (intent: Intent) => ({ requestID: intent.requestID, sessionID: intent.sessionID,
-        state: 'pending', safeToRetrySameRequestID: true, queueReason: 'worker_not_reached' });
+        state: 'pending', safeToRetrySameRequestID: true,
+        queueReason: intent.closedCreateAttempt ? 'execution_not_reached' : 'worker_not_reached',
+        ...(intent.method === 'tasks.create' ? { createRetryProof: intent.closedCreateAttempt ? 'withdrawn' : 'unclaimed' } : {}) });
     const unsent = (intent: Intent) => ({ version: 1, ok: false, dispatch: 'not_sent',
         data: pendingReceipt(intent), error: { code: 'WORKER_UNAVAILABLE', retryable: true } });
     const unknown = () => failure('UNAVAILABLE_OR_UNKNOWN');
@@ -225,7 +227,7 @@ export function createGateway(options: GatewayOptions) {
                 record.claimID = null;
                 record.state = 'pending';
                 store.set(intentKey(c, record.requestID), record);
-                return ok({ requestID, state: 'pending', safeToRetrySameRequestID: true, queueReason: 'execution_not_reached' });
+                return ok(pendingReceipt(record));
             }
             if (record && intent && record.claimID === intent.claimID) {
                 if (typeof result.data.sessionID === 'string') record.sessionID = identifier.parse(result.data.sessionID);

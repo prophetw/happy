@@ -412,7 +412,9 @@ describe('durable dispatch evidence', () => {
             expect((await original).error.code).toBe('UNAVAILABLE_OR_UNKNOWN');
             r.gatewayOptions.timeoutMs = 4000;
             const receipt = await r.client.request('GET', '/requests/expired-waiter', undefined, grant);
-            expect(receipt.data).toMatchObject({ safeToRetrySameRequestID: true, queueReason: 'execution_not_reached' });
+            expect(receipt.data).toMatchObject({ safeToRetrySameRequestID: true, queueReason: 'execution_not_reached', createRetryProof: 'withdrawn' });
+            const next = await r.client.request('GET', '/requests/expired-waiter', undefined, grant);
+            expect(next.data).toEqual(receipt.data);
         } finally { release(); }
         expect((await finished).errorCode).toBe('REQUEST_ID_CONFLICT');
         expect(r.spawnCount).toBe(0);

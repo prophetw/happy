@@ -76,6 +76,7 @@ export class CodexCommunicationHandler {
                 kind: 'form',
                 createdAt: Date.now(),
                 toolUseId: id,
+                turnId: params.turnId,
                 // Older Codex versions omit isBlocking. Their requests block.
                 isBlocking: params.isBlocking !== false,
                 form: { questions: params.questions.map(question => ({
@@ -99,7 +100,7 @@ export class CodexCommunicationHandler {
         this.add(id, {
             turnId: params.turnId,
             communication: {
-                kind: 'form', createdAt: Date.now(), toolUseId: id, isBlocking: false,
+                kind: 'form', createdAt: Date.now(), toolUseId: id, isBlocking: false, turnId: params.turnId,
                 form: { questions: params.questions.map((question, index) => ({
                     id: `${id}:${index}`, header: `${index + 1}`, question: question.title,
                     options: (question.options ?? []).map(label => ({ label })), allowCustom: true,

@@ -54,6 +54,26 @@ export function projectMessage(message: { id: string; seq: number; content: unkn
     return { ...base, kind: 'omitted' };
 }
 
+/** The form, choices and answers stay in the child session's agent state. */
+function pendingCodexInputs(agentState: unknown) {
+    if (agentState == null || typeof agentState !== 'object' || Array.isArray(agentState)) return;
+    const state = obj(agentState), completed = obj(state.completedCommunications);
+    const pending = Object.entries(obj(state.communications)).flatMap(([key, raw]) => {
+        if ((!key.startsWith('codex-input:') && !key.startsWith('codex-async:')) || Object.hasOwn(completed, key)) return [];
+        const form = obj(raw), questions = obj(form.form).questions;
+        if (form.kind !== 'form' || form.toolUseId !== key || !Array.isArray(questions)
+            || !questions.some(question => {
+                const { id, question: prompt } = obj(question);
+                return typeof id === 'string' && !!id && typeof prompt === 'string' && !!prompt.trim();
+            })) return [];
+        const nativeTurn = /^codex-input:[^:]+:([A-Za-z0-9_-]{1,128}):[^:]+:.+$/.exec(key)?.[1];
+        const turnID = form.turnId ?? nativeTurn;
+        if (typeof turnID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(turnID) || nativeTurn && nativeTurn !== turnID) return [];
+        return [{ inputID: hash(key), turnID }];
+    });
+    return pending.length <= 500 ? pending : undefined;
+}
+
 export class AutomationControl {
     constructor(private transport: Transport, private policy: Policy, private journal: Journal, private createAttempt?: RecordEntry['createAttempt']) {}
     private allowedMachine(machineID: string) {
@@ -216,8 +236,10 @@ export class AutomationControl {
             }
             const process = method === 'sessions.status' ? await this.transport.rpc(await this.machine(id(obj(session.metadata).machineId)), { version: 1, operation: 'status', sessionID }) : undefined;
             if (process?.errorCode) throw new ControlError(String(process.errorCode));
-            return { sessionID, process: process ? processState(process.process) : undefined, turn: turn ?? { state: 'unknown' },
+            const status = process ? processState(process.process) : undefined;
+            return { sessionID, process: status, turn: turn ?? { state: 'unknown' },
                 waitingForPermission: Object.keys(obj(obj(session.agentState).requests)).length > 0,
+                ...(status === 'running' && obj(session.metadata).flavor === 'codex' ? { pendingInputs: pendingCodexInputs(session.agentState) } : {}),
                 messages, nextCursor: page.messages.at(-1)?.seq ?? cursor, hasMore: page.hasMore };
         }
         const requestID = id(req.requestID);

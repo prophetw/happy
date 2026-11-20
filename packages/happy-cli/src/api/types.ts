@@ -509,6 +509,7 @@ export type AgentCommunication = {
   createdAt: number;
   toolUseId: string;
   isBlocking: boolean;
+  turnId?: string;
   form: { questions: Array<{
     id: string;
     header: string;
