@@ -36,7 +36,9 @@ describe('daemon, SDK and contract adapters', () => {
             { id: 'unknown', metadata: 'not-decryptable' },
         ], nextCursor: 'cursor_v1_next' } });
         const control = vi.fn(async () => ({ version: 1, process: 'unknown' }));
-        const adapter = createDaemonTransport({ serverUrl: 'https://relay.invalid', token: 'fixture-private-bearer', machine: () => machine, sessions: () => [session], control });
+        const adapter = createDaemonTransport({ serverUrl: 'https://relay.invalid', token: 'fixture-private-bearer', machine: () => machine, sessions: () => [session], localSessionStopped: id => id === session.id, control });
+        expect(adapter.localSessionStopped?.(session.id)).toBe(true);
+        expect(adapter.localSessions?.()).toEqual([session]);
         const page = await adapter.sessions(undefined, 10);
         expect(page.nextCursor).toBe('cursor_v1_next'); expect(page.sessions).toHaveLength(1);
         expect(page.sessions[0]).toMatchObject({ seq: 11, agentState: { requests: { permission1: {} } } });

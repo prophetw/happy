@@ -15,6 +15,8 @@ export interface Transport {
     sessions(cursor?: string, limit?: number): Promise<{ sessions: TransportSession[]; nextCursor: string | null }>;
     /** In-process daemon inventory for scheduling. Remote command authorization still uses Relay metadata. */
     localSessions?(): TransportSession[];
+    /** True only when the local process owner can prove the session has stopped. */
+    localSessionStopped?(sessionID: string): boolean;
     rpc(machine: DecryptedMachine, input: Record<string, unknown>): Promise<Record<string, unknown>>;
     messages(session: DecryptedSession, cursor: number, limit: number): Promise<MessagePage>;
     send(session: DecryptedSession, requestID: string, text: string): Promise<{ id: string; seq: number }>;

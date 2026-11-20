@@ -61,7 +61,7 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 
 回执/UI 分开显示 project-limit（本项目名额）、machine-limit（机器硬上限）、resource-wait（排他资源），另保留 session_turn 等顺序/恢复原因；创建空闲 session 不占执行槽。旧全局排他 turn 在缺乏归属证据时保留；取得原进程/turn强证据后可收窄自动租约。新受理普通交办按真实checkout调度。
 
-旧会话通过 daemon 已持有的会话记录发现，完整读过历史后才接管仍在运行的 turn。每个旧会话只保留一项在途读取，已经知道的 checkout 和声明资源在核对时仍受保护。任务派发与各自的回执收集独立推进。`legacy_observation` 表示当前任务等待相冲突的旧会话核对，`candidate_review` 表示在等原 checkout 的验收结束。回执的资源名称来自本任务的资源声明，会话链接按授权和 Dot 所属范围显示。
+旧会话通过 daemon 已持有的会话记录发现。本机进程所有者能确认退出的会话不参与新的执行接管，原有租约仍按历史核对其轮次结果。其他会话完整读过历史后才接管仍在运行的 turn。每个旧会话只保留一项在途读取，已经知道的 checkout 和声明资源在核对时仍受保护。任务派发与各自的回执收集独立推进。`legacy_observation` 表示当前任务等待相冲突的旧会话核对，`candidate_review` 表示在等原 checkout 的验收结束。回执的资源名称来自本任务的资源声明，会话链接按授权和 Dot 所属范围显示。
 
 账本持久记录任务/request/session/worktree/branch/baseCommit/resource、dispatcher PID、真实会话 PID和派发状态。短同步事务持有内核 flock，无计时过期锁；claim 在启动前持久化，发送前另写不可自动重派标记。慢 checkout 先持久化 workspace preparing/baseCommit/preparationPID，再以异步 Git 和独立 workspace flock 创建；Git 继承锁fd，宿主死亡而 Git 尚活时不能启动第二次 checkout。它不占机器全局事务锁。create 回执尚未有会话时返回 pending 和真实任务入口；收敛到 confirmed 前不能 send，准备中断可查原回执后使用原ID恢复。调度器死亡后先查原 core/daemon 回执与完整分页消息；活会话重接，未知派发保留槽位与资源，不因 PID/租约超时重复执行。旧活跃 turn 以只读方式接管为 legacy 排他占用，完整读取到最新页；旧空闲 PID 和已完成 turn 不算永久占用。此迁移不重派任何旧任务。
 

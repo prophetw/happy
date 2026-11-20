@@ -1090,6 +1090,17 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     const apiMachine = api.machineSyncClient(machine);
     connectionReady = () => apiMachine.isReady();
 
+    const observeAutomationSession = (sessionID: string) => {
+      const tracked = findTrackedSessionById(sessionID);
+      if (!tracked || tracked.startedBy === 'persisted')
+        return observePersistedProcess(readPersistedSessionProcess(sessionID), machineId, bootTimeMs);
+      return observeOwnedProcess({
+        pid: tracked.pid,
+        owned: tracked.startedBy === 'daemon' && !!tracked.childProcess,
+        stopping: stoppingPids.has(tracked.pid),
+      });
+    };
+
     // Set RPC handlers
     const automationControl = createAutomationControl({
         directory: join(configuration.happyHomeDir, 'automation-receipts', machineId),
@@ -1106,15 +1117,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
             return { defaultAgent: AUTOMATION_DEFAULT_AGENT, catalog, policy: options.automation?.registration.launchOptions };
         },
         stop: stopSession,
-        observe: sessionID => {
-          const tracked = getCurrentChildren().find(s => s.happySessionId === sessionID)
-            ?? sessionIdToFinishedSession.get(sessionID);
-          if (!tracked || tracked.startedBy === 'persisted')
-            return observePersistedProcess(readPersistedSessionProcess(sessionID), machineId, bootTimeMs);
-          return observeOwnedProcess(tracked ? { pid: tracked.pid,
-            owned: tracked.startedBy === 'daemon' && !!tracked.childProcess,
-            stopping: stoppingPids.has(tracked.pid) } : undefined);
-        },
+        observe: observeAutomationSession,
       });
     apiMachine.setRPCHandlers({
       automationControl,
@@ -1127,7 +1130,13 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     const automation = options.automation;
     const automationWorker = automation ? await beforeRelayConnect(() => startDaemonAutomation(automation, {
       machine, token: credentials.token, serverUrl: configuration.serverUrl, happyHomeDir: configuration.happyHomeDir,
-      sessions: () => [...sessionIdToFinishedSession.values(), ...getCurrentChildren()], control: automationControl,
+      sessions: () => {
+        const current = getCurrentChildren();
+        const trackedIDs = new Set(current.map(session => session.happySessionId));
+        return [...current, ...[...sessionIdToFinishedSession.values()].filter(session => !trackedIDs.has(session.happySessionId))];
+      },
+      localSessionStopped: sessionID => observeAutomationSession(sessionID) === 'stopped',
+      control: automationControl,
       startupSignal: options.existingOnly ? startupAbort.signal : undefined,
     })) : null;
     machineVerified = true;

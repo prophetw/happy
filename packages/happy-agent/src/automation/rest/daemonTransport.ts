@@ -10,6 +10,7 @@ export type DaemonTransportBindings = {
     machine: () => DecryptedMachine;
     /** Only records whose per-session keys the daemon already possesses. */
     sessions: () => DecryptedSession[];
+    localSessionStopped?: (sessionID: string) => boolean;
     control: (input: unknown) => Promise<unknown>;
 };
 function sessionProcessID(localMetadata: unknown, relayMetadata: unknown, machineID: string): number | undefined {
@@ -28,6 +29,7 @@ export function createDaemonTransport(bindings: DaemonTransportBindings): Transp
         ...records,
         machines: async () => [bindings.machine()],
         localSessions: () => bindings.sessions().filter(s => s.encryption.variant === 'dataKey'),
+        localSessionStopped: bindings.localSessionStopped,
         sessions: async (cursor, limit = 100) => {
             if (cursor !== undefined && !/^cursor_v1_[A-Za-z0-9_-]+$/.test(cursor)) throw new ControlError('INVALID_CURSOR');
             const { data } = await http.get<{ sessions: RawSession[]; nextCursor: string | null }>('/v2/sessions', { params: { cursor, limit } });

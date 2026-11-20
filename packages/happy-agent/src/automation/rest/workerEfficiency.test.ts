@@ -21,7 +21,7 @@ function fixture() {
             const tail = (histories.get(session.id) ?? []).filter(message => message.seq > cursor);
             return { messages: tail.slice(0, limit), hasMore: tail.length > limit };
         }),
-        rpc: vi.fn(async () => ({ version: 1, process: 'stopped' })),
+        rpc: vi.fn(async () => ({ version: 1, process: 'unknown' })),
         send: vi.fn(async () => { throw Error('unexpected_send'); }),
     };
     const worker = () => new ScopedWorker(registration, transport, join(root, 'worker'), async () => { throw Error('unexpected_authorization'); }, Date.now, undefined, undefined, join(root, 'queue'));
@@ -40,6 +40,27 @@ it('lists idle sessions once per page and reads the adoption queue once instead 
     expect(f.transport.sessions).toHaveBeenCalledTimes(1);
     // Upgrade snapshot, adoption snapshot, scheduler observation snapshot.
     expect(reads.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(f.transport.send).not.toHaveBeenCalled();
+});
+
+it('leaves confirmed stopped local sessions out of discovery until they resume', async () => {
+    const f = fixture();
+    const retired = Array.from({ length: 100 }, (_, n) => f.session('retired-' + n));
+    const stopped = new Set(retired.map(session => session.id));
+    const session = f.session('running');
+    f.transport.localSessions = () => f.sessions;
+    f.transport.localSessionStopped = id => stopped.has(id);
+    const worker = f.worker();
+
+    await worker.tick();
+    expect(f.transport.sessions).not.toHaveBeenCalled();
+    expect(f.transport.rpc).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(f.transport.messages).mock.calls.map(([record]) => record.id)).toEqual([session.id]);
+
+    stopped.delete(retired[0].id);
+    f.histories.set(retired[0].id, [input(1), turn(2, 'resumed')]);
+    await worker.tick();
+    expect(worker.queue.tasks()).toMatchObject([{ sessionID: retired[0].id, state: 'running', turnID: 'resumed' }]);
     expect(f.transport.send).not.toHaveBeenCalled();
 });
 
@@ -80,7 +101,7 @@ it('rebuilds the observation if session ownership metadata changes or the stream
     expect(vi.mocked(f.transport.messages).mock.calls[0][1]).toBe(0);
 });
 
-it('preserves a terminal turn across an empty incremental read and still checks process status each time', async () => {
+it('reconciles a terminal legacy turn after a stopped process is confirmed', async () => {
     const f = fixture(), session = f.session('running-legacy'), worker = f.worker();
     vi.mocked(f.transport.rpc).mockResolvedValue({ version: 1, process: 'unknown' });
     f.histories.set(session.id, [input(1), turn(2, 'first')]);
@@ -88,6 +109,9 @@ it('preserves a terminal turn across an empty incremental read and still checks 
         authorization: '', text: '', resources: [{ key: 'machine', mode: 'exclusive' }], legacy: true, seq: 1, turnID: 'first', processID: 99999999 });
     await worker.tick(); expect(worker.queue.tasks().find(value => value.id === task.id)?.state).toBe('running');
     f.histories.get(session.id)!.push(...Array.from({ length: 150 }, (_, n) => text(n + 3)), turn(153, 'first', 'completed'));
+    vi.mocked(f.transport.rpc).mockResolvedValue({ version: 1, process: 'stopped' });
+    f.transport.localSessions = () => f.sessions;
+    f.transport.localSessionStopped = id => id === session.id;
     vi.mocked(f.transport.messages).mockClear();
     await worker.tick();
     expect(worker.queue.tasks().find(value => value.id === task.id)?.state).toBe('completed');

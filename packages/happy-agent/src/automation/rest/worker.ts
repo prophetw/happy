@@ -79,9 +79,9 @@ export class ScopedWorker {
             observe: async t => {
                 if (!t.legacy) return this.observeTask(t, run);
                 const session = this.transport.localSessions?.().find(s => s.id === t.sessionID);
-                const observed = await this.observeLegacy(t.sessionID, session, (state, verified) => {
+                const observed = await this.observeLegacy(t.sessionID, { session, checkProcess: (state, verified) => {
                     if (state === 'unknown' && !verified) this.queue.restoreLegacyExclusion(t);
-                });
+                } });
                 const pid = (observed.sourceSession.metadata as any)?.hostPid;
                 if (observed.sessionOwnerVerified && (observed.outcome === 'running' || observed.pendingInput) && pid === t.processID && Number.isInteger(pid) && pid > 0
                     && (observed.turnID !== undefined && observed.turnID === t.turnID
@@ -120,12 +120,18 @@ export class ScopedWorker {
         const sessionOwnerVerified = process === 'running' || this.processProofs.verify(target);
         return { sessionOwnerVerified, dispatchable: process === 'unknown' && sessionOwnerVerified };
     }
-    private async observeLegacy(sessionID: string, listedSession?: TransportSession, checkProcess?: (state: string, verified: boolean) => void): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
-        const session = listedSession ?? await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
+    private async observeLegacy(sessionID: string, options: {
+        session?: TransportSession;
+        discovery?: boolean;
+        checkProcess?: (state: string, verified: boolean) => void;
+    }): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
+        const session = options.session ?? await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
         if (!machine) throw new ApiError('MACHINE_UNAVAILABLE', 503);
         const process = await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID });
-        const state = String(process.process ?? 'unknown'), proof = this.schedulingProof(session, state);
-        checkProcess?.(state, proof.sessionOwnerVerified);
+        const state = String(process.process ?? 'unknown');
+        if (options.discovery && state === 'stopped') return { process: state, cursor: 0, sourceSession: session };
+        const proof = this.schedulingProof(session, state);
+        options.checkProcess?.(state, proof.sessionOwnerVerified);
         const metadata = session.metadata as { machineId?: unknown; hostPid?: unknown; path?: unknown } | null;
         const binding = hash(canonicalBody({ machineID: metadata?.machineId, pid: metadata?.hostPid, path: metadata?.path,
             encryption: session.encryption ? { variant: session.encryption.variant, key: Buffer.from(session.encryption.key).toString('base64') } : undefined }));
@@ -183,8 +189,8 @@ export class ScopedWorker {
         } catch { /* A changed binding retains its original lease. */ }
     }
     private async adoptLegacy(session: TransportSession, check: LegacyCheck) {
-        const observed = await this.observeLegacy(session.id, session);
-        if (observed.outcome !== 'running' && !observed.pendingInput || observed.process === 'stopped') return;
+        const observed = await this.observeLegacy(session.id, { session, discovery: true });
+        if (observed.outcome !== 'running' && !observed.pendingInput) return;
         const pid = (observed.sourceSession.metadata as any)?.hostPid;
         const knownOwner = observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && Number.isInteger(pid) && pid > 0;
         this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`),
@@ -204,7 +210,10 @@ export class ScopedWorker {
                 const current = this.legacyReads.get(session.id);
                 if (current) { reads.push(current); continue; }
                 const workspace = bySession.get(session.id);
-                if (active.has(session.id) || workspace?.testCleanup === 'removed') { this.legacyChecks.delete(session.id); continue; }
+                if (active.has(session.id) || workspace?.testCleanup === 'removed' || this.transport.localSessionStopped?.(session.id)) {
+                    this.legacyChecks.delete(session.id);
+                    continue;
+                }
                 const check = { sessionID: session.id, resources: this.legacyResources(session, workspace ?? null) };
                 this.legacyChecks.set(session.id, check);
                 const work = this.adoptLegacy(session, check).then(() => {

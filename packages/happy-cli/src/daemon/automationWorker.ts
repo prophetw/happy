@@ -12,6 +12,7 @@ export type DaemonAutomationOptions = {
 export async function startDaemonAutomation(options: DaemonAutomationOptions, bindings: {
     machine: Machine; token: string; serverUrl: string; happyHomeDir: string;
     sessions: () => TrackedSession[]; control: (input: unknown) => Promise<unknown>;
+    localSessionStopped?: (sessionID: string) => boolean;
     startupSignal?: AbortSignal;
 }) {
     if (options.registration.id !== options.identity.id || options.registration.machineID !== bindings.machine.id

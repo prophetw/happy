@@ -188,6 +188,31 @@ for (const failure of [false, true]) it(`dispatches independent work while an ol
     } finally { release(); await round; }
 }, 10000);
 
+it('dispatches without reading the history of a stopped session whose checkout is gone', async () => {
+    const f = setup(4);
+    const checkout = join(f.root, 'retired-checkout');
+    mkdirSync(checkout);
+    const old = await f.transport.rpc((await f.transport.machines())[0], { version: 1, operation: 'create', requestID: 'retired-session', directory: checkout });
+    rmSync(checkout, { recursive: true });
+    const next = await f.create('ready-after-exit', { mode: 'legacy' });
+    await f.send(next.sessionID, 'ready-after-exit-send');
+    const rpc = f.transport.rpc, read = f.transport.messages;
+    f.transport.rpc = async (machine, input) => input.operation === 'status' && input.sessionID === old.sessionID
+        ? { version: 1, process: 'stopped' } : rpc(machine, input);
+    let oldReads = 0;
+    f.transport.messages = async (session, cursor, limit) => {
+        if (session.id === old.sessionID) { oldReads++; throw Error('retired_history_unavailable'); }
+        return read(session, cursor, limit);
+    };
+
+    await expect(f.worker.tick()).resolves.toBeUndefined();
+    expect(oldReads).toBe(0);
+    expect(f.state('ready-after-exit-send')).toBe('running');
+    expect(f.messages(next.sessionID).filter(message => message.localId)).toHaveLength(1);
+    f.release('ready-after-exit-send');
+    await until(() => existsSync(join(f.repo, 'ready-after-exit-send.txt')));
+});
+
 it('holds the checkout while another session on the same path is being checked', async () => {
     const f = setup(4);
     const old = await f.transport.rpc((await f.transport.machines())[0], { version: 1, operation: 'create', requestID: 'same-checkout-old', directory: f.repo });
