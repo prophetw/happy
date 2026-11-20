@@ -57,7 +57,7 @@ const taskFingerprint = (t: Pick<QueueTask,'requestID'|'grantID'|'workerID'|'ses
 export const terminalTask = (t: QueueTask) => ['completed', 'failed', 'cancelled'].includes(t.state);
 export const occupiesSlot = (t: QueueTask) => !terminalTask(t) && !['queued', 'waiting-resource'].includes(t.state);
 const conflicts = (a: Resource[], b: Resource[]) => a.some(x => b.some(y => x.key === y.key && (x.mode === 'exclusive' || y.mode === 'exclusive')));
-const pendingConflict = (task: QueueTask, check: LegacyCheck) => check.sessionID !== task.sessionID && conflicts(task.resources, check.resources);
+export const pendingConflict = (task: QueueTask, check: LegacyCheck) => check.sessionID !== task.sessionID && conflicts(task.resources, check.resources);
 const reviewSource = (s: State, workspace?: Workspace) => {
     const candidate = workspace?.execution.candidate;
     if (candidate?.kind !== 'checkout') return;

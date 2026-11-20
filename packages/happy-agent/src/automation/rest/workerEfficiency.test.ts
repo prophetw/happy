@@ -64,6 +64,31 @@ it('leaves confirmed stopped local sessions out of discovery until they resume',
     expect(f.transport.send).not.toHaveBeenCalled();
 });
 
+it('uses one background claim pass while multiple old session checks finish', async () => {
+    const f = fixture(), worker = f.worker();
+    const gates = new Map(Array.from({ length: 8 }, (_, i) => {
+        const session = f.session('old-' + i);
+        return [session.id, Promise.withResolvers<void>()];
+    }));
+    vi.mocked(f.transport.messages).mockImplementation(async session => {
+        await gates.get(session.id)?.promise;
+        return { messages: [], hasMore: false };
+    });
+    const task = worker.queue.enqueue({ requestID: 'pending', workerID: 'worker', grantID: 'fixture',
+        sessionID: 'target', authorization: '', text: 'fixture', resources: [] });
+    worker.queue.update(task.id, current => { current.notBefore = Date.now() + 60000; });
+    const claim = vi.spyOn(worker.queue, 'claim'), onError = vi.fn();
+    await worker.tick({ signal: new AbortController().signal, onError });
+    expect(claim).toHaveBeenCalledTimes(1);
+    for (const gate of gates.values()) {
+        gate.resolve();
+        await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    await worker.drain();
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+});
+
 it('consumes only the new tail after a multi-page history and reconstructs it after restart', async () => {
     const f = fixture(), session = f.session('history');
     f.histories.set(session.id, [...Array.from({ length: 250 }, (_, n) => text(n + 1)), input(251), turn(252, 'first'), turn(253, 'first', 'completed')]);

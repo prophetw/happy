@@ -213,6 +213,45 @@ it('dispatches without reading the history of a stopped session whose checkout i
     await until(() => existsSync(join(f.repo, 'ready-after-exit-send.txt')));
 });
 
+it('dispatches after the last conflicting legacy check settles, within the same background round', async () => {
+    const f = setup(4), machine = (await f.transport.machines())[0];
+    const gates = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+    for (const requestID of ['older-one', 'older-two']) {
+        const previous = await f.transport.rpc(machine, { version: 1, operation: 'create', requestID, directory: f.repo });
+        gates.set(String(previous.sessionID), Promise.withResolvers<void>());
+    }
+    const next = await f.create('after-last-check', { mode: 'legacy' });
+    await f.send(next.sessionID, 'after-last-check-send');
+    const read = f.transport.messages, entered = new Set<string>();
+    f.transport.messages = async (session, cursor, limit) => {
+        const gate = gates.get(session.id);
+        if (gate) { entered.add(session.id); await gate.promise; }
+        return read(session, cursor, limit);
+    };
+    const controller = new AbortController(), backgroundErrors: unknown[] = [];
+    try {
+        await f.worker.tick({ signal: controller.signal, onError: error => backgroundErrors.push(error) });
+        await until(() => entered.size === 2);
+        expect(f.state('after-last-check-send')).toBe('waiting-resource');
+        const [first, last] = gates.values();
+        first.resolve();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(f.state('after-last-check-send')).toBe('waiting-resource');
+        expect(f.messages(next.sessionID)).toHaveLength(0);
+
+        last.resolve();
+        await until(() => f.state('after-last-check-send') === 'running');
+        expect(f.messages(next.sessionID).filter(message => message.localId)).toHaveLength(1);
+        expect(backgroundErrors).toEqual([]);
+        f.release('after-last-check-send');
+        await until(() => existsSync(join(f.repo, 'after-last-check-send.txt')));
+    } finally {
+        controller.abort();
+        for (const gate of gates.values()) gate.resolve();
+        await f.worker.drain();
+    }
+});
+
 it('holds the checkout while another session on the same path is being checked', async () => {
     const f = setup(4);
     const old = await f.transport.rpc((await f.transport.machines())[0], { version: 1, operation: 'create', requestID: 'same-checkout-old', directory: f.repo });

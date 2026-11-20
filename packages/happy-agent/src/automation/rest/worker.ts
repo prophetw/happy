@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
-import { TaskQueue, occupiesSlot, terminalTask, type LegacyCheck, type QueueTask, type Workspace } from './taskQueue';
+import { TaskQueue, occupiesSlot, pendingConflict, terminalTask, type LegacyCheck, type QueueTask, type Workspace } from './taskQueue';
 import { TaskScheduler, candidateError, type Observation } from './taskScheduler';
 import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository, withWorkspaceAccess,
     verifyReviewCandidate, checkoutVersion, candidateInstruction, finishTestCheckout } from './taskWorkspaces';
@@ -198,7 +198,7 @@ export class ScopedWorker {
             resources: knownOwner ? check.resources : workspaceResources(), legacy: true, seq: observed.seq, turnID: observed.turnID,
             processID: Number.isInteger(pid) && pid > 0 ? pid : undefined });
     }
-    private scanLegacy(tasks: QueueTask[], workspaces: Workspace[], onRelease: () => void) {
+    private scanLegacy(tasks: QueueTask[], workspaces: Workspace[], onRelease: (released: LegacyCheck) => void) {
         if (this.legacyListing) return this.legacyListing;
         const active = new Set(tasks.filter(occupiesSlot).map(t => t.sessionID));
         const bySession = new Map(workspaces.flatMap(w => w.sessionID ? [[w.sessionID, w] as const] : []));
@@ -218,7 +218,7 @@ export class ScopedWorker {
                 this.legacyChecks.set(session.id, check);
                 const work = this.adoptLegacy(session, check).then(() => {
                     this.legacyChecks.delete(session.id);
-                    onRelease();
+                    onRelease(check);
                 }).finally(() => { this.legacyReads.delete(session.id); });
                 this.legacyReads.set(session.id, work);
                 // A failed read keeps this checkout fenced and is retried on a later poll.
@@ -268,12 +268,17 @@ export class ScopedWorker {
         }
         const observed = this.scheduler.reconcile(tasks);
         const dispatch = () => this.scheduler.dispatch(this.checking);
+        const waiting = background ? tasks.filter(t => t.state === 'queued' || t.state === 'waiting-resource') : [];
         let wake = false;
         const report = (work: Promise<void>[]) => { for (const flight of work) void flight.catch(background?.onError ?? (() => {})); };
         const reading = [...observed, ...refinements, ...this.cleanTestCheckouts(tasks, workspaces)];
         report(reading);
-        const listing = this.scanLegacy(tasks, workspaces, () => {
-            if (!background || wake || !tasks.some(t => ['queued', 'waiting-resource'].includes(t.state))) return;
+        const listing = this.scanLegacy(tasks, workspaces, released => {
+            if (!background || wake || !this.haveLegacyInventory) return;
+            // Claiming reads the whole ledger. Wake only when this was a waiting
+            // task's last legacy check, before the next scan can fence it again.
+            if (!waiting.some(task => pendingConflict(task, released)
+                && !this.checking().some(check => pendingConflict(task, check)))) return;
             wake = true;
             queueMicrotask(() => {
                 wake = false;
