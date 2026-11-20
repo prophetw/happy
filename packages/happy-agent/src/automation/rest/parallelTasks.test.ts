@@ -215,10 +215,12 @@ it('dispatches without reading the history of a stopped session whose checkout i
 
 it('dispatches after the last conflicting legacy check settles, within the same background round', async () => {
     const f = setup(4), machine = (await f.transport.machines())[0];
-    const gates = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+    const gates = new Map<string, { promise: Promise<void>; release: () => void }>();
     for (const requestID of ['older-one', 'older-two']) {
         const previous = await f.transport.rpc(machine, { version: 1, operation: 'create', requestID, directory: f.repo });
-        gates.set(String(previous.sessionID), Promise.withResolvers<void>());
+        let release!: () => void;
+        const promise = new Promise<void>(resolve => { release = resolve; });
+        gates.set(String(previous.sessionID), { promise, release });
     }
     const next = await f.create('after-last-check', { mode: 'legacy' });
     await f.send(next.sessionID, 'after-last-check-send');
@@ -234,12 +236,12 @@ it('dispatches after the last conflicting legacy check settles, within the same 
         await until(() => entered.size === 2);
         expect(f.state('after-last-check-send')).toBe('waiting-resource');
         const [first, last] = gates.values();
-        first.resolve();
+        first.release();
         await new Promise<void>(resolve => setImmediate(resolve));
         expect(f.state('after-last-check-send')).toBe('waiting-resource');
         expect(f.messages(next.sessionID)).toHaveLength(0);
 
-        last.resolve();
+        last.release();
         await until(() => f.state('after-last-check-send') === 'running');
         expect(f.messages(next.sessionID).filter(message => message.localId)).toHaveLength(1);
         expect(backgroundErrors).toEqual([]);
@@ -247,7 +249,7 @@ it('dispatches after the last conflicting legacy check settles, within the same 
         await until(() => existsSync(join(f.repo, 'after-last-check-send.txt')));
     } finally {
         controller.abort();
-        for (const gate of gates.values()) gate.resolve();
+        for (const gate of gates.values()) gate.release();
         await f.worker.drain();
     }
 });

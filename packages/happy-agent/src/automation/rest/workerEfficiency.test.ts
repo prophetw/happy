@@ -68,7 +68,9 @@ it('uses one background claim pass while multiple old session checks finish', as
     const f = fixture(), worker = f.worker();
     const gates = new Map(Array.from({ length: 8 }, (_, i) => {
         const session = f.session('old-' + i);
-        return [session.id, Promise.withResolvers<void>()];
+        let release!: () => void;
+        const promise = new Promise<void>(resolve => { release = resolve; });
+        return [session.id, { promise, release }] as const;
     }));
     vi.mocked(f.transport.messages).mockImplementation(async session => {
         await gates.get(session.id)?.promise;
@@ -81,7 +83,7 @@ it('uses one background claim pass while multiple old session checks finish', as
     await worker.tick({ signal: new AbortController().signal, onError });
     expect(claim).toHaveBeenCalledTimes(1);
     for (const gate of gates.values()) {
-        gate.resolve();
+        gate.release();
         await new Promise<void>(resolve => setImmediate(resolve));
     }
     await worker.drain();
