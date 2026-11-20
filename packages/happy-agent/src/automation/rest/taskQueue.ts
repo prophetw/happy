@@ -8,22 +8,25 @@ import { ApiError } from './schema';
 import { hash } from '../journal';
 import { canonicalBody } from './auth';
 import { z } from 'zod';
-import { executionSchema } from './execution';
+import { checkoutDigest, executionSchema, objectID, testEvidenceSchema, type TestEvidence } from './execution';
 import { concurrencyPolicySchema, normalizeConcurrency, type ConcurrencyPolicy } from './concurrency';
 
 export { executionSchema } from './execution';
 import type { Execution } from './execution';
 export type Resource = { key: string; mode: 'shared' | 'exclusive' };
+export type LegacyCheck = { sessionID: string; resources: Resource[] };
 export type Workspace = { id: string; grantID: string; projectID: string; root: string; cwd: string;
     managedBy?: { machineID: string; uid: number };
     retirement?: { operationID: string; phase: 'retiring' | 'retired'; retainedRef: string; retainedCommit: string };
     repository: string; stage?: 'preparing' | 'ready'; preparationPID?: number; preparationError?: string; branch?: string; baseCommit?: string; execution: Execution; fingerprint: string;
-    sessionID?: string; options?: Record<string, unknown>; resolvedOptions?: unknown; temporaryDirectory: string; port: number };
+    sessionID?: string; options?: Record<string, unknown>; resolvedOptions?: unknown; temporaryDirectory: string; port: number;
+    candidateTree?: string; testCleanup?: 'removed' | 'retained' };
 export type QueueTask = { id: string; requestID: string; grantID: string; workerID: string; sessionID: string; workspaceID?: string;
     fingerprint: string; authorization: string; text: string; resources: Resource[]; order: number;
     state: 'queued' | 'waiting-resource' | 'preparing' | 'running' | 'canceling' | 'completed' | 'failed' | 'cancelled' | 'blocked';
     reason?: string; dispatched: boolean; seq?: number; messageID?: string; turnID?: string; cursor: number;
-    notBefore?: number; resultCommit?: string; worktreeDirty?: boolean; ownerPID?: number; processID?: number; legacy?: boolean; createdAt: number; finishedAt?: number };
+    notBefore?: number; resultCommit?: string; worktreeDirty?: boolean; ownerPID?: number; processID?: number; legacy?: boolean; createdAt: number; finishedAt?: number;
+    checkoutDigest?: string; reviewReleased?: boolean; testResult?: TestEvidence };
 type Cancellation = { requestID: string; grantID: string; sessionID: string; sendRequestID?: string; fingerprint: string; taskIDs: string[] };
 type State = { schedulers: Record<string,{lastSeen:number}>; cancellations: Cancellation[]; version: 2; policy: ConcurrencyPolicy; nextOrder: number; workspaces: Workspace[]; tasks: QueueTask[] };
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -32,12 +35,14 @@ const taskSchema = z.object({ id: digest, requestID: identifier, grantID: identi
     workspaceID: digest.optional(), fingerprint: digest, authorization: z.string().max(64), text: z.string().max(100000), resources: z.array(resourceSchema).max(36), order: z.number().int().nonnegative(),
     state: z.enum(['queued','waiting-resource','preparing','running','canceling','completed','failed','cancelled','blocked']), reason: z.string().max(256).optional(), dispatched: z.boolean(),
     seq: z.number().int().nonnegative().optional(), messageID: z.string().optional(), turnID: z.string().optional(), cursor: z.number().int().nonnegative(),
-    notBefore: z.number().nonnegative().optional(), resultCommit: z.string().regex(/^[a-f0-9]{40,64}$/).optional(), worktreeDirty: z.boolean().optional(), ownerPID: z.number().int().positive().optional(), processID: z.number().int().positive().optional(), legacy: z.boolean().optional(), createdAt: z.number().nonnegative(), finishedAt: z.number().nonnegative().optional() }).strict();
+    notBefore: z.number().nonnegative().optional(), resultCommit: z.string().regex(/^[a-f0-9]{40,64}$/).optional(), worktreeDirty: z.boolean().optional(), ownerPID: z.number().int().positive().optional(), processID: z.number().int().positive().optional(), legacy: z.boolean().optional(), createdAt: z.number().nonnegative(), finishedAt: z.number().nonnegative().optional(),
+    checkoutDigest: checkoutDigest.optional(), reviewReleased: z.boolean().optional(), testResult: testEvidenceSchema.optional() }).strict();
 const workspaceSchema = z.object({ id: digest, grantID: identifier, projectID: identifier, root: z.string().startsWith('/'), cwd: z.string().startsWith('/'), repository: z.string().startsWith('/'),
     managedBy: z.object({ machineID: identifier, uid: z.number().int().nonnegative() }).strict().optional(),
     retirement: z.object({ operationID: identifier, phase: z.enum(['retiring','retired']), retainedRef: z.string().max(256), retainedCommit: z.string().regex(/^[a-f0-9]{40,64}$/) }).strict().optional(),
     stage: z.enum(['preparing','ready']).optional(), preparationPID: z.number().int().positive().optional(), preparationError: z.string().optional(), branch: z.string().optional(), baseCommit: z.string().optional(), execution: executionSchema, fingerprint: digest, sessionID: identifier.optional(),
-    options: z.record(z.string(),z.json()).optional(), resolvedOptions: z.json().optional(), temporaryDirectory: z.string().startsWith('/'), port: z.number().int().min(20000).max(60000) }).strict();
+    options: z.record(z.string(),z.json()).optional(), resolvedOptions: z.json().optional(), temporaryDirectory: z.string().startsWith('/'), port: z.number().int().min(20000).max(60000),
+    candidateTree: objectID.optional(), testCleanup: z.enum(['removed', 'retained']).optional() }).strict();
 const cancellationSchema = z.object({ requestID: identifier, grantID: identifier, sessionID: identifier, sendRequestID: identifier.optional(), fingerprint: digest, taskIDs: z.array(digest).max(1000) }).strict();
 const legacyStateSchema = z.object({ version: z.literal(1), maxConcurrency: z.number().int().min(1).max(4), nextOrder: z.number().int().nonnegative(),
     schedulers: z.record(z.string(),z.object({lastSeen:z.number().nonnegative()}).strict()), workspaces: z.array(workspaceSchema).max(40001), tasks: z.array(taskSchema).max(1000), cancellations: z.array(cancellationSchema).max(5000) }).strict();
@@ -50,6 +55,23 @@ const taskFingerprint = (t: Pick<QueueTask,'requestID'|'grantID'|'workerID'|'ses
 export const terminalTask = (t: QueueTask) => ['completed', 'failed', 'cancelled'].includes(t.state);
 export const occupiesSlot = (t: QueueTask) => !terminalTask(t) && !['queued', 'waiting-resource'].includes(t.state);
 const conflicts = (a: Resource[], b: Resource[]) => a.some(x => b.some(y => x.key === y.key && (x.mode === 'exclusive' || y.mode === 'exclusive')));
+const pendingConflict = (task: QueueTask, check: LegacyCheck) => check.sessionID !== task.sessionID && conflicts(task.resources, check.resources);
+export const holdsReviewCheckout = (t: QueueTask) => t.state === 'completed' && !!t.checkoutDigest && !t.reviewReleased;
+const reviewSource = (s: State, workspace?: Workspace) => {
+    const candidate = workspace?.execution.candidate;
+    if (candidate?.kind !== 'checkout') return;
+    return s.tasks.find(t => t.grantID === workspace!.grantID && t.requestID === candidate.requestID && t.checkoutDigest === candidate.digest);
+};
+const releaseReview = (s: State, reviewer: QueueTask) => {
+    if (!terminalTask(reviewer)) return;
+    const source = reviewSource(s, s.workspaces.find(w => w.id === reviewer.workspaceID));
+    if (source) source.reviewReleased = true;
+};
+function reviewBlockers(s: State, task: QueueTask) {
+    const source = reviewSource(s, s.workspaces.find(w => w.id === task.workspaceID));
+    return s.tasks.filter(t => holdsReviewCheckout(t) && t.id !== source?.id
+        && conflicts(task.resources, t.resources.filter(r => r.key.startsWith('checkout:'))));
+}
 
 /** Short synchronous transactions under the same kernel flock in every process.
  * Never expires a lock/lease on a timer. Flock releases on death; dispatched tasks do not.
@@ -155,7 +177,18 @@ export class TaskQueue {
     noteScheduler(workerID: string) { this.transaction(s=>{s.schedulers[workerID]={lastSeen:Date.now()};}); }
     tasks() { return this.transaction(s => s.tasks,true); }
     workspaces(grantID: string) { return this.transaction(s => s.workspaces.filter(w => w.grantID === grantID),true); }
-    update(id: string, fn: (t: QueueTask) => void) { return this.transaction(s => { const t = s.tasks.find(t => t.id === id); if (!t) throw new ApiError('NOT_FOUND', 404); fn(t); return t; }); }
+    releaseCandidate(workspace: Workspace) {
+        this.transaction(s => { const source = reviewSource(s, workspace); if (source) source.reviewReleased = true; });
+    }
+    update(id: string, fn: (t: QueueTask) => void) {
+        return this.transaction(s => {
+            const t = s.tasks.find(t => t.id === id); if (!t) throw new ApiError('NOT_FOUND', 404);
+            const wasTerminal = terminalTask(t);
+            fn(t);
+            if (!wasTerminal) releaseReview(s, t);
+            return t;
+        });
+    }
     enqueue(input: Omit<QueueTask, 'id' | 'fingerprint' | 'order' | 'state' | 'dispatched' | 'cursor' | 'createdAt'>) {
         const fingerprint = taskFingerprint(input), id = hash(`${input.grantID}\n${input.requestID}`);
         return this.transaction(s => {
@@ -163,6 +196,8 @@ export class TaskQueue {
             const previous = s.tasks.find(t => t.id === id);
             if (previous) { if (previous.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409); return previous; }
             if (s.workspaces.find(w => w.id === input.workspaceID)?.retirement) throw new ApiError('WORKSPACE_RETIRED',409);
+            if (s.workspaces.find(w => w.id === input.workspaceID)?.execution.candidate?.kind === 'test'
+                && s.tasks.some(t => t.workspaceID === input.workspaceID)) throw new ApiError('TEST_CHECKOUT_SETTLED', 409);
             const task: QueueTask = { ...input, id, fingerprint, order: s.nextOrder++, state: 'queued', reason: 'scheduler-ready', dispatched: false, cursor: 0, createdAt: Date.now() };
             s.tasks.push(task); return task;
         });
@@ -237,14 +272,17 @@ export class TaskQueue {
             const tasks = prior ? s.tasks.filter(t => prior.taskIDs.includes(t.id)) : s.tasks.filter(t => t.grantID === grantID && t.sessionID === sessionID && (requestID ? t.requestID === requestID : !terminalTask(t)));
             if (!tasks.length && (prior || requestID || !s.tasks.some(t => t.grantID === grantID && t.sessionID === sessionID))) return [];
             if (!prior) s.cancellations.push({ requestID: mutationID, grantID, sessionID, sendRequestID: requestID, fingerprint, taskIDs: tasks.map(t => t.id) });
-            for (const t of tasks) if (!terminalTask(t)) {
-                if (!t.dispatched) { t.state = 'cancelled'; t.finishedAt = Date.now(); }
-                else t.state = 'canceling';
+            for (const t of tasks) {
+                if (terminalTask(t)) {
+                    if (requestID && holdsReviewCheckout(t)) t.reviewReleased = true;
+                } else if (!t.dispatched) {
+                    t.state = 'cancelled'; t.finishedAt = Date.now(); releaseReview(s, t);
+                } else t.state = 'canceling';
             }
             return tasks;
         });
     }
-    claim(workerID?: string): QueueTask | null {
+    claim(workerID?: string, checking: readonly LegacyCheck[] = []): QueueTask | null {
         return this.transaction(s => {
             const active = s.tasks.filter(occupiesSlot);
             const project = (t: QueueTask) => {
@@ -261,6 +299,13 @@ export class TaskQueue {
             for (const task of waiting) {
                 const sessionBusy = s.tasks.some(t => !terminalTask(t) && t.id !== task.id && t.sessionID === task.sessionID && (occupiesSlot(t) || t.order < task.order));
                 if (sessionBusy) {task.state='waiting-resource';task.reason='session_turn';continue;}
+                // The older write must let its own reviewer through, even when this
+                // waiting writer arrived first. The retained checkout still excludes it.
+                if (reviewBlockers(s, task).length) { task.state = 'waiting-resource'; task.reason = 'candidate_review'; continue; }
+                if (checking.some(other => pendingConflict(task, other))) {
+                    task.state = 'waiting-resource'; task.reason = 'legacy_observation';
+                    reserved.push(...task.resources); continue;
+                }
                 const key=project(task);
                 if (s.policy.machineConcurrency !== null && active.length+reservedSlots >= s.policy.machineConcurrency) {
                     task.state='queued';task.reason='machine-limit';continue;
@@ -278,7 +323,22 @@ export class TaskQueue {
             return null;
         });
     }
-    receipt(t: QueueTask) {
+    beginDispatch(id: string, checking: readonly LegacyCheck[]) {
+        return this.transaction(s => {
+            const task = s.tasks.find(t => t.id === id)!;
+            if (task.state !== 'preparing' || task.dispatched) return false;
+            // Recheck after the async preflight. Discovery may have found an older
+            // turn while this task was checking its own session.
+            const pending = checking.some(other => pendingConflict(task, other));
+            const reviewing = reviewBlockers(s, task).length > 0;
+            if (pending || reviewing || s.tasks.some(other => other.id !== id && occupiesSlot(other) && conflicts(task.resources, other.resources))) {
+                task.state = 'waiting-resource'; task.reason = pending ? 'legacy_observation' : reviewing ? 'candidate_review' : 'resource-wait'; return false;
+            }
+            task.dispatched = true;
+            return true;
+        });
+    }
+    receipt(t: QueueTask, checking: readonly LegacyCheck[] = []) {
         return this.transaction(s => {
         t = s.tasks.find(current => current.id === t.id) ?? t;
         const workspace = s.workspaces.find(w => w.id === t.workspaceID);
@@ -287,17 +347,28 @@ export class TaskQueue {
         const named = t.resources.filter(r => r.key.startsWith('declared:') && blockers.some(other => conflicts([r], other.resources))).map(r => r.key.slice('declared:'.length));
         const sameDirectory = blockers.some(other => t.resources.some(r => r.key.startsWith('checkout:') && conflicts([r], other.resources)));
         // Only identities already visible through this grant may leave the Worker.
-        const sessions = blockers.filter(other => other.grantID === t.grantID).map(other => `/session/${other.sessionID}`).slice(0, 5);
+        const sessions = [...new Set(blockers.filter(other => other.grantID === t.grantID).map(other => `/session/${other.sessionID}`))].slice(0, 5);
         let recovery: string | undefined;
         if (t.reason === 'resource-wait' || t.reason === 'resource_lock') {
             recovery = blockers.some(other => other.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))
                 ? '正在核对旧执行进程或等待机器维护释放资源；确认后自动继续。'
-                : sameDirectory ? '同一工作目录正在被其他任务使用；目录释放后自动继续。' : named.length
-                ? `共享资源 ${named.join('、')} 正在被使用；资源释放后自动继续。` : '正在等待较早任务释放或完成资源申请，系统会自动继续。';
+                : sameDirectory || named.length
+                ? `${[...(sameDirectory ? [`工作目录${workspace ? ` ${workspace.cwd}` : ''}`] : []), ...(named.length ? [`共享资源 ${named.join('、')}`] : [])].join('、')} 正在被使用；释放后自动继续。`
+                : '正在等待较早任务释放或完成资源申请，系统会自动继续。';
             if (sessions.length) recovery += ` 占用会话：${sessions.join('、')}`;
+        } else if (t.reason === 'candidate_review') {
+            const holders = reviewBlockers(s, t).filter(other => other.grantID === t.grantID);
+            recovery = `工作目录${workspace ? ` ${workspace.cwd}` : ''} 正在保留独立验收的候选，验收结束后自动继续。`;
+            if (holders.length) recovery += ` 占用会话：${holders.slice(0, 5).map(other => `/session/${other.sessionID}`).join('、')}`;
+        } else if (t.reason === 'legacy_observation') {
+            const pending = checking.filter(other => pendingConflict(t, other));
+            const directory = workspace && pending.some(other => other.resources.some(r => r.key === `checkout:${hash(workspace.cwd)}`)) ? workspace.cwd : undefined;
+            const names = t.resources.filter(r => r.key.startsWith('declared:') && pending.some(other => conflicts([r], other.resources))).map(r => r.key.slice('declared:'.length));
+            recovery = `正在核对${directory ? `工作目录 ${directory} 的` : ''}${names.length ? `共享资源 ${names.join('、')} 的` : ''}旧执行会话；确认后自动继续。`;
+            if (pending.some(other => other.sessionID === t.sessionID)) recovery += ` 占用会话：/session/${t.sessionID}`;
         } else if (t.reason === 'project-limit') recovery = `本项目 ${workspace ? s.policy.projectOverrides[workspace.repository] ?? s.policy.projectConcurrency : s.policy.projectConcurrency} 个执行名额正在被占用或预留，前序任务推进后自动继续。`;
         else if (t.reason === 'machine-limit') recovery = '机器配置的执行名额已用满，任务结束后自动继续。';
-        else if (t.reason === 'session_turn') recovery = '等待同一执行会话的前一轮结束，随后自动交办。';
+        else if (t.reason === 'session_turn') recovery = `等待同一执行会话的前一轮结束，随后自动交办。 占用会话：/session/${t.sessionID}`;
         else if (t.reason === 'session_process_unknown' || t.state === 'blocked') recovery = '正在核对原执行会话与原请求回执；不会重复派发，确认后自动继续。';
         else if (t.reason === 'execution_unavailable' || t.reason === 'observation_unavailable') recovery = '执行端暂时不可用，系统正在重试原请求的状态查询。';
         else if (t.reason?.startsWith('execution_unavailable:')) recovery = t.reason.endsWith(':UNSUPPORTED_VERSION')
@@ -306,10 +377,14 @@ export class TaskQueue {
         return { requestID: t.requestID, taskID: t.id, queueID: t.id, sessionID: t.sessionID,
             state: t.state === 'cancelled' ? 'cancelled' : t.seq !== undefined ? 'submitted' : t.state,
             executionState: t.state, executionDispatched: t.dispatched, queueReason: t.reason,
-            ...(t.dispatched && ['failed','cancelled'].includes(t.state)?{process:'stopped'}:{}),
+            ...(t.dispatched && ['failed','cancelled'].includes(t.state) && !t.reason?.startsWith('CANDIDATE_') ? {process:'stopped'}:{}),
             seq: t.seq, messageID: t.messageID, turnID: t.turnID,
             ...(workspace ? { execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch,
                 baseCommit: workspace.baseCommit, resultCommit: t.resultCommit, dirty: t.worktreeDirty, projectID: workspace.projectID, port: workspace.port,
+                checkoutDigest: t.checkoutDigest ?? (workspace.execution.candidate?.kind === 'checkout' ? workspace.execution.candidate.digest : undefined),
+                reviewPending: t.checkoutDigest ? holdsReviewCheckout(t) : undefined,
+                candidateCommit: workspace.execution.candidate && workspace.execution.candidate.kind !== 'checkout' ? workspace.execution.candidate.commit : undefined,
+                candidateTree: workspace.candidateTree, testResult: t.testResult, testCleanup: workspace.testCleanup,
                 workspaceState: workspace.retirement?.phase ?? 'active', retainedRef: workspace.retirement?.retainedRef,
                 retainedCommit: workspace.retirement?.retainedCommit }, resources: workspace.execution.resources } : {}),
             canCancel: !terminalTask(t), recovery };

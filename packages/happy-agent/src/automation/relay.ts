@@ -13,6 +13,8 @@ export type TransportSession = DecryptedSession & {
 export interface Transport {
     machines(): Promise<DecryptedMachine[]>;
     sessions(cursor?: string, limit?: number): Promise<{ sessions: TransportSession[]; nextCursor: string | null }>;
+    /** In-process daemon inventory for scheduling. Remote command authorization still uses Relay metadata. */
+    localSessions?(): TransportSession[];
     rpc(machine: DecryptedMachine, input: Record<string, unknown>): Promise<Record<string, unknown>>;
     messages(session: DecryptedSession, cursor: number, limit: number): Promise<MessagePage>;
     send(session: DecryptedSession, requestID: string, text: string): Promise<{ id: string; seq: number }>;

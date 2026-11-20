@@ -7,7 +7,7 @@ import { canonicalBody } from './auth';
 import { ApiError } from './schema';
 import { MetadataStore } from './store';
 import { privateDirectory } from './privateFs';
-import { TaskQueue, terminalTask, type Workspace, type QueueTask } from './taskQueue';
+import { TaskQueue, terminalTask, holdsReviewCheckout, type Workspace, type QueueTask } from './taskQueue';
 import { workspaceGit, workspaceLock } from './taskWorkspaces';
 import { retirementProcessProof } from './sessionProcessProofs';
 
@@ -112,9 +112,10 @@ export class WorkspaceLifecycle {
             const w = s.workspaces.find(w=>w.id===workspaceID);
             if (!w || w.grantID!==this.policy.grantID || w.projectID!==this.policy.projectID || w.root!==this.policy.root) error('WORKSPACE_SCOPE_DENIED');
             return { workspace: w!, tasks: s.tasks.filter(t=>t.workspaceID===workspaceID),
-                related: s.tasks.filter(t=>!terminalTask(t) && (t.sessionID===w!.sessionID || t.resources.some(r=>r.key===`checkout:${hash(w!.cwd)}`
+                related: s.tasks.filter(t=>(!terminalTask(t) || holdsReviewCheckout(t)) && (t.sessionID===w!.sessionID || t.resources.some(r=>r.key===`checkout:${hash(w!.cwd)}`
                     || r.mode==='exclusive'&&(r.key==='machine'||r.key===`repo:${hash(w!.repository)}`)))),
-                others: s.workspaces.filter(other=>other.id!==workspaceID && other.retirement?.phase!=='retired' && overlaps(other.cwd,w!.cwd)) };
+                others: s.workspaces.filter(other=>other.id!==workspaceID && other.retirement?.phase!=='retired'
+                    && other.execution.candidate?.kind !== 'checkout' && overlaps(other.cwd,w!.cwd)) };
         },true);
     }
     private binding(w: Workspace) { return fingerprint({ id:w.id, grant:w.grantID, project:w.projectID, root:w.root, cwd:w.cwd,
@@ -232,7 +233,8 @@ export class WorkspaceLifecycle {
     }
     async inventory(limit = 20, after = '') {
         if (!Number.isInteger(limit)||limit<1||limit>50) error('WORKSPACE_PAGE_LIMIT');
-        const registered=this.queue.transaction(s=>s.workspaces.filter(w=>w.grantID===this.policy.grantID&&w.projectID===this.policy.projectID&&w.root===this.policy.root).sort((a,b)=>a.id.localeCompare(b.id)),true);
+        const registered=this.queue.transaction(s=>s.workspaces.filter(w=>w.grantID===this.policy.grantID&&w.projectID===this.policy.projectID&&w.root===this.policy.root
+            && !w.execution.candidate).sort((a,b)=>a.id.localeCompare(b.id)),true);
         const rows=[...new Map(registered.map(w=>[w.cwd,w])).values()].sort((a,b)=>a.id.localeCompare(b.id));
         const page=rows.filter(w=>w.id>after).slice(0,limit);
         const items=page.map(w=>{const r=this.read(w);return {id:w.id,projectID:w.projectID,directory:w.cwd,baseCommit:w.baseCommit,
@@ -391,7 +393,7 @@ export class WorkspaceLifecycle {
             if(!w.retirement) {
                 try {this.queue.transaction(q=>{
                     const current=q.workspaces.find(x=>x.id===w.id)!;
-                    if(current.retirement||this.binding(current)!==plan.binding||q.tasks.some(t=>!terminalTask(t)&&(t.workspaceID===w.id||t.sessionID===w.sessionID||t.resources.some(x=>x.key===`checkout:${hash(w.cwd)}`
+                    if(current.retirement||this.binding(current)!==plan.binding||q.tasks.some(t=>(!terminalTask(t) || holdsReviewCheckout(t))&&(t.workspaceID===w.id||t.sessionID===w.sessionID||t.resources.some(x=>x.key===`checkout:${hash(w.cwd)}`
                         ||x.mode==='exclusive'&&(x.key==='machine'||x.key===`repo:${hash(w.repository)}`)))))error('WORKSPACE_IN_USE');
                     current.retirement={operationID,phase:'retiring',retainedRef:op!.retainedRef!,retainedCommit:op!.head!};
                 });} catch {return this.fail(w,r,op,'WORKSPACE_IN_USE');}

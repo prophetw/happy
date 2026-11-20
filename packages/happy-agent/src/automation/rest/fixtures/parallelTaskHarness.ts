@@ -18,6 +18,7 @@ setInterval(()=>{if(current)return;const m=events().find(m=>m.localId&&!seen.has
  const timer=setInterval(()=>{if(!fs.existsSync(path.join(dir,'release-'+m.seq)))return;clearInterval(timer);
  try{const file=m.content.content.text;let result=turnModule?require(turnModule)(file,cwd,dir):null;
  if(result==null){fs.writeFileSync(path.join(cwd,file),'child '+process.pid);cp.execFileSync('git',['add','--',file],{cwd});cp.execFileSync('git',['commit','-m','fixture '+file],{cwd,stdio:'ignore'});result='wrote '+file;}
+ if(result&&typeof result==='object'){for(const ev of result.events??[])append({role:'session',content:{role:'agent',turn,ev}});result=result.text;}
  append({role:'session',content:{role:'agent',turn,ev:{t:'text',text:result}}});
  append({role:'session',content:{role:'agent',turn,ev:{t:'turn-end',status:'completed'}}});}catch(e){append({role:'session',content:{role:'agent',turn,ev:{t:'turn-end',status:'failed'}}});
  if(turnModule){fs.writeFileSync(path.join(dir,'fixture-error'),e.message);process.exit(1);}}
@@ -72,7 +73,7 @@ export function fixtureSessionTransport(root: string, registration: { machineID:
 export function fixtureWorker(root: string, grantID = 'grant-a', workerID?: string, Worker = ScopedWorker) {
     const config = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
     const registration = { ...config.registration, ...(workerID ? { id: workerID } : {}) };
-    const { transport, sessions, messages, state } = fixtureSessionTransport(root, registration);
+    const { transport, sessions, messages, state } = fixtureSessionTransport(root, registration, config.fixture);
     const grant = (id: string) => JSON.parse(readFileSync(join(root, 'grants.json'), 'utf8'))[id];
     const worker = new Worker(registration, transport, join(root, 'worker'), async () => grant(grantID), Date.now, undefined, async id => grant(id), join(root, 'queue'));
     const call = (method: string, values: Record<string, unknown>) => worker.execute({ id: 'job', workerID: registration.id, grantID, deadline: Date.now() + 60000, command: { version: 1, method, ...values } }) as Promise<any>;

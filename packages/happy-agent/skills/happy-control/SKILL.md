@@ -36,9 +36,10 @@ description: Guides agents through Happy Control MCP connection, project, machin
 
 ## 并行、资源与交付
 
-- 创建代码任务时显式传 `execution: {mode: "worktree", resources: []}`，保留原用户 permissionMode；固定基线、任务分支、真实cwd从回执读取，不编造。非Git或子目录项目不支持worktree时会明确拒绝，可经用户范围选择legacy串行。
-- 跨授权项目默认并行，无需额外execution参数；同一canonical仓库默认同时执行2项，可配置，多个Dot/grant/Worker共用项目额度。省略execution的legacy仅在该仓库排他；同项目代码并行选择独立worktree/session。机器硬上限是单独可选配置，不默认限制为2或4。机器维护、服务部署、共享数据库及合main必须选integration并声明实际命名资源。任务满时应保存queued回执，不称派发失败。
+- 普通写任务省略 `execution`，使用原目录和用户原权限，可接续已有修改。对同一任务的追问继续向原 session 发送。确需同时启动且能从已提交基线独立开发的写任务用 `execution: {mode: "worktree"}`。固定基线、任务分支、真实目录从回执读取。
+- 只审提交或差异时，使用 `execution: {mode: "read-only", candidate: {kind: "commit", commit: "<完整提交 ID>"}}`，可选 `baseCommit`。需要单独测试固定候选时用 `candidate: {kind: "test", commit: "<完整提交 ID>", command: "<测试命令>"}`。未提交交付可在执行 create 声明 `handoff: true`，随后用 `candidate: {kind: "checkout", requestID: "<原执行 send ID>", digest: "<回执 checkoutDigest>"}` 独立只读验收。
+- 跨授权项目默认并行，同一 canonical 仓库的可配置额度跨 Dot/grant/Worker 共计。相同 checkout 写入互斥。机器硬上限独立配置。机器维护、服务部署、共享数据库及合 main 用 integration 并声明实际命名资源。保存 queued 原回执，按状态查看实际等待对象。
 - main合并/push使用明确授权的integration任务；部署/重启/迁移声明相同机器资源名（如service:relay、database:orders）以排他串行。锁是调度保证，不拦截任意shell。
-- 每个任务在自己的worktree安装和构建，遵循仓库包源，不链接共享可写node_modules/dist；端口显式使用HAPPY_TASK_PORT或声明固定port资源。代码结果应提交在任务分支并回报commit，集中集成/发布需要另有授权。
+- 独立写任务在分配的 worktree 安装和构建，遵守仓库包源，交付候选 commit 和实际测试状态。端口显式使用 `HAPPY_TASK_PORT` 或声明固定资源。集成与发布需要相应授权。
 - 排队期间先查原send requestID回执，出现真实sentSeq/turnID后才按该轮读取结果；必须读取最新分页，不能把旧running当当前状态。
 - 取消单个未来交办用happy_cancel.sendRequestID；cancelled队列回执表示该项未再执行。取消running仍须等确实停止证明。未知写入不重派；失败/dirty现场保留，向用户提供分支/目录与恢复信息。

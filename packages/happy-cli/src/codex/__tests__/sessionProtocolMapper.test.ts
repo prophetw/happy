@@ -489,7 +489,8 @@ describe('mapCodexMcpMessageToSessionEnvelopes', () => {
         expect(result.envelopes).toHaveLength(1);
         expect(result.envelopes[0]).toMatchObject({
             turn: 'turn-1',
-            ev: { t: 'tool-call-end', call: 'call-1', result: output, isError },
+            ev: { t: 'tool-call-end', call: 'call-1', result: output, isError,
+                ...('exit_code' in fields ? { exitCode: fields.exit_code } : {}) },
         });
     });
 
@@ -878,7 +879,7 @@ describe('mapCodexThreadToSessionEnvelopes', () => {
         });
 
         expect(envelopes.find(envelope => envelope.ev.t === 'tool-call-end')?.ev).toEqual({
-            t: 'tool-call-end', call: 'cmd-failed', result: 'No such file\n', isError: true,
+            t: 'tool-call-end', call: 'cmd-failed', result: 'No such file\n', isError: true, exitCode: 1,
         });
         expect(envelopes.some(envelope => envelope.ev.t === 'text')).toBe(false);
     });

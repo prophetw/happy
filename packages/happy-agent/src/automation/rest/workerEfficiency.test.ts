@@ -91,8 +91,8 @@ it('preserves a terminal turn across an empty incremental read and still checks 
     vi.mocked(f.transport.messages).mockClear();
     await worker.tick();
     expect(worker.queue.tasks().find(value => value.id === task.id)?.state).toBe('completed');
-    expect(vi.mocked(f.transport.messages).mock.calls.map(call => call[1])).toEqual([2, 102, 153]);
-    expect(f.transport.rpc).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(f.transport.messages).mock.calls.map(call => call[1])).toEqual([2, 102]);
+    expect(f.transport.rpc).toHaveBeenCalledTimes(2);
     expect(f.transport.send).not.toHaveBeenCalled();
 });
 

@@ -147,6 +147,198 @@ it('scopes an ordinary live legacy turn to its canonical repository instead of b
     expect(adopted.resources).toEqual([{key:'machine',mode:'shared'},{key:'repo:'+hash(join(other,'.git')),mode:'shared'},{key:'checkout:'+hash(other),mode:'exclusive'},{key:'session:'+old.sessionID,mode:'exclusive'}]);
     expect(adopted.state).toBe('running');expect(f.state('new-project-send')).toBe('running');
 });
+
+for (const failure of [false, true]) it(`dispatches independent work while an older checkout history ${failure ? 'fails' : 'is held'}`, async () => {
+    const f = setup(4), other = join(f.root, 'legacy-project'); mkdirSync(other); git(other, 'init', '-q');
+    const old = await f.transport.rpc((await f.transport.machines())[0], { version: 1, operation: 'create', requestID: 'old-project-a', directory: other });
+    const events = join(f.root, 'sessions', String(old.sessionID), 'events');
+    for (let seq = 1; seq <= 101; seq++) appendFileSync(events, JSON.stringify({ id: `m${seq}`, seq, content: { role: 'unknown' } }) + '\n');
+    const b = await f.create('independent-project-b', { mode: 'legacy' });
+    await f.send(b.sessionID, 'independent-send');
+    const rpc = f.transport.rpc;
+    f.transport.rpc = async (machine, input) => input.operation === 'status' && input.sessionID === old.sessionID
+        ? { version: 1, process: 'unknown' } : rpc(machine, input);
+    let entered!: () => void, release!: () => void;
+    const enteredPage = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const read = f.transport.messages;
+    let attempts = 0;
+    f.transport.messages = async (session, cursor, limit) => {
+        if (session.id === old.sessionID && cursor === 100) {
+            attempts++;
+            entered();
+            if (failure) throw Error('fixture_history_read_failed');
+            await held;
+        }
+        return read(session, cursor, limit);
+    };
+    const round = f.worker.tick().catch(error => error);
+    try {
+        await enteredPage;
+        const deadline = Date.now() + 2500;
+        while (!f.messages(b.sessionID).some(m => m.content?.content?.ev?.t === 'turn-start') && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(f.state('independent-send'), 'B is durably sent before A resumes').toBe('running');
+        expect(f.messages(b.sessionID).filter(m => m.localId)).toHaveLength(1);
+        expect(f.messages(b.sessionID).filter(m => m.content?.content?.ev?.t === 'turn-start')).toHaveLength(1);
+        expect(attempts).toBe(1);
+        f.release('independent-send');
+        await until(() => existsSync(join(f.repo, 'independent-send.txt')));
+    } finally { release(); await round; }
+}, 10000);
+
+it('holds the checkout while another session on the same path is being checked', async () => {
+    const f = setup(4);
+    const old = await f.transport.rpc((await f.transport.machines())[0], { version: 1, operation: 'create', requestID: 'same-checkout-old', directory: f.repo });
+    const b = await f.create('same-checkout-b', {mode:'legacy'});
+    await f.send(b.sessionID, 'waiting-b');
+    let release!: () => void, entered = false;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const read = f.transport.messages;
+    f.transport.messages = async (session, cursor, limit) => {
+        if (session.id === old.sessionID) { entered = true; await held; }
+        return read(session, cursor, limit);
+    };
+    const round = f.worker.tick();
+    try {
+        await until(() => entered && f.state('waiting-b') === 'waiting-resource');
+        const info = (await f.call('requests.get', {requestID:'waiting-b'})).data;
+        expect(info).toMatchObject({ queueReason: 'legacy_observation', execution: {directory:f.repo} });
+        expect(info.recovery).toContain(f.repo);
+        expect(info.recovery).not.toContain(old.sessionID);
+        expect(f.messages(b.sessionID)).toHaveLength(0);
+    } finally { release(); await round; }
+    expect(f.messages(b.sessionID).filter(m => m.localId)).toHaveLength(1);
+});
+
+function candidateFixture(f: ReturnType<typeof setup>) {
+    const configPath = join(f.root, 'config.json'), config = JSON.parse(readFileSync(configPath, 'utf8'));
+    const turnModule = join(f.root, 'candidate-turn.cjs');
+    writeFileSync(turnModule, `const fs = require('node:fs'), cp = require('node:child_process'), path = require('node:path');
+const repo = ${JSON.stringify(f.repo)};
+module.exports = (instruction, cwd) => {
+    if (instruction.startsWith('inspect objects')) {
+        const oid = /绑定的提交 ([a-f0-9]+)/.exec(instruction)[1];
+        const git = (...args) => cp.execFileSync('git', ['--git-dir='+path.join(repo,'.git'), ...args], {cwd, encoding:'utf8'});
+        const files = git('ls-tree','--name-only','-r',oid), diff = git('show','--format=','--no-ext-diff',oid,'--','baseline');
+        return JSON.stringify({oid,files,diff,blob:git('cat-file','blob',oid+':baseline')});
+    }
+    if (instruction.startsWith('write candidate')) { fs.writeFileSync(path.join(cwd,'new.txt'),'candidate bytes');return 'written'; }
+    if (instruction.startsWith('read candidate')) return fs.readFileSync(path.join(cwd,'new.txt'),'utf8');
+    if (instruction.startsWith('isolated test')) {
+        const command = 'node --test candidate.test.cjs';
+        const result = cp.spawnSync(process.execPath,['--test','candidate.test.cjs'],{cwd,encoding:'utf8'});
+        if (instruction.startsWith('isolated test with artifacts')) fs.writeFileSync(path.join(cwd,'kept.log'),'test evidence');
+        return {text: result.stdout, events:[{t:'tool-call-start',call:'test-one',name:'CodexBash',args:{command,cwd}},
+            {t:'tool-call-end',call:'test-one',exitCode:result.status}]};
+    }
+    return null;
+};`);
+    config.fixture = { turnModule, catalog: { version: 1, defaultAgent: 'codex', agents: [{ agent: 'codex', models: ['fixture-model'],
+        permissionModes: ['default', 'read-only'], efforts: [], defaultModel: 'fixture-model', defaultPermissionMode: 'default', defaultEffort: '' }] } };
+    config.registration.launchOptions = { version: 1, agents: [{ agent: 'codex', models: ['fixture-model'], permissionModes: ['default', 'read-only'] }] };
+    writeFileSync(configPath, JSON.stringify(config));
+    const scope = fixtureWorker(f.root);
+    const createReview = async (requestID: string, candidate: unknown) => (await scope.call('tasks.create', { requestID, machineID: 'machine', projectID: 'project',
+        options: {permissionMode:'read-only'}, execution: {mode:'read-only', candidate} })).data;
+    const gitState = () => ({ worktrees: git(f.repo,'worktree','list','--porcelain'), branches: git(f.repo,'for-each-ref','refs/heads','--format=%(refname) %(objectname)') });
+    const send = (sessionID: string, requestID: string, text: string) => scope.call('sessions.send',{sessionID,requestID,text});
+    const tick = () => scope.worker.tick();
+    const receipt = async (requestID: string) => (await scope.call('requests.get', {requestID})).data;
+    const finish = async (id: string, sessionID: string) => {
+        f.release(id);
+        await until(() => scope.messages(sessionID).some(m => m.content?.content?.ev?.t === 'turn-end'));
+        await tick();
+        return scope.messages(sessionID).find(m => m.content?.content?.ev?.t === 'text')?.content.content.ev.text;
+    };
+    return { ...scope, createReview, send, tick, receipt, finish, gitState };
+}
+
+it('reviews an exact historic commit, tree, diff and blob without changing Git worktrees or branches', async () => {
+    const f = setup(), a = candidateFixture(f), baseCommit = git(f.repo, 'rev-parse', 'HEAD');
+    writeFileSync(join(f.repo,'baseline'),'fixed candidate\n');git(f.repo,'commit','-qam','candidate');
+    const commit = git(f.repo,'rev-parse','HEAD'), tree = git(f.repo,'rev-parse','HEAD^{tree}');
+    writeFileSync(join(f.repo,'baseline'),'unrelated HEAD\n');git(f.repo,'commit','-qam','current');
+    writeFileSync(join(f.repo,'uncommitted'),'existing work');
+    const before = a.gitState();
+    await expect(a.createReview('unknown-commit', {kind:'commit',commit:'a'.repeat(40)})).rejects.toThrow('CANDIDATE_UNAVAILABLE');
+    await expect(a.createReview('no-commit', undefined)).rejects.toThrow('CANDIDATE_REQUIRED');
+    const review = await a.createReview('pinned-review', {kind:'commit',commit,baseCommit});
+    expect(review.execution).toMatchObject({candidateCommit:commit,candidateTree:tree});
+    expect(review.execution.directory).not.toBe(f.repo);
+    await a.send(review.sessionID,'pinned-read','inspect objects');await a.tick();
+    const proof = JSON.parse(await a.finish('pinned-read',review.sessionID));
+    expect(proof).toMatchObject({oid:commit,files:'baseline\n',blob:'fixed candidate\n'});
+    expect(proof.diff).toContain('+fixed candidate');
+    expect(a.gitState()).toEqual(before);
+    expect(readFileSync(join(f.repo,'uncommitted'),'utf8')).toBe('existing work');
+});
+
+for (const changed of [false, true]) it(`hands the original checkout to an independent reviewer${changed ? ' and refuses changed bytes' : ' including an untracked file'}`, async () => {
+    const f = setup(3), a = candidateFixture(f), before = a.gitState();
+    const source = (await a.call('tasks.create',{requestID:'source',machineID:'machine',projectID:'project',execution:{mode:'legacy',handoff:true}})).data;
+    const writer = (await a.call('tasks.create',{requestID:'writer',machineID:'machine',projectID:'project'})).data;
+    await a.send(source.sessionID,'source-send','write candidate');await a.tick();
+    await a.send(writer.sessionID,'waiting-write','parallel.txt');
+    expect(await a.finish('source-send',source.sessionID)).toBe('written');
+    const proof = await a.receipt('source-send');
+    expect(proof.executionState).toBe('completed');
+    expect(proof.execution.checkoutDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect((await a.receipt('waiting-write')).recovery).toContain(source.sessionID);
+    const review = await a.createReview('review',{kind:'checkout',requestID:'source-send',digest:proof.execution.checkoutDigest});
+    expect(review.sessionID).not.toBe(source.sessionID);
+    expect(review.execution.directory).toBe(f.repo);
+    if (changed) writeFileSync(join(f.repo,'new.txt'),'changed after launch');
+    await a.send(review.sessionID,'review-send','read candidate');await a.tick();
+    if (changed) {
+        expect(await a.receipt('review-send')).toMatchObject({ executionState:'failed', queueReason:'CANDIDATE_CHANGED', executionDispatched:false });
+        expect(a.messages(review.sessionID)).toHaveLength(0);
+    } else {
+        expect((await a.receipt('waiting-write')).queueReason).toBe('candidate_review');
+        expect(a.messages(writer.sessionID)).toHaveLength(0);
+        expect(await a.finish('review-send',review.sessionID)).toBe('candidate bytes');
+    }
+    await until(async () => { await a.tick(); return f.state('waiting-write') === 'running'; });
+    expect(a.messages(writer.sessionID).filter(m=>m.localId)).toHaveLength(1);
+    expect(a.gitState()).toEqual(before);
+});
+
+it('releases a completed handoff through its original targeted cancel receipt', async () => {
+    const f = setup(3), a = candidateFixture(f);
+    const source = (await a.call('tasks.create',{requestID:'source',machineID:'machine',projectID:'project',execution:{handoff:true}})).data;
+    const writer = (await a.call('tasks.create',{requestID:'writer',machineID:'machine',projectID:'project'})).data;
+    await a.send(source.sessionID,'source-send','write candidate');await a.tick();await a.finish('source-send',source.sessionID);
+    await a.send(writer.sessionID,'waiting-write','parallel.txt');await a.tick();
+    expect((await a.receipt('waiting-write')).queueReason).toBe('candidate_review');
+    const release = { sessionID:source.sessionID,requestID:'release-candidate',sendRequestID:'source-send' };
+    for (let retry=0;retry<2;retry++) expect((await a.call('sessions.cancel',release)).data.state).toBe('cancelled');
+    expect(await a.receipt('source-send')).toMatchObject({ executionState:'completed',execution:{reviewPending:false} });
+    expect(a.state(source.sessionID)).toBe('running');
+    await a.tick();expect(f.state('waiting-write')).toBe('running');
+    expect(a.messages(writer.sessionID).filter(m=>m.localId)).toHaveLength(1);
+});
+
+for (const scenario of ['success', 'artifacts', 'failure']) it(`runs actual ${scenario} tests on a detached candidate and settles the checkout`, async () => {
+    const f = setup(), a = candidateFixture(f);
+    const keepArtifacts = scenario === 'artifacts', exitCode = scenario === 'failure' ? 1 : 0;
+    writeFileSync(join(f.repo,'candidate.test.cjs'),`require('node:test')('fixed candidate',()=>require('node:assert/strict').equal(${exitCode},0));\n`);
+    writeFileSync(join(f.repo,'.gitignore'),'kept.log\n');git(f.repo,'add','.');git(f.repo,'commit','-qm','candidate test');
+    const commit = git(f.repo,'rev-parse','HEAD');
+    writeFileSync(join(f.repo,'candidate.test.cjs'),'throw Error("wrong HEAD");');git(f.repo,'commit','-qam','current');
+    const before = a.gitState(), command = 'node --test candidate.test.cjs';
+    const session = await a.createReview('test-create',{kind:'test',commit,command}), cwd = session.execution.directory;
+    expect(git(cwd,'rev-parse','HEAD')).toBe(commit);
+    expect(a.gitState().worktrees).toContain('detached');
+    expect(a.gitState().branches).toBe(before.branches);
+    await a.send(session.sessionID,'test-send',keepArtifacts?'isolated test with artifacts':'isolated test');await a.tick();
+    expect(await a.finish('test-send',session.sessionID)).toContain(exitCode ? '# fail 1' : '# pass 1');
+    await until(async () => { await a.tick(); return Boolean((await a.receipt('test-send')).execution.testCleanup); });
+    expect((await a.receipt('test-send')).execution).toMatchObject({candidateCommit:commit,resultCommit:commit,testResult:{command,exitCode},testCleanup:keepArtifacts?'retained':'removed'});
+    expect(a.gitState().branches).toBe(before.branches);
+    if (keepArtifacts) expect(readFileSync(join(cwd,'kept.log'),'utf8')).toBe('test evidence');
+    else expect(a.gitState()).toEqual(before);
+}, 20000);
 it('reclassifies a persisted generated legacy machine lease without changing its turn or replaying input',async()=>{
     const f=setup(),other=join(f.root,'other');mkdirSync(other);git(other,'init','-q');
     const old:any=await f.transport.rpc((await f.transport.machines())[0],{version:1,operation:'create',requestID:'persisted-other',directory:other});

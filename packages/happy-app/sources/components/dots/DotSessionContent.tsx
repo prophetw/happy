@@ -86,6 +86,13 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const view = own ? data.projection?.details[metadata.dotId] : undefined;
     const detail = view?.data;
     const selectedTask = detail?.tasks.find(task => task.id === taskId);
+    type Delivery = NonNullable<NonNullable<typeof detail>['pendingIntegration']>['items'][number];
+    const pendingByProject = new Map<string, Delivery[]>();
+    for (const delivery of detail?.pendingIntegration?.items ?? []) {
+        const project = pendingByProject.get(delivery.projectID) ?? [];
+        project.push(delivery);
+        pendingByProject.set(delivery.projectID, project);
+    }
     useFocusEffect(React.useCallback(() => {
         navigation.update(`${session.id}:${metadata.workspaceId}:${metadata.dotId}`, active);
         return () => navigation.invalidate();
@@ -292,6 +299,19 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                     </Pressable>)}
                     {!detail.tasks.length && <Text style={muted}>这个 Dot 还没有可查看的工作项。在对话中交办即可。</Text>}
                     {detail.taskTotal > detail.tasks.length && <Text style={muted}>当前展示 {detail.tasks.length} 项，其余工作可在对话中按名称或编号查询。</Text>}
+                    {detail.pendingIntegration && <>
+                        <Text accessibilityRole="header" style={heading}>待集成 · {detail.pendingIntegration.total}</Text>
+                        {[...pendingByProject].map(([project, deliveries]) => <View key={project} style={{ gap: 8 }}>
+                            <Text style={heading}>{project}</Text>
+                            {deliveries.map(delivery => <View key={delivery.id} style={{ gap: 4, paddingVertical: 8 }}>
+                                <Text style={body}>{delivery.title}</Text>
+                                <Text selectable style={muted}>{delivery.commit}</Text>
+                                <Text selectable style={muted}>{delivery.test ? `${delivery.test.command} · ${delivery.test.exitCode === 0 ? '通过' : '失败'}（退出码 ${delivery.test.exitCode}）` : '未测'}</Text>
+                                {delivery.sessionId && action('查看执行会话', () => void openExecution(delivery.sessionId!))}
+                            </View>)}
+                        </View>)}
+                        {detail.pendingIntegration.total > detail.pendingIntegration.items.length && <Text style={muted}>当前展示 {detail.pendingIntegration.items.length} 项。</Text>}
+                    </>}
                 </>}
             {view && <Text style={muted}>更新于 {new Date(view.asOf).toLocaleString()}</Text>}
         </ScrollView>
@@ -330,6 +350,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {selectedTask.projectID && <Text style={muted}>项目：{selectedTask.projectID}</Text>}
             {selectedTask.queueReason && <Text style={muted}>排队原因：{testloopWorkQueueReason(selectedTask.queueReason)}</Text>}
             {selectedTask.execution && <><Text selectable style={muted}>执行位置：{selectedTask.execution.directory}</Text>{selectedTask.execution.branch && <Text selectable style={muted}>分支：{selectedTask.execution.branch}</Text>}{selectedTask.execution.resultCommit && <Text selectable style={muted}>提交：{selectedTask.execution.resultCommit}</Text>}{selectedTask.execution.dirty && <Text style={muted}>存在未提交改动，现场已保留</Text>}</>}
+            {selectedTask.execution?.testCleanup && <Text style={muted}>{selectedTask.execution.testCleanup === 'removed' ? '临时测试目录已清理' : '临时测试目录已保留'}</Text>}
             {selectedTask.recovery && <Text style={muted}>{selectedTask.recovery}</Text>}
             {selectedTask.canCancel && action('在对话中取消此工作', () => toConversation(`请取消当前 Dot 的工作项 ${selectedTask.id}，只取消这一交办，保留已有改动，并核对停止结果。`))}
             {selectedTask.reason && <Text style={muted}>状态原因：{testloopWorkQueueReason(selectedTask.reason)}</Text>}

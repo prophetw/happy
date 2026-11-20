@@ -1,8 +1,10 @@
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
-import { TaskQueue, occupiesSlot, type QueueTask } from './taskQueue';
-import { TaskScheduler, type Observation } from './taskScheduler';
-import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository, withWorkspaceAccess } from './taskWorkspaces';
+import { TaskQueue, occupiesSlot, terminalTask, type LegacyCheck, type QueueTask, type Workspace } from './taskQueue';
+import { TaskScheduler, candidateError, type Observation } from './taskScheduler';
+import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository, withWorkspaceAccess,
+    verifyReviewCandidate, checkoutVersion, candidateInstruction, finishTestCheckout } from './taskWorkspaces';
+import type { TestEvidence } from './execution';
 import { realpathSync, statSync } from 'node:fs';
 import { AutomationControl, projectMessage, type Policy } from '../control';
 import { Journal, hash } from '../journal';
@@ -14,7 +16,7 @@ import { ApiError, cancelSchema, sendSchema, checkBoundProjects, taskTitleSchema
 import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog, type ResolvedTaskOptions } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
-import { SessionProcessProofs } from './sessionProcessProofs';
+import { SessionProcessProofs, retirementProcessProof } from './sessionProcessProofs';
 
 /**
  * Queue lease pins grant identity only. Owner in-place edits (renewal, scope,
@@ -38,6 +40,12 @@ export class ScopedWorker {
     // Only reduced message evidence is cached. Process status and ownership are always fresh.
     // A new worker reconstructs history; no ledger migration or replay rights are introduced.
     private readonly legacyObservations = new Map<string, LegacyObservation>();
+    private readonly legacyChecks = new Map<string, LegacyCheck>();
+    private readonly legacyReads = new Map<string, Promise<void>>();
+    private readonly refinements = new Map<string, Promise<void>>();
+    private readonly testCleanups = new Map<string, Promise<void>>();
+    private legacyListing?: Promise<Promise<void>[]>;
+    private haveLegacyInventory = false;
     constructor(private registration: WorkerRegistration, private transport: Transport, private directory: string,
         private authorize: (jobID: string) => Promise<Connection>, private now = Date.now,
         private canonicalDirectory: (path: string) => string = realpathSync,
@@ -70,14 +78,18 @@ export class ScopedWorker {
             authorize: async t => { const result = await run(t, { version: 1, method: 'sessions.status', sessionID: t.sessionID, cursor: 0, limit: 1 }, true); if(!result.ok)throw new ApiError(result.error?.code??'EXECUTION_UNAVAILABLE',503); },
             observe: async t => {
                 if (!t.legacy) return this.observeTask(t, run);
-                try {
-                    const observed = await this.observeLegacy(t.sessionID);
-                    if (observed.process === 'unknown' && !observed.sessionOwnerVerified) this.queue.restoreLegacyExclusion(t);
-                    return observed;
-                } catch (error) {
-                    this.queue.restoreLegacyExclusion(t);
-                    throw error;
+                const session = this.transport.localSessions?.().find(s => s.id === t.sessionID);
+                const observed = await this.observeLegacy(t.sessionID, session, (state, verified) => {
+                    if (state === 'unknown' && !verified) this.queue.restoreLegacyExclusion(t);
+                });
+                const pid = (observed.sourceSession.metadata as any)?.hostPid;
+                if (observed.sessionOwnerVerified && (observed.outcome === 'running' || observed.pendingInput) && pid === t.processID && Number.isInteger(pid) && pid > 0
+                    && (observed.turnID !== undefined && observed.turnID === t.turnID
+                        || observed.pendingInput && observed.seq !== undefined && observed.seq === t.seq && t.turnID === undefined)) {
+                    if (t.resources.some(r => r.key === 'machine' && r.mode === 'exclusive') || !t.resources.some(r => r.key.startsWith('checkout:')))
+                        this.queue.refineLegacyResources(t, this.legacyResources(observed.sourceSession));
                 }
+                return observed;
             },
             send: async t => {
                 const result: any = await run(t, { version: 1, method: 'sessions.send', sessionID: t.sessionID, requestID: t.requestID, text: t.text });
@@ -108,10 +120,12 @@ export class ScopedWorker {
         const sessionOwnerVerified = process === 'running' || this.processProofs.verify(target);
         return { sessionOwnerVerified, dispatchable: process === 'unknown' && sessionOwnerVerified };
     }
-    private async observeLegacy(sessionID: string, listedSession?: TransportSession): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
+    private async observeLegacy(sessionID: string, listedSession?: TransportSession, checkProcess?: (state: string, verified: boolean) => void): Promise<Observation & { sourceSession: { id: string; metadata: unknown } }> {
         const session = listedSession ?? await this.localSession(sessionID), machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
         if (!machine) throw new ApiError('MACHINE_UNAVAILABLE', 503);
         const process = await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID });
+        const state = String(process.process ?? 'unknown'), proof = this.schedulingProof(session, state);
+        checkProcess?.(state, proof.sessionOwnerVerified);
         const metadata = session.metadata as { machineId?: unknown; hostPid?: unknown; path?: unknown } | null;
         const binding = hash(canonicalBody({ machineID: metadata?.machineId, pid: metadata?.hostPid, path: metadata?.path,
             encryption: session.encryption ? { variant: session.encryption.variant, key: Buffer.from(session.encryption.key).toString('base64') } : undefined }));
@@ -131,18 +145,18 @@ export class ScopedWorker {
                 this.legacyObservations.delete(sessionID);
                 this.legacyObservations.set(sessionID, { binding, sessionSeq: session.seq, cursor: next, turnID, outcome, lastInput, lastTurn });
                 if (this.legacyObservations.size > 1000) this.legacyObservations.delete(this.legacyObservations.keys().next().value!);
-                const pendingInput = lastInput > lastTurn, state = String(process.process ?? 'unknown');
-                return { process: state, cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session, ...this.schedulingProof(session, state) };
+                const pendingInput = lastInput > lastTurn;
+                return { process: state, cursor: next, turnID: pendingInput ? undefined : turnID, outcome: pendingInput ? undefined : outcome, pendingInput, seq: lastInput || undefined, externalRunning: pendingInput, sourceSession: session, ...proof };
             }
             if (next <= cursor) throw new ApiError('INVALID_CURSOR'); cursor = next;
         }
         throw new ApiError('OBSERVATION_PAGE_LIMIT');
     }
-    private legacyResources(session: { id: string; metadata: unknown }) {
+    private legacyResources(session: { id: string; metadata: unknown }, registered?: Workspace | null) {
         try {
             const directory = (session.metadata as any)?.path;
             if (typeof directory !== 'string' || !statSync(directory).isDirectory()) throw new Error();
-            const workspace = this.queue.transaction(s => s.workspaces.find(w => w.sessionID === session.id));
+            const workspace = registered === undefined ? this.queue.transaction(s => s.workspaces.find(w => w.sessionID === session.id), true) : registered;
             if (workspace) {
                 if (workspace.cwd !== directory) throw new Error();
                 verifyWorkspace(workspace);
@@ -154,57 +168,151 @@ export class ScopedWorker {
             return workspaceResources();
         }
     }
-    async tick() {
-        // Existing queues progress in place after upgrade. Verify the original
-        // binding before narrowing an automatically generated repository lease.
-        for (const task of this.queue.tasks().filter(t => t.workerID === this.registration.id && !t.legacy && !['completed', 'failed', 'cancelled'].includes(t.state)
-            && t.resources.some(r => r.key.startsWith('repo:')) && !t.resources.some(r => r.key.startsWith('checkout:')))) {
-            const workspace = this.queue.workspaces(task.grantID).find(w => w.id === task.workspaceID);
-            try {
-                if (workspace) { verifyWorkspace(workspace); this.queue.refineWorkspaceResources(task, workspaceResources(workspace, task.sessionID)); }
-                else if (!task.workspaceID) {
-                    const grant = await this.currentGrant(task), session = await this.localSession(task.sessionID);
-                    const project = checkBoundProjects(grant, this.registration, this.now()).find(p => p.directory === (session.metadata as any)?.path);
-                    if (!project || task.processID && task.processID !== (session.metadata as any)?.hostPid) continue;
-                    const binding = { repository: canonicalRepository(project.directory), cwd: project.directory, execution: { mode: 'legacy' as const, resources: [] } };
-                    this.queue.refineWorkspaceResources(task, workspaceResources(binding, task.sessionID), binding);
-                }
+    private async refineResources(task: QueueTask, workspace?: Workspace) {
+        try {
+            if (workspace) {
+                verifyWorkspace(workspace);
+                this.queue.refineWorkspaceResources(task, workspaceResources(workspace, task.sessionID));
+            } else if (!task.workspaceID) {
+                const grant = await this.currentGrant(task), session = await this.localSession(task.sessionID);
+                const project = checkBoundProjects(grant, this.registration, this.now()).find(p => p.directory === (session.metadata as any)?.path);
+                if (!project || task.processID && task.processID !== (session.metadata as any)?.hostPid) return;
+                const binding = { repository: canonicalRepository(project.directory), cwd: project.directory, execution: { mode: 'legacy' as const, resources: [] } };
+                this.queue.refineWorkspaceResources(task, workspaceResources(binding, task.sessionID), binding);
             }
-            catch { /* Binding failures keep the existing lease and follow normal authorization handling. */ }
+        } catch { /* A changed binding retains its original lease. */ }
+    }
+    private async adoptLegacy(session: TransportSession, check: LegacyCheck) {
+        const observed = await this.observeLegacy(session.id, session);
+        if (observed.outcome !== 'running' && !observed.pendingInput || observed.process === 'stopped') return;
+        const pid = (observed.sourceSession.metadata as any)?.hostPid;
+        const knownOwner = observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && Number.isInteger(pid) && pid > 0;
+        this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`),
+            workerID: this.registration.id, grantID: 'legacy-import', sessionID: session.id, authorization: '', text: '',
+            resources: knownOwner ? check.resources : workspaceResources(), legacy: true, seq: observed.seq, turnID: observed.turnID,
+            processID: Number.isInteger(pid) && pid > 0 ? pid : undefined });
+    }
+    private scanLegacy(tasks: QueueTask[], workspaces: Workspace[], onRelease: () => void) {
+        if (this.legacyListing) return this.legacyListing;
+        const active = new Set(tasks.filter(occupiesSlot).map(t => t.sessionID));
+        const bySession = new Map(workspaces.flatMap(w => w.sessionID ? [[w.sessionID, w] as const] : []));
+        const seen = new Set<string>(), reads: Promise<void>[] = [];
+        const visit = (sessions: TransportSession[]) => {
+            for (const session of sessions) {
+                if ((session.metadata as any)?.machineId !== this.registration.machineID || seen.has(session.id)) continue;
+                seen.add(session.id);
+                const current = this.legacyReads.get(session.id);
+                if (current) { reads.push(current); continue; }
+                const workspace = bySession.get(session.id);
+                if (active.has(session.id) || workspace?.testCleanup === 'removed') { this.legacyChecks.delete(session.id); continue; }
+                const check = { sessionID: session.id, resources: this.legacyResources(session, workspace ?? null) };
+                this.legacyChecks.set(session.id, check);
+                const work = this.adoptLegacy(session, check).then(() => {
+                    this.legacyChecks.delete(session.id);
+                    onRelease();
+                }).finally(() => { this.legacyReads.delete(session.id); });
+                this.legacyReads.set(session.id, work);
+                // A failed read keeps this checkout fenced and is retried on a later poll.
+                void work.catch(() => {});
+                reads.push(work);
+            }
+        };
+        const local = this.transport.localSessions?.();
+        const list = async () => {
+            let cursor: string | undefined;
+            do {
+                const page = await this.transport.sessions(cursor);
+                visit(page.sessions);
+                if (page.nextCursor === cursor) throw new ApiError('INVALID_CURSOR');
+                cursor = page.nextCursor ?? undefined;
+            } while (cursor);
+            this.haveLegacyInventory = true;
+            for (const id of this.legacyChecks.keys()) if (!seen.has(id) && !this.legacyReads.has(id)) this.legacyChecks.delete(id);
+            return reads;
+        };
+        // The daemon already has the keys and directories of every session this
+        // worker can adopt. A paginated account listing is unnecessary there.
+        if (local) {
+            visit(local);
+            for (const id of this.legacyChecks.keys()) if (!seen.has(id) && !this.legacyReads.has(id)) this.legacyChecks.delete(id);
+            this.haveLegacyInventory = true;
+            return Promise.resolve(reads);
         }
-        // Read-only adoption of genuinely live pre-queue turns. Never resends historical
-        // blocked/not_sent work and never treats idle long-lived session PIDs as leases.
-        let cursor: string | undefined;
-        do {
-            const page = await this.transport.sessions(cursor);
-            // One read per page, rather than a synchronous flock/decrypt for every session.
-            // Mutations below still revalidate their own binding in the queue transaction.
-            const activeBySession = new Map<string, QueueTask>();
-            for (const task of this.queue.tasks()) if (occupiesSlot(task) && !activeBySession.has(task.sessionID)) activeBySession.set(task.sessionID, task);
-            for (const session of page.sessions) {
-                if ((session.metadata as any)?.machineId !== this.registration.machineID) continue;
-                const active = activeBySession.get(session.id);
-                if (active && (!active.legacy || active.resources.some(r => r.key.startsWith('checkout:')) && !active.resources.some(r => r.key === 'machine' && r.mode === 'exclusive'))) continue;
-                const observed = await this.observeLegacy(session.id, session);
-                if (active) {
-                    const pid = (observed.sourceSession.metadata as any)?.hostPid;
-                    if (observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && (observed.outcome === 'running' || observed.pendingInput) && Number.isInteger(pid) && pid > 0 && pid === active.processID
-                        && (observed.turnID !== undefined && observed.turnID === active.turnID
-                            || observed.pendingInput && observed.seq !== undefined && observed.seq === active.seq && active.turnID === undefined)) {
-                        this.queue.refineLegacyResources(active, this.legacyResources(observed.sourceSession));
-                    }
-                    continue;
-                }
-                if (observed.outcome !== 'running' && !observed.pendingInput || observed.process === 'stopped') continue;
-                const pid = (observed.sourceSession.metadata as any)?.hostPid;
-                const knownOwner = observed.sessionOwnerVerified && (observed.process === 'running' || observed.dispatchable) && Number.isInteger(pid) && pid > 0;
-                const adopted = this.queue.adoptLegacy({ requestID: hash(`legacy:${session.id}:${observed.turnID ?? 'input-' + observed.seq}`), workerID: this.registration.id, grantID: 'legacy-import', sessionID: session.id,
-                    authorization: '', text: '', resources: knownOwner ? this.legacyResources(observed.sourceSession) : workspaceResources(), legacy: true, seq: observed.seq, turnID: observed.turnID, processID: Number.isInteger(pid) && pid > 0 ? pid : undefined });
-                activeBySession.set(session.id, adopted);
+        return this.legacyListing = list().finally(() => { this.legacyListing = undefined; });
+    }
+    private checking = () => [...this.legacyChecks.values()];
+
+    async tick(background?: { signal: AbortSignal; onError: (error: unknown) => void }) {
+        const { tasks, workspaces } = this.queue.transaction(s => ({ tasks: s.tasks, workspaces: s.workspaces }), true);
+        const byID = new Map(workspaces.map(w => [w.id, w])), refinements: Promise<void>[] = [];
+        for (const task of tasks) {
+            if (task.workerID !== this.registration.id || task.legacy || terminalTask(task)
+                || !task.resources.some(r => r.key.startsWith('repo:')) || task.resources.some(r => r.key.startsWith('checkout:'))) continue;
+            const workspace = task.workspaceID ? byID.get(task.workspaceID) : undefined;
+            if (workspace?.execution.candidate?.kind === 'commit') continue;
+            let work = this.refinements.get(task.id);
+            if (!work) {
+                work = this.refineResources(task, workspace).finally(() => { this.refinements.delete(task.id); });
+                this.refinements.set(task.id, work);
             }
-            if (page.nextCursor === cursor) throw new ApiError('INVALID_CURSOR'); cursor = page.nextCursor ?? undefined;
-        } while (cursor);
-        await this.scheduler.tick();
+            refinements.push(work);
+        }
+        const observed = this.scheduler.reconcile(tasks);
+        const dispatch = () => this.scheduler.dispatch(this.checking);
+        let wake = false;
+        const report = (work: Promise<void>[]) => { for (const flight of work) void flight.catch(background?.onError ?? (() => {})); };
+        const reading = [...observed, ...refinements, ...this.cleanTestCheckouts(tasks, workspaces)];
+        report(reading);
+        const listing = this.scanLegacy(tasks, workspaces, () => {
+            if (!background || wake || !tasks.some(t => ['queued', 'waiting-resource'].includes(t.state))) return;
+            wake = true;
+            queueMicrotask(() => {
+                wake = false;
+                if (background.signal.aborted) return;
+                try { report(dispatch()); } catch (error) { background.onError(error); }
+            });
+        });
+        if (background) {
+            if (!this.haveLegacyInventory) await listing;
+            else void listing.catch(background.onError);
+            if (!background.signal.aborted) report(dispatch());
+            return;
+        }
+        const reads = await listing;
+        const results = await Promise.allSettled([...reads, ...reading, ...dispatch()]);
+        if (reads.length || refinements.length || observed.length) await Promise.all(dispatch());
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed) throw failed.reason;
+    }
+    async drain() {
+        await this.legacyListing?.catch(() => {});
+        await Promise.allSettled([...this.legacyReads.values(), ...this.refinements.values(), ...this.testCleanups.values(), this.scheduler.drain()]);
+    }
+    private cleanTestCheckouts(tasks: QueueTask[], workspaces: Workspace[]) {
+        const ready = workspaces.filter(w => w.execution.candidate?.kind === 'test' && !w.testCleanup && w.sessionID);
+        return ready.flatMap(workspace => {
+            const task = tasks.find(t => t.workerID === this.registration.id && t.workspaceID === workspace.id && terminalTask(t));
+            if (!task || this.testCleanups.has(workspace.id)) return [];
+            const work = this.stopTestSession(task, workspace).finally(() => { this.testCleanups.delete(workspace.id); });
+            this.testCleanups.set(workspace.id, work);
+            return [work];
+        });
+    }
+    private async stopTestSession(task: QueueTask, workspace: Workspace) {
+        const machine = (await this.transport.machines()).find(m => m.id === this.registration.machineID);
+        if (!machine) return;
+        const stopped = async () => (await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID: task.sessionID })).process === 'stopped';
+        if (!await stopped()) {
+            const result = await this.run({ id: task.id, workerID: task.workerID, grantID: task.grantID, deadline: this.now() + 60000,
+                command: { version: 1, method: 'sessions.cancel', sessionID: task.sessionID, requestID: hash('temporary-test:' + task.id) },
+            }, () => this.currentGrant(task), true);
+            if (!result.ok || !await stopped()) return;
+        }
+        const proof = retirementProcessProof(join(this.queue.directory, 'session-process-proofs'), this.registration.machineID, task.sessionID, workspace);
+        if (!proof?.processGroup) return;
+        try { process.kill(-proof.processGroup, 0); return; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return; }
+        await finishTestCheckout(this.queue, workspace);
     }
     private async currentGrant(t: QueueTask) {
         if (!this.authorizeGrant) throw new ApiError('QUEUE_AUTHORITY_UNAVAILABLE', 503);
@@ -245,12 +353,55 @@ export class ScopedWorker {
                 const local = await this.localSession(t.sessionID), processID = (local.metadata as any)?.hostPid;
                 if (t.processID !== processID) this.queue.update(t.id, current => { current.processID = processID; });
                 const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID);
-                return { ...(workspace && outcome && outcome !== 'running' ? workspaceResult(workspace) : {}), process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome, externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID), ...this.schedulingProof(local, process) };
+                const result: Observation = { process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome,
+                    externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID), ...this.schedulingProof(local, process) };
+                if (!workspace) return result;
+                if (!t.dispatched && workspace.execution.candidate) await verifyReviewCandidate(workspace);
+                if (!outcome || outcome === 'running' || result.externalRunning) return result;
+                try {
+                    await verifyReviewCandidate(workspace);
+                    Object.assign(result, workspaceResult(workspace));
+                    if (outcome === 'completed' && workspace.execution.handoff) result.checkoutDigest = await checkoutVersion(workspace.cwd);
+                    const candidate = workspace.execution.candidate;
+                    if (candidate?.kind === 'test' && turnID && sentSeq !== undefined)
+                        result.testResult = await this.observeTest(local, sentSeq, turnID, workspace.cwd, candidate.command);
+                } catch (error) {
+                    const reason = candidateError(error);
+                    if (!reason) throw error;
+                    result.candidateError = reason;
+                    delete result.testResult; delete result.resultCommit;
+                }
+                return result;
             }
             if (data.nextCursor <= cursor) throw new ApiError('INVALID_CURSOR');
             cursor = data.nextCursor;
         }
         throw new ApiError('OBSERVATION_PAGE_LIMIT', 503);
+    }
+    private async observeTest(session: TransportSession, cursor: number, turnID: string, cwd: string, command: string): Promise<TestEvidence | undefined> {
+        const started = new Set<string>();
+        let result: TestEvidence | undefined;
+        for (let n = 0; n < 10000; n++) {
+            const page = await this.transport.messages(session, cursor, 100);
+            for (const raw of page.messages) {
+                const message = raw.content as { role?: string; content?: { role?: string; subagent?: string; turn?: string; ev?: Record<string, any> } } | null;
+                const body = message?.content, event = body?.ev;
+                if (message?.role !== 'session' || body?.role !== 'agent' || body.subagent || body.turn !== turnID || !event) continue;
+                if (event.t === 'turn-end') return result;
+                if (typeof event.call !== 'string') continue;
+                if (event.t === 'tool-call-start' && event.name === 'CodexBash' && event.args?.cwd === cwd) {
+                    const invocation = event.args.command;
+                    if (invocation === command || Array.isArray(invocation) && invocation.length === 3
+                        && ['/bin/bash', '/bin/sh', 'bash', 'sh'].includes(invocation[0]) && invocation[1] === '-lc' && invocation[2] === command)
+                        started.add(event.call);
+                }
+                if (event.t === 'tool-call-end' && started.delete(event.call) && Number.isInteger(event.exitCode)) result = { command, exitCode: event.exitCode };
+            }
+            const next = page.messages.at(-1)?.seq ?? cursor;
+            if (!page.hasMore || next <= cursor) return undefined;
+            cursor = next;
+        }
+        return undefined;
     }
     async execute(job: Job): Promise<unknown> { return this.run(job, () => this.authorize(job.id)); }
     private async run(job: Job, authorize: () => Promise<Connection>, internal = false, launchCheck = false): Promise<any> {
@@ -276,7 +427,7 @@ export class ScopedWorker {
             && typeof job.command.requestID === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(job.command.requestID)
             && Object.keys(job.command).every(key => ['version', 'method', 'requestID'].includes(key))) {
             const task = this.queue.tasks().find(t => t.grantID === live.id && t.requestID === job.command.requestID);
-            if (task) { await check(true); return { version: 1, ok: true, data: this.queue.receipt(task) }; }
+            if (task) { await check(true); return { version: 1, ok: true, data: this.queue.receipt(task, this.checking()) }; }
         }
         const command = { ...job.command };
         let workspaces = this.queue.workspaces(live.id);
@@ -314,7 +465,7 @@ export class ScopedWorker {
             send: async (s, id, text) => {
                 await check(true); assertSession(s);
                 const w = workspaces.find(w => w.sessionID === s.id);
-                const send = () => this.transport.send(s, remoteID(id), text);
+                const send = () => this.transport.send(s, remoteID(id), text + (w ? candidateInstruction(w) : ''));
                 return w ? withWorkspaceAccess(this.queue,w.id,send) : send();
             },
             rpc: async (m, input) => {
@@ -381,7 +532,11 @@ export class ScopedWorker {
             if (!policy.machines[0].directories.includes(workspace.cwd)) policy.machines[0].directories.push(workspace.cwd);
         }
         for (const w of workspaces.filter(w => typeof command.sessionID === 'string' && w.sessionID === command.sessionID)) {
-            verifyWorkspace(w);
+            if (!w.execution.candidate) verifyWorkspace(w);
+            else if (command.method === 'sessions.send') {
+                if (w.testCleanup) throw new ApiError('TEST_CHECKOUT_SETTLED', 409);
+                if (internal && w.execution.candidate.kind !== 'checkout') verifyWorkspace(w);
+            }
             if (internal && (command.method === 'sessions.send' || launchCheck) && w.resolvedOptions) {
                 const available = await catalog();
                 try {
@@ -428,7 +583,7 @@ export class ScopedWorker {
                     queueReason:preparing.preparationError ?? (interrupted?'preparation_interrupted':'preparing_worktree'),safeToRetrySameRequestID:false});
             }
             const task = this.queue.tasks().find(t => t.grantID === live.id && t.requestID === command.requestID);
-            if (task) { await check(true); return reply(this.queue.receipt(task)); }
+            if (task) { await check(true); return reply(this.queue.receipt(task, this.checking())); }
             const cancellation = this.queue.cancellation(live.id, String(command.requestID));
             if (cancellation) { await check(true); if (!cancellation.targeted && journal.get(String(command.requestID))) return readCore(command); const { targeted: _targeted, ...data } = cancellation; return reply(data); }
         }
@@ -456,7 +611,7 @@ export class ScopedWorker {
             const binding = w ?? (project ? {repository:canonicalRepository(project.directory),cwd:project.directory,execution:{mode:'legacy' as const,resources:[]}} : undefined);
             const task = this.queue.enqueue({ requestID: command.requestID, grantID: live.id, workerID: this.registration.id, sessionID: String(command.sessionID),
                 workspaceID: w?.id, authorization: leaseFingerprint(live), text: command.text, resources: accepted?.resources ?? workspaceResources(binding, String(command.sessionID)) });
-            await check(true); return reply(this.queue.receipt(task));
+            await check(true); return reply(this.queue.receipt(task, this.checking()));
         }
         if (!internal && command.method === 'sessions.cancel') {
             if (Object.keys(command).some(k => !['version','method','sessionID','requestID','sendRequestID'].includes(k))) throw new ApiError('INVALID_REQUEST');
@@ -488,7 +643,10 @@ export class ScopedWorker {
                 try { this.processProofs.recordRunning(await this.localSession((result as any).data.sessionID), 'running'); } catch { /* Missing proof keeps later recovery conservative. */ }
             }
             return { ...(result as any), data: { ...(result as any).data, execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch, baseCommit: workspace.baseCommit, projectID: workspace.projectID, port: workspace.port,
-                workspaceState:workspace.retirement?.phase??'active',retainedRef:workspace.retirement?.retainedRef,retainedCommit:workspace.retirement?.retainedCommit } } };
+                workspaceState:workspace.retirement?.phase??'active',retainedRef:workspace.retirement?.retainedRef,retainedCommit:workspace.retirement?.retainedCommit,
+                checkoutDigest: workspace.execution.candidate?.kind === 'checkout' ? workspace.execution.candidate.digest : undefined,
+                candidateCommit: workspace.execution.candidate && workspace.execution.candidate.kind !== 'checkout' ? workspace.execution.candidate.commit : undefined,
+                candidateTree: workspace.candidateTree, testCleanup: workspace.testCleanup } } };
         }
         return result;
     }
@@ -577,7 +735,7 @@ export class HTTPWorkerRunner {
                     // Observation/preparation must not starve gateway presence or receipt RPCs.
                     if (!schedulerWork && this.now() - lastScheduled >= 1000) {
                         lastScheduled = this.now();
-                        schedulerWork = this.worker.tick().then(() => { schedulerFailure = undefined; notify(); }, error => { schedulerFailure = errorCode(error); notify(); }).finally(() => { schedulerWork = undefined; });
+                        schedulerWork = this.worker.tick({ signal, onError: error => { schedulerFailure = errorCode(error); notify(); } }).then(() => { schedulerFailure = undefined; notify(); }, error => { schedulerFailure = errorCode(error); notify(); }).finally(() => { schedulerWork = undefined; });
                     }
                     if (job && !signal.aborted) {
                         const work = this.handleJob(job).catch(unavailable).finally(() => active.delete(work));
@@ -587,6 +745,9 @@ export class HTTPWorkerRunner {
                 } catch (error) { unavailable(error); }
                 await new Promise<void>(resolve => { const timer = setTimeout(done, intervalMs); function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); } signal.addEventListener('abort', done, { once: true }); if (signal.aborted) done(); });
             }
-        } finally { await Promise.allSettled([...active, ...(schedulerWork ? [schedulerWork] : [])]); }
+        } finally {
+            await Promise.allSettled([...active, ...(schedulerWork ? [schedulerWork] : [])]);
+            await this.worker.drain();
+        }
     }
 }

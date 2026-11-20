@@ -20,7 +20,7 @@ create 的可选 `title` 是去空白后1–200字的初始展示标题，不代
 
 ## 自主推进与资源（2026-11-10）
 
-Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、Journal 和权限检查，没有引入新队列服务。工作树基于受理 create 时的 HEAD commit，保留 root projectID、grant 和目录绑定。准备阶段禁用 Git checkout hooks 和 fsmonitor，避免 create 阶段触发仓库脚本；不自动安装依赖、构建或执行交办。worktree/read-only 首版只接受授权 Git 仓库顶层目录；子目录项目明确返回 WORKTREE_REQUIRES_REPOSITORY_ROOT，避免把兄弟目录扩大进执行 cwd。路径必须规范化且 realpath 不变；每次执行校验 Git common-dir、基线祖先和当前分支。
+Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、Journal 和权限检查。明确需要相互独立且同时启动的写任务时，调用方选 `worktree`，受理 create 时冻结可独立开发的已提交 HEAD。普通写入用原目录，后续追问向原 session 发送新轮次。准备阶段禁用 Git checkout hooks 和 fsmonitor。Git 候选和 worktree 以授权的 Git 仓库顶层为项目边界。路径身份使用 canonical realpath 和 Git common-dir。
 
 分配的分支名（`dot-task/<workspaceID>`）只是创建时的名字，不是分支锁：任务可以按自己的要求在仓库内新建、改名或切换分支并在那里提交，只要记录的 `baseCommit` 仍是 HEAD 的祖先，交付内容就仍然可达。`execution.branch` 始终报告创建时的分配名，`workspaceBranch()` 才返回实际检出的分支，避免把审阅者引到任务已经离开的分支。两种切换会被拒绝为 WORKTREE_BINDING_CHANGED：detached HEAD（没有任何可 fetch/审阅的分支），以及切到 root 检出目录当前所在的分支（只有 `checkout -f -B` 能绕过 Git 自身的占用保护，此时等于改写用户分支，不能静默继续）。改动背景见 2026-11-10 的 Console 修复会话：任务在 worktree 内 `git switch -c fix/console-tag-thumbnail-crash` 完成后，旧校验把每次观察都判为 403，任务只能停在「执行中 + 原始错误码」直到进程结束。
 
@@ -28,10 +28,18 @@ Worker 使用系统 Git worktree 和 Linux flock，复用既有 MetadataStore、
 | --- | --- | --- |
 | legacy（省略时） | 授权原目录；可接续已有未提交改动的开发和测试 | machine/repo 共享、实际 checkout 排他、session 排他 |
 | worktree | 任务独立 worktree | machine/repo 共享、实际 checkout 排他、session 排他 |
-| read-only | 任务独立 worktree | checkout 共享；原始权限必须为 read-only，Worker/daemon allowlist 仍须允许 |
+| read-only + `candidate.kind: commit` | 会话临时目录，通过完整提交 ID 读 Git tree、diff 和 blob | 指定项目与会话，另计声明资源 |
+| read-only + `candidate.kind: checkout` | 执行者同一目录，包含未提交和新增文件 | 共享原 checkout、会话排他及声明资源 |
+| read-only + `candidate.kind: test` | 指定提交的临时 detached checkout | 独立 checkout、会话排他及声明资源 |
 | integration | 授权原目录；保留未提交改动 | machine/repo 共享、实际 checkout 排他、session 排他 |
 
 `resources` 为机器范围的排他名字，如 `service:relay`、`database:orders`、`port:3000`。不同项目/Dot 使用相同名字会串行；资源等待不会阻塞无冲突任务。ready FIFO，并防止后到的冲突任务饿死前面的等待者。集成任务应显式声明服务、迁移或 push 的资源；不声明资源的 shell 行为不受资源锁拦截。worktree 是文件隔离，不是权限沙箱。
+
+新建 `read-only` 会话须选定 `candidate`，并经 Worker 与 Agent 核实 `read-only` 权限。提交审查使用 `{ "kind": "commit", "commit": "<完整提交 ID>", "baseCommit": "<可选完整基线 ID>" }`。Worker 冻结 commit 和 tree，发送时附上限定对象的 Git 命令。缺失对象返回 `CANDIDATE_UNAVAILABLE`。已有只读工作树仍按其原记录核验。
+
+原目录验收时，执行侧在 create 声明 `execution.handoff: true`。Worker 以终态轮次中的 HEAD 和实际文件生成 `checkoutDigest` 并保留该 checkout。验收侧用 `{ "kind": "checkout", "requestID": "<执行 send 的原请求 ID>", "digest": "<回执 checkoutDigest>" }` 创建独立会话。内容在派发前和验收轮次结束时均核验，变化返回 `CANDIDATE_CHANGED`。验收结束释放 checkout，较早排队的写任务继续。取消已完成的指定执行交办可释放其待验收保留。
+
+需要在固定提交独立跑测试时，使用 `{ "kind": "test", "commit": "<完整提交 ID>", "command": "<实际测试命令>" }`。脱离分支的测试目录随执行进程组停止、Git 检出干净且工作区为空闲后清理。存在未提交、未跟踪或被忽略的产物时保留目录，并在回执中给出清理结果。只有绑定轮次中、在候选目录执行的指定 Codex 命令有实际退出码时，回执才提供 `testResult`。
 
 每个 worktree 拥有独立索引和目录；不复制/链接 node_modules 或共享可写 dist。Worker 给创建会话提供独立 TMPDIR/TMP/TEMP、HAPPY_TASK_ID、HAPPY_TASK_PORT。任务需要自行显式使用端口变量，其他固定端口需声明资源；端口号是任务间互异的建议值，不保证不会被外部程序占用。包管理器可复用下载缓存，但应在本 worktree 安装/构建，包源遵循仓库 npmmirror 规则。
 
@@ -52,6 +60,8 @@ Worker 调度依赖 Linux/WSL 的内核 flock；其他平台未验证。生产�
 覆盖配置的路径在 Worker 启动时转成 canonical Git common-dir / 非 Git root；同仓库别名不能获得第二份名额，别名配置冲突拒绝启动。覆盖策略也持久化并跨进程核对。机器资源保护例如 machineConcurrency=6 是独立配置。不同项目普通 create/send 无需用户手写 execution 即可并行；同项目代码写入并行须用独立 worktree/session。默认继续原目录，保留已有改动；legacy/integration 不再要求派发时 Git status 干净。所有已知项目以 canonical repo 统计名额，写入互斥收窄到实际 checkout；同仓原目录和独立 worktree 可同时推进，同一目录的写入仍排队。服务、数据库、发布与维护按实际共享对象声明命名资源，不因同仓就默认阻止独立任务。锁是调度约束，不是安全沙箱。
 
 回执/UI 分开显示 project-limit（本项目名额）、machine-limit（机器硬上限）、resource-wait（排他资源），另保留 session_turn 等顺序/恢复原因；创建空闲 session 不占执行槽。旧全局排他 turn 在缺乏归属证据时保留；取得原进程/turn强证据后可收窄自动租约。新受理普通交办按真实checkout调度。
+
+旧会话通过 daemon 已持有的会话记录发现，完整读过历史后才接管仍在运行的 turn。每个旧会话只保留一项在途读取，已经知道的 checkout 和声明资源在核对时仍受保护。任务派发与各自的回执收集独立推进。`legacy_observation` 表示当前任务等待相冲突的旧会话核对，`candidate_review` 表示在等原 checkout 的验收结束。回执的资源名称来自本任务的资源声明，会话链接按授权和 Dot 所属范围显示。
 
 账本持久记录任务/request/session/worktree/branch/baseCommit/resource、dispatcher PID、真实会话 PID和派发状态。短同步事务持有内核 flock，无计时过期锁；claim 在启动前持久化，发送前另写不可自动重派标记。慢 checkout 先持久化 workspace preparing/baseCommit/preparationPID，再以异步 Git 和独立 workspace flock 创建；Git 继承锁fd，宿主死亡而 Git 尚活时不能启动第二次 checkout。它不占机器全局事务锁。create 回执尚未有会话时返回 pending 和真实任务入口；收敛到 confirmed 前不能 send，准备中断可查原回执后使用原ID恢复。调度器死亡后先查原 core/daemon 回执与完整分页消息；活会话重接，未知派发保留槽位与资源，不因 PID/租约超时重复执行。旧活跃 turn 以只读方式接管为 legacy 排他占用，完整读取到最新页；旧空闲 PID 和已完成 turn 不算永久占用。此迁移不重派任何旧任务。
 

@@ -584,7 +584,7 @@ export function isCodexTurnInProgress(turn: ThreadTurn): boolean {
     return status === 'inProgress' || status === 'running' || status === 'active' || status === 'pending';
 }
 
-function commandOutcome(message: Record<string, unknown>): { result: string; isError: boolean } {
+function commandOutcome(message: Record<string, unknown>): { result: string; isError: boolean; exitCode?: number } {
     // V2 items supply output; legacy exec events may supply aggregated_output
     // or separate streams. Prefer the aggregate so output is never duplicated.
     const output = typeof message.output === 'string' ? message.output
@@ -597,6 +597,7 @@ function commandOutcome(message: Record<string, unknown>): { result: string; isE
     return {
         result: output || error || (isError && typeof exitCode === 'number' ? `Command exited with code ${exitCode}` : ''),
         isError,
+        ...(typeof exitCode === 'number' && Number.isInteger(exitCode) ? { exitCode } : {}),
     };
 }
 

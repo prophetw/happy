@@ -46,13 +46,19 @@ export function testloopDotsCommand(raw: TestloopDotsRequest): string {
 
 const workSummary = z.object({ id: uuid, title: z.string().max(200), kind: z.string().max(60), status: z.string().max(80),
     needsReview: z.boolean(), projectID: z.string().max(200).nullable(), goalPhase: z.string().max(80).nullable() });
-const executionLocation = z.object({ mode: z.string(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional() });
+const gitObjectID = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+const testResult = z.object({ command: z.string().min(1).max(300), exitCode: z.number().int() });
+const executionLocation = z.object({ mode: z.string(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional(),
+    checkoutDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(), candidateCommit: gitObjectID.optional(),
+    testResult: testResult.optional(), testCleanup: z.enum(['removed', 'retained']).optional() });
 const workDetail = workSummary.extend({ execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
     nextWakeAt: z.string().nullable(), finishedAt: z.string().nullable(), executionSessionId: sessionId.nullable(),
     executionOutcome: z.string().max(80).nullable(), businessVerification: z.string().max(80),
     steps: z.array(z.object({ id: z.string().max(100), title: z.string().max(500), status: z.string().max(80) })).max(10),
     result: z.string().max(1200).nullable(), resultTruncated: z.boolean() });
 const dotDetail = z.object({ dotId: uuid, taskTotal: z.number().int().nonnegative(), tasks: z.array(workDetail).max(10),
+    pendingIntegration: z.object({ total: z.number().int().nonnegative(), items: z.array(z.object({ id: uuid, title: z.string().max(200),
+        projectID: z.string().max(200), commit: gitObjectID, sessionId: sessionId.nullable(), test: testResult.nullable() })).max(20) }).optional(),
     memory: z.object({ total: z.number().int().nonnegative(), omittedCount: z.number().int().nonnegative(),
         access: z.array(z.enum(['read', 'write', 'forget'])), items: z.array(z.object({ key: z.string().max(200), value: z.unknown(),
             kind: z.enum(['fact', 'preference', 'commitment']), revision: z.number().int().positive(), verified: z.boolean(),
@@ -191,6 +197,9 @@ export function testloopWorkQueueReason(reason: string): string {
     const labels: Record<string, string> = {
         'scheduler-ready': '等待调度', 'project-limit': '等待本项目执行名额', 'machine-limit': '等待机器硬上限名额',
         'resource-wait': '等待共享排他资源', execution_slot: '等待机器执行槽',
+        legacy_observation: '正在核对占用资源的旧会话', candidate_review: '等待原目录的候选验收结束',
+        CANDIDATE_REQUIRED: '请选择要审查的提交或执行候选。', CANDIDATE_UNAVAILABLE: '指定候选已无法读取。',
+        CANDIDATE_CHANGED: '指定候选已经变化，验收无法继续。',
         integration_worktree_dirty: '原目录有已有改动；新版会保留改动并按原请求继续，无需清理目录。',
         INTEGRATION_WORKTREE_DIRTY: '原目录有已有改动；新版会保留改动并按原请求继续，无需清理目录。',
         session_turn: '等待同会话前一交办结束', resource_lock: '等待排他资源', preparing_worktree: '准备独立工作目录',
