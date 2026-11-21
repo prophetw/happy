@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 21 - CodeBuddy sessions",
+      "summary": "Requires the updated Happy CLI and a signed-in CodeBuddy CLI on the selected machine.",
+      "markdown": "- **Start a CodeBuddy session** by choosing CodeBuddy in Happy's new session screen.\n- Thanks to [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 17 - Simpler Dot controls",
       "summary": "Requires the updated TestLoop host.",
       "markdown": "- **Save memories directly** — add, edit, or forget a memory from its form, with drafts preserved when versions conflict.\n- **Find everyday actions sooner** — use Chat, Work, and Memory; open diagnostics when you need more detail.\n- **Confirm tools with one tap** — review the preview and confirm without copying a command.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
@@ -181,5 +186,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 17 - Simpler Dot controls"
+  "latestTitle": "November 21 - CodeBuddy sessions"
 }

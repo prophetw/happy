@@ -1,3 +1,10 @@
+# November 21 - CodeBuddy sessions
+
+Requires the updated Happy CLI and a signed-in CodeBuddy CLI on the selected machine.
+
+- **Start a CodeBuddy session** by choosing CodeBuddy in Happy's new session screen.
+- Thanks to [@prophetw](https://github.com/prophetw).
+
 # November 17 - Simpler Dot controls
 
 Requires the updated TestLoop host.
