@@ -102,7 +102,8 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
         }
         return resolveCurrentOption(availableEffortLevels, [
             savedEffort,
-            isRig ? getRigReasoningSelection(metadata, modelKey) : effectiveAgentDefaults.effortLevel,
+            isRig ? getRigReasoningSelection(metadata, modelKey)
+                : flavor === 'codebuddy' ? metadata?.currentThoughtLevelCode : effectiveAgentDefaults.effortLevel,
         ]);
     }, [availableEffortLevels, savedEffort, effectiveAgentDefaults.effortLevel, metadata, modelKey, isRig, flavor]);
 

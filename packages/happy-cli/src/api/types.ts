@@ -151,6 +151,7 @@ export const MachineMetadataSchema = z.object({
     agy: z.boolean().optional(),
     // Optional for the same backward-compat reason as agy.
     dsh: z.boolean().optional(),
+    codebuddy: z.boolean().optional(),
     detectedAt: z.number(),
   }).optional(),
   resumeSupport: z.object({
@@ -374,6 +375,7 @@ export type Metadata = {
   claudeSessionId?: string, // Claude Code session ID
   codexThreadId?: string, // Codex app-server thread ID
   agyConversationId?: string, // Antigravity CLI conversation ID
+  codebuddySessionId?: string, // CodeBuddy ACP session ID when the agent supports loading it
   tools?: string[],
   slashCommands?: string[],
   mcpServers?: Array<{ name: string; status: string }>,

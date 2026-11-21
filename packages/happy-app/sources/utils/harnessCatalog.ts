@@ -11,6 +11,7 @@ export const HARNESS_NAMES: Record<NewSessionAgentType, string> = {
     rig: 'Happy',
     agy: 'Antigravity',
     dsh: 'DeepSeek',
+    codebuddy: 'CodeBuddy',
     gemini: 'Gemini',
     openclaw: 'OpenClaw',
 };
@@ -35,6 +36,7 @@ export const HARNESS_ORDER: readonly NewSessionAgentType[] = [
     'codex',
     'agy',
     'dsh',
+    'codebuddy',
     'rig',
 ];
 
@@ -61,6 +63,7 @@ export function getHarnessName(key: NewSessionAgentType | string): string {
 const EXPLICIT_REPORT_HARNESSES: ReadonlySet<NewSessionAgentType> = new Set([
     'agy',
     'dsh',
+    'codebuddy',
 ]);
 
 /** Whether this machine has given the app enough evidence to offer a harness. */
@@ -86,8 +89,8 @@ export function isHarnessAvailable({
  * cannot. Two things keep the list from ever being empty — the current
  * selection is usually included, and a machine that reports no capabilities at
  * all (an older daemon, or none selected yet) falls back to the familiar
- * catalog. Antigravity and DeepSeek are the exception to both fallbacks: they
- * are only listed after an explicit installation report. A retired harness is
+ * catalog. Agents that require an explicit installation report are excluded
+ * from both fallbacks. A retired harness is
  * also exempt from the first rule, because keeping it listed would strand
  * someone on it.
  */

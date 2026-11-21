@@ -80,7 +80,7 @@
                     "properties": {
                       "agents": {
                         "minItems": 1,
-                        "maxItems": 3,
+                        "maxItems": 4,
                         "type": "array",
                         "items": {
                           "type": "object",
@@ -90,7 +90,8 @@
                               "enum": [
                                 "claude",
                                 "codex",
-                                "agy"
+                                "agy",
+                                "codebuddy"
                               ]
                             },
                             "models": {
@@ -1451,7 +1452,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 3,
+                            "maxItems": 4,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -1461,7 +1462,8 @@
                                   "enum": [
                                     "claude",
                                     "codex",
-                                    "agy"
+                                    "agy",
+                                    "codebuddy"
                                   ]
                                 },
                                 "models": {
@@ -1563,7 +1565,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 3,
+                            "maxItems": 4,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -1573,7 +1575,8 @@
                                   "enum": [
                                     "claude",
                                     "codex",
-                                    "agy"
+                                    "agy",
+                                    "codebuddy"
                                   ]
                                 },
                                 "models": {
@@ -1689,7 +1692,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 3,
+                            "maxItems": 4,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -1699,7 +1702,8 @@
                                   "enum": [
                                     "claude",
                                     "codex",
-                                    "agy"
+                                    "agy",
+                                    "codebuddy"
                                   ]
                                 },
                                 "models": {
@@ -1844,7 +1848,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 3,
+                            "maxItems": 4,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -1854,7 +1858,8 @@
                                   "enum": [
                                     "claude",
                                     "codex",
-                                    "agy"
+                                    "agy",
+                                    "codebuddy"
                                   ]
                                 },
                                 "models": {
@@ -1956,7 +1961,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 3,
+                            "maxItems": 4,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -1966,7 +1971,8 @@
                                   "enum": [
                                     "claude",
                                     "codex",
-                                    "agy"
+                                    "agy",
+                                    "codebuddy"
                                   ]
                                 },
                                 "models": {
@@ -2082,7 +2088,7 @@
                         "properties": {
                           "agents": {
                             "minItems": 1,
-                            "maxItems": 3,
+                            "maxItems": 4,
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -2092,7 +2098,8 @@
                                   "enum": [
                                     "claude",
                                     "codex",
-                                    "agy"
+                                    "agy",
+                                    "codebuddy"
                                   ]
                                 },
                                 "models": {
@@ -3151,7 +3158,8 @@
                         "enum": [
                           "claude",
                           "codex",
-                          "agy"
+                          "agy",
+                          "codebuddy"
                         ]
                       },
                       "model": {

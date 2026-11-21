@@ -90,10 +90,13 @@ export function getResumeAvailability(session: Session, machine: Machine | null 
     const hasBackendResumeId = Boolean(
         session.metadata?.claudeSessionId ||
         session.metadata?.codexThreadId ||
-        session.metadata?.agyConversationId
+        session.metadata?.agyConversationId ||
+        session.metadata?.codebuddySessionId
     );
     if (!hasBackendResumeId) {
-        const message = t('sessionInfo.resumeSessionMissingBackendId');
+        const message = session.metadata?.flavor === 'codebuddy'
+            ? 'CodeBuddy CLI did not supply a loadable session ID.'
+            : t('sessionInfo.resumeSessionMissingBackendId');
         return {
             canResume: false,
             canShowResume: true,

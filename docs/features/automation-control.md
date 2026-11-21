@@ -75,7 +75,9 @@ Claude Code 和 Codex 使用 Happy 选择器读取的 `machine.claudeModels/code
 
 `models`/`permissionModes` 列出的是"允许调用方覆盖的值"，默认启动不需要列入；需要放权委派时才加入 `yolo`（Codex）或 `bypassPermissions`（Claude）。worker 注册的 `methods` 含 `options.list` 时，调用方才能通过 `GET /options` 发现这些可选项；服务授权创建页会把该能力列为可勾选的只读操作。
 
-兼容性：daemon `capabilities.operations` 只有在新版才包含 `options`；缺此能力时，发现与任何带覆盖的创建都返回 426 `UNSUPPORTED_VERSION`，纯默认创建不受影响。目录只含键（模型 ID、模式 ID），不经过自由文本投影；Claude 会话同 Codex 一样支持后续 send/status/logs（其他 flavor 仍 `UNSUPPORTED_AGENT`）。白名单约束的是"覆盖值"，owner 已配置的环境默认启动始终有效。另注意：创建回执的幂等 fingerprint 现在包含规范化后的请求选项，daemon 升级前写入的旧回执若用同一 `requestID` 重发创建，会返回 `REQUEST_ID_CONFLICT` 而不是直接重放；按原 `requestID` 查询回执即可核实原结果，不要换新 ID 重派。
+兼容性：daemon `capabilities.operations` 只有在新版才包含 `options`；缺此能力时，发现与任何带覆盖的创建都返回 426 `UNSUPPORTED_VERSION`，纯默认创建不受影响。目录只含键（模型 ID、模式 ID），不经过自由文本投影。Claude、Codex、AGY 和 CodeBuddy 会话支持后续 send/status/logs。白名单约束的是"覆盖值"，owner 已配置的环境默认启动始终有效。另注意：创建回执的幂等 fingerprint 现在包含规范化后的请求选项，daemon 升级前写入的旧回执若用同一 `requestID` 重发创建，会返回 `REQUEST_ID_CONFLICT` 而不是直接重放；按原 `requestID` 查询回执即可核实原结果，不要换新 ID 重派。
+
+机器发布 CodeBuddy 能力且 worker 和连接授权允许时，调用方可以在创建任务时使用 `options.agent: "codebuddy"`。启动沿用本机 CLI 模型和默认权限，推理档位由 CLI 决定。 [CodeBuddy 使用和派活说明](codebuddy-cli.md)
 
 对于已被 Worker 领取但尚未到达 daemon 的 create，支持 `withdraw-create` 的执行端在原回执位置持久登记已撤回的尝试。记录绑定授权作用域内的原 requestID、命令摘要、启动参数和前序尝试编号。领取与撤回在同一 daemon 的同步回执写入区间完成。已开始启动时返回原回执，迟到的旧 create 会被拒绝。网关核对签名 Worker 回传的证明并复核授权，后续可用原 ID 和相同内容重新派发。对端缺少这项证明时保持查询原回执。服务令牌的最后使用时间单独存储，旧 Control 可以读取凭据原记录。
 

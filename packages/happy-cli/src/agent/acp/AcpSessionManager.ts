@@ -38,6 +38,9 @@ export class AcpSessionManager {
   /** Pending text waiting to be flushed when the stream type changes */
   private pendingText = '';
   private pendingType: 'thinking' | 'output' | null = null;
+  private outputStream: { id: string; offset: number } | null = null;
+
+  constructor(private readonly streamOutput = false) {}
 
   private nextTime(): number {
     this.lastTime = Math.max(this.lastTime + 1, Date.now());
@@ -63,7 +66,6 @@ export class AcpSessionManager {
     const type = this.pendingType;
     this.pendingText = '';
     this.pendingType = null;
-
     if (!text) {
       return [];
     }
@@ -97,6 +99,7 @@ export class AcpSessionManager {
 
     const turnId = this.currentTurnId;
     this.currentTurnId = null;
+    this.outputStream = null;
     this.acpCallToSessionCall.clear();
     this.pendingText = '';
     this.pendingType = null;
@@ -112,6 +115,7 @@ export class AcpSessionManager {
       if (!text) {
         return [];
       }
+      this.outputStream = null;
 
       if (streaming) {
         // Streaming thinking: accumulate, flush if switching from a different type
@@ -154,12 +158,22 @@ export class AcpSessionManager {
       }
       // Accumulate output, flush if switching from a different type
       const flushed = this.pendingType !== 'output' ? this.flush() : [];
+      if (this.streamOutput && this.currentTurnId) {
+        const stream = this.outputStream ??= { id: createId(), offset: 0 };
+        // The app already uses this wire field to join text deltas within a turn.
+        const envelope = createEnvelope('agent', { t: 'text', text, textOffset: stream.offset }, {
+          turn: this.currentTurnId, time: this.nextTime(), codexItemId: stream.id,
+        });
+        stream.offset += text.length;
+        return [...flushed, envelope];
+      }
       this.pendingType = 'output';
       this.pendingText += text;
       return flushed;
     }
 
     if (msg.type === 'tool-call') {
+      this.outputStream = null;
       const flushed = this.flush();
       const call = this.ensureSessionCallId(msg.callId);
       return [
@@ -176,6 +190,7 @@ export class AcpSessionManager {
     }
 
     if (msg.type === 'tool-result') {
+      this.outputStream = null;
       const flushed = this.flush();
       const call = this.ensureSessionCallId(msg.callId);
       const result = typeof msg.result === 'string' ? msg.result

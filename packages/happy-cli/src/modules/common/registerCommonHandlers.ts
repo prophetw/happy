@@ -115,12 +115,14 @@ interface DifftasticResponse {
  * This rpc type is used by the daemon, all other RPCs here are for sessions
 */
 
+export const spawnAgents = ['claude', 'codex', 'gemini', 'openclaw', 'agy', 'dsh', 'codebuddy'] as const;
+
 export interface SpawnSessionOptions {
     machineId?: string;
     directory: string;
     sessionId?: string;
     approvedNewDirectoryCreation?: boolean;
-    agent?: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'dsh';
+    agent?: typeof spawnAgents[number];
     permissionMode?: string;
     modelMode?: string;
     effortLevel?: string;

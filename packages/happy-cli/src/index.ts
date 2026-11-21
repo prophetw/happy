@@ -15,7 +15,7 @@ import { authAndSetupMachineIfNeeded } from './ui/auth'
 import packageJson from '../package.json'
 import { z } from 'zod'
 import { startDaemon } from './daemon/run'
-import { checkIfDaemonRunningAndCleanupStaleState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './daemon/controlClient'
+import { checkIfDaemonRunningAndCleanupStaleState, isDaemonRunningCurrentlyInstalledHappyVersion, notifyDaemonSessionStartupFailed, stopDaemon } from './daemon/controlClient'
 import { getLatestDaemonLog } from './ui/logger'
 import { killRunawayHappyProcesses } from './daemon/doctor'
 import { install } from './daemon/install'
@@ -538,6 +538,59 @@ Conversation history is preserved on the server, but in-flight tool calls are in
       }
       process.exit(1);
     }
+  } else if (subcommand === 'codebuddy') {
+    if (args.includes('--help') || args.includes('-h')) {
+      console.log('Usage: happy codebuddy [--resume <CodeBuddy session ID>] [--verbose]');
+      return;
+    }
+    const { runCodeBuddy, formatCodeBuddyError } = await import('@/codebuddy/runCodeBuddy');
+    let startedBy: 'daemon' | 'terminal' = 'terminal';
+    try {
+      let verbose = false;
+      let resumeSessionId: string | undefined;
+      let initialModel: string | undefined;
+      let initialPermissionMode: string | undefined;
+      for (let i = 1; i < args.length; i++) {
+        const flag = args[i];
+        if (flag === '--verbose') {
+          verbose = true;
+          continue;
+        }
+        const value = args[++i];
+        if (!value || value.startsWith('--')) throw new Error(`Missing value for ${flag}.`);
+        switch (flag) {
+          case '--started-by':
+            if (value !== 'daemon' && value !== 'terminal') throw new Error('Invalid --started-by value.');
+            startedBy = value;
+            break;
+          case '--happy-starting-mode':
+            if (value !== 'remote') throw new Error('Happy CodeBuddy sessions use remote mode.');
+            break;
+          case '--resume':
+            resumeSessionId = value;
+            break;
+          case '--model':
+            initialModel = value;
+            break;
+          case '--permission-mode':
+            initialPermissionMode = value;
+            break;
+          default:
+            throw new Error(`Unsupported Happy CodeBuddy argument: ${flag}.`);
+        }
+      }
+      const { credentials } = await authAndSetupMachineIfNeeded();
+      await ensureDaemonRunning();
+      await runCodeBuddy({ credentials, startedBy, verbose, resumeSessionId, initialModel, initialPermissionMode });
+    } catch (error) {
+      const message = formatCodeBuddyError(error);
+      if (startedBy === 'daemon') {
+        await notifyDaemonSessionStartupFailed(process.pid, message);
+      }
+      console.error(chalk.red('Error:'), message);
+      process.exitCode = 1;
+    }
+    return;
   } else if (subcommand === 'dsh') {
     try {
       const { runDsh } = await import('@/dsh/runDsh');
@@ -814,6 +867,7 @@ ${chalk.bold('Usage:')}
   happy gemini            Start Gemini mode (ACP) [deprecated — use agy]
   happy agy               Start agy (Antigravity CLI) mode
   happy dsh               Start dsh (DeepSeek Harness) mode
+  happy codebuddy         Start a CodeBuddy CLI session over ACP
   happy acp               Start a generic ACP-compatible agent
   happy connect           Connect AI vendor API keys
   happy sandbox           Configure and manage OS-level sandboxing

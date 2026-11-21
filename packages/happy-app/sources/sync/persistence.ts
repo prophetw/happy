@@ -32,7 +32,7 @@ const VOICE_SOFT_PAYWALL_SHOWN_KEY = 'voice-soft-paywall-shown';
 const VOICE_ONBOARDING_PROMPT_LOAD_COUNT_KEY = 'voice-onboarding-prompt-load-count';
 const VOICE_MESSAGE_COUNT_KEY = 'voice-message-count';
 
-export type NewSessionAgentType = 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'dsh' | 'rig';
+export type NewSessionAgentType = 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'dsh' | 'codebuddy' | 'rig';
 export type NewSessionSessionType = 'simple' | 'worktree';
 
 export interface NewSessionDraft {
@@ -210,7 +210,7 @@ export function saveRigComposerDraft(sessionId: string, draft: RigComposerDraftS
     else mmkv.set(key, JSON.stringify(draft));
 }
 
-const NEW_SESSION_AGENT_TYPES: readonly NewSessionAgentType[] = ['claude', 'codex', 'gemini', 'openclaw', 'agy', 'dsh', 'rig'];
+const NEW_SESSION_AGENT_TYPES: readonly NewSessionAgentType[] = ['claude', 'codex', 'gemini', 'openclaw', 'agy', 'dsh', 'codebuddy', 'rig'];
 
 function parseNewSessionAgentType(value: unknown): NewSessionAgentType | null {
     return NEW_SESSION_AGENT_TYPES.find((agent) => agent === value) ?? null;

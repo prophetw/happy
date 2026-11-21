@@ -126,6 +126,7 @@ const ALL_AGENTS: { key: AgentKey; label: string }[] = [
     { key: 'codex', label: 'codex' },
     { key: 'agy', label: 'antigravity' },
     { key: 'dsh', label: 'deepseek' },
+    { key: 'codebuddy', label: 'CodeBuddy' },
     { key: 'rig', label: 'happy' },
 ];
 
@@ -1339,6 +1340,13 @@ function NewSessionScreen() {
     const agent = availableAgents.find(a => a.key === selectedAgent)
         ?? ALL_AGENTS.find((candidate) => candidate.key === selectedAgent)
         ?? ALL_AGENTS[0];
+    const renderAgentIcon = (collapsed = false) => agent.key === 'codebuddy'
+        ? <Ionicons name="terminal-outline" size={collapsed ? 14 : 15} color={theme.colors.textSecondary} />
+        : <RNImage
+            source={agentIcons[agent.key]}
+            style={[collapsed ? styles.collapsedAgentIcon : styles.agentIcon, { tintColor: theme.colors.textSecondary }]}
+            resizeMode="contain"
+        />;
     // A Rig machine can publish an empty catalog, so every current pick is
     // nullable — the composer hides the picker instead of rendering a pick.
     const currentPermission = resolveSelectedOption(permissionModes, permissionIndex);
@@ -2127,13 +2135,11 @@ function NewSessionScreen() {
                                         <BubblePressable
                                             scaleFeedback={false}
                                             onPress={() => togglePicker('agent')}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`Agent: ${agent.label}`}
                                             style={(p) => [styles.configInlineField, p.pressed && styles.configRowPressed]}
                                         >
-                                            <RNImage
-                                                source={agentIcons[agent.key]}
-                                                style={[styles.agentIcon, { tintColor: theme.colors.textSecondary }]}
-                                                resizeMode="contain"
-                                            />
+                                            {renderAgentIcon()}
                                             <Text style={[styles.configLabel, styles.configInlineText]} numberOfLines={1}>
                                                 {agent.label}
                                             </Text>
@@ -2243,14 +2249,12 @@ function NewSessionScreen() {
                                 <>
                                     <BubblePressable
                                         onPress={() => togglePicker('agent')}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Agent: ${agent.label}`}
                                         hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
                                         style={(p) => [styles.collapsedIconButton, p.pressed && styles.configRowPressed]}
                                     >
-                                        <RNImage
-                                            source={agentIcons[agent.key]}
-                                            style={[styles.collapsedAgentIcon, { tintColor: theme.colors.textSecondary }]}
-                                            resizeMode="contain"
-                                        />
+                                        {renderAgentIcon(true)}
                                     </BubblePressable>
 
                                     {showPermission && (
@@ -2391,11 +2395,7 @@ function NewSessionScreen() {
                             accessibilityRole="button"
                             accessibilityLabel={`Agent: ${agent.label}`}
                         >
-                            <RNImage
-                                source={agentIcons[agent.key]}
-                                style={[styles.collapsedAgentIcon, { tintColor: theme.colors.textSecondary }]}
-                                resizeMode="contain"
-                            />
+                            {renderAgentIcon(true)}
                             <Text style={styles.composerAgentLabel} numberOfLines={1}>
                                 {agent.label}
                             </Text>

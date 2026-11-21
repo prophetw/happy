@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 
-export const launchAgents = ['claude', 'codex', 'agy'] as const;
+export const launchAgents = ['claude', 'codex', 'agy', 'codebuddy'] as const;
 // Installed Claude provider model IDs may include a context window suffix such as [1M].
 export const launchOptionValue = z.string().regex(/^[A-Za-z0-9_.:\[\]-]{1,128}$/);
 /** Agy uses the exact display name as its model argument, including spaces and parentheses. */
@@ -159,7 +159,7 @@ export function resolveTaskOptions(requested: TaskOptions, workerPolicy: LaunchO
     };
     check(resolved.model, requested.model, workerAgent.modelSource === 'machine' ? c.models : workerAgent.models, grantAgent?.models, c.models);
     check(resolved.permissionMode, requested.permissionMode, workerAgent.permissionModes, grantAgent?.permissionModes, c.permissionModes);
-    if (requested.effort !== undefined && c.efforts.length && !c.efforts.includes(resolved.effort)) throw new OptionsDenied();
+    if (requested.effort !== undefined && (c.efforts.length || agent === 'codebuddy') && !c.efforts.includes(resolved.effort)) throw new OptionsDenied();
     return resolved;
 }
 

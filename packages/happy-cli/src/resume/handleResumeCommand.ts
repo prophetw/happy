@@ -40,7 +40,8 @@ export function parseResumeCommandArgs(args: string[]): { showHelp: boolean; ses
     };
 }
 
-function resolveFlavor(metadata: Metadata): 'codex' | 'claude' | 'agy' | null {
+function resolveFlavor(metadata: Metadata): 'codex' | 'claude' | 'agy' | 'codebuddy' | null {
+    if (metadata.flavor === 'codebuddy') return 'codebuddy';
     if (metadata.flavor === 'codex' || metadata.codexThreadId) {
         return 'codex';
     }
@@ -101,6 +102,15 @@ export function buildResumeLaunch(session: ResumableHappySession, options: Resum
             cwd: metadata.path,
             args,
         };
+    }
+
+    if (flavor === 'codebuddy') {
+        if (!metadata.codebuddySessionId) {
+            throw new Error(`Happy session ${session.id} has no loadable CodeBuddy session ID.`);
+        }
+        const args = ['codebuddy', '--resume', metadata.codebuddySessionId];
+        if (options.startedBy) args.push('--started-by', options.startedBy);
+        return { cwd: metadata.path, args };
     }
 
     throw new Error(`Happy session ${session.id} uses unsupported flavor "${metadata.flavor ?? 'unknown'}".`);

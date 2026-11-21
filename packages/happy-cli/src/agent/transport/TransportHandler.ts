@@ -12,6 +12,7 @@
  */
 
 import type { AgentMessage } from '../core';
+import type { PromptResponse } from '@agentclientprotocol/sdk';
 
 /**
  * Tool name pattern for extraction from toolCallId
@@ -64,6 +65,9 @@ export interface TransportHandler {
    * Agent identifier for logging
    */
   readonly agentName: string;
+
+  /** Interpret native prompt failures, including errors carried in JSON-RPC results. */
+  getPromptError?(response: PromptResponse): string | undefined;
 
   /**
    * Get initialization timeout in milliseconds.

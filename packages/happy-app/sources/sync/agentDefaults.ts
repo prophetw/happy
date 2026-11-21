@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { compareVersionsWithPrerelease, isWellFormedVersion } from '@/utils/versionUtils';
 
-export const agentKeys = ['claude', 'codex', 'gemini', 'openclaw', 'agy', 'dsh'] as const;
+export const agentKeys = ['claude', 'codex', 'gemini', 'openclaw', 'agy', 'dsh', 'codebuddy'] as const;
 export type AgentKey = typeof agentKeys[number];
 
 export const AgentDefaultOverrideSchema = z.object({
@@ -17,6 +17,7 @@ export const AgentDefaultOverridesSchema = z.object({
     openclaw: AgentDefaultOverrideSchema.optional(),
     agy: AgentDefaultOverrideSchema.optional(),
     dsh: AgentDefaultOverrideSchema.optional(),
+    codebuddy: AgentDefaultOverrideSchema.optional(),
 }).passthrough().default({});
 
 export type AgentDefaultOverride = z.infer<typeof AgentDefaultOverrideSchema>;
@@ -41,6 +42,7 @@ const codeAgentDefaults: Record<AgentKey, AgentDefaultConfig> = {
     // dsh's model catalog arrives over ACP (session config options), so the
     // default here only selects the catalog's ambient "no override" entry.
     dsh: { permissionMode: 'default', modelMode: 'default', effortLevel: null },
+    codebuddy: { permissionMode: 'default', modelMode: 'default', effortLevel: null },
 };
 
 // `auto` first shipped in happy-cli 1.2.1-beta.2, for Claude and Codex alike.
@@ -64,7 +66,7 @@ function resolveCodeDefaultPermissionMode(
 }
 
 export function normalizeAgentKey(flavor: string | null | undefined): AgentKey {
-    if (flavor === 'codex' || flavor === 'gemini' || flavor === 'openclaw' || flavor === 'agy' || flavor === 'dsh') {
+    if (flavor === 'codex' || flavor === 'gemini' || flavor === 'openclaw' || flavor === 'agy' || flavor === 'dsh' || flavor === 'codebuddy') {
         return flavor;
     }
     return 'claude';
@@ -97,8 +99,8 @@ const RETIRED_PERMISSION_MODES: Record<string, string> = {
  * flavor-based agents only: a harness that publishes its own catalog owns its
  * codes, and none of them collide with a retired Claude key.
  */
-export function retirePermissionMode<T extends string | null | undefined>(mode: T): T | string {
-    return mode ? RETIRED_PERMISSION_MODES[mode] ?? mode : mode;
+export function retirePermissionMode<T extends string | null | undefined>(mode: T, flavor?: string | null): T | string {
+    return mode && flavor !== 'codebuddy' ? RETIRED_PERMISSION_MODES[mode] ?? mode : mode;
 }
 
 /**
@@ -139,7 +141,7 @@ export function getAgentDefaultOverride(
     flavor: string | null | undefined,
 ): AgentDefaultOverride {
     const override = overrides?.[normalizeAgentKey(flavor)] ?? {};
-    const permissionMode = retirePermissionMode(override.permissionMode);
+    const permissionMode = retirePermissionMode(override.permissionMode, flavor);
     const modelMode = retireModelMode(flavor, override.modelMode);
     return permissionMode === override.permissionMode && modelMode === override.modelMode
         ? override

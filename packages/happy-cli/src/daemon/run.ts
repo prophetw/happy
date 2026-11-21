@@ -10,7 +10,7 @@ import axios from 'axios';
 import { ApiClient } from '@/api/api';
 import { TrackedSession, SessionEncryptionData } from './types';
 import { MachineMetadata, DaemonState, Metadata } from '@/api/types';
-import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
+import { spawnAgents, type SpawnSessionOptions, type SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { configuration } from '@/configuration';
@@ -315,6 +315,19 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       logger.debugLargeJson('[DAEMON RUN] Spawning session', options);
 
       const { directory, sessionId, machineId, approvedNewDirectoryCreation = true } = options;
+      const agent = options.agent ?? 'claude';
+      if (!spawnAgents.includes(agent)) {
+        return { type: 'error', errorMessage: `Unsupported agent type: '${agent}'. Please update your CLI to the latest version.` };
+      }
+      if (agent === 'codebuddy') {
+        if (options.token) {
+          return { type: 'error', errorMessage: 'CodeBuddy uses the CLI login on the selected machine. Run codebuddy and use /login there.' };
+        }
+        if ((options.permissionMode && options.permissionMode !== 'default')
+          || (options.modelMode && options.modelMode !== 'default') || options.effortLevel) {
+          return { type: 'error', errorMessage: 'CodeBuddy starts with its CLI model and default permissions. Select available options after the session starts.' };
+        }
+      }
       let directoryCreated = false;
 
       try {
@@ -475,8 +488,6 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
 
           // Construct command for the CLI
           const cliPath = join(projectPath(), 'dist', 'index.mjs');
-          // Determine agent command - support claude, codex, gemini, openclaw, agy, and dsh
-          const agent = options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : (options.agent === 'openclaw' ? 'openclaw' : (options.agent === 'agy' ? 'agy' : (options.agent === 'dsh' ? 'dsh' : 'claude'))));
           const resumeId = agent === 'claude'
             ? options.resumeClaudeSessionId
             : (agent === 'codex' ? options.resumeCodexThreadId : undefined);
@@ -580,50 +591,22 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         if (!useTmux) {
           logger.debug(`[DAEMON RUN] Using regular process spawning`);
 
-          // Construct arguments for the CLI - support claude, codex, and gemini
-          let agentCommand: string;
-          switch (options.agent) {
-            case 'claude':
-            case undefined:
-              agentCommand = 'claude';
-              break;
-            case 'codex':
-              agentCommand = 'codex';
-              break;
-            case 'gemini':
-              agentCommand = 'gemini';
-              break;
-            case 'openclaw':
-              agentCommand = 'openclaw';
-              break;
-            case 'agy':
-              agentCommand = 'agy';
-              break;
-            case 'dsh':
-              agentCommand = 'dsh';
-              break;
-            default:
-              return {
-                type: 'error',
-                errorMessage: `Unsupported agent type: '${options.agent}'. Please update your CLI to the latest version.`
-              };
-          }
           const args = [
-            agentCommand,
+            agent,
             '--happy-starting-mode', 'remote',
             '--started-by', 'daemon'
           ];
-          appendDaemonSpawnModeArgs(args, options, agentCommand);
+          appendDaemonSpawnModeArgs(args, options, agent);
 
           // Resume ids attach the new Happy session to a pre-existing provider
           // conversation created by the fork / duplicate RPC.
-          if (options.resumeClaudeSessionId && agentCommand === 'claude') {
+          if (options.resumeClaudeSessionId && agent === 'claude') {
             args.push('--resume', options.resumeClaudeSessionId);
           }
-          if (options.resumeCodexThreadId && agentCommand === 'codex') {
+          if (options.resumeCodexThreadId && agent === 'codex') {
             args.push('--resume', options.resumeCodexThreadId);
           }
-          if (options.resumeAgyConversationId && agentCommand === 'agy') {
+          if (options.resumeAgyConversationId && agent === 'agy') {
             args.push('--resume', options.resumeAgyConversationId);
           }
 
@@ -856,6 +839,8 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
             metadata = { ...metadata, claudeSessionId: fallback.metadata.claudeSessionId };
           } else if (flavor === 'codex' && !metadata.codexThreadId && fallback.metadata.codexThreadId) {
             metadata = { ...metadata, codexThreadId: fallback.metadata.codexThreadId };
+          } else if (flavor === 'codebuddy' && !metadata.codebuddySessionId && fallback.metadata.codebuddySessionId) {
+            metadata = { ...metadata, codebuddySessionId: fallback.metadata.codebuddySessionId };
           }
         }
 
@@ -869,7 +854,8 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         // sessions, and an older session simply keeps what the client sent.
         const needsFetch = (!metadata.claudeSessionId && (!metadata.flavor || metadata.flavor === 'claude'))
           || (!metadata.codexThreadId && metadata.flavor === 'codex')
-          || (!metadata.agyConversationId && metadata.flavor === 'agy');
+          || (!metadata.agyConversationId && metadata.flavor === 'agy')
+          || (!metadata.codebuddySessionId && metadata.flavor === 'codebuddy');
         if (needsFetch) {
           logger.debug(`[DAEMON RUN] Session ${happySessionId} has no agent session ID in the metadata at hand, fetching from server`);
           const serverMetadata = await fetchServerSessionMetadata(happySessionId, encryption.encryptionKey, encryption.encryptionVariant);

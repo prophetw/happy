@@ -5,6 +5,7 @@ export type ResumeCommandMetadata = {
     claudeSessionId?: string | null;
     codexThreadId?: string | null;
     agyConversationId?: string | null;
+    codebuddySessionId?: string | null;
     client?: { id?: string | null } | null;
     capabilities?: { resume?: boolean | null } | null;
 };
@@ -35,6 +36,10 @@ function buildResumeInvocation(metadata: ResumeCommandMetadata): string | null {
     }
     if ((metadata.flavor === 'agy' || metadata.flavor === 'antigravity') && metadata.agyConversationId) {
         return `happy agy --resume ${metadata.agyConversationId}`;
+    }
+    if (metadata.flavor === 'codebuddy' && metadata.codebuddySessionId) {
+        const quote = isWindows(metadata) ? quotePowerShellPath : quotePosixPath;
+        return `happy codebuddy --resume ${quote(metadata.codebuddySessionId)}`;
     }
     if (metadata.claudeSessionId) {
         return `happy claude --resume ${metadata.claudeSessionId}`;

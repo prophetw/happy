@@ -122,6 +122,45 @@ const create = (r: any, grant: string, requestID: string, options?: unknown) =>
     r.client.request('POST', '/tasks', { requestID, machineID: 'machineA', projectID: 'projectA', ...(options ? { options } : {}) }, grant);
 
 describe('REST option discovery and allowlisted task creation', () => {
+    it('routes CodeBuddy MCP tasks to the authorized directory with native defaults', async () => {
+        const codebuddy = { agent: 'codebuddy', models: ['default'], permissionModes: ['default'], efforts: [],
+            defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '' };
+        const launchOptions = { version: 1 as const, agents: [
+            { agent: 'codebuddy' as const, models: ['default', 'stale-model'], permissionModes: ['default', 'bypassPermissions'] },
+        ] };
+        const r = await setup({ launchOptions, catalog: () => [...catalog, codebuddy] });
+        const grant = await r.connect({ options: { agents: [{ agent: 'codebuddy', models: ['default'], permissionModes: ['default'] }] } });
+        await r.startWorker();
+        const { callControlTool } = await import('./mcp');
+        const discovered = await callControlTool(r.client, grant, 'happy_options', { machineID: 'machineA' });
+        expect(discovered.data).toEqual({ defaultAgent: 'codex', agents: [codebuddy] });
+
+        const args = { requestID: 'cb-create', machineID: 'machineA', projectID: 'projectA', options: { agent: 'codebuddy' } };
+        for (const override of [{ model: 'stale-model' }, { permissionMode: 'bypassPermissions' }, { effort: 'high' }]) {
+            const denied = await callControlTool(r.client, grant, 'happy_create_task', {
+                ...args, requestID: 'cb-denied-' + Object.keys(override)[0], options: { ...args.options, ...override },
+            });
+            expect(denied.error.code).toBe('OPTION_DENIED');
+        }
+        expect(r.launches).toHaveLength(0);
+        const created = await callControlTool(r.client, grant, 'happy_create_task', args);
+        expect(created.data.state).toBe('confirmed');
+        expect(r.launches).toEqual([{ directory: r.project, options: {
+            agent: 'codebuddy', model: 'default', permissionMode: 'default', effort: '',
+        } }]);
+        const sessionID = created.data.sessionID;
+        const sent = await callControlTool(r.client, grant, 'happy_send', {
+            requestID: 'cb-send', sessionID, text: 'fixture request',
+        });
+        expect(['preparing', 'queued']).toContain(sent.data.state);
+        await r.waitForSubmitted(grant, 'cb-send');
+        r.complete(sessionID);
+        expect((await callControlTool(r.client, grant, 'happy_status', { sessionID })).ok).toBe(true);
+        const result = await callControlTool(r.client, grant, 'happy_result', { sessionID, turnID: 'turn1' });
+        expect(result.data).toMatchObject({ ready: true, outcome: 'completed' });
+        expect(result.data.messages).toContainEqual(expect.objectContaining({ kind: 'text', text: 'fixture result' }));
+    });
+
     it('uses new defaults for new Codex sessions and keeps prior sessions dispatchable', async () => {
         let live = catalog;
         const r = await setup({ launchOptions: policy, catalog: () => live });

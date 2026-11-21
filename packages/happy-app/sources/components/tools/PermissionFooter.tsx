@@ -136,8 +136,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, 
     const [loadingBypass, setLoadingBypass] = useState(false);
     const [loadingForSession, setLoadingForSession] = useState(false);
     
-    // Check if this is a decision-based session (Codex, Agy, Gemini) - check both metadata.flavor and tool name prefix
-    const isDecisionBased = metadata?.flavor === 'codex' || metadata?.flavor === 'agy' || metadata?.flavor === 'gemini' || toolName.startsWith('Codex');
+    const isCodeBuddy = metadata?.flavor === 'codebuddy';
+    const isDecisionBased = isCodeBuddy || metadata?.flavor === 'codex' || metadata?.flavor === 'agy' || metadata?.flavor === 'gemini' || toolName.startsWith('Codex');
 
     const handleApprove = async () => {
         if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingBypass || loadingForSession) return;
@@ -453,7 +453,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, 
                         ],
                     })}
 
-                    {renderPermissionButton({
+                    {!isCodeBuddy && renderPermissionButton({
                         label: t('codex.permissions.yesForSession'),
                         loading: loadingForSession,
                         onPress: handleDecisionApproveForSession,

@@ -17,6 +17,7 @@ export const ResumableMetadataSchema = z.object({
     claudeSessionId: z.string().optional(),
     codexThreadId: z.string().optional(),
     agyConversationId: z.string().optional(),
+    codebuddySessionId: z.string().optional(),
 }).passthrough();
 
 type RawSession = {
