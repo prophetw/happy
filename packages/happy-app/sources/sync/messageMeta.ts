@@ -147,7 +147,7 @@ export function resolveMessageModeMeta(
     if (session.permissionMode !== null && session.permissionMode !== undefined) {
         // A session picked before a mode was retired still carries the old key,
         // and the CLI rejects the whole message envelope on an unknown one.
-        meta.permissionMode = supported(retirePermissionMode(session.permissionMode));
+        meta.permissionMode = supported(retirePermissionMode(session.permissionMode, flavor));
     } else if (agentOverrides.permissionMode !== undefined) {
         meta.permissionMode = supported(agentOverrides.permissionMode);
     }

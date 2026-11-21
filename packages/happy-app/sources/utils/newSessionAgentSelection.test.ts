@@ -19,6 +19,11 @@ describe('resolveMachineAgent', () => {
         })).toBe('codex');
     });
 
+    it('keeps CodeBuddy only on machines that report its CLI', () => {
+        expect(resolveMachineAgent('codebuddy', { claude: true, codebuddy: true })).toBe('codebuddy');
+        expect(resolveMachineAgent('codebuddy', { claude: true })).toBe('claude');
+    });
+
     it('selects Rig on a Rig-only machine', () => {
         expect(resolveMachineAgent('claude', {
             rig: true,

@@ -185,6 +185,7 @@ export const MetadataSchema = z.object({
     claudeSessionId: z.string().optional(), // Claude Code session ID
     codexThreadId: z.string().optional(), // Codex app-server thread ID
     agyConversationId: z.string().optional(), // Antigravity CLI conversation ID
+    codebuddySessionId: z.string().optional(),
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),
     mcpServers: z.array(z.object({ name: z.string(), status: z.string() })).optional(),
@@ -533,6 +534,7 @@ export const MachineMetadataSchema = z.object({
         openclaw: z.boolean(),
         agy: z.boolean().optional(), // optional: older CLIs don't report agy
         dsh: z.boolean().optional(), // optional: older CLIs don't report dsh
+        codebuddy: z.boolean().optional(),
         rig: z.boolean().optional(), // Rig runs its own Happy-connected daemon
         detectedAt: z.number(),
     }).optional(),

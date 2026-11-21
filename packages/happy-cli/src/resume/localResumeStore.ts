@@ -32,6 +32,9 @@ function needsFreshMetadata(metadata: Metadata): boolean {
     if (metadata.flavor === 'agy') {
         return !metadata.agyConversationId;
     }
+    if (metadata.flavor === 'codebuddy') {
+        return !metadata.codebuddySessionId;
+    }
     if (metadata.flavor === 'claude' || !metadata.flavor) {
         return !metadata.claudeSessionId;
     }

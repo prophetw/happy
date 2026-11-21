@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/apiSession';
+import type { Session as ApiSession } from '@/api/types';
 import type { AgentMessage } from '@/agent/core';
 import { AcpBackend, USER_CANCELLED_DETAIL, type AcpPermissionHandler } from './AcpBackend';
 import { DefaultTransport, type TransportHandler } from '@/agent/transport';
@@ -15,7 +16,8 @@ import { initialMachineMetadata } from '@/daemon/run';
 import { createSessionMetadata } from '@/utils/createSessionMetadata';
 import { setupOfflineReconnection } from '@/utils/setupOfflineReconnection';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
-import { encodeBase64 } from '@/api/encryption';
+import { decodeBase64, encodeBase64 } from '@/api/encryption';
+import { ensureSessionDeliveryCursor, readSessionDeliveryCursor } from '@/claude/sessionDeliveryCursor';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { projectPath } from '@/projectPath';
@@ -32,6 +34,7 @@ import {
 import type { SessionConfigOption, SessionModeState, SessionModelState } from '@agentclientprotocol/sdk';
 
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
+const CANCEL_CONFIRMATION_TIMEOUT_MS = 10_000;
 
 /**
  * Instruction for the agent to title the session itself, the way Claude Code
@@ -352,9 +355,7 @@ function extractConfigSelector(
   category: 'mode' | 'model' | 'thought_level',
 ): AcpConfigSelector | null {
   const optionMatchesCategory = (option: SessionConfigOption): boolean => {
-    if (option.category === category) {
-      return true;
-    }
+    if (option.category) return option.category === category;
     // Some ACP providers omit category; fallback to id/name heuristics.
     const id = normalizeComparable(option.id);
     const name = normalizeComparable(option.name);
@@ -365,7 +366,8 @@ function extractConfigSelector(
       return id.includes('reasoning') || id.includes('effort') || id.includes('thought')
         || name.includes('reasoning') || name.includes('effort') || name.includes('thought');
     }
-    return id.includes('mode') || id.includes('permission') || name.includes('mode') || name.includes('permission');
+    return id.includes('permission') || name.includes('permission')
+      || (id.includes('mode') && !id.includes('model')) || (name.includes('mode') && !name.includes('model'));
   };
 
   for (const option of configOptions) {
@@ -505,15 +507,15 @@ type PendingTurn = {
   timeout: NodeJS.Timeout | null;
 };
 
-function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'dsh' | 'acp' {
+function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'dsh' | 'codebuddy' | 'acp' {
   if (agentName === 'gemini') {
     return 'gemini';
   }
   if (agentName === 'opencode') {
     return 'opencode';
   }
-  if (agentName === 'dsh') {
-    return 'dsh';
+  if (agentName === 'dsh' || agentName === 'codebuddy') {
+    return agentName;
   }
   return 'acp';
 }
@@ -526,8 +528,12 @@ export async function runAcp(opts: {
   startedBy?: 'daemon' | 'terminal';
   verbose?: boolean;
   transportHandler?: TransportHandler;
+  resumeSessionId?: string;
+  initialModel?: string;
+  initialPermissionMode?: string;
 }): Promise<void> {
   const verbose = opts.verbose === true;
+  const isCodeBuddy = opts.agentName === 'codebuddy';
   const sessionTag = randomUUID();
   connectionState.setBackend(opts.agentName);
 
@@ -548,40 +554,72 @@ export async function runAcp(opts: {
     startedBy: opts.startedBy,
     sandbox: settings.sandboxConfig,
   });
-  const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+  const reconnectId = isCodeBuddy ? process.env.HAPPY_RECONNECT_SESSION_ID : undefined;
+  let response: ApiSession | null;
+  if (reconnectId) {
+    const key = process.env.HAPPY_RECONNECT_ENCRYPTION_KEY;
+    const variant = process.env.HAPPY_RECONNECT_ENCRYPTION_VARIANT;
+    if (!key || (variant !== 'legacy' && variant !== 'dataKey') || !opts.resumeSessionId) {
+      throw new Error('CodeBuddy resume is missing the saved session information.');
+    }
+    response = {
+      id: reconnectId,
+      seq: Number(process.env.HAPPY_RECONNECT_SEQ ?? 0),
+      encryptionKey: decodeBase64(key),
+      encryptionVariant: variant,
+      metadata,
+      metadataVersion: Number(process.env.HAPPY_RECONNECT_METADATA_VERSION ?? 0),
+      agentState: state,
+      agentStateVersion: Number(process.env.HAPPY_RECONNECT_AGENT_STATE_VERSION ?? 0),
+    };
+  } else {
+    response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    if (isCodeBuddy && !response) throw new Error('Happy could not connect to the relay to start CodeBuddy.');
+  }
   if (response) {
     logAcp('muted', `Happy Session ID: ${response.id}`);
   }
 
   let session: ApiSessionClient;
   let permissionHandler: GenericAcpPermissionHandler;
-  const { session: initialSession, reconnectionHandle } = setupOfflineReconnection({
-    api,
-    sessionTag,
-    metadata,
-    state,
-    response,
-    onSessionSwap: (newSession) => {
-      session = newSession;
-      if (permissionHandler) {
-        permissionHandler.updateSession(newSession);
-      }
-    },
-  });
+  const { session: initialSession, reconnectionHandle } = isCodeBuddy && response
+    ? {
+      session: api.sessionSyncClient(response, {
+        initialReceivedSeq: reconnectId ? readSessionDeliveryCursor(reconnectId) ?? response.seq : ensureSessionDeliveryCursor(response.id),
+      }),
+      reconnectionHandle: null,
+    }
+    : setupOfflineReconnection({
+      api,
+      sessionTag,
+      metadata,
+      state,
+      response,
+      onSessionSwap: (newSession) => {
+        session = newSession;
+        if (permissionHandler) {
+          permissionHandler.updateSession(newSession);
+        }
+      },
+    });
   session = initialSession;
+  if (reconnectId) session.suppressNextArchiveSignal();
 
-  if (response) {
+  const reportSessionStarted = async (ready: ApiSession, readyMetadata = metadata) => {
     try {
-      await notifyDaemonSessionStarted(response.id, metadata, {
-        encryptionKey: encodeBase64(response.encryptionKey),
-        encryptionVariant: response.encryptionVariant,
-        seq: response.seq,
-        metadataVersion: response.metadataVersion,
-        agentStateVersion: response.agentStateVersion,
+      await notifyDaemonSessionStarted(ready.id, readyMetadata, {
+        encryptionKey: encodeBase64(ready.encryptionKey),
+        encryptionVariant: ready.encryptionVariant,
+        seq: ready.seq,
+        metadataVersion: ready.metadataVersion,
+        agentStateVersion: ready.agentStateVersion,
       });
     } catch (error) {
       logger.debug('[acp] Failed to report session to daemon:', error);
     }
+  };
+  if (response && !isCodeBuddy) {
+    await reportSessionStarted(response);
   }
 
   permissionHandler = new GenericAcpPermissionHandler(session, opts.agentName);
@@ -589,10 +627,10 @@ export async function runAcp(opts: {
   // process that died while a tool prompt was open — see the matching
   // call in claudeRemoteLauncher for the full rationale.
   permissionHandler.reset('Previous CLI process exited before responding');
-  const sessionManager = new AcpSessionManager();
+  const sessionManager = new AcpSessionManager(isCodeBuddy);
   const messageQueue = new MessageQueue2<AcpSwitchMode>((mode) => hashObject(mode));
-  let currentPermissionMode: string | undefined;
-  let currentModel: string | null | undefined;
+  let currentPermissionMode = opts.initialPermissionMode;
+  let currentModel: string | null | undefined = opts.initialModel;
   let currentEffort: string | null | undefined;
   let modeSelector: AcpConfigSelector | null = null;
   let modelSelector: AcpConfigSelector | null = null;
@@ -604,7 +642,7 @@ export async function runAcp(opts: {
   let sawModels = false;
   // The change-title instruction rides only the first prompt, so the agent
   // names the session once and is never nagged about it again.
-  let changeTitleInstructionSent = false;
+  let changeTitleInstructionSent = !!opts.resumeSessionId;
 
   const happyServer = await startHappyServer(session);
   const mcpServers = {
@@ -624,6 +662,8 @@ export async function runAcp(opts: {
     permissionHandler,
     transportHandler: transport,
     verbose,
+    resumeSessionId: opts.resumeSessionId,
+    startupAttempts: isCodeBuddy ? 1 : undefined,
   });
 
   let thinking = false;
@@ -685,38 +725,38 @@ export async function runAcp(opts: {
     }
   };
 
-  const switchPermissionModeIfRequested = async (requestedMode: string): Promise<void> => {
+  const switchPermissionModeIfRequested = async (requestedMode: string): Promise<boolean> => {
     if (!requestedMode) {
-      return;
+      return false;
     }
 
     if (modeSelector) {
       const resolved = resolveRequestedCode(modeSelector.options, requestedMode);
       if (!resolved) {
         logger.debug(`[${opts.agentName}] Ignoring unknown ACP permission mode request: ${requestedMode}`);
-        return;
+        return false;
       }
       if (resolved === modeSelector.currentCode) {
-        return;
+        return true;
       }
       const switched = await backend.setSessionConfigOption(modeSelector.configId, resolved);
       if (switched) {
         modeSelector.currentCode = resolved;
-        return;
+        return true;
       }
     }
 
     if (!legacyModes) {
-      return;
+      return isCodeBuddy && !modeSelector && requestedMode === 'default';
     }
 
     const resolvedLegacyMode = resolveRequestedLegacyModeCode(legacyModes, requestedMode);
     if (!resolvedLegacyMode) {
       logger.debug(`[${opts.agentName}] Ignoring unknown ACP legacy mode request: ${requestedMode}`);
-      return;
+      return false;
     }
     if (resolvedLegacyMode === legacyModes.currentModeId) {
-      return;
+      return true;
     }
 
     const switched = await backend.setSessionMode(resolvedLegacyMode);
@@ -726,40 +766,41 @@ export async function runAcp(opts: {
         currentModeId: resolvedLegacyMode,
       };
     }
+    return switched;
   };
 
-  const switchModelIfRequested = async (requestedModel: string): Promise<void> => {
+  const switchModelIfRequested = async (requestedModel: string): Promise<boolean> => {
     if (!requestedModel) {
-      return;
+      return false;
     }
 
     if (modelSelector) {
       const resolved = resolveRequestedCode(modelSelector.options, requestedModel);
       if (!resolved) {
         logger.debug(`[${opts.agentName}] Ignoring unknown ACP model request: ${requestedModel}`);
-        return;
+        return false;
       }
       if (resolved === modelSelector.currentCode) {
-        return;
+        return true;
       }
       const switched = await backend.setSessionConfigOption(modelSelector.configId, resolved);
       if (switched) {
         modelSelector.currentCode = resolved;
-        return;
+        return true;
       }
     }
 
     if (!legacyModels) {
-      return;
+      return false;
     }
 
     const resolvedLegacyModel = resolveRequestedLegacyModelCode(legacyModels, requestedModel);
     if (!resolvedLegacyModel) {
       logger.debug(`[${opts.agentName}] Ignoring unknown ACP legacy model request: ${requestedModel}`);
-      return;
+      return false;
     }
     if (resolvedLegacyModel === legacyModels.currentModelId) {
-      return;
+      return true;
     }
 
     const switched = await backend.setSessionModel(resolvedLegacyModel);
@@ -769,11 +810,12 @@ export async function runAcp(opts: {
         currentModelId: resolvedLegacyModel,
       };
     }
+    return switched;
   };
 
-  const switchThoughtLevelIfRequested = async (requestedEffort: string | null): Promise<void> => {
+  const switchThoughtLevelIfRequested = async (requestedEffort: string | null): Promise<boolean> => {
     if (!thoughtLevelSelector) {
-      return;
+      return false;
     }
 
     // null means "reset to default"; ACP providers that support a provider
@@ -784,16 +826,17 @@ export async function runAcp(opts: {
       if (requested !== '') {
         logger.debug(`[${opts.agentName}] Ignoring unknown ACP thought level request: ${requestedEffort}`);
       }
-      return;
+      return false;
     }
     if (resolved === thoughtLevelSelector.currentCode) {
-      return;
+      return true;
     }
 
     const switched = await backend.setSessionConfigOption(thoughtLevelSelector.configId, resolved);
     if (switched) {
       thoughtLevelSelector.currentCode = resolved;
     }
+    return switched;
   };
 
   const onBackendMessage = (msg: AgentMessage) => {
@@ -982,7 +1025,7 @@ export async function runAcp(opts: {
       currentPermissionMode = message.meta.permissionMode;
       // dsh has no ACP mode selector; its "allow all" mode is enforced by
       // locally auto-approving permission requests instead of switching modes.
-      permissionHandler.setAutoApprove(currentPermissionMode === 'bypassPermissions');
+      if (!isCodeBuddy) permissionHandler.setAutoApprove(currentPermissionMode === 'bypassPermissions');
       logger.debug(`[${opts.agentName}] Requested ACP permission mode: ${currentPermissionMode}`);
     }
 
@@ -1000,7 +1043,7 @@ export async function runAcp(opts: {
       permissionMode: currentPermissionMode,
       model: currentModel,
       effort: currentEffort,
-    });
+    }, undefined, isCodeBuddy ? message.seq : undefined);
   });
   session.keepAlive(thinking, 'remote');
 
@@ -1010,20 +1053,41 @@ export async function runAcp(opts: {
 
   async function handleAbort() {
     try {
-      if (acpSessionId) {
+      if (acpSessionId && (!isCodeBuddy || thinking)) {
         await backend.cancel(acpSessionId);
+        if (isCodeBuddy && pendingTurn && !pendingTurn.timeout) {
+          pendingTurn.timeout = setTimeout(() => {
+            clearPendingTurn(new Error('CodeBuddy did not confirm cancellation. Closing the CLI process.'));
+            stopCodeBuddy();
+          }, CANCEL_CONFIRMATION_TIMEOUT_MS);
+        }
       }
       permissionHandler.reset();
       abortController.abort();
     } catch (error) {
       logger.debug(`[${opts.agentName}] Abort failed:`, error);
+      if (isCodeBuddy) throw error;
     } finally {
       abortController = new AbortController();
     }
   }
 
+  let shutdownBackend: Promise<void> | undefined;
+  const stopCodeBuddy = () => {
+    shouldExit = true;
+    messageQueue.close();
+    clearPendingTurn(new Error('Session terminated'));
+    permissionHandler.reset();
+    shutdownBackend ??= backend.dispose();
+  };
+  if (isCodeBuddy) {
+    process.once('SIGTERM', stopCodeBuddy);
+    process.once('SIGINT', stopCodeBuddy);
+  }
+
   session.rpcHandlerManager.registerHandler('abort', handleAbort);
   registerKillSessionHandler(session.rpcHandlerManager, async () => {
+    if (isCodeBuddy) return stopCodeBuddy();
     shouldExit = true;
     messageQueue.close();
     clearPendingTurn(new Error('Session terminated'));
@@ -1033,6 +1097,25 @@ export async function runAcp(opts: {
   try {
     const started = await backend.startSession();
     acpSessionId = started.sessionId;
+    if (isCodeBuddy && response && !shouldExit) {
+      if (opts.initialPermissionMode && !(await switchPermissionModeIfRequested(opts.initialPermissionMode))) {
+        throw new Error(`CodeBuddy did not accept permission mode "${opts.initialPermissionMode}".`);
+      }
+      if (opts.initialModel && !(await switchModelIfRequested(opts.initialModel))) {
+        throw new Error(`CodeBuddy did not accept model "${opts.initialModel}".`);
+      }
+      await session.updateMetadata(current => ({
+        ...current,
+        hostPid: metadata.hostPid,
+        version: metadata.version,
+        lifecycleState: 'running',
+        lifecycleStateSince: Date.now(),
+        codebuddySessionId: started.supportsResume ? started.providerSessionId : undefined,
+        archivedBy: undefined,
+        archiveReason: undefined,
+      }));
+      await reportSessionStarted(response, session.getMetadata() ?? metadata);
+    }
     if (verbose) {
       if (!sawSlashCommands) {
         logAcp('muted', `Outgoing slash commands from ${opts.agentName}: not reported yet`);
@@ -1077,6 +1160,7 @@ export async function runAcp(opts: {
       changeTitleInstructionSent = true;
 
       sendEnvelopes(sessionManager.startTurn());
+      if (isCodeBuddy) session.markUserMessageDelivered(batch.seq);
       const turnEnded = waitForTurnEnd();
       // The turn can be rejected (user cancel, backend error) while sendPrompt
       // is still awaiting the agent's response; without an immediate handler
@@ -1085,16 +1169,30 @@ export async function runAcp(opts: {
       turnEnded.catch(() => {});
       try {
         if (typeof batch.mode.permissionMode === 'string' && batch.mode.permissionMode.length > 0) {
-          await switchPermissionModeIfRequested(batch.mode.permissionMode);
+          const switched = await switchPermissionModeIfRequested(batch.mode.permissionMode);
+          if (isCodeBuddy && !switched) {
+            throw new Error(`CodeBuddy did not accept permission mode "${batch.mode.permissionMode}".`);
+          }
         }
         if (typeof batch.mode.model === 'string' && batch.mode.model.length > 0) {
-          await switchModelIfRequested(batch.mode.model);
+          const switched = await switchModelIfRequested(batch.mode.model);
+          if (isCodeBuddy && !switched) {
+            throw new Error(`CodeBuddy did not accept model "${batch.mode.model}".`);
+          }
         }
         if (Object.prototype.hasOwnProperty.call(batch.mode, 'effort')) {
-          await switchThoughtLevelIfRequested(batch.mode.effort ?? null);
+          const switched = await switchThoughtLevelIfRequested(batch.mode.effort ?? null);
+          if (isCodeBuddy && batch.mode.effort && !switched) {
+            throw new Error(`CodeBuddy did not accept reasoning level "${batch.mode.effort}".`);
+          }
         }
-        await backend.sendPrompt(acpSessionId, promptToSend);
-        await turnEnded;
+        if (isCodeBuddy) {
+          if (waitSignal.aborted) throw new TurnCancelledError('CodeBuddy cancelled by user');
+          await Promise.all([backend.sendPrompt(acpSessionId, promptToSend), turnEnded]);
+        } else {
+          await backend.sendPrompt(acpSessionId, promptToSend);
+          await turnEnded;
+        }
         sendEnvelopes(sessionManager.endTurn('completed'));
         session.sendSessionEvent({ type: 'ready' });
         if (verbose) {
@@ -1104,6 +1202,7 @@ export async function runAcp(opts: {
         if (error instanceof TurnCancelledError) {
           sendEnvelopes(sessionManager.endTurn('cancelled'));
           session.sendSessionEvent({ type: 'ready' });
+          clearPendingTurn(error);
           await turnEnded.catch(() => {});
           continue;
         }
@@ -1124,6 +1223,10 @@ export async function runAcp(opts: {
       }
     }
   } finally {
+    if (isCodeBuddy) {
+      process.removeListener('SIGTERM', stopCodeBuddy);
+      process.removeListener('SIGINT', stopCodeBuddy);
+    }
     clearInterval(keepAliveInterval);
     reconnectionHandle?.cancel();
     clearPendingTurn(new Error('ACP runner shutting down'));
@@ -1135,7 +1238,7 @@ export async function runAcp(opts: {
     }
 
     backend.offMessage?.(onBackendMessage);
-    await backend.dispose();
+    await (shutdownBackend ?? backend.dispose());
 
     try {
       happyServer.stop();

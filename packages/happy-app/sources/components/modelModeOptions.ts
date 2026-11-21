@@ -350,6 +350,9 @@ export function getHardcodedPermissionModes(flavor: AgentFlavor, translate: Tran
     if (flavor === 'dsh') {
         return getDshPermissionModes(translate);
     }
+    if (flavor === 'codebuddy') {
+        return [{ key: 'default', name: 'Default', description: null }];
+    }
     return getClaudePermissionModes(translate);
 }
 
@@ -418,6 +421,9 @@ export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translat
     }
     if (flavor === 'dsh') {
         return getDshModelModes();
+    }
+    if (flavor === 'codebuddy') {
+        return [{ key: 'default', name: 'CodeBuddy CLI default', description: null }];
     }
     return getClaudeModelModes();
 }
@@ -531,6 +537,7 @@ export function getMachineModelModes(
     }
     if (flavor === 'agy' && metadata?.agyModels) return includeConfiguredModel(flavor, getAgyModelModes(metadata.agyModels), configuredModelKey);
     if (flavor === 'dsh') return getDshModelModes(getMachineDshModelCatalog(metadata));
+    if (flavor === 'codebuddy') return getHardcodedModelModes(flavor, translate);
     return includeConfiguredModel(flavor, getHardcodedModelModes(flavor, translate), configuredModelKey);
 }
 
@@ -712,6 +719,9 @@ export function getEffortLevelsForModel(
     }
     if (flavor === 'agy') {
         return getAgyEffortLevels(modelKey);
+    }
+    if (flavor === 'codebuddy') {
+        return (metadata?.thoughtLevels ?? []).map(level => ({ key: level.code, name: level.value }));
     }
     return [];
 }

@@ -12,6 +12,7 @@ export interface CLIAvailability {
   openclaw: boolean;
   agy: boolean;
   dsh: boolean;
+  codebuddy?: boolean;
   detectedAt: number;
 }
 
@@ -43,6 +44,7 @@ function detectPosix(): CLIAvailability {
   const gemini = commandExists('gemini');
   const agy = findAgyBin() !== undefined;
   const dsh = findDshBin() !== undefined;
+  const codebuddy = commandExists('codebuddy');
 
   // OpenClaw: check command, config file, or env var
   const openclawCommand = commandExists('openclaw');
@@ -50,7 +52,7 @@ function detectPosix(): CLIAvailability {
   const openclawEnv = !!process.env.OPENCLAW_GATEWAY_URL;
   const openclaw = openclawCommand || openclawConfig || openclawEnv;
 
-  return { claude, codex, gemini, openclaw, agy, dsh, detectedAt: Date.now() };
+  return { claude, codex, gemini, openclaw, agy, dsh, codebuddy, detectedAt: Date.now() };
 }
 
 function detectWindows(): CLIAvailability {
@@ -68,6 +70,7 @@ function detectWindows(): CLIAvailability {
   const gemini = checkCommand('gemini');
   const agy = findAgyBin() !== undefined;
   const dsh = findDshBin() !== undefined;
+  const codebuddy = checkCommand('codebuddy');
 
   // OpenClaw: check command, config file, or env var
   const openclawCommand = checkCommand('openclaw');
@@ -75,5 +78,5 @@ function detectWindows(): CLIAvailability {
   const openclawEnv = !!process.env.OPENCLAW_GATEWAY_URL;
   const openclaw = openclawCommand || openclawConfig || openclawEnv;
 
-  return { claude, codex, gemini, openclaw, agy, dsh, detectedAt: Date.now() };
+  return { claude, codex, gemini, openclaw, agy, dsh, codebuddy, detectedAt: Date.now() };
 }

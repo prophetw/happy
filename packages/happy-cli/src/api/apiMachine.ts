@@ -117,6 +117,7 @@ export const ResumeFallbackSchema = z.object({
         flavor: z.string().nullish(),
         claudeSessionId: z.string().optional(),
         codexThreadId: z.string().optional(),
+        codebuddySessionId: z.string().optional(),
     }).passthrough(),
     metadataVersion: z.number().int().nonnegative(),
     agentStateVersion: z.number().int().nonnegative(),
@@ -776,7 +777,8 @@ export class ApiMachineClient {
             || prev.gemini !== newAvailability.gemini
             || prev.openclaw !== newAvailability.openclaw
             || prev.agy !== newAvailability.agy
-            || prev.dsh !== newAvailability.dsh;
+            || prev.dsh !== newAvailability.dsh
+            || prev.codebuddy !== newAvailability.codebuddy;
         const resumeSupportChanged = !prevResume
             || prevResume.rpcAvailable !== newResumeSupport.rpcAvailable
             || prevResume.happyAgentAuthenticated !== newResumeSupport.happyAgentAuthenticated;

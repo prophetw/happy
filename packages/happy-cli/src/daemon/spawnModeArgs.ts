@@ -56,6 +56,7 @@ export function spawnWebhookTimeoutMs(agent: string, resuming: boolean): number 
   // keeps starting either way, so an early timeout answers the app with a
   // failure for a session that shows up moments later.
   if (agent === 'agy') return SLOW_SPAWN_STARTUP_TIMEOUT_MS;
+  if (agent === 'codebuddy') return SLOW_SPAWN_STARTUP_TIMEOUT_MS;
   // Cover Codex's 30s thread/resume request plus CLI startup.
   if (agent === 'codex' && resuming) return SLOW_SPAWN_STARTUP_TIMEOUT_MS;
   return DEFAULT_SPAWN_STARTUP_TIMEOUT_MS;

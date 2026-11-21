@@ -4,6 +4,7 @@
  */
 
 import { apiSocket } from './apiSocket';
+import type { NewSessionAgentType } from './persistence';
 import { normalizeSpawnSessionResult } from './spawnSessionResult';
 import type { SpawnSessionResult } from './spawnSessionResult';
 import { sync } from './sync';
@@ -175,7 +176,7 @@ export interface SpawnSessionOptions {
     directory: string;
     approvedNewDirectoryCreation?: boolean;
     token?: string;
-    agent?: 'codex' | 'claude' | 'gemini' | 'openclaw' | 'agy' | 'dsh' | 'rig';
+    agent?: NewSessionAgentType;
     permissionMode?: string;
     modelMode?: string;
     effortLevel?: string;
@@ -277,7 +278,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             directory: string
             approvedNewDirectoryCreation?: boolean,
             token?: string,
-            agent?: 'codex' | 'claude' | 'gemini' | 'openclaw' | 'agy' | 'dsh' | 'rig',
+            agent?: NewSessionAgentType,
             permissionMode?: string,
             modelMode?: string,
             effortLevel?: string,

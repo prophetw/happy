@@ -123,6 +123,9 @@ import {
 type ExtendedRequestPermissionRequest = RequestPermissionRequest & {
   toolCall?: {
     id?: string;
+    toolCallId?: string;
+    title?: string;
+    rawInput?: Record<string, unknown>;
     kind?: string;
     toolName?: string;
     input?: Record<string, unknown>;
@@ -210,6 +213,9 @@ export interface AcpBackendOptions {
   /** Transport handler for agent-specific behavior (timeouts, filtering, etc.) */
   transportHandler?: TransportHandler;
 
+  resumeSessionId?: string;
+  startupAttempts?: number;
+
   /** Optional callback to check if prompt has change_title instruction */
   hasChangeTitleInstruction?: (prompt: string) => boolean;
 
@@ -227,21 +233,22 @@ function nodeToWebStreams(
   stdin: Writable, 
   stdout: Readable
 ): { writable: WritableStream<Uint8Array>; readable: ReadableStream<Uint8Array> } {
+  // The child can close stdin while the daemon stops its process group.
+  // Surface the rejected write without terminating the Happy process.
+  stdin.on('error', (err) => logger.debug('[AcpBackend] Stdin error:', err));
+
   // Convert Node writable to Web WritableStream
   const writable = new WritableStream<Uint8Array>({
     write(chunk) {
       return new Promise((resolve, reject) => {
-        const ok = stdin.write(chunk, (err) => {
+        stdin.write(chunk, (err) => {
           if (err) {
             logger.debug(`[AcpBackend] Error writing to stdin:`, err);
             reject(err);
+          } else {
+            resolve();
           }
         });
-        if (ok) {
-          resolve();
-        } else {
-          stdin.once('drain', resolve);
-        }
       });
     },
     close() {
@@ -380,7 +387,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
-  async startSession(initialPrompt?: string): Promise<StartSessionResult> {
+  async startSession(initialPrompt?: string): Promise<StartSessionResult & { providerSessionId: string; supportsResume: boolean }> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
     }
@@ -481,11 +488,12 @@ export class AcpBackend implements AgentBackend {
         this.emit({ type: 'status', status: 'error', detail: err.message });
       });
 
-      this.process.on('exit', (code, signal) => {
-        if (!this.disposed && code !== 0 && code !== null) {
-          signalStartupFailure(new Error(`Exit code: ${code}`));
+      this.process.on(this.transport.getPromptError ? 'close' : 'exit', (code, signal) => {
+        if (!this.disposed && (this.transport.getPromptError || (code !== 0 && code !== null))) {
+          const detail = signal ? `Signal: ${signal}` : `Exit code: ${code}`;
+          signalStartupFailure(new Error(detail));
           logger.debug(`[AcpBackend] Process exited with code ${code}, signal ${signal}`);
-          this.emit({ type: 'status', status: 'stopped', detail: `Exit code: ${code}` });
+          this.emit({ type: 'status', status: 'stopped', detail });
         }
       });
 
@@ -577,16 +585,17 @@ export class AcpBackend implements AgentBackend {
           
           const extendedParams = params as ExtendedRequestPermissionRequest;
           const toolCall = extendedParams.toolCall;
-          let toolName = toolCall?.kind || toolCall?.toolName || extendedParams.kind || 'Unknown tool';
+          const reportedToolName = toolCall?.kind || toolCall?.toolName || extendedParams.kind || toolCall?.title || 'Unknown tool';
+          let toolName = reportedToolName;
           // Use toolCallId as the single source of truth for permission ID
           // This ensures mobile app sends back the same ID that we use to store pending requests
-          const toolCallId = toolCall?.id || randomUUID();
+          const toolCallId = toolCall?.toolCallId || toolCall?.id || randomUUID();
           const permissionId = toolCallId; // Use same ID for consistency!
           
           // Extract input/arguments from various possible locations FIRST (before checking toolName)
           let input: Record<string, unknown> = {};
           if (toolCall) {
-            input = toolCall.input || toolCall.arguments || toolCall.content || {};
+            input = toolCall.rawInput || toolCall.input || toolCall.arguments || toolCall.content || {};
           } else {
             // If no toolCall, try to extract from params directly
             input = extendedParams.input || extendedParams.arguments || extendedParams.content || {};
@@ -599,7 +608,7 @@ export class AcpBackend implements AgentBackend {
           };
           toolName = this.transport.determineToolName?.(toolName, toolCallId, input, context) ?? toolName;
           
-          if (toolName !== (toolCall?.kind || toolCall?.toolName || extendedParams.kind || 'Unknown tool')) {
+          if (toolName !== reportedToolName) {
             logger.debug(`[AcpBackend] Detected tool name: ${toolName} from toolCallId: ${toolCallId}`);
           }
           
@@ -645,6 +654,24 @@ export class AcpBackend implements AgentBackend {
                 toolName,
                 input
               );
+              // ACP option kinds are authoritative even when labels are
+              // localized or the first option is a rejection.
+              if (options.some(option => option.kind)) {
+                const allowOnce = options.find(option => option.kind === 'allow_once');
+                const option = result.decision === 'approved_for_session'
+                  ? options.find(item => item.kind === 'allow_always') ?? allowOnce
+                  : result.decision === 'approved' ? allowOnce
+                    : result.decision === 'denied' ? options.find(item => item.kind === 'reject_once') : undefined;
+                this.emit({
+                  type: 'tool-result',
+                  toolName,
+                  result: { status: option?.kind?.startsWith('allow_') ? 'approved' : 'denied', decision: result.decision },
+                  callId: permissionId,
+                });
+                return { outcome: option?.optionId
+                  ? { outcome: 'selected', optionId: option.optionId }
+                  : { outcome: 'cancelled' } };
+              }
               
               // Map permission decision to ACP response
               // ACP uses optionId from the request options
@@ -700,7 +727,7 @@ export class AcpBackend implements AgentBackend {
               // Log to file only, not console
               logger.debug('[AcpBackend] Error in permission handler:', error);
               // Fallback to deny on error
-              return { outcome: { outcome: 'selected', optionId: 'cancel' } };
+              return { outcome: { outcome: 'cancelled' } };
             }
           }
           
@@ -773,13 +800,20 @@ export class AcpBackend implements AgentBackend {
         },
         {
           operationName: 'Initialize',
-          maxAttempts: RETRY_CONFIG.maxAttempts,
+          maxAttempts: this.options.startupAttempts ?? RETRY_CONFIG.maxAttempts,
           baseDelayMs: RETRY_CONFIG.baseDelayMs,
           maxDelayMs: RETRY_CONFIG.maxDelayMs,
           shouldRetry: (error) => !isNonRetryableStartupError(error),
         }
       );
       logger.debug(`[AcpBackend] Initialize completed`);
+      if (initializeResponse.protocolVersion !== initRequest.protocolVersion) {
+        throw new Error(`Unsupported protocol version: ${initializeResponse.protocolVersion}`);
+      }
+      const resumeSessionId = this.options.resumeSessionId;
+      if (resumeSessionId && !initializeResponse.agentCapabilities?.loadSession) {
+        throw new Error(`${this.options.agentName} does not support loading a saved ACP session.`);
+      }
       if (this.options.verbose) {
         logAcpBackendMuted(
           `Incoming initialize response from ${this.options.agentName}: ${summarizeSessionMetadataPayload(initializeResponse)}`,
@@ -803,7 +837,7 @@ export class AcpBackend implements AgentBackend {
         mcpServers: mcpServers as unknown as NewSessionRequest['mcpServers'],
       };
 
-      logger.debug(`[AcpBackend] Creating new session...`);
+      logger.debug(`[AcpBackend] ${resumeSessionId ? 'Loading' : 'Creating'} ACP session...`);
 
       const sessionResponse = await withRetry(
         async () => {
@@ -811,7 +845,9 @@ export class AcpBackend implements AgentBackend {
           try {
             const result = await Promise.race([
               startupFailurePromise,
-              this.connection!.newSession(newSessionRequest).then((res) => {
+              (resumeSessionId
+                ? this.connection!.loadSession({ ...newSessionRequest, sessionId: resumeSessionId })
+                : this.connection!.newSession(newSessionRequest)).then((res) => {
                 if (timeoutHandle) {
                   clearTimeout(timeoutHandle);
                   timeoutHandle = null;
@@ -820,7 +856,7 @@ export class AcpBackend implements AgentBackend {
               }),
               new Promise<never>((_, reject) => {
                 timeoutHandle = setTimeout(() => {
-                  reject(new Error(`New session timeout after ${initTimeout}ms - ${this.transport.agentName} did not respond`));
+                  reject(new Error(`ACP session startup timeout after ${initTimeout}ms - ${this.transport.agentName} did not respond`));
                 }, initTimeout);
               }),
             ]);
@@ -832,14 +868,18 @@ export class AcpBackend implements AgentBackend {
           }
         },
         {
-          operationName: 'NewSession',
-          maxAttempts: RETRY_CONFIG.maxAttempts,
+          operationName: resumeSessionId ? 'LoadSession' : 'NewSession',
+          maxAttempts: this.options.startupAttempts ?? RETRY_CONFIG.maxAttempts,
           baseDelayMs: RETRY_CONFIG.baseDelayMs,
           maxDelayMs: RETRY_CONFIG.maxDelayMs,
           shouldRetry: (error) => !isNonRetryableStartupError(error),
         }
       );
-      this.acpSessionId = sessionResponse.sessionId;
+      const providerSessionId = resumeSessionId ?? ('sessionId' in sessionResponse ? sessionResponse.sessionId : undefined);
+      if (typeof providerSessionId !== 'string' || !providerSessionId) {
+        throw new Error(`${this.options.agentName} did not return an ACP session ID.`);
+      }
+      this.acpSessionId = providerSessionId;
       logger.debug(`[AcpBackend] Session created: ${this.acpSessionId}`);
       if (this.options.verbose) {
         logAcpBackendMuted(
@@ -859,7 +899,7 @@ export class AcpBackend implements AgentBackend {
         });
       }
 
-      return { sessionId };
+      return { sessionId, providerSessionId, supportsResume: initializeResponse.agentCapabilities?.loadSession === true };
 
     } catch (error) {
       // Log to file only, not console
@@ -905,7 +945,7 @@ export class AcpBackend implements AgentBackend {
     };
   }
 
-  private emitInitialSessionMetadata(sessionResponse: NewSessionResponse): void {
+  private emitInitialSessionMetadata(sessionResponse: Pick<NewSessionResponse, 'configOptions' | 'models' | 'modes'>): void {
     if (Array.isArray(sessionResponse.configOptions)) {
       this.emit({
         type: 'event',
@@ -947,6 +987,13 @@ export class AcpBackend implements AgentBackend {
 
     const sessionUpdateType = update.sessionUpdate;
     const updateType = sessionUpdateType as string | undefined;
+    // session/load replays provider history. Happy already owns its transcript
+    // and only records text and tool activity from live prompts here.
+    if (this.transport.getPromptError && !this.waitingForResponse &&
+        (updateType === 'agent_message_chunk' || updateType === 'agent_thought_chunk' ||
+         updateType === 'tool_call' || updateType === 'tool_call_update')) {
+      return;
+    }
 
     logger.debug(`[AcpBackend] sessionUpdate: ${sessionUpdateType}`, JSON.stringify(update));
     if (this.options.verbose) {
@@ -1084,8 +1131,18 @@ export class AcpBackend implements AgentBackend {
       };
 
       logger.debug(`[AcpBackend] Prompt request:`, JSON.stringify(promptRequest, null, 2));
-      await this.connection.prompt(promptRequest);
+      const response = await this.connection.prompt(promptRequest);
       logger.debug('[AcpBackend] Prompt request sent to ACP connection');
+
+      if (this.transport.getPromptError) {
+        const detail = this.transport.getPromptError(response);
+        if (detail) throw new Error(detail);
+        if (response.stopReason === 'cancelled') {
+          this.waitingForResponse = false;
+          this.emit({ type: 'status', status: 'stopped', detail: USER_CANCELLED_DETAIL });
+          return;
+        }
+      }
 
       if (this.transport.turnEndOnPromptResponse?.()) {
         // The prompt response is the authoritative end-of-turn signal for
@@ -1272,12 +1329,15 @@ export class AcpBackend implements AgentBackend {
     // Signal the turn end locally first: the in-flight turn resolves
     // immediately and the runner stays alive for later prompts. The ACP
     // session itself is not torn down — the agent process keeps running.
-    this.emit({ type: 'status', status: 'stopped', detail: USER_CANCELLED_DETAIL });
+    if (!this.transport.getPromptError) {
+      this.emit({ type: 'status', status: 'stopped', detail: USER_CANCELLED_DETAIL });
+    }
     try {
       await this.connection.cancel({ sessionId: this.acpSessionId });
     } catch (error) {
       // Log to file only, not console
       logger.debug('[AcpBackend] Error cancelling:', error);
+      if (this.transport.getPromptError) throw error;
     }
   }
 
@@ -1308,7 +1368,7 @@ export class AcpBackend implements AgentBackend {
     this.disposed = true;
 
     // Try graceful shutdown first
-    if (this.connection && this.acpSessionId) {
+    if (this.connection && this.acpSessionId && (!this.transport.getPromptError || this.waitingForResponse)) {
       try {
         // Send cancel to stop any ongoing work
         await Promise.race([

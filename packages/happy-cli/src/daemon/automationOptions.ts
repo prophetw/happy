@@ -10,7 +10,7 @@ import { AGY_EFFORTS } from '../agyStream/constants';
  */
 export type AutomationOption = { key: string; name: string; description?: string | null };
 export type AutomationAgentCatalog = {
-    agent: 'claude' | 'codex' | 'agy';
+    agent: 'claude' | 'codex' | 'agy' | 'codebuddy';
     models: AutomationOption[];
     permissionModes: AutomationOption[];
     /** Union of every listed model's efforts; per-model support is enforced by the agent itself. */
@@ -74,6 +74,17 @@ export function buildAutomationCatalog(metadata: MachineMetadata | null | undefi
         permissionModes: [{ key: 'default', name: 'Default' }, { key: 'bypassPermissions', name: 'Yolo' }],
         efforts: [...AGY_EFFORTS], defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '',
     });
+    if (metadata?.cliAvailability?.codebuddy === true) {
+        agents.push({
+            agent: 'codebuddy',
+            models: [{ key: 'default', name: 'CodeBuddy CLI default' }],
+            permissionModes: [{ key: 'default', name: 'Default' }],
+            efforts: [],
+            defaultModel: 'default',
+            defaultPermissionMode: 'default',
+            defaultEffort: '',
+        });
+    }
     return agents.filter(entry => metadata?.cliAvailability?.[entry.agent] !== false);
 }
 

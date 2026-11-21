@@ -10,7 +10,7 @@ import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
 import { decodeBase64 } from '@/api/encryption';
 import { TrackedSession, SessionEncryptionData } from './types';
-import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
+import { spawnAgents, type SpawnSessionOptions, type SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
 
 export function startDaemonControlServer({
   getChildren,
@@ -159,7 +159,7 @@ export function startDaemonControlServer({
         body: z.object({
           directory: z.string(),
           sessionId: z.string().optional(),
-          agent: z.enum(['claude', 'codex', 'gemini', 'openclaw', 'agy', 'dsh']).optional(),
+          agent: z.enum(spawnAgents).optional(),
           permissionMode: z.string().optional(),
           modelMode: z.string().optional(),
           effortLevel: z.string().optional(),

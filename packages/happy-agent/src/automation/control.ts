@@ -1,7 +1,7 @@
 import { Journal, hash, type RecordEntry } from './journal';
 import { ControlError, type Transport } from './relay';
 import type { DecryptedSession } from '../api';
-import { taskOptionsSchema } from './rest/options';
+import { launchAgents, taskOptionsSchema } from './rest/options';
 
 export const methods = ['machines.list', 'sessions.list', 'tasks.create', 'requests.get', 'sessions.send', 'sessions.status', 'sessions.logs', 'sessions.result', 'sessions.cancel', 'options.list'] as const;
 export type Policy = {
@@ -40,7 +40,7 @@ export function redact(text: string): string {
         .replace(/\b(?:sk-[a-zA-Z0-9_-]+|gh[pousr]_[a-zA-Z0-9]+)\b/g, '[REDACTED]')
         .replace(/(["']?(?:[a-z_]*(?:token|secret|password|api[_-]?key|encryption[_-]?key))["']?\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '$1[REDACTED]');
 }
-export function projectMessage(message: { id: string; seq: number; content: unknown }) {
+export function projectMessage(message: { id: string; seq: number; content: unknown }, includeServiceErrors = false) {
     const c = obj(message.content), body = obj(c.content), ev = obj(body.ev);
     const base = { messageID: message.id, seq: message.seq };
     const turnID = typeof body.turn === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(body.turn) ? body.turn : undefined;
@@ -49,6 +49,9 @@ export function projectMessage(message: { id: string; seq: number; content: unkn
         if (ev.t === 'turn-start') return { ...base, kind: 'turn', turnID, state: 'running' };
         if (ev.t === 'turn-end' && ['completed', 'failed', 'cancelled'].includes(String(ev.status))) return { ...base, kind: 'turn', turnID, state: ev.status };
         if (ev.t === 'text' && typeof ev.text === 'string' && ev.thinking !== true) return { ...base, kind: 'text', turnID, text: redact(ev.text).slice(0, 16000), truncated: ev.text.length > 16000 };
+        if (includeServiceErrors && ev.t === 'service' && typeof ev.text === 'string' && ev.text.startsWith('Error: ')) {
+            return { ...base, kind: 'text', turnID, text: redact(ev.text).slice(0, 16000), truncated: ev.text.length > 16000 };
+        }
     }
     if (body.type === 'text' && typeof body.text === 'string') return { ...base, kind: 'text', text: redact(body.text).slice(0, 16000) };
     return { ...base, kind: 'omitted' };
@@ -108,9 +111,7 @@ export class AutomationControl {
                 if (!this.policy.sessionIDs.includes(sessionID) && !this.journal.entries().some(e => e.method === 'tasks.create' && e.sessionID === sessionID
                     && e.machineID === obj(session.metadata).machineId && e.directory === obj(session.metadata).path
                     && this.policy.machines.some(m => m.id === e.machineID && m.directories.includes(e.directory!)))) throw new ControlError('FORBIDDEN');
-                // Delegated launches support codex, claude and agy; any other flavor
-                // stays outside the automation contract.
-                if (!['codex', 'claude', 'agy'].includes(String(obj(session.metadata).flavor))) throw new ControlError('UNSUPPORTED_AGENT');
+                if (!launchAgents.some(agent => agent === obj(session.metadata).flavor)) throw new ControlError('UNSUPPORTED_AGENT');
                 return session;
             }
             if (page.nextCursor === cursor) throw new ControlError('INVALID_RELAY_RESPONSE');
@@ -225,7 +226,8 @@ export class AutomationControl {
             const cursor = integer(req.cursor, 0, Number.MAX_SAFE_INTEGER), limit = integer(req.limit, 100, 500);
             if (!limit) throw new ControlError('INVALID_REQUEST');
             const page = await this.transport.messages(session, cursor, limit);
-            const messages = page.messages.map(projectMessage);
+            const includeServiceErrors = obj(session.metadata).flavor === 'codebuddy';
+            const messages = page.messages.map(message => projectMessage(message, includeServiceErrors));
             const turn = [...messages].reverse().find(m => m.kind === 'turn');
             if (requestedTurn) {
                 const evidence = messages.filter(m => 'turnID' in m && m.turnID === requestedTurn);
