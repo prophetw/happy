@@ -262,6 +262,9 @@ it('keeps background task events out of the native turn and Relay reply even whe
     const result = legacy('1', 'completed', '无', '业务结果');
     try {
         for (const [key, status, reason] of background) f.event(key, 0, { text: legacy(key, status, reason), createdAt: new Date(0).toISOString() });
+        f.event('8', 0, { text: legacy('8', 'running', 'resource-wait').replace('正在按原请求推进，请向用户说明当前状态。',
+            '任务已恢复执行，沿用原会话和原请求，没有重复派发。'), createdAt: new Date(0).toISOString() });
+        f.event('9', 0, { text: legacy('9', 'blocked', 'dispatch_receipt_unknown'), createdAt: new Date(0).toISOString() });
         f.event('f', 0, { text: settled.text });
         f.event('1', 0, { text: result });
         await vi.waitFor(() => expect(f.state().inputs.find((input: any) => input.id === id('1'))?.status).toBe('completed'), { timeout: 4000 });
@@ -293,7 +296,11 @@ it('keeps background task events out of the native turn and Relay reply even whe
         const canceled = legacy('7', 'canceled', '无');
         f.event('7', 0, { text: canceled });
         await vi.waitFor(() => expect(f.state().inputs.find((input: any) => input.id === id('7'))?.status).toBe('completed'));
-        expect(turns()).toEqual([result, '请查询当前状态', later, blockage, canceled]);
+        const permission = legacy('0', 'awaiting_user', 'CONTROL_READ_UNAVAILABLE').replace('正在按原请求推进，请向用户说明当前状态。',
+            '执行正在等待用户授权，请打开执行会话处理；尚未完成。');
+        f.event('0', 0, { text: permission });
+        await vi.waitFor(() => expect(f.state().inputs.find((input: any) => input.id === id('0'))?.status).toBe('completed'));
+        expect(turns()).toEqual([result, '请查询当前状态', later, blockage, canceled, permission]);
     } finally { await f.stop(); }
 });
 it('rejects a task event bound to another Dot before starting a model turn', async () => {
