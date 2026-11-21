@@ -6,9 +6,11 @@ import { useFocusEffect } from 'expo-router';
 import { automationApprovalApi, type AutomationConsent, type ServiceConnectionOptions } from '@/auth/automationApproval';
 
 import { DirectoryPicker } from '@/components/DirectoryPicker';
+import type { MachineChoice } from '@/sync/machineChoices';
 import { t } from '@/text';
 
 type API = ReturnType<typeof automationApprovalApi>;
+type ServiceWorker = ServiceConnectionOptions['workers'][number];
 const day = 24 * 3600000;
 const labels: Record<string, string> = { 'machines.list': '查看机器', 'sessions.list': '列出会话', 'tasks.create': '创建任务', 'requests.get': '查询回执', 'sessions.send': '追加指令', 'sessions.status': '查看状态', 'sessions.logs': '读取日志', 'sessions.result': '读取结果', 'sessions.cancel': '取消任务', 'options.list': '发现启动选项' };
 const readOnly = (methods: string[]) => methods.filter(m => !['tasks.create', 'sessions.send', 'sessions.cancel'].includes(m));
@@ -62,7 +64,12 @@ export function ServiceTokenDelivery({ consent, api, disabled = false }: { conse
 }
 
 /** Uses only operator-registered service identities and worker scopes; existing sessions default denied. */
-export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; onCreated: (id: string) => void; sourceID?: string }) {
+export function ServiceConnectionForm({ api, onCreated, sourceID, onlineMachines = [] }: {
+    api: API;
+    onCreated: (id: string) => void;
+    sourceID?: string;
+    onlineMachines?: readonly Pick<MachineChoice, 'id' | 'name' | 'machineIds'>[];
+}) {
     const [options, setOptions] = React.useState<ServiceConnectionOptions | null>(null), [clientID, setClient] = React.useState(''), [workerID, setWorker] = React.useState(''), [projectIDs, setProjects] = React.useState<string[]>([]);
     const [name, setName] = React.useState('');
     const [scopeDirty, setScopeDirty] = React.useState(false);
@@ -86,8 +93,10 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
                 try {
                     const value = await api.serviceOptions();
                     if (version !== generation.current) return;
-                    setOptions(value); setClient(value.clients[0]?.id ?? ''); setWorker(value.workers[0]?.id ?? ''); setProjects(value.workers[0]?.projects[0] ? [value.workers[0].projects[0].id] : []);
-                    setMethods(readOnly(value.workers[0]?.methods ?? [])); setDays(String(Math.min(30, value.maxGrantMs / day)));
+                    const firstWorker = value.workers.find(w => w.online !== false);
+                    setOptions(value); setClient(value.clients[0]?.id ?? ''); setWorker(firstWorker?.id ?? '');
+                    setProjects(firstWorker?.projects[0] ? [firstWorker.projects[0].id] : []);
+                    setMethods(readOnly(firstWorker?.methods ?? [])); setDays(String(Math.min(30, value.maxGrantMs / day)));
                 } catch {
                     if (version === generation.current) setError('服务令牌功能未启用、身份未登录或暂不可用。请联系操作方登记服务及允许的 worker 范围。');
                 }
@@ -147,6 +156,8 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
     const maxProjects = multipleSupported ? Math.min(options?.maxProjects ?? 32, 32) : 1;
     const duration = Math.floor(Number(days) * day);
     const inPlace = !!original && original.state === 'approved';
+    const registeredMachineIDs = new Set(options?.workers.map(w => w.machineID));
+    const machinesWithoutWorker = onlineMachines.filter(machine => !machine.machineIds.some(id => registeredMachineIDs.has(id)));
     const requiresDirectorySelection = customDirectories.length > 0 || original?.scopeVersion === 3;
     const pickedPaths = [...(worker?.projects.filter(p => projectIDs.includes(p.id)).map(p => p.directory) ?? []), ...customDirectories];
     // In-place edits that keep the scope unchanged must not force directory re-verification.
@@ -154,8 +165,17 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
     const retainedSessionIDs = original?.sessionIDs ?? [];
     const sessionsValid = retainedSessionIDs.every(id => worker?.projects.some(p => projectIDs.includes(p.id) && p.sessionIDs.includes(id)))
         && (!requiresDirectorySelection || retainedSessionIDs.length === 0);
-    const valid = selectionReady && sessionsValid && !!options && !!clientID && !!worker && pickedPaths.length > 0 && pickedPaths.length <= maxProjects
+    const valid = selectionReady && sessionsValid && !!options && !!clientID && !!worker && (inPlace || worker.online !== false)
+        && pickedPaths.length > 0 && pickedPaths.length <= maxProjects
         && projectIDs.every(id => worker.projects.some(p => p.id === id)) && methods.length > 0 && Number.isFinite(duration) && duration >= 1000 && duration <= options.maxGrantMs;
+    const selectWorker = (next: ServiceWorker) => {
+        if (submitted || inPlace || next.online === false || next.id === workerID) return;
+        invalidateSelection();
+        setCustomDirectories([]); setCustomPath(''); setError('');
+        setWorker(next.id);
+        setProjects(next.projects[0] ? [next.projects[0].id] : []);
+        setMethods(readOnly(next.methods));
+    };
     const create = async () => {
         if (!valid || !worker || !options || attempted.current) return;
         attempted.current = true; const version = generation.current; setSubmitted(true); setBusy(true); setError('');
@@ -227,7 +247,10 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
             <Text style={styles.title}>服务身份</Text>
             {options.clients.map(c => <Choice key={c.id} label={c.name} selected={clientID === c.id} disabled={submitted || inPlace} onPress={() => { setClient(c.id); invalidateSelection(); }} />)}
             <Text style={styles.title}>机器 / Worker</Text>
-            {options.workers.map(w => <Choice key={w.id} label={`${w.name} · ${w.machineID}`} selected={workerID === w.id} disabled={submitted || inPlace} onPress={() => { invalidateSelection(); setCustomDirectories([]); setCustomPath(''); setWorker(w.id); setProjects(w.projects[0] ? [w.projects[0].id] : []); setMethods(readOnly(w.methods)); }} />)}
+            {options.workers.map(w => <Choice key={w.id} label={`${w.name} · ${w.machineID}${w.online === false ? '（Worker 离线）' : ''}`}
+                selected={workerID === w.id} disabled={submitted || inPlace || w.online === false} onPress={() => selectWorker(w)} />)}
+            {!inPlace && machinesWithoutWorker.map(machine => <Choice key={`machine:${machine.id}`} label={`${machine.name}（在线，待接入 Worker）`} selected={false} disabled />)}
+            {!inPlace && !options.workers.some(w => w.online !== false) && <Text style={styles.secondary}>暂无可选机器。请在目标机器接入并启动服务授权 Worker。</Text>}
             <Text style={styles.title}>项目目录（可多选）</Text>
             <Text style={styles.secondary}>已选 {pickedPaths.length} 个项目。同一令牌仅可访问勾选的目录；创建每个任务时仍需明确指定项目。</Text>
             {worker?.projects.map(p => <Choice key={p.id} label={`${p.id} · ${p.directory}`} selected={projectIDs.includes(p.id)} disabled={submitted} onPress={() => { setScopeDirty(true); invalidateSelection(); setProjects(ids => ids.includes(p.id) ? ids.filter(id => id !== p.id) : [...ids, p.id]); }} />)}
@@ -260,7 +283,7 @@ export function ServiceConnectionForm({ api, onCreated, sourceID }: { api: API; 
         </>}
     </View>;
 }
-function Choice({ label, selected, disabled, onPress }: { label: string; selected: boolean; disabled: boolean; onPress: () => void }) {
+function Choice({ label, selected, disabled, onPress }: { label: string; selected: boolean; disabled: boolean; onPress?: () => void }) {
     return <Pressable accessibilityRole="checkbox" accessibilityLabel={label} aria-checked={selected} accessibilityState={{ checked: selected, disabled }} disabled={disabled} onPress={onPress} style={[styles.choice, selected && styles.selected]}><Text style={styles.text}>{selected ? '✓  ' : '○  '}{label}</Text></Pressable>;
 }
 const styles = StyleSheet.create(theme => ({

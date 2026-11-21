@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { ProofClient } from './client';
 import { createGateway } from './gateway';
 import { MAX_SERVICE_GRANT_MS } from './schema';
 import { hostConfigSchema } from '../production/config';
@@ -132,6 +133,36 @@ describe('opt-in service access tokens (all identities/credentials and relay are
   const options=await r.ownerRequest('/service-connections/options');expect(options.body.data.clients.map((x:any)=>x.id)).toEqual(['serviceA']);expect(options.body.data.workers[0].projects[0].directory).toBe(r.project);
   const off=await setup({serviceTokens:undefined});expect((await off.ownerRequest('/service-connections/options')).body.error.code).toBe('SERVICE_TOKENS_DISABLED');
   expect(hostConfigSchema.safeParse({version:1,role:'host',listen:{host:'127.0.0.1',port:9010},origin:'https://fixture.invalid',relayURL:'https://fixture.invalid/home-relay',stateDirectory:'/fixture',clients:[],workers:[],serviceTokens:{clients,maxGrantMs:MAX_SERVICE_GRANT_MS+1}}).success).toBe(false);
+ });
+ it('reports each registered worker’s signed liveness and offers a second machine only to its owner', async () => {
+  let now = Date.now();
+  const r = await setup({ clock: () => now, directorySelection: true });
+  const second = {
+   ...r.registration, id: r.otherIdentity.id, publicKey: r.otherIdentity.publicKey, machineID: 'machineB',
+   projects: [{ id: 'projectB', directory: r.projectB, sessionIDs: [] }],
+  };
+  r.gatewayOptions.workers.push(second, { ...r.registration, id: 'foreign', userID: 'userB', machineID: 'foreignMachine' });
+  await r.restartGateway();
+  const secondClient = new ProofClient(`${r.address}/happy-control/v1`, r.otherIdentity, 'worker', { now: () => now, allowLoopback: true });
+  const options = async (user = 'A') => (await r.ownerRequest('/service-connections/options', 'GET', undefined, user)).body.data.workers;
+  expect(await options()).toMatchObject([{ machineID: 'machineA', online: false }, { machineID: 'machineB', online: false }]);
+  expect((await r.workerClient.request('POST', '/worker/poll', { protocol: 1, projectScopes: 1, directoryScopes: 1 })).ok).toBe(true);
+  now += 5000;
+  expect((await secondClient.request('POST', '/worker/poll', { protocol: 1 })).ok).toBe(true);
+  expect(await options()).toMatchObject([
+   { machineID: 'machineA', online: true, projectScopes: 1, directoryScopes: 1 },
+   { machineID: 'machineB', online: true },
+  ]);
+  expect(await options('B')).toMatchObject([{ machineID: 'foreignMachine', online: false }]);
+  const created = await pending(r, { workerID: second.id, machineID: 'machineB', projectID: 'projectB' });
+  expect(created).toMatchObject({ workerID: second.id, machineID: 'machineB', projectDirectory: r.projectB });
+  now++;
+  const [stale, active] = await options();
+  expect(stale.online).toBe(false);
+  expect(stale.projectScopes).toBeUndefined();
+  expect(stale.directoryScopes).toBeUndefined();
+  expect(active.online).toBe(true);
+  expect(active.projectScopes).toBeUndefined();
  });
  it('requires owner origin/authentication and explicit bound approval before one-time delivery',async()=>{
   const r=await setup(),c=await pending(r);

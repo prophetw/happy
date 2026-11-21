@@ -6,11 +6,15 @@ import { getServerUrl } from '@/sync/serverConfig';
 import { ItemList } from '@/components/ItemList';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ServiceConnectionForm } from '@/components/automation/ServiceAccess';
+import { collectMachineChoices } from '@/sync/machineChoices';
+import { useAllMachines } from '@/sync/storage';
 export default function ServiceAuthorization() {
     const auth = useAuth(), router = useRouter(), params = useLocalSearchParams<{ from?: string }>();
+    const machines = useAllMachines({ includeOffline: true });
+    const onlineMachines = React.useMemo(() => collectMachineChoices(machines).filter(machine => machine.online), [machines]);
     const api = React.useMemo(() => automationApprovalApi(getServerUrl(), () => {
         if (!auth.credentials?.token) throw new Error('OWNER_AUTH_REQUIRED');
         return `Bearer ${auth.credentials.token}`;
     }), [auth.credentials?.token]);
-    return <><Stack.Screen options={{ title: '服务授权' }} /><ItemList><ItemGroup><ServiceConnectionForm api={api} sourceID={params.from} onCreated={id => router.push(`/settings/automation?connection=${id}`)} /></ItemGroup></ItemList></>;
+    return <><Stack.Screen options={{ title: '服务授权' }} /><ItemList><ItemGroup><ServiceConnectionForm api={api} onlineMachines={onlineMachines} sourceID={params.from} onCreated={id => router.push(`/settings/automation?connection=${id}`)} /></ItemGroup></ItemList></>;
 }

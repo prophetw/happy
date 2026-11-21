@@ -15,6 +15,7 @@ const fixtureSecret='fixture-secret-with-no-real-access';
 const consent={id:'service_connection',credentialMode:'service-token-v1',state:'approved',serviceToken:{issued:false}} as AutomationConsent;
 let renderer:any;
 const button=(label:string)=>renderer.root.findAllByType('Pressable').find((n:any)=>n.props.accessibilityLabel===label);
+const durationInput=()=>renderer.root.findAllByType('TextInput').find((n:any)=>n.props.accessibilityLabel==='服务授权有效天数');
 const hasSecret=()=>JSON.stringify(renderer.toJSON()).includes(fixtureSecret);
 function api(){return{serviceOptions:vi.fn(async()=>({protocol:1,maxGrantMs:30*24*3600000,clients:[{id:'service',name:'Fixture backend'}],workers:[{id:'worker',name:'Fixture worker',machineID:'machine',methods:['machines.list','tasks.create','sessions.send','sessions.cancel'],projects:[{id:'project',directory:'/fixture/project',sessionIDs:[]}]}]})),createService:vi.fn(async()=>({id:'created_connection'})),issueServiceToken:vi.fn(async()=>({connectionID:consent.id,token:fixtureSecret,expiresAt:Date.now()+60000}))} as unknown as ReturnType<typeof automationApprovalApi>;}
 beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);runtime.state='active';runtime.copy.mockResolvedValue(undefined);runtime.copy.mockClear();});
@@ -57,8 +58,8 @@ describe('service access UI, fixture credentials only',()=>{
   const a=api(),created=vi.fn();await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created}));});
   const choices=renderer.root.findAllByType('Pressable').filter((n:any)=>n.props.accessibilityRole==='checkbox');
   for(const method of ['tasks.create','sessions.send','sessions.cancel'])expect(choices.find((n:any)=>n.props.accessibilityLabel.includes(method)).props.accessibilityState.checked).toBe(false);
-  await act(async()=>{renderer.root.findByType('TextInput').props.onChangeText('31');});expect(button('创建申请并审查权限').props.disabled).toBe(true);
-  await act(async()=>{renderer.root.findByType('TextInput').props.onChangeText('30');});
+  await act(async()=>{durationInput().props.onChangeText('31');});expect(button('创建申请并审查权限').props.disabled).toBe(true);
+  await act(async()=>{durationInput().props.onChangeText('30');});
   await act(async()=>{button('创建申请并审查权限').props.onPress();});
   expect(a.createService).toHaveBeenCalledTimes(1);const scope=(a.createService as any).mock.calls[0][0];expect(scope).toMatchObject({clientID:'service',workerID:'worker',machineID:'machine',projectID:'project',methods:['machines.list'],sessionIDs:[],expiresInMs:30*24*3600000});expect(scope.expiresAt).toBeUndefined();expect(scope).not.toHaveProperty('options');expect(created).toHaveBeenCalledWith('created_connection');
  });
@@ -95,6 +96,38 @@ function multiApi(upgraded = true) {
  return a;
 }
 describe('multi-project form selection (no real registration/credentials)', () => {
+ it('offers both online registered machines and shows which other online computers need a worker', async () => {
+  const a = multiApi();
+  const options = await a.serviceOptions();
+  const [first, second] = options.workers;
+  a.serviceOptions = vi.fn(async () => ({
+   ...options,
+   workers: [
+    { ...first, online: false },
+    { ...second, online: true },
+    { ...second, id: 'third_worker', machineID: 'third_machine', name: 'Third worker', online: true,
+     projects: [{ id: 'projectY', directory: '/fixture/y', sessionIDs: [] }] },
+   ],
+  }));
+  const onlineMachines = [
+   { id: 'other_machine', name: 'Other computer', machineIds: ['other_machine', 'paired_agent'] },
+   { id: 'laptop', name: 'Online laptop', machineIds: ['laptop'] },
+  ];
+  await act(async () => {
+   renderer = create(React.createElement(ServiceConnectionForm, { api: a, onlineMachines, onCreated: vi.fn() }));
+  });
+  expect(button('Fixture worker · machine（Worker 离线）').props.disabled).toBe(true);
+  expect(button('Online laptop（在线，待接入 Worker）').props.disabled).toBe(true);
+  expect(button('Other computer（在线，待接入 Worker）')).toBeUndefined();
+  expect(button('Other worker · other_machine').props.accessibilityState.checked).toBe(true);
+  await act(async () => { button('Third worker · third_machine').props.onPress(); });
+  expect(button('projectX · /fixture/x')).toBeUndefined();
+  expect(button('projectY · /fixture/y').props.accessibilityState.checked).toBe(true);
+  await act(async () => { button('创建申请并审查权限').props.onPress(); });
+  expect(a.createService).toHaveBeenCalledWith(expect.objectContaining({
+   workerID: 'third_worker', machineID: 'third_machine', projectID: 'projectY', methods: ['machines.list'], sessionIDs: [],
+  }));
+ });
  it('defaults to one explicit project, requires at least one, and submits the exact selected set with v2 only for multiple projects',async()=>{
   const a=multiApi();await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:vi.fn()}));});
   expect(button('projectA · /fixture/a').props.accessibilityState.checked).toBe(true);expect(button('projectB · /fixture/b').props.accessibilityState.checked).toBe(false);
@@ -158,7 +191,7 @@ describe('owner browses directories then explicitly approves a v3 scope',()=>{
 const DAY=24*3600000;
 function editableConsent(overrides:Partial<AutomationConsent>={}):AutomationConsent{
  const createdAt=Date.now();
- return{id:'old_connection',userID:'owner',clientID:'service',clientName:'Fixture backend',clientFingerprint:'fixture',workerFingerprint:'worker-fingerprint',workerID:'worker',workerName:'Fixture worker',machineID:'machine',projectID:'projectA',projectDirectory:'/fixture/a',methods:['machines.list'],sessionIDs:[],createdAt,expiresAt:createdAt+10*DAY,pendingUntil:createdAt+300000,credentialMode:'service-token-v1',state:'approved',digest:'d'.repeat(64),challenge:'fixture-challenge',disclosure:'fixture disclosure',...overrides};
+ return{id:'old_connection',userID:'owner',clientID:'service',clientName:'Fixture backend',clientFingerprint:'fixture',workerFingerprint:'worker-fingerprint',workerID:'worker',workerName:'Fixture worker',machineID:'machine',projectID:'projectA',projectDirectory:'/fixture/a',methods:['machines.list'],sessionIDs:[],createdAt,expiresAt:createdAt+10*DAY,pendingUntil:createdAt+300000,credentialMode:'service-token-v1',state:'pending',digest:'d'.repeat(64),challenge:'fixture-challenge',disclosure:'fixture disclosure',...overrides};
 }
 function editApi(previous:AutomationConsent){
  const a=multiApi();a.consent=vi.fn(async()=>previous);a.revoke=vi.fn(async()=>previous);return a;
@@ -168,9 +201,22 @@ function directoryEditApi(previous:AutomationConsent){
  a.serviceOptions=vi.fn(async():Promise<ServiceConnectionOptions>=>({protocol:1,maxGrantMs:30*DAY,projectScopes:1,directoryScopes:1,maxProjects:32,clients:[{id:'service',name:'Fixture backend',fingerprint:'fixture'}],workers:[{id:'worker',name:'Fixture worker',machineID:'machine',methods:['machines.list','tasks.create'],projectScopes:1,directoryScopes:1,directorySelection:{roots:['/fixture']},projects:[{id:'project',directory:'/fixture/project',sessionIDs:[]}]}]}));
  a.resolveDirectories=vi.fn(async(input:{directories:string[]})=>({selectionID:'fresh_selection',expiresAt:Date.now()+120000,projects:input.directories.map(directory=>({id:directory==='/fixture/project'?'project':'dir_dynamic',directory}))}));return a;
 }
-const durationInput=()=>renderer.root.findAllByType('TextInput').find((n:any)=>n.props.accessibilityLabel==='服务授权有效天数');
-
 describe('service authorization edit mode',()=>{
+ it('allows an in-place edit on an offline worker while keeping the machine fixed', async () => {
+  const previous = editableConsent({ state: 'approved' });
+  const a = editApi(previous);
+  const options = await a.serviceOptions();
+  a.serviceOptions = vi.fn(async () => ({ ...options, workers: options.workers.map((worker, i) => ({ ...worker, online: i > 0 })) }));
+  a.edit = vi.fn(async () => previous);
+  await act(async () => {
+   renderer = create(React.createElement(ServiceConnectionForm, { api: a, sourceID: previous.id, onCreated: vi.fn() }));
+  });
+  expect(button('Fixture worker · machine（Worker 离线）').props.accessibilityState.checked).toBe(true);
+  expect(button('Other worker · other_machine').props.disabled).toBe(true);
+  await act(async () => { button('保存修改（保持令牌不变）').props.onPress(); });
+  expect(a.edit).toHaveBeenCalledWith(previous.id, expect.objectContaining({ methods: previous.methods }));
+  expect(a.createService).not.toHaveBeenCalled();
+ });
  it('prefills v1 exactly, including methods, original duration and options, then revokes only after creation',async()=>{
   const launchOptions={agents:[{agent:'fixture-agent',models:['fixture-model'],permissionModes:['fixture-mode']}]};
   const createdAt=Date.now(),previous=editableConsent({createdAt,expiresAt:createdAt+12.5*DAY,methods:['tasks.create','machines.list'],options:launchOptions});const a=editApi(previous),created=vi.fn();
@@ -264,7 +310,7 @@ describe('service authorization edit mode',()=>{
   await act(async()=>{button('创建申请并审查权限').props.onPress();});expect(a.createService).toHaveBeenCalledTimes(1);expect(a.revoke).toHaveBeenCalledTimes(1);
  });
  it('uses the server state rather than the local wall clock when revoking the old source',async()=>{
-  const createdAt=Date.now()-2*DAY,previous=editableConsent({createdAt,expiresAt:Date.now()-1000,state:'approved'});const a=editApi(previous),created=vi.fn();
+  const createdAt=Date.now()-2*DAY,previous=editableConsent({createdAt,expiresAt:Date.now()-1000});const a=editApi(previous),created=vi.fn();
   await act(async()=>{renderer=create(React.createElement(ServiceConnectionForm,{api:a,onCreated:created,sourceID:previous.id}));});await act(async()=>{button('创建申请并审查权限').props.onPress();});
   expect(a.revoke).toHaveBeenCalledWith(previous.id);expect(created).toHaveBeenCalledWith('created_connection');
  });

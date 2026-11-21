@@ -46,6 +46,10 @@ export function createGateway(options: GatewayOptions) {
     try { serviceTokens?.validateStore(); grants.reconcileRegistrations(); } catch (error) { unlock(); throw error; }
     const app = Fastify({ logger: false, bodyLimit: 256 * 1024, requestTimeout: 10000 });
     const jobs = new Map<string, PendingJob>(), lastSeen = new Map<string, number>(), projectScopeWorkers = new Set<string>(), directoryScopeWorkers = new Set<string>();
+    function workerOnline(id: string) {
+        const seenAt = lastSeen.get(id);
+        return seenAt !== undefined && seenAt >= now() - 5000;
+    }
     const directories = new DirectorySelections(proofs, now);
     const principals = new WeakMap<FastifyRequest, string>();
     const counters = new Map<string, { count: number; until: number }>();
@@ -129,7 +133,7 @@ export function createGateway(options: GatewayOptions) {
     const verifiedWithdrawal = Symbol('verified create withdrawal');
     async function dispatch(c: Connection, command: Record<string, unknown>, intent?: Intent, lookupIntent?: Intent): Promise<any> {
         grants.active(c.id, c.clientID);
-        if (!lastSeen.has(c.workerID) || lastSeen.get(c.workerID)! < now() - 5000) {
+        if (!workerOnline(c.workerID)) {
             if (intent) return unsent(intent);
             throw new ApiError('WORKER_UNAVAILABLE', 503);
         }
@@ -320,14 +324,17 @@ export function createGateway(options: GatewayOptions) {
         if (!serviceConfig) throw new ApiError('SERVICE_TOKENS_DISABLED', 404);
         return ok({ protocol: 1, maxGrantMs: serviceConfig.maxGrantMs, projectScopes: 1, maxProjects: MAX_SCOPE_PROJECTS, directoryScopes: 1,
             clients: serviceConfig.clients.filter(c => c.userID === userID).map(c => ({ id: c.id, name: c.name, fingerprint: serviceClientFingerprint(c) })),
-            workers: options.workers.filter(w => w.userID === userID).map(w => ({ id: w.id, name: w.name, machineID: w.machineID, methods: w.methods, projects: w.projects,
-                directorySelection: w.directorySelection, directoryScopes: directoryScopeWorkers.has(w.id) && (lastSeen.get(w.id) ?? 0) >= now() - 5000 ? 1 : undefined,
-                projectScopes: projectScopeWorkers.has(w.id) && (lastSeen.get(w.id) ?? 0) >= now() - 5000 ? 1 : undefined })) });
+            workers: options.workers.filter(w => w.userID === userID).map(w => {
+                const online = workerOnline(w.id);
+                return { id: w.id, name: w.name, machineID: w.machineID, methods: w.methods, projects: w.projects, online,
+                    directorySelection: w.directorySelection, directoryScopes: online && directoryScopeWorkers.has(w.id) ? 1 : undefined,
+                    projectScopes: online && projectScopeWorkers.has(w.id) ? 1 : undefined };
+            }) });
     });
     function directoryWorker(id: string, userID: string) {
         const worker = options.workers.find(w => w.id === id && w.userID === userID);
         if (!worker?.directorySelection) throw new ApiError('SCOPE_DENIED', 403);
-        if ((lastSeen.get(id) ?? 0) < now() - 5000) throw new ApiError('WORKER_UNAVAILABLE', 503);
+        if (!workerOnline(id)) throw new ApiError('WORKER_UNAVAILABLE', 503);
         if (!directoryScopeWorkers.has(id)) throw new ApiError('WORKER_DIRECTORY_SCOPE_UPGRADE_REQUIRED', 426);
         return worker;
     }

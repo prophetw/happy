@@ -15,7 +15,7 @@ export interface AutomationConsent {
 }
 export interface ServiceConnectionOptions {
     protocol: 1; maxGrantMs: number; projectScopes?: 1; directoryScopes?: 1; maxProjects?: number; clients: { id: string; name: string; fingerprint: string }[];
-    workers: { id: string; name: string; machineID: string; projectScopes?: 1; directoryScopes?: 1; directorySelection?: { roots: string[] }; methods: string[]; projects: { id: string; directory: string; sessionIDs: string[] }[] }[];
+    workers: { id: string; name: string; machineID: string; online?: boolean; projectScopes?: 1; directoryScopes?: 1; directorySelection?: { roots: string[] }; methods: string[]; projects: { id: string; directory: string; sessionIDs: string[] }[] }[];
 }
 export type ServiceConnectionRequest = {
     clientID: string; workerID: string; machineID: string; methods: string[]; sessionIDs: string[];

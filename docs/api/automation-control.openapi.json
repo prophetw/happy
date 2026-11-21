@@ -1093,7 +1093,7 @@
     "/service-connections/options": {
       "get": {
         "operationId": "serviceOptions",
-        "description": "Optional service-token-v1: owner registered services and scope. projectScopes=1 plus fresh workers[].projectScopes=1 enables multi-selection; maxProjects is at most 32. directoryScopes=1 and fresh workers[].directoryScopes=1 plus explicit directorySelection.roots enables owner-selected directories. No credentials. Disabled by default.",
+        "description": "Optional service-token-v1: owner registered services and scope. workers[].online indicates a signed poll within the last five seconds. projectScopes=1 plus fresh workers[].projectScopes=1 enables multi-selection; maxProjects is at most 32. directoryScopes=1 and fresh workers[].directoryScopes=1 plus explicit directorySelection.roots enables owner-selected directories. No credentials. Disabled by default.",
         "security": [
           {
             "OwnerBearer": []
