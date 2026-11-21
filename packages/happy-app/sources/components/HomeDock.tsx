@@ -59,8 +59,7 @@ import type { Session } from '@/sync/storageTypes';
 import {
     getEffortLevelsForModel,
     getMachineModelModes,
-    getHardcodedPermissionModes,
-    filterPermissionModesForCli,
+    getMachinePermissionModes,
     getSupportsWorktree,
     groupModelModesByProvider,
     truncateModelLabel,
@@ -956,13 +955,8 @@ export const HomeDock = React.memo(({
         }
         : resolveAgentDefaultConfig(defaultOverrides, agentType, happyCliVersion), [agentType, defaultOverrides, happyCliVersion, rigCreation]);
     const permissionOptions = React.useMemo(
-        // The CLI daemon on the picked computer is what will parse the mode;
-        // older CLIs drop the whole prompt on modes they do not know (`auto`).
-        () => rigCreation?.permissionModes ?? filterPermissionModesForCli(
-            getHardcodedPermissionModes(agentType, t),
-            happyCliVersion,
-        ),
-        [agentType, happyCliVersion, rigCreation],
+        () => rigCreation?.permissionModes ?? getMachinePermissionModes(agentType, selectedChoice?.happyMachine?.metadata, t),
+        [agentType, selectedChoice?.happyMachine?.metadata, rigCreation],
     );
     // Model options follow the computer that will spawn the session.
     const modelOptions = React.useMemo(

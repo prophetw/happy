@@ -1191,7 +1191,7 @@ export class AcpBackend implements AgentBackend {
    * Set a session config option value.
    * Returns false when unsupported or when the update fails.
    */
-  async setSessionConfigOption(configId: string, value: string): Promise<boolean> {
+  async setSessionConfigOption(configId: string, value: string, confirmSelection = false): Promise<boolean> {
     if (this.disposed || !this.connection || !this.acpSessionId) {
       return false;
     }
@@ -1211,7 +1211,9 @@ export class AcpBackend implements AgentBackend {
         });
       }
 
-      return true;
+      return !confirmSelection || response.configOptions?.some(option =>
+        option.type === 'select' && option.id === configId && option.currentValue === value,
+      ) === true;
     } catch (error) {
       logger.debug('[AcpBackend] Failed to set session config option:', {
         configId,

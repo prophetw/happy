@@ -1,4 +1,5 @@
 import type { MachineMetadata } from '@/api/types';
+import { taskOptionsSchema } from 'happy-agent/automation';
 import { AGY_EFFORTS } from '../agyStream/constants';
 
 /**
@@ -75,10 +76,17 @@ export function buildAutomationCatalog(metadata: MachineMetadata | null | undefi
         efforts: [...AGY_EFFORTS], defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '',
     });
     if (metadata?.cliAvailability?.codebuddy === true) {
+        const catalog = metadata.codebuddyOptions;
+        const models = (catalog?.models ?? [])
+            .filter(({ code }) => code !== 'default' && taskOptionsSchema.shape.model.safeParse(code).success)
+            .slice(0, 255);
+        const modes = (catalog?.permissionModes ?? [])
+            .filter(({ code }) => code !== 'default' && taskOptionsSchema.shape.permissionMode.safeParse(code).success)
+            .slice(0, 31);
         agents.push({
             agent: 'codebuddy',
-            models: [{ key: 'default', name: 'CodeBuddy CLI default' }],
-            permissionModes: [{ key: 'default', name: 'Default' }],
+            models: [{ key: 'default', name: 'CodeBuddy CLI default' }, ...models.map(m => ({ key: m.code, name: m.value, description: m.description }))],
+            permissionModes: [{ key: 'default', name: 'Default' }, ...modes.map(m => ({ key: m.code, name: m.value, description: m.description }))],
             efforts: [],
             defaultModel: 'default',
             defaultPermissionMode: 'default',

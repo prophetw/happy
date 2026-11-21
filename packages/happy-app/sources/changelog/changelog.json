@@ -3,7 +3,7 @@
     {
       "title": "November 21 - CodeBuddy sessions",
       "summary": "Requires the updated Happy CLI and a signed-in CodeBuddy CLI on the selected machine.",
-      "markdown": "- **Start a CodeBuddy session** by choosing CodeBuddy in Happy's new session screen.\n- Thanks to [@prophetw](https://github.com/prophetw)."
+      "markdown": "- **Start a CodeBuddy session** by choosing CodeBuddy in Happy's new session screen.\n- **Choose a CodeBuddy model and permission mode** before sending your first message.\n- Thanks to [@prophetw](https://github.com/prophetw)."
     },
     {
       "title": "November 17 - Simpler Dot controls",

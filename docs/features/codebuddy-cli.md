@@ -5,16 +5,16 @@ Happy 可以在所选机器和目录中启动 CodeBuddy Code。机器上的 Happ
 ## 使用
 
 1. 在运行 Happy daemon 的账号下确认 `codebuddy --version` 和 `codebuddy --help` 可用。运行 `codebuddy`，通过 `/login` 登录。
-2. 在 Happy 新建会话中选机器、项目目录和 **CodeBuddy**，再发送首条消息。也可以在目标目录运行 `happy codebuddy`，然后从 Happy 向该会话发送消息。
+2. 在 Happy 新建会话中选机器、项目目录和 **CodeBuddy**。模型和权限菜单显示所选机器的 CLI 通过 ACP 发布的选项。也可以在目标目录运行 `happy codebuddy`，然后从 Happy 向该会话发送消息。
 3. 会话启动后，Happy 使用 CLI 通过 ACP 发布的模型、权限和推理选项。工具审批沿用 Happy 会话内的授权界面。
 
-启动参数为 `codebuddy --acp --permission-mode default`。模型沿用本机 CLI 的配置。登录状态由本机 CodeBuddy 管理。 [CodeBuddy ACP 文档](https://www.codebuddy.cn/docs/cli/acp) · [CodeBuddy CLI 参考](https://www.codebuddy.cn/docs/cli/cli-reference)
+启动参数为 `codebuddy --acp --permission-mode default`。发送首条消息前，Happy 通过 ACP 应用所选的模型和权限。默认模型沿用本机 CLI 的配置，默认权限为询问。探测目录期间无需发送消息，登录状态由本机 CodeBuddy 管理。 [CodeBuddy ACP 文档](https://www.codebuddy.cn/docs/cli/acp) · [CodeBuddy CLI 参考](https://www.codebuddy.cn/docs/cli/cli-reference)
 
 Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、失败或取消。登录过期的轮次会提示重新登录。停止当前轮次会发送 `session/cancel`。当 CLI 发布 `loadSession` 能力且原始会话仍存在时，**恢复会话**或 `happy resume <Happy session ID>` 会在原机器和目录中加载它。
 
 ## Happy 派活
 
-在现有 worker 的 `launchOptions.agents` 中授权 `codebuddy`，并按连接授权的项目范围派活。`happy_options` 接收 `machineID`，在有能力且获授权的机器上返回 `codebuddy`。启动沿用本机 CLI 模型及默认权限，推理档位由 CLI 决定。使用授权中的 `projectID` 指定工作目录。
+在现有 worker 的 `launchOptions.agents` 中授权 `codebuddy`，并按连接授权的项目范围派活。`happy_options` 接收 `machineID`，在有能力且获授权的机器上返回 `codebuddy` 及获准的模型和权限选项。省略覆盖项时沿用本机 CLI 模型及默认权限，推理档位由 CLI 决定。使用授权中的 `projectID` 指定工作目录。
 
 例如，先调用 `happy_create_task`。
 

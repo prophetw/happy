@@ -136,6 +136,10 @@ try {
     await page.getByTestId('project-search-result').filter({ hasText: 'codebuddy-checkout' }).click();
     await page.getByRole('button', { name: /^Agent:/ }).click();
     await page.getByText('CodeBuddy', { exact: true }).click();
+    await page.getByText('Always Ask', { exact: true }).click();
+    await page.getByText('Bypass Permissions', { exact: true }).click();
+    await page.getByText('Default model', { exact: true }).click();
+    await page.getByText('Fixture model', { exact: true }).click();
     await page.getByPlaceholder('What would you like to work on?').fill('ACP_FIRST');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForURL('**/session/*', { timeout: 60_000 });
@@ -147,6 +151,7 @@ try {
     assert.equal(metadata.path, checkout);
     assert.equal(metadata.flavor, 'codebuddy');
     assert.equal(metadata.currentModelCode, 'fixture-model');
+    assert.equal(metadata.currentOperatingModeCode, 'bypassPermissions');
 
     async function events() {
         const response = await fetch(serverUrl + '/v3/sessions/' + sessionId + '/messages?after_seq=0&limit=100', { headers });
@@ -162,10 +167,17 @@ try {
 
     await page.getByText('Streaming fixture', { exact: true }).waitFor();
     assert.deepEqual(await statuses(), []);
-    const first = await observed();
+    const traceBeforeFirstReply = await observed();
+    const probeEvents = traceBeforeFirstReply.filter(ev => ev.probe);
+    assert.ok(probeEvents.some(ev => ev.event === 'new'));
+    assert.ok(probeEvents.every(ev => ev.event !== 'prompt' && ev.event !== 'configure'));
+    const first = traceBeforeFirstReply.filter(ev => !ev.probe);
     assert.deepEqual(first.find(ev => ev.event === 'start').args, ['--acp', '--permission-mode', 'default']);
     assert.equal(first.find(ev => ev.event === 'new').requestedCwd, checkout);
-    assert.ok(first.find(ev => ev.event === 'prompt').text.startsWith('ACP_FIRST'));
+    const firstPrompt = first.find(ev => ev.event === 'prompt');
+    assert.ok(firstPrompt.text.startsWith('ACP_FIRST'));
+    assert.equal(firstPrompt.model, 'fixture-model');
+    assert.equal(firstPrompt.mode, 'bypassPermissions');
     assert.ok(first.every(ev => ev.cwd === checkout));
     await writeFile(trace + '.finish', '');
     await checkStatuses(['completed']);
@@ -208,7 +220,7 @@ try {
     assert.deepEqual(prompts.map(ev => ev.count), [1, 2, 3, 4, 5, 6]);
     assert.ok(page.url().endsWith('/session/' + sessionId));
     assert.deepEqual(errors, []);
-    console.log('PASS: selected daemon and checkout, streaming, native completion and failure, cancel, permission, follow-up and restart resume');
+    console.log('PASS: machine model and permission menus, options applied to the first prompt, selected checkout, turn results, cancel, follow-up and resume');
 } catch (error) {
     await page?.screenshot({ path: join(artifacts, 'failure.png') }).catch(() => {});
     if (page) await writeFile(join(artifacts, 'failure.txt'), JSON.stringify({

@@ -739,11 +739,12 @@ export async function runAcp(opts: {
       if (resolved === modeSelector.currentCode) {
         return true;
       }
-      const switched = await backend.setSessionConfigOption(modeSelector.configId, resolved);
+      const switched = await backend.setSessionConfigOption(modeSelector.configId, resolved, isCodeBuddy);
       if (switched) {
         modeSelector.currentCode = resolved;
         return true;
       }
+      if (isCodeBuddy) return false;
     }
 
     if (!legacyModes) {
@@ -783,11 +784,12 @@ export async function runAcp(opts: {
       if (resolved === modelSelector.currentCode) {
         return true;
       }
-      const switched = await backend.setSessionConfigOption(modelSelector.configId, resolved);
+      const switched = await backend.setSessionConfigOption(modelSelector.configId, resolved, isCodeBuddy);
       if (switched) {
         modelSelector.currentCode = resolved;
         return true;
       }
+      if (isCodeBuddy) return false;
     }
 
     if (!legacyModels) {
@@ -832,7 +834,7 @@ export async function runAcp(opts: {
       return true;
     }
 
-    const switched = await backend.setSessionConfigOption(thoughtLevelSelector.configId, resolved);
+    const switched = await backend.setSessionConfigOption(thoughtLevelSelector.configId, resolved, isCodeBuddy);
     if (switched) {
       thoughtLevelSelector.currentCode = resolved;
     }

@@ -3,6 +3,7 @@
 Requires the updated Happy CLI and a signed-in CodeBuddy CLI on the selected machine.
 
 - **Start a CodeBuddy session** by choosing CodeBuddy in Happy's new session screen.
+- **Choose a CodeBuddy model and permission mode** before sending your first message.
 - Thanks to [@prophetw](https://github.com/prophetw).
 
 # November 17 - Simpler Dot controls

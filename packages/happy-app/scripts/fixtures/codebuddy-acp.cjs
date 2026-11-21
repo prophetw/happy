@@ -4,9 +4,19 @@ const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 
 const cwd = process.cwd();
+const probe = process.argv.includes('--no-session-persistence');
 const statePath = join(cwd, '.codebuddy-fixture-session');
-const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { id: 'fixture-codebuddy-session', prompts: 0 };
-const observe = (event, fields) => appendFileSync(process.env.HAPPY_CODEBUDDY_FIXTURE_LOG, JSON.stringify({ event, cwd, ...fields }) + '\n');
+const state = !probe && existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {
+    id: 'fixture-codebuddy-session', prompts: 0, mode: 'default', model: 'fixture-default',
+};
+const configOptions = () => [{
+    type: 'select', category: 'model', id: 'model', name: 'Model', currentValue: state.model,
+    options: [{ value: 'fixture-default', name: 'Fixture default' }, { value: 'fixture-model', name: 'Fixture model' }],
+}, {
+    type: 'select', category: 'mode', id: 'mode', name: 'Permission Mode', currentValue: state.mode,
+    options: [{ value: 'default', name: 'Always Ask' }, { value: 'bypassPermissions', name: 'Bypass Permissions' }],
+}];
+const observe = (event, fields) => appendFileSync(process.env.HAPPY_CODEBUDDY_FIXTURE_LOG, JSON.stringify({ event, cwd, probe, ...fields }) + '\n');
 const write = (body) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...body }) + '\n');
 const reply = (id, result) => write({ id, result });
 const update = (sessionUpdate) => write({ method: 'session/update', params: { sessionId: state.id, update: sessionUpdate } });
@@ -23,11 +33,19 @@ io.on('line', (line) => {
             break;
         case 'session/new':
             observe('new', { requestedCwd: params.cwd });
-            reply(id, { sessionId: state.id, configOptions: [{
-                type: 'select', category: 'model', id: 'model', name: 'Model', currentValue: 'fixture-model',
-                options: [{ value: 'fixture-model', name: 'Fixture model' }],
-            }] });
+            reply(id, { sessionId: state.id, configOptions: configOptions() });
             break;
+        case 'session/set_config_option': {
+            const option = configOptions().find(entry => entry.id === params.configId);
+            if (!option?.options.some(entry => entry.value === params.value)) {
+                write({ id, error: { code: -32602, message: 'Unsupported fixture option' } });
+                break;
+            }
+            state[option.id] = params.value;
+            observe('configure', { configId: option.id, value: params.value });
+            reply(id, { configOptions: configOptions() });
+            break;
+        }
         case 'session/load':
             observe('load', { requestedCwd: params.cwd, sessionId: params.sessionId });
             if (params.sessionId !== state.id || !existsSync(statePath)) {
@@ -35,13 +53,13 @@ io.on('line', (line) => {
                 return;
             }
             chunk('Replayed provider history');
-            reply(id, {});
+            reply(id, { configOptions: configOptions() });
             break;
         case 'session/prompt': {
             const text = params.prompt[0].text;
             state.prompts++;
-            writeFileSync(statePath, JSON.stringify(state));
-            observe('prompt', { text, sessionId: params.sessionId, count: state.prompts });
+            if (!probe) writeFileSync(statePath, JSON.stringify(state));
+            observe('prompt', { text, sessionId: params.sessionId, count: state.prompts, mode: state.mode, model: state.model });
             if (text.includes('ACP_FAIL')) {
                 reply(id, { stopReason: 'refusal', _meta: {
                     'codebuddy.ai/outcome': 'FAILED_MODEL_REQUEST',

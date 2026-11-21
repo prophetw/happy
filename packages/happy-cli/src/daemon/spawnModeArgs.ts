@@ -8,7 +8,8 @@ export function shouldForwardDaemonPermissionMode(
 
   // Claude's "default" means no harness override. Codex's "default" is a
   // concrete ask-first execution policy and differs from its ambient "auto".
-  return permissionMode !== 'default' || agent === 'codex';
+  // CodeBuddy also treats default as an explicit ask-first mode, including on resume.
+  return permissionMode !== 'default' || agent === 'codex' || agent === 'codebuddy';
 }
 
 export function appendDaemonSpawnModeArgs(
@@ -16,7 +17,7 @@ export function appendDaemonSpawnModeArgs(
   options: SpawnSessionOptions,
   agent: string,
 ): void {
-  if (agent !== 'claude' && agent !== 'codex' && agent !== 'agy') return;
+  if (agent !== 'claude' && agent !== 'codex' && agent !== 'agy' && agent !== 'codebuddy') return;
 
   // For claude/agy, 'default' is the app's ambient "no override" value — forwarding
   // it would pin the session to prompting mode and lose the CLI's own default
@@ -30,7 +31,7 @@ export function appendDaemonSpawnModeArgs(
   if (options.modelMode && options.modelMode !== 'default') {
     args.push('--model', options.modelMode);
   }
-  if (options.effortLevel) {
+  if (options.effortLevel && agent !== 'codebuddy') {
     args.push('--effort', options.effortLevel);
   }
 }

@@ -178,6 +178,8 @@ export class ApiMachineClient {
     private codexModelsNextRefresh = 0;
     private agyModelsRefreshing = false;
     private agyModelsNextRefresh = 0;
+    private codeBuddyOptionsRefreshing = false;
+    private codeBuddyOptionsNextRefresh = 0;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -764,6 +766,8 @@ export class ApiMachineClient {
         else this.codexModelsNextRefresh = 0;
         if (newAvailability.agy) void this.refreshAgyModels();
         else this.agyModelsNextRefresh = 0;
+        if (newAvailability.codebuddy) void this.refreshCodeBuddyOptions();
+        else this.codeBuddyOptionsNextRefresh = 0;
         const prev = this.lastKnownCLIAvailability;
         const newResumeSupport = detectResumeSupport();
         const prevResume = this.lastKnownResumeSupport;
@@ -797,6 +801,7 @@ export class ApiMachineClient {
                 ...(metadata || {} as any),
                 happyCliVersion: configuration.currentCliVersion,
                 cliAvailability: newAvailability,
+                codebuddyOptions: newAvailability.codebuddy ? metadata?.codebuddyOptions : undefined,
                 resumeSupport: { ...newResumeSupport, rpcAvailable: !!this.resumeSessionHandler },
             })).catch((err) => {
                 logger.debug('[API MACHINE] Failed to update machine capabilities:', err);
@@ -858,6 +863,28 @@ export class ApiMachineClient {
             logger.debug('[API MACHINE] Failed to refresh Agy model catalog:', error);
         } finally {
             this.agyModelsRefreshing = false;
+        }
+    }
+
+    private async refreshCodeBuddyOptions(): Promise<void> {
+        if (this.codeBuddyOptionsRefreshing || Date.now() < this.codeBuddyOptionsNextRefresh) return;
+        this.codeBuddyOptionsRefreshing = true;
+        this.codeBuddyOptionsNextRefresh = Date.now() + 60_000;
+        try {
+            const { discoverCodeBuddyOptions } = await import('@/codebuddy/runCodeBuddy');
+            const catalog = await discoverCodeBuddyOptions();
+            if (!catalog || this.shutdownRequested || !this.lastKnownCLIAvailability?.codebuddy) return;
+            if (JSON.stringify(this.machine.metadata?.codebuddyOptions) !== JSON.stringify(catalog)) {
+                await this.updateMachineMetadata(metadata => ({
+                    ...(metadata ?? this.machine.metadata),
+                    codebuddyOptions: catalog,
+                }));
+            }
+            this.codeBuddyOptionsNextRefresh = Date.now() + 5 * 60_000;
+        } catch (error) {
+            logger.debug('[API MACHINE] Failed to refresh CodeBuddy options:', error);
+        } finally {
+            this.codeBuddyOptionsRefreshing = false;
         }
     }
 

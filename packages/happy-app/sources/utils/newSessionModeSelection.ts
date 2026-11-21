@@ -34,6 +34,7 @@ export function resolvePermissionStyle(
         case 'safe-yolo':
             return { color: '#FBBF24', icon: 'play-forward' };
         case 'bypassPermissions':
+        case 'fullAccess':
         case 'yolo':
             return { color: '#F87171', icon: 'play-forward' };
         case 'read-only':

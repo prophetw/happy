@@ -134,6 +134,8 @@ export type Session = {
 /**
  * Machine metadata - static information (rarely changes)
  */
+const codeBuddyOptionSchema = z.object({ code: z.string(), value: z.string(), description: z.string().nullish() });
+
 export const MachineMetadataSchema = z.object({
   host: z.string(),
   platform: z.string(),
@@ -198,6 +200,11 @@ export const MachineMetadataSchema = z.object({
     })),
     currentCode: z.string().nullable().optional(),
     detectedAt: z.number(),
+  }).optional(),
+  codebuddyOptions: z.object({
+    models: z.array(codeBuddyOptionSchema),
+    currentModelCode: z.string().nullable(),
+    permissionModes: z.array(codeBuddyOptionSchema),
   }).optional(),
 })
 

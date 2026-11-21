@@ -512,6 +512,8 @@ export interface DecryptedMessage {
 // Machine states
 //
 
+const codeBuddyOptionSchema = z.object({ code: z.string(), value: z.string(), description: z.string().nullish() });
+
 export const MachineMetadataSchema = z.object({
     host: z.string(),
     platform: z.string(),
@@ -649,6 +651,11 @@ export const MachineMetadataSchema = z.object({
         currentCode: z.string().nullish().optional(),
         detectedAt: z.number().optional(),
     }).passthrough().optional().catch(undefined),
+    codebuddyOptions: z.object({
+        models: z.array(codeBuddyOptionSchema),
+        currentModelCode: z.string().nullish(),
+        permissionModes: z.array(codeBuddyOptionSchema),
+    }).optional().catch(undefined),
 }).passthrough();
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>;

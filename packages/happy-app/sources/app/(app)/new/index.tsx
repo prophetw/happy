@@ -61,8 +61,7 @@ import {
     resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import {
-    filterPermissionModesForCli,
-    getHardcodedPermissionModes,
+    getMachinePermissionModes,
     getMachineModelModes,
     getEffortLevelsForModel,
     getSupportsWorktree,
@@ -1172,15 +1171,9 @@ function NewSessionScreen() {
         }
     }, [availableAgents, draftAgent, selectedAgent, setSelectedAgent]);
 
-    // Derive options from agent type. The CLI daemon on the picked computer is
-    // what will parse the mode; older CLIs drop the whole prompt on modes they
-    // do not know (`auto`), so those are not offered.
     const permissionModes = React.useMemo<PermissionMode[]>(
-        () => rigCreation?.permissionModes ?? filterPermissionModesForCli(
-            getHardcodedPermissionModes(selectedAgent, t),
-            happyCliVersion,
-        ),
-        [happyCliVersion, selectedAgent, rigCreation],
+        () => rigCreation?.permissionModes ?? getMachinePermissionModes(selectedAgent, selectedChoice?.happyMachine?.metadata, t),
+        [selectedAgent, selectedChoice?.happyMachine?.metadata, rigCreation],
     );
     const effectiveAgentDefaults = React.useMemo(() => rigCreation
         ? {

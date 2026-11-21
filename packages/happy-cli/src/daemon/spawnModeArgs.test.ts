@@ -41,6 +41,16 @@ describe('daemon spawn mode arguments', () => {
     ]);
   });
 
+  it('forwards the selected CodeBuddy model ID and native permission mode', () => {
+    const args: string[] = [];
+
+    appendDaemonSpawnModeArgs(args, {
+      directory: '/repo', permissionMode: 'bypassPermissions', modelMode: 'host-model',
+    }, 'codebuddy');
+
+    expect(args).toEqual(['--permission-mode', 'bypassPermissions', '--model', 'host-model']);
+  });
+
   it('uses the same Codex default rule for resume launches', () => {
     expect(shouldForwardDaemonPermissionMode('codex', 'default')).toBe(true);
     expect(shouldForwardDaemonPermissionMode('claude', 'default')).toBe(false);

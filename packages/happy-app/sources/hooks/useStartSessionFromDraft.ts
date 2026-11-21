@@ -19,8 +19,7 @@ import { createWorktree } from '@/utils/worktree';
 import {
     getEffortLevelsForModel,
     getMachineModelModes,
-    getHardcodedPermissionModes,
-    filterPermissionModesForCli,
+    getMachinePermissionModes,
     getSupportsWorktree,
 } from '@/components/modelModeOptions';
 import { Modal } from '@/modal';
@@ -372,12 +371,7 @@ export function useStartSessionFromDraft() {
             }
             : resolveAgentDefaultConfig(defaultOverrides, agentType, machine.metadata?.happyCliVersion);
         const permission = resolveOption<{ key: string }>(
-            // The daemon machine's CLI is what will parse the mode; older CLIs
-            // drop the whole prompt on modes they do not know (e.g. `auto`).
-            rigCreation?.permissionModes ?? filterPermissionModesForCli(
-                getHardcodedPermissionModes(agentType, t),
-                machine.metadata?.happyCliVersion,
-            ),
+            rigCreation?.permissionModes ?? getMachinePermissionModes(agentType, machine.metadata, t),
             // The code default last: when the saved and configured modes were
             // both filtered out for an old CLI, land there rather than on
             // whichever mode happens to lead the list.

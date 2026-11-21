@@ -21,4 +21,19 @@ describe('automation catalog parity with published Happy machine models', () => 
         expect(buildAutomationCatalog({ ...metadata, agyModels: undefined }).find(a => a.agent === 'agy')?.models ?? [])
             .not.toContainEqual(expect.objectContaining({ key: 'Gemini 3.8 Flash (High)' }));
     });
+
+    it('shares CodeBuddy discovery with automation without changing its defaults', () => {
+        const codebuddy = buildAutomationCatalog({ ...metadata,
+            cliAvailability: { ...metadata.cliAvailability, codebuddy: true },
+            codebuddyOptions: {
+                models: [{ code: 'host-model', value: 'Host model' }, { code: 'unusable/model', value: 'Other model' }],
+                currentModelCode: 'host-model',
+                permissionModes: [{ code: 'default', value: 'Always Ask' }, { code: 'bypassPermissions', value: 'Bypass Permissions' }],
+            },
+        }).find(agent => agent.agent === 'codebuddy');
+
+        expect(codebuddy?.models.map(model => model.key)).toEqual(['default', 'host-model']);
+        expect(codebuddy?.permissionModes.map(mode => mode.key)).toEqual(['default', 'bypassPermissions']);
+        expect(codebuddy).toMatchObject({ defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '' });
+    });
 });

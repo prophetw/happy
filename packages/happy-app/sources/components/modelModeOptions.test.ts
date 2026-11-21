@@ -12,6 +12,7 @@ import {
     getAvailablePermissionModes,
     getCodexModelModes,
     getMachineModelModes,
+    getMachinePermissionModes,
     getCodexPermissionModes,
     getClaudeModelModes,
     getClaudePermissionModes,
@@ -28,6 +29,7 @@ import {
 } from './modelModeOptions';
 import { sortPermissionModes } from '@/utils/permissionModeLabels';
 import { rigMetadataFixture } from '@/sync/__testdata__/rigMetadata';
+import { MachineMetadataSchema } from '@/sync/storageTypes';
 
 const translate = (key: string) => `tr:${key}`;
 
@@ -37,7 +39,44 @@ const codexCatalog = {
     currentCode: 'gpt-6.1-terra', detectedAt: 1,
 };
 
+const machineIdentity = {
+    host: 'host', platform: 'linux', happyCliVersion: '1.2.5', homeDir: '/home/dev', happyHomeDir: '/home/dev/.happy',
+};
+
 describe('modelModeOptions', () => {
+    it('offers the selected machine’s CodeBuddy models before the first message', () => {
+        const machine = MachineMetadataSchema.parse({ ...machineIdentity, codebuddyOptions: {
+            models: [{ code: 'host-model', value: 'Host model', description: 'Model from CodeBuddy' }],
+            currentModelCode: 'host-model',
+            permissionModes: [],
+        } });
+
+        const models = getMachineModelModes('codebuddy', machine, translate);
+
+        expect(models.map(model => model.key)).toEqual(['default', 'host-model']);
+        expect(models[0].description).toContain('Host model');
+        expect(models[1]).toMatchObject({ name: 'Host model', description: 'Model from CodeBuddy' });
+        expect(getMachineModelModes('codebuddy', null, translate).map(model => model.key)).toEqual(['default']);
+    });
+
+    it('preserves CodeBuddy permission IDs and uses ask-first when discovery is unavailable', () => {
+        const machine = MachineMetadataSchema.parse({ ...machineIdentity, codebuddyOptions: {
+            models: [],
+            currentModelCode: null,
+            permissionModes: [
+                { code: 'default', value: 'Always Ask' },
+                { code: 'dontAsk', value: 'Don’t Ask' },
+                { code: 'bypassPermissions', value: 'Bypass Permissions' },
+                { code: 'fullAccess', value: 'Full Access' },
+            ],
+        } });
+
+        expect(getMachinePermissionModes('codebuddy', machine, translate).map(mode => mode.key))
+            .toEqual(['default', 'dontAsk', 'bypassPermissions', 'fullAccess']);
+        expect(getMachinePermissionModes('codebuddy', null, translate).map(mode => mode.key)).toEqual(['default']);
+        expect(getMachinePermissionModes('claude', machine, translate).map(mode => mode.key)).not.toContain('fullAccess');
+    });
+
     it('uses the published dynamic Agy catalog for new and existing sessions', () => {
         const machine = { agyModels: { options: [{ code: 'new-agy-model', value: 'Fresh host model' }], detectedAt: 1 } } as any;
         expect(getMachineModelModes('agy', machine, translate).map(m => m.key)).toEqual(['default', 'new-agy-model']);

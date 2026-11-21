@@ -323,9 +323,8 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         if (options.token) {
           return { type: 'error', errorMessage: 'CodeBuddy uses the CLI login on the selected machine. Run codebuddy and use /login there.' };
         }
-        if ((options.permissionMode && options.permissionMode !== 'default')
-          || (options.modelMode && options.modelMode !== 'default') || options.effortLevel) {
-          return { type: 'error', errorMessage: 'CodeBuddy starts with its CLI model and default permissions. Select available options after the session starts.' };
+        if (options.effortLevel) {
+          return { type: 'error', errorMessage: 'Select CodeBuddy reasoning level after the session starts.' };
         }
       }
       let directoryCreated = false;

@@ -117,13 +117,8 @@ vi.mock('@/utils/worktree', () => ({
 vi.mock('@/utils/time', () => ({ delay: mocks.delay }));
 
 vi.mock('@/components/modelModeOptions', () => ({
-    filterPermissionModesForCli: (modes: any[], cliVersion?: string) => (
-        cliVersion === '1.2.0' || cliVersion === '1.2.1-beta.1'
-            ? modes.filter((mode) => mode.key !== 'auto')
-            : modes
-    ),
-    getHardcodedPermissionModes: () => [
-        { key: 'auto', name: 'Auto' },
+    getMachinePermissionModes: (_agent: string, metadata?: { happyCliVersion?: string }) => [
+        ...(['1.2.0', '1.2.1-beta.1'].includes(metadata?.happyCliVersion ?? '') ? [] : [{ key: 'auto', name: 'Auto' }]),
         { key: 'default', name: 'Default' },
         { key: 'safe-yolo', name: 'Safe YOLO' },
         { key: 'yolo', name: 'YOLO' },

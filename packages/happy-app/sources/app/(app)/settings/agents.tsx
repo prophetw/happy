@@ -7,6 +7,7 @@ import { ItemList } from '@/components/ItemList';
 import {
     getEffortLevelsForModel,
     getMachineModelModes,
+    getMachinePermissionModes,
     getHardcodedPermissionModes,
     type ModeOption,
 } from '@/components/modelModeOptions';
@@ -253,14 +254,18 @@ export default function AgentsSettingsScreen() {
             {configurableAgentKeys.map((agent) => {
                 const codeDefaults = getCodeAgentDefaults(agent, defaultsCliVersion);
                 const effectiveDefaults = resolveAgentDefaultConfig(agentDefaultOverrides, agent, defaultsCliVersion);
-                const permissionOptions = getHardcodedPermissionModes(agent, t);
                 // dsh's models come from the machine catalog the daemon probes
                 // (dshModelCatalog.ts), not from a hardcoded table; the field
                 // stays hidden until some machine publishes a catalog.
                 const dshCatalog = agent === 'dsh' ? dshModelCatalog : null;
-                const catalogMachine = machineChoices.find(choice => agent === 'codex'
-                    ? choice.happyMachine?.metadata?.codexModels?.options.length
-                    : choice.happyMachine?.metadata?.claudeModels)?.happyMachine?.metadata;
+                const catalogMachine = machineChoices.find(({ happyMachine }) => {
+                    const metadata = happyMachine?.metadata;
+                    if (agent === 'codebuddy') return metadata?.codebuddyOptions;
+                    return agent === 'codex' ? metadata?.codexModels?.options.length : metadata?.claudeModels;
+                })?.happyMachine?.metadata;
+                const permissionOptions = agent === 'codebuddy'
+                    ? getMachinePermissionModes(agent, catalogMachine, t)
+                    : getHardcodedPermissionModes(agent, t);
                 const modelOptions = agent === 'dsh'
                     ? (dshCatalog?.options ?? []).map((option) => ({
                         key: option.code,

@@ -540,7 +540,7 @@ Conversation history is preserved on the server, but in-flight tool calls are in
     }
   } else if (subcommand === 'codebuddy') {
     if (args.includes('--help') || args.includes('-h')) {
-      console.log('Usage: happy codebuddy [--resume <CodeBuddy session ID>] [--verbose]');
+      console.log('Usage: happy codebuddy [--model <id>] [--permission-mode <mode>] [--resume <CodeBuddy session ID>] [--verbose]');
       return;
     }
     const { runCodeBuddy, formatCodeBuddyError } = await import('@/codebuddy/runCodeBuddy');

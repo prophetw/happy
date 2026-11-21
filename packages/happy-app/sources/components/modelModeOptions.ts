@@ -356,6 +356,19 @@ export function getHardcodedPermissionModes(flavor: AgentFlavor, translate: Tran
     return getClaudePermissionModes(translate);
 }
 
+export function getMachinePermissionModes(
+    flavor: AgentFlavor,
+    metadata: MachineMetadata | null | undefined,
+    translate: Translate,
+): PermissionMode[] {
+    const base = getHardcodedPermissionModes(flavor, translate);
+    if (flavor === 'codebuddy') {
+        const modes = mapMetadataOptions(metadata?.codebuddyOptions?.permissionModes);
+        return modes.some(mode => mode.key === 'default') ? modes : [...base, ...modes];
+    }
+    return filterPermissionModesForCli(base, metadata?.happyCliVersion);
+}
+
 export function getOpenClawModelModes(): ModelMode[] {
     return [
         { key: 'default', name: 'Default model', description: null },
@@ -423,7 +436,7 @@ export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translat
         return getDshModelModes();
     }
     if (flavor === 'codebuddy') {
-        return [{ key: 'default', name: 'CodeBuddy CLI default', description: null }];
+        return [{ key: 'default', name: 'Default model', description: null }];
     }
     return getClaudeModelModes();
 }
@@ -537,7 +550,15 @@ export function getMachineModelModes(
     }
     if (flavor === 'agy' && metadata?.agyModels) return includeConfiguredModel(flavor, getAgyModelModes(metadata.agyModels), configuredModelKey);
     if (flavor === 'dsh') return getDshModelModes(getMachineDshModelCatalog(metadata));
-    if (flavor === 'codebuddy') return getHardcodedModelModes(flavor, translate);
+    if (flavor === 'codebuddy') {
+        const catalog = metadata?.codebuddyOptions;
+        const models = mapMetadataOptions(catalog?.models);
+        const defaultName = models.find(model => model.key === catalog?.currentModelCode)?.name;
+        return [
+            { key: 'default', name: 'Default model', description: defaultName ? `CodeBuddy default (${defaultName})` : null },
+            ...models.filter(model => model.key !== 'default'),
+        ];
+    }
     return includeConfiguredModel(flavor, getHardcodedModelModes(flavor, translate), configuredModelKey);
 }
 

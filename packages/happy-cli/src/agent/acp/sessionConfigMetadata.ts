@@ -18,6 +18,9 @@ export type AcpSessionConfigSnapshot = {
   currentModeId?: string | null;
 };
 
+type AcpMetadata = Pick<Metadata, 'models' | 'currentModelCode' | 'operatingModes'
+  | 'currentOperatingModeCode' | 'thoughtLevels' | 'currentThoughtLevelCode'>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -87,7 +90,7 @@ function findConfigOptionByCategory(
 }
 
 function applyConfigCategory(
-  metadata: Metadata,
+  metadata: AcpMetadata,
   option: SessionConfigOption | null,
   kind: SupportedCategory,
 ): void {
@@ -191,8 +194,8 @@ export function extractCurrentModeIdFromPayload(payload: unknown): string | null
   return payload.currentModeId;
 }
 
-export function mergeAcpSessionConfigIntoMetadata(metadata: Metadata, snapshot: AcpSessionConfigSnapshot): Metadata {
-  const next: Metadata = { ...metadata };
+export function mergeAcpSessionConfigIntoMetadata<T extends AcpMetadata>(metadata: T, snapshot: AcpSessionConfigSnapshot): T & AcpMetadata {
+  const next: T & AcpMetadata = { ...metadata };
 
   let hasModeFromConfig = false;
   let hasModelFromConfig = false;
