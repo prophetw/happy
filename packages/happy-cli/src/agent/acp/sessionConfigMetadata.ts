@@ -39,7 +39,7 @@ function isOptionGroup(value: unknown): value is { options: unknown[] } {
   return Array.isArray(value.options);
 }
 
-function flattenConfigSelectOptions(options: unknown): MetadataOption[] {
+export function flattenConfigSelectOptions(options: unknown): MetadataOption[] {
   if (!Array.isArray(options)) {
     return [];
   }

@@ -1098,6 +1098,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
                 agent: entry.agent, models: entry.models.map(m => m.key), permissionModes: entry.permissionModes.map(m => m.key),
                 efforts: entry.efforts, defaultModel: entry.defaultModel, defaultPermissionMode: entry.defaultPermissionMode,
                 defaultEffort: entry.defaultEffort,
+                ...(entry.codebuddy ? { codebuddy: entry.codebuddy } : {}),
             }));
             return { defaultAgent: AUTOMATION_DEFAULT_AGENT, catalog, policy: options.automation?.registration.launchOptions };
         },

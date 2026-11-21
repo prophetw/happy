@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { codeBuddyOptionsDetailsSchema } from 'happy-agent/automation'
 import type { Update, UpdateMachineBody } from '@slopus/happy-wire';
 import { UsageSchema } from '@/claude/types'
 import type { SandboxConfig } from '@/persistence'
@@ -205,6 +206,7 @@ export const MachineMetadataSchema = z.object({
     models: z.array(codeBuddyOptionSchema),
     currentModelCode: z.string().nullable(),
     permissionModes: z.array(codeBuddyOptionSchema),
+    details: codeBuddyOptionsDetailsSchema.optional(),
   }).optional(),
 })
 

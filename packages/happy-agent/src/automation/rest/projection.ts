@@ -1,6 +1,6 @@
 import { redact } from '../control';
 import { ApiError } from './schema';
-import { launchModelValue } from './options';
+import { codeBuddyOptionsDetailsSchema, launchModelValue } from './options';
 
 const fields = new Set(['version','ok','requestID','data','error','code','retryable','instruction','taskID','machineID','sessionID','state',
     'messageID','seq','process','safeToRetrySameRequestID','hasMore','reconciliationCursor','machines','sessions','availability','activeAt',
@@ -22,7 +22,13 @@ export function projectResponse(input: unknown): Record<string, unknown> {
         if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
         if (Array.isArray(value)) { if (value.length > 500) throw new ApiError('INVALID_WORKER_RESPONSE', 502); return value.map(v => project(v, depth+1,key)); }
         if (!value || typeof value !== 'object') return undefined;
-        return Object.fromEntries(Object.entries(value).filter(([k]) => fields.has(k)).map(([k,v]) => [k, project(v, depth+1,k)]));
+        const projected = Object.fromEntries(Object.entries(value).filter(([k]) => fields.has(k)).map(([k,v]) => [k, project(v, depth+1,k)]));
+        if (depth === 1 && key === 'data' && Array.isArray(projected.agents)
+            && projected.agents.some(agent => agent?.agent === 'codebuddy')) {
+            const details = codeBuddyOptionsDetailsSchema.safeParse((value as Record<string, unknown>).codebuddy);
+            if (details.success) projected.codebuddy = details.data;
+        }
+        return projected;
     };
     const object = input as { version?: unknown; ok?: unknown } | null;
     if (!object || object.version !== 1 || typeof object.ok !== 'boolean') throw new ApiError('INVALID_WORKER_RESPONSE', 502);

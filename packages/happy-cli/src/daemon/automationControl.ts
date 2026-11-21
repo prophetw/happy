@@ -120,10 +120,11 @@ export function createAutomationControl(deps: Dependencies) {
             if (req.version !== 1) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
             if (req.operation === 'capabilities') return { version: 1, operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', ...(deps.options ? ['options'] : [])] };
             if (req.operation === 'options') {
-                // Keys-only catalog; the scoped worker narrows it per grant.
                 if (!deps.options) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
                 const { defaultAgent, catalog } = deps.options();
-                return { version: 1, defaultAgent, agents: catalog };
+                // Older workers validate the keys-only shape strictly.
+                const agents = req.includeCodeBuddyDetails === true ? catalog : catalog.map(({ codebuddy, ...entry }) => entry);
+                return { version: 1, defaultAgent, agents };
             }
             if (req.operation === 'status') return { version: 1, sessionID: identifier(req.sessionID), process: deps.observe(identifier(req.sessionID)) };
             const requestID = identifier(req.requestID);

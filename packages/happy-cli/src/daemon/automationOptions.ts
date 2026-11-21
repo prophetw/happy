@@ -1,5 +1,5 @@
 import type { MachineMetadata } from '@/api/types';
-import { taskOptionsSchema } from 'happy-agent/automation';
+import { taskOptionsSchema, type CodeBuddyOptionsDetails } from 'happy-agent/automation';
 import { AGY_EFFORTS } from '../agyStream/constants';
 
 /**
@@ -20,6 +20,7 @@ export type AutomationAgentCatalog = {
     defaultPermissionMode: string;
     /** Empty string = no effort flag passed to the CLI. */
     defaultEffort: string;
+    codebuddy?: CodeBuddyOptionsDetails;
 };
 
 export const AUTOMATION_DEFAULT_AGENT = 'codex' as const;
@@ -91,6 +92,7 @@ export function buildAutomationCatalog(metadata: MachineMetadata | null | undefi
             defaultModel: 'default',
             defaultPermissionMode: 'default',
             defaultEffort: '',
+            ...(catalog?.details ? { codebuddy: catalog.details } : {}),
         });
     }
     return agents.filter(entry => metadata?.cliAvailability?.[entry.agent] !== false);

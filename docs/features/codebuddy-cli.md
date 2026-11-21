@@ -14,7 +14,9 @@ Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、失
 
 ## Happy 派活
 
-在现有 worker 的 `launchOptions.agents` 中授权 `codebuddy`，并按连接授权的项目范围派活。`happy_options` 接收 `machineID`，在有能力且获授权的机器上返回 `codebuddy` 及获准的模型和权限选项。省略覆盖项时沿用本机 CLI 模型及默认权限，推理档位由 CLI 决定。使用授权中的 `projectID` 指定工作目录。
+在现有 Worker 的 `launchOptions.agents` 中授权 `codebuddy`，并按连接授权的项目范围派活。`happy_options` 接收 `machineID`，`agents` 中的 CodeBuddy 条目列出机器与连接均允许的启动选项。`default` 模型沿用该机器的 CLI 配置。可以用 `options.model` 或 `options.permissionMode` 选择获准的创建覆盖值，Happy 通过 ACP 确认后报告会话就绪。省略推理档位时由 CLI 决定。使用授权中的 `projectID` 指定工作目录。
+
+`happy_options.data.codebuddy` 仅在得到 ACP 探测结果时出现，包含获准模型和探测会话的默认模型。每个模型的 `effortOptions` 与 `maxInputTokens` 来自 CLI 公布的模型元数据，后者是只读输入上限。`sessionEffort` 和 `contextWindow` 仅在探测会话选中的模型公布对应选择器时出现。Happy 创建接口当前没有 CodeBuddy 推理、上下文或自动压缩参数。`--autocompact` 由 CodeBuddy CLI 管理，表示自动压缩基准。缺少探测结果时，目录退回默认启动选项。 [CodeBuddy ACP](https://www.codebuddy.cn/docs/cli/acp) · [CodeBuddy CLI 设置](https://www.codebuddy.cn/docs/cli/settings)
 
 例如，先调用 `happy_create_task`。
 
@@ -28,8 +30,6 @@ Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、失
 ~~~
 
 取得 `sessionID` 后，用独立的 `requestID` 调用 `happy_send`。当前 CodeBuddy 派活支持授权目录及既有 worktree 路径。`read-only` 候选执行需要支持该权限档位的 Agent。 [Happy 派活协议](automation-control.md)
-
-TestLoop 的 `src/happy-control-contract.ts` 和 `src/loop-contract.ts` 仍只接受 Claude、Codex 和 AGY。通过这些配置入口选用 CodeBuddy 需要 TestLoop 更新校验。
 
 ## 验证
 

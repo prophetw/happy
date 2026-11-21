@@ -122,6 +122,39 @@ const create = (r: any, grant: string, requestID: string, options?: unknown) =>
     r.client.request('POST', '/tasks', { requestID, machineID: 'machineA', projectID: 'projectA', ...(options ? { options } : {}) }, grant);
 
 describe('REST option discovery and allowlisted task creation', () => {
+    it('returns per-model CodeBuddy evidence only for authorized launches and the observed default', async () => {
+        const observed = { model: 'machine-default', maxInputTokens: 320000,
+            effortOptions: ['low', 'high'], sessionEffort: { values: ['low', 'high', 'enabled'], current: 'high' },
+            contextWindow: { values: ['200000', '300000'], current: '200000' } };
+        const allowed = { model: 'allowed-model', maxInputTokens: 900000, effortOptions: ['high'] };
+        const entry = { agent: 'codebuddy', models: ['default', 'machine-default', 'allowed-model', 'private-model'],
+            permissionModes: ['default', 'bypassPermissions'], efforts: [], defaultModel: 'default',
+            defaultPermissionMode: 'default', defaultEffort: '', codebuddy: {
+                currentModel: 'machine-default', currentPermissionMode: 'default', permissionModes: ['default', 'bypassPermissions'],
+                models: [observed, allowed, { model: 'private-model', effortOptions: ['max'] }],
+            } };
+        let agents = [...catalog, entry];
+        const launchOptions = { version: 1 as const, agents: [
+            { agent: 'codebuddy' as const, modelSource: 'machine' as const, models: [], permissionModes: ['bypassPermissions'] },
+        ] };
+        const r = await setup({ launchOptions, catalog: () => agents });
+        const legacyReply = await r.transport.rpc({ id: 'machineA' }, { version: 1, operation: 'options' });
+        expect(legacyReply.agents.find((agent: OptionCatalogEntry) => agent.agent === 'codebuddy')).not.toHaveProperty('codebuddy');
+        const grant = await r.connect({ options: { agents: [{ agent: 'codebuddy', models: ['allowed-model'], permissionModes: [] }] } });
+        await r.startWorker();
+        const { callControlTool } = await import('./mcp');
+        const options = () => callControlTool(r.client, grant, 'happy_options', { machineID: 'machineA' });
+
+        const { codebuddy, ...launch } = entry;
+        expect((await options()).data).toEqual({
+            defaultAgent: 'codex',
+            agents: [{ ...launch, models: ['default', 'allowed-model'], permissionModes: ['default'] }],
+            codebuddy: { ...codebuddy, permissionModes: ['default'], models: [observed, allowed] },
+        });
+        agents = catalog;
+        expect((await options()).data).toEqual({ defaultAgent: 'codex', agents: [] });
+    });
+
     it('routes CodeBuddy MCP tasks to the authorized directory with native defaults', async () => {
         const codebuddy = { agent: 'codebuddy', models: ['default'], permissionModes: ['default'], efforts: [],
             defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '' };

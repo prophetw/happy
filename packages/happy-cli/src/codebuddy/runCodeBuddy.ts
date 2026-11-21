@@ -1,4 +1,5 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk';
+import { taskOptionsSchema, type CodeBuddyOptionsDetails } from 'happy-agent/automation';
 import { homedir } from 'node:os';
 import { runAcp } from '@/agent/acp';
 import { AcpBackend } from '@/agent/acp/AcpBackend';
@@ -6,6 +7,7 @@ import {
   extractConfigOptionsFromPayload,
   extractModelStateFromPayload,
   extractModeStateFromPayload,
+  flattenConfigSelectOptions,
   mergeAcpSessionConfigIntoMetadata,
   type AcpSessionConfigSnapshot,
 } from '@/agent/acp/sessionConfigMetadata';
@@ -66,6 +68,53 @@ class CodeBuddyTransport extends DefaultTransport {
 
 const codeBuddyArgs = ['--acp', '--permission-mode', 'default'];
 
+function optionID(value: unknown): string | undefined {
+  const parsed = taskOptionsSchema.shape.effort.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function optionIDs(values: unknown[]): string[] {
+  return [...new Set(values.map(optionID).filter((value): value is string => value !== undefined))].slice(0, 32);
+}
+
+export function codeBuddyOptionsFromSnapshot(snapshot: AcpSessionConfigSnapshot): MachineMetadata['codebuddyOptions'] {
+  const { models = [], currentModelCode, operatingModes = [], currentOperatingModeCode, thoughtLevels, currentThoughtLevelCode }
+    = mergeAcpSessionConfigIntoMetadata({}, snapshot);
+  if (models.length === 0 && operatingModes.length === 0) return undefined;
+  const model = currentModelCode && currentModelCode !== 'default' && models.some(item => item.code === currentModelCode)
+    && taskOptionsSchema.shape.model.safeParse(currentModelCode).success ? currentModelCode : undefined;
+  const mode = optionID(currentOperatingModeCode);
+  const permissionModes = optionIDs(operatingModes.map(item => item.code));
+  const contextSelector = snapshot.configOptions?.find(option => option.type === 'select' && option.id === 'context_window');
+  const nativeModels = new Map(snapshot.models?.availableModels.map(entry => [entry.modelId, entry._meta]));
+  const details: CodeBuddyOptionsDetails = {
+    ...(model ? { currentModel: model } : {}),
+    ...(mode ? { currentPermissionMode: mode } : {}),
+    ...(operatingModes.length ? { permissionModes } : {}),
+    models: models.filter(item => item.code !== 'default' && taskOptionsSchema.shape.model.safeParse(item.code).success)
+      .slice(0, 255).map(({ code }) => {
+        const native = nativeModels.get(code);
+        const maxInputTokens = native?.maxInputTokens;
+        const currentEffort = code === model ? optionID(currentThoughtLevelCode) : undefined;
+        const context = code === model && contextSelector?.type === 'select' ? contextSelector : undefined;
+        const currentContext = optionID(context?.currentValue);
+        return {
+          model: code,
+          ...(typeof maxInputTokens === 'number' && Number.isSafeInteger(maxInputTokens) && maxInputTokens > 0 ? { maxInputTokens } : {}),
+          ...(Array.isArray(native?.effortOptions) ? { effortOptions: optionIDs(flattenConfigSelectOptions(native.effortOptions).map(item => item.code)) } : {}),
+          ...(code === model && thoughtLevels ? { sessionEffort: {
+            values: optionIDs(thoughtLevels.map(item => item.code)), ...(currentEffort ? { current: currentEffort } : {}),
+          } } : {}),
+          ...(context ? { contextWindow: {
+            values: optionIDs(flattenConfigSelectOptions(context.options).map(item => item.code)),
+            ...(currentContext ? { current: currentContext } : {}),
+          } } : {}),
+        };
+      }),
+  };
+  return { models, currentModelCode: currentModelCode ?? null, permissionModes: operatingModes, details };
+}
+
 /** Read the installed CLI's catalog without sending a prompt or saving a session. */
 export async function discoverCodeBuddyOptions(): Promise<MachineMetadata['codebuddyOptions']> {
   const backend = new AcpBackend({
@@ -94,9 +143,7 @@ export async function discoverCodeBuddyOptions(): Promise<MachineMetadata['codeb
   });
   try {
     await backend.startSession();
-    const { models = [], currentModelCode, operatingModes = [] } = mergeAcpSessionConfigIntoMetadata({}, snapshot);
-    if (models.length === 0 && operatingModes.length === 0) return undefined;
-    return { models, currentModelCode: currentModelCode ?? null, permissionModes: operatingModes };
+    return codeBuddyOptionsFromSnapshot(snapshot);
   } finally {
     await backend.dispose();
   }

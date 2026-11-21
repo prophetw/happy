@@ -872,15 +872,18 @@ export class ApiMachineClient {
         this.codeBuddyOptionsNextRefresh = Date.now() + 60_000;
         try {
             const { discoverCodeBuddyOptions } = await import('@/codebuddy/runCodeBuddy');
-            const catalog = await discoverCodeBuddyOptions();
-            if (!catalog || this.shutdownRequested || !this.lastKnownCLIAvailability?.codebuddy) return;
+            const catalog = await discoverCodeBuddyOptions().catch(error => {
+                logger.debug('[API MACHINE] Failed to discover CodeBuddy options:', error);
+                return undefined;
+            });
+            if (this.shutdownRequested || !this.lastKnownCLIAvailability?.codebuddy) return;
             if (JSON.stringify(this.machine.metadata?.codebuddyOptions) !== JSON.stringify(catalog)) {
                 await this.updateMachineMetadata(metadata => ({
                     ...(metadata ?? this.machine.metadata),
                     codebuddyOptions: catalog,
                 }));
             }
-            this.codeBuddyOptionsNextRefresh = Date.now() + 5 * 60_000;
+            if (catalog) this.codeBuddyOptionsNextRefresh = Date.now() + 5 * 60_000;
         } catch (error) {
             logger.debug('[API MACHINE] Failed to refresh CodeBuddy options:', error);
         } finally {

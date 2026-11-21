@@ -509,16 +509,17 @@ export class ScopedWorker {
             || !['create', 'request', 'status', 'cancel'].every(op => (capabilities.operations as unknown[]).includes(op))) throw new ApiError('UNSUPPORTED_VERSION', 426);
         // Launch-option catalog is served by the daemon that actually spawns;
         // a daemon without it cannot honour overrides or discovery.
-        const catalog = async (): Promise<OptionCatalog> => {
+        const catalog = async (includeCodeBuddyDetails = false): Promise<OptionCatalog> => {
             if (!(capabilities.operations as unknown[]).includes('options')) throw new ApiError('UNSUPPORTED_VERSION', 426);
-            const reply = await wrapped.rpc(machine, { version: 1, operation: 'options' });
+            const reply = await wrapped.rpc(machine, { version: 1, operation: 'options',
+                ...(includeCodeBuddyDetails ? { includeCodeBuddyDetails: true } : {}) });
             const parsed = optionCatalogSchema.safeParse(reply);
             if (!parsed.success) throw new ApiError('UNSUPPORTED_VERSION', 426);
             return parsed.data;
         };
         if (command.method === 'options.list') {
             if (command.machineID !== live.machineID) throw new ApiError('SCOPE_DENIED', 403);
-            const reply = await catalog();
+            const reply = await catalog(true);
             // Only the options this grant may select leave the machine.
             await check(true); return { version: 1, ok: true, data: filterCatalogForGrant(reply, this.registration.launchOptions, live.options) };
         }

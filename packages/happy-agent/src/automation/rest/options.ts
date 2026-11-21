@@ -49,6 +49,26 @@ export const connectionOptionsSchema = z.object({
 }).strict();
 export type ConnectionOptions = z.infer<typeof connectionOptionsSchema>;
 
+const nativeSelectionSchema = z.object({
+    values: z.array(launchOptionValue).max(32),
+    current: launchOptionValue.optional(),
+}).strict();
+
+/** Observations made by the CodeBuddy ACP probe. Native selectors do not grant launch overrides. */
+export const codeBuddyOptionsDetailsSchema = z.object({
+    currentModel: launchModelValue.optional(),
+    currentPermissionMode: launchOptionValue.optional(),
+    permissionModes: z.array(launchOptionValue).max(32).optional(),
+    models: z.array(z.object({
+        model: launchModelValue,
+        maxInputTokens: z.number().int().positive().optional(),
+        effortOptions: z.array(launchOptionValue).max(32).optional(),
+        sessionEffort: nativeSelectionSchema.optional(),
+        contextWindow: nativeSelectionSchema.optional(),
+    }).strict()).max(256),
+}).strict();
+export type CodeBuddyOptionsDetails = z.infer<typeof codeBuddyOptionsDetailsSchema>;
+
 /** Per-agent catalog entry as enforced by the daemon that actually spawns. */
 export type OptionCatalogEntry = {
     agent: string;
@@ -60,6 +80,7 @@ export type OptionCatalogEntry = {
     defaultPermissionMode: string;
     /** Empty string = no effort flag passed to the CLI. */
     defaultEffort: string;
+    codebuddy?: CodeBuddyOptionsDetails;
 };
 
 export class OptionsDenied extends Error {
@@ -67,7 +88,7 @@ export class OptionsDenied extends Error {
     constructor() { super('OPTION_DENIED'); }
 }
 
-/** Wire shape of the daemon's `options` RPC reply (keys only, no free text). */
+/** Wire shape of the daemon's `options` RPC reply. It carries IDs and typed native observations. */
 export const optionCatalogEntrySchema = z.object({
     agent: launchOptionValue,
     models: z.array(launchModelValue).max(256),
@@ -76,6 +97,7 @@ export const optionCatalogEntrySchema = z.object({
     defaultModel: launchModelValue,
     defaultPermissionMode: launchOptionValue,
     defaultEffort: z.union([launchOptionValue, z.literal('')]),
+    codebuddy: codeBuddyOptionsDetailsSchema.optional().catch(undefined),
 }).strict();
 export const optionCatalogSchema = z.object({
     version: z.literal(1), defaultAgent: launchOptionValue,
@@ -89,13 +111,16 @@ export type OptionCatalog = z.infer<typeof optionCatalogSchema>;
  * only (empty selectable lists), matching their fixed-launch behaviour.
  */
 export function filterCatalogForGrant(catalog: OptionCatalog, workerPolicy: LaunchOptionsPolicy | undefined,
-    grantOptions: ConnectionOptions | undefined): { defaultAgent: string; agents: OptionCatalogEntry[] } {
+    grantOptions: ConnectionOptions | undefined): {
+        defaultAgent: string; agents: OptionCatalogEntry[]; codebuddy?: CodeBuddyOptionsDetails;
+    } {
     if (!workerPolicy) {
         return { defaultAgent: catalog.defaultAgent, agents: catalog.agents.filter(a => a.agent === catalog.defaultAgent)
             .map(a => ({ agent: a.agent, models: [], permissionModes: [], efforts: [],
                 defaultModel: a.defaultModel, defaultPermissionMode: a.defaultPermissionMode, defaultEffort: a.defaultEffort })) };
     }
     const agents: OptionCatalogEntry[] = [];
+    let codebuddy: CodeBuddyOptionsDetails | undefined;
     for (const entry of catalog.agents) {
         const workerAgent = workerPolicy.agents.find(a => a.agent === entry.agent);
         if (!workerAgent) continue;
@@ -106,13 +131,25 @@ export function filterCatalogForGrant(catalog: OptionCatalog, workerPolicy: Laun
             if (grantList) result = result.filter(v => grantList.includes(v) || v === fallback);
             return result;
         };
-        agents.push({ agent: entry.agent,
-            models: narrow(entry.models, workerAgent.modelSource === 'machine' ? entry.models : workerAgent.models, grantAgent?.models, entry.defaultModel),
-            permissionModes: narrow(entry.permissionModes, workerAgent.permissionModes, grantAgent?.permissionModes, entry.defaultPermissionMode),
+        const models = narrow(entry.models, workerAgent.modelSource === 'machine' ? entry.models : workerAgent.models, grantAgent?.models, entry.defaultModel);
+        const permissionModes = narrow(entry.permissionModes, workerAgent.permissionModes, grantAgent?.permissionModes, entry.defaultPermissionMode);
+        agents.push({ agent: entry.agent, models, permissionModes,
             efforts: entry.efforts,
             defaultModel: entry.defaultModel, defaultPermissionMode: entry.defaultPermissionMode, defaultEffort: entry.defaultEffort });
+        if (entry.agent === 'codebuddy' && entry.codebuddy) {
+            const details = entry.codebuddy;
+            const currentModel = details.currentModel && entry.models.includes(details.currentModel) ? details.currentModel : undefined;
+            codebuddy = {
+                ...(currentModel ? { currentModel } : {}),
+                ...(details.currentPermissionMode ? { currentPermissionMode: details.currentPermissionMode } : {}),
+                ...(details.permissionModes ? { permissionModes: details.permissionModes.filter(mode =>
+                    mode === details.currentPermissionMode || permissionModes.includes(mode)) } : {}),
+                // Grants can use the ambient model. Other model details follow the launch allowlist.
+                models: details.models.filter(profile => profile.model === currentModel || models.includes(profile.model)),
+            };
+        }
     }
-    return { defaultAgent: catalog.defaultAgent, agents };
+    return { defaultAgent: catalog.defaultAgent, agents, ...(codebuddy ? { codebuddy } : {}) };
 }
 
 export type ResolvedTaskOptions = { agent: string; model: string; permissionMode: string; effort: string };
