@@ -72,7 +72,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
         stop: () => { processState = 'unknown'; return true; }, observe: () => processState as 'running' | 'stopping' | 'stopped' | 'unknown' });
     const transport: Transport = {
         machines: async () => [machine], sessions: async () => ({ sessions, nextCursor: null }),
-        rpc: async (_machine, command) => await control(command) as Record<string, unknown>,
+        rpc: async (_machine, command, grant) => await control(command, grant) as Record<string, unknown>,
         messages: async (s, after, limit) => { const all = ciphertext.get(s.id)!.filter(m => m.seq > after); return { hasMore: all.length > limit,
             messages: all.slice(0,limit).map(m => ({ id: m.id, seq: m.seq, localId: m.localId, content: decrypt(key, 'dataKey', decodeBase64(m.c)) })) }; },
         send: async (s, requestID, text) => {

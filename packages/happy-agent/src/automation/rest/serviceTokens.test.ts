@@ -16,6 +16,56 @@ async function pending(r:any,scope:Record<string,unknown>={}) {
 }
 async function approve(r:any,c:any) { const view=await r.ownerRequest(`/connections/${c.id}/consent`);const x=await r.ownerRequest(`/connections/${c.id}/approve`,'POST',{digest:view.body.data.digest,challenge:view.body.data.challenge,credentialMode:'service-token-v1'});expect(x.status).toBe(200); }
 async function issue(r:any,c:any) { const x=await r.ownerRequest(`/connections/${c.id}/service-token`,'POST');expect(x.status).toBe(200);return x.body.data.token as string; }
+
+it('lets only the owner of one connection delegate the live CodeBuddy catalog and bypass', async () => {
+ const native = ['first-native', 'second-native', 'third-native'];
+ const modes = ['default', 'plan', 'bypassPermissions', 'fullAccess'];
+ const launchOptions = {version:1, allowCodeBuddyApproval:true, agents:[
+  {agent:'codebuddy', models:[], permissionModes:[]}, {agent:'codex', models:[], permissionModes:[]}]};
+ const catalog = () => [{agent:'codebuddy',models:['default', ...native],permissionModes:modes,efforts:[],
+  defaultModel:'default',defaultPermissionMode:'default',defaultEffort:'',codebuddy:{
+   currentModel:native[0],currentPermissionMode:'default',models:native.map(model=>({model}))}}];
+ const r=await setup({launchOptions,catalog,workerIntervalMs:5});
+ const methods=['options.list','tasks.create','requests.get'];
+ const grant=await pending(r,{methods}), other=await pending(r,{methods});
+ await approve(r,grant); await approve(r,other);
+ const token=await issue(r,grant), otherToken=await issue(r,other);
+ await r.startWorker();
+ const options=async (bearer:string)=>(await request(r,bearer,'/options?machineID=machineA')).body.data;
+ const edit=`/connections/${grant.id}/edit`;
+ const approval={codebuddyLaunch:{machineModels:true,bypassPermissions:true}};
+ const task=(bearer:string,id:string,model:string)=>request(r,bearer,'/tasks','POST',{requestID:id,machineID:'machineA',projectID:'projectA',
+  options:{agent:'codebuddy',model,permissionMode:'bypassPermissions'}});
+ expect((await options(token)).agents[0]).toMatchObject({models:['default'],permissionModes:['default']});
+ expect((await request(r,token,edit,'POST',approval)).status).not.toBe(200);
+ expect((await r.ownerRequest(edit,'POST',approval,'B')).status).toBe(404);
+ expect((await r.ownerRequest(edit,'POST',approval)).body.data).toMatchObject({id:grant.id,...approval,expiresAt:grant.expiresAt});
+ const listed=await options(token);
+ expect(listed.agents[0]).toMatchObject({models:['default',...native],permissionModes:['default','bypassPermissions']});
+ expect(listed.codebuddy.models.map((v:{model:string})=>v.model)).toEqual(native);
+ expect((await options(otherToken)).agents[0]).toMatchObject({models:['default'],permissionModes:['default']});
+ expect((await task(otherToken,'denied',native[0])).body.error.code).toBe('OPTION_DENIED');
+ for (const model of native) {
+  const created=await task(token,'create-'+model,model);
+  expect(created.body.data.state).toBe('confirmed');
+  expect((await task(token,'create-'+model,model)).body.data.sessionID).toBe(created.body.data.sessionID);
+ }
+ expect(r.launches.map((v:{options:unknown})=>v.options)).toEqual(native.map(model=>({agent:'codebuddy',model,permissionMode:'bypassPermissions',effort:''})));
+ const retired=native.shift()!; native.push('new-native');
+ expect((await options(token)).agents[0].models).toEqual(['default',...native]);
+ for (const model of [retired,'invented']) expect((await task(token,'deny-'+model,model)).body.error.code).toBe('OPTION_DENIED');
+ expect((await task(token,'added','new-native')).body.data.state).toBe('confirmed');
+ const limited={agents:[{agent:'codebuddy',models:[native[0]],permissionModes:[]}]};
+ expect((await r.ownerRequest(edit,'POST',{options:limited})).status).toBe(200);
+ expect((await options(token)).agents[0]).toMatchObject({models:['default',native[0]],permissionModes:['default']});
+ expect((await task(token,'narrowed',native[0])).body.error.code).toBe('OPTION_DENIED');
+ expect((await r.ownerRequest(edit,'POST',{codebuddyLaunch:{machineModels:true,updateAgentLimit:true}})).status).toBe(200);
+ expect((await options(token)).agents[0]).toMatchObject({models:['default',...native],permissionModes:['default']});
+ expect((await r.ownerRequest(edit,'POST',{codebuddyLaunch:{bypassPermissions:true,updateAgentLimit:true}})).status).toBe(200);
+ expect((await task(token,'explicit-widen',native[1])).body.data.state).toBe('confirmed');
+ expect((await r.ownerRequest(edit,'POST',{codebuddyLaunch:{machineModels:false,bypassPermissions:false,updateAgentLimit:true}})).status).toBe(200);
+ expect((await options(token)).agents[0]).toMatchObject({models:['default'],permissionModes:['default']});
+}, 20000);
 async function request(r:any,token:string,route:string,method='GET',body?:unknown) {
  const response=await fetch(`${r.address}/happy-control/v1${route}`,{method,headers:{authorization:`Bearer ${token}`,...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(10000) as NonNullable<Parameters<typeof fetch>[1]>['signal']});return {status:response.status,body:await response.json() as any};
 }

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { decryptField, type RawSession } from '../../api';
 import type { DecryptedMachine, DecryptedSession } from '../../api';
 import { ControlError, recordMessageTransport, type Transport } from '../relay';
+import type { Connection } from './schema';
 
 export type DaemonTransportBindings = {
     serverUrl: string;
@@ -11,7 +12,7 @@ export type DaemonTransportBindings = {
     /** Only records whose per-session keys the daemon already possesses. */
     sessions: () => DecryptedSession[];
     localSessionStopped?: (sessionID: string) => boolean;
-    control: (input: unknown) => Promise<unknown>;
+    control: (input: unknown, grant?: Pick<Connection, 'options' | 'codebuddyLaunch'>) => Promise<unknown>;
 };
 function sessionProcessID(localMetadata: unknown, relayMetadata: unknown, machineID: string): number | undefined {
     const local = localMetadata as { machineId?: unknown; path?: unknown; hostPid?: unknown; startedBy?: unknown; startedFromDaemon?: unknown } | null;
@@ -44,9 +45,9 @@ export function createDaemonTransport(bindings: DaemonTransportBindings): Transp
             }) };
 
         },
-        rpc: async (machine, input) => {
+        rpc: async (machine, input, grant) => {
             if (machine.id !== bindings.machine().id || input.version !== 1 || !['capabilities', 'create', 'withdraw-create', 'request', 'status', 'cancel', 'options'].includes(String(input.operation))) throw new ControlError('UNSUPPORTED_VERSION');
-            const result = await bindings.control(input);
+            const result = await bindings.control(input, grant);
             if (!result || typeof result !== 'object' || !('version' in result) || result.version !== 1) throw new ControlError('UNSUPPORTED_VERSION');
             return result as Record<string, unknown>;
         },

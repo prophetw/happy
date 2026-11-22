@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { verifyAutomationWorkerOwner } from '@/api/automationIdentity';
-import { createDaemonTransport, HTTPWorkerRunner, ProofClient, type ProofIdentity, type WorkerRegistration } from 'happy-agent/automation';
+import { createDaemonTransport, HTTPWorkerRunner, ProofClient, type DaemonTransportBindings, type ProofIdentity, type WorkerRegistration } from 'happy-agent/automation';
 import type { Machine } from '@/api/types';
 import type { TrackedSession } from './types';
 
@@ -11,7 +11,7 @@ export type DaemonAutomationOptions = {
 /** Explicit opt-in only: no key-file discovery, login, public listener, or automatic grant. */
 export async function startDaemonAutomation(options: DaemonAutomationOptions, bindings: {
     machine: Machine; token: string; serverUrl: string; happyHomeDir: string;
-    sessions: () => TrackedSession[]; control: (input: unknown) => Promise<unknown>;
+    sessions: () => TrackedSession[]; control: DaemonTransportBindings['control'];
     localSessionStopped?: (sessionID: string) => boolean;
     startupSignal?: AbortSignal;
 }) {

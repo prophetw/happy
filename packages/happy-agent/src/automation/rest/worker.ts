@@ -13,7 +13,7 @@ import { canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { projectResponse } from './projection';
 import { ApiError, cancelSchema, sendSchema, checkBoundProjects, taskTitleSchema, type Connection, type WorkerRegistration } from './schema';
-import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, resolveTaskOptions, taskOptionsSchema, type OptionCatalog, type ResolvedTaskOptions } from './options';
+import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, policyForCodeBuddyApproval, resolveTaskOptions, taskOptionsSchema, type OptionCatalog, type ResolvedTaskOptions } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
 import { SessionProcessProofs, retirementProcessProof } from './sessionProcessProofs';
@@ -434,6 +434,7 @@ export class ScopedWorker {
             return { live, projects };
         };
         const { live, projects } = await check();
+        const launchPolicy = policyForCodeBuddyApproval(this.registration.launchOptions, live.codebuddyLaunch);
         if (job.workerID !== this.registration.id || job.deadline < this.now()) throw new ApiError('JOB_UNAVAILABLE', 403);
         // An authorized durable queue receipt must remain readable even while the
         // native Agent is offline or its protocol is being repaired.
@@ -486,7 +487,8 @@ export class ScopedWorker {
                 await check(['create','withdraw-create','cancel'].includes(String(input.operation))); if (m.id !== live.machineID || (input.directory !== undefined && !permittedDirectory(input.directory))) throw new ApiError('SCOPE_DENIED', 403);
                 const workspace = ['create','withdraw-create'].includes(String(input.operation)) ? workspaces.find(w => w.id === hash(`${live.id}\n${input.requestID}`) && w.cwd === input.directory) : undefined;
                 const call = () => this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port),
-                    ...(taskTitle ? { HAPPY_TASK_TITLE: taskTitle, HAPPY_TASK_ROOT: workspace.root } : {}) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) });
+                    ...(taskTitle ? { HAPPY_TASK_TITLE: taskTitle, HAPPY_TASK_ROOT: workspace.root } : {}) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) },
+                    live.codebuddyLaunch ? { codebuddyLaunch: live.codebuddyLaunch, options: live.options } : undefined);
                 const used = workspace ?? (typeof input.sessionID==='string'?workspaces.find(w => w.sessionID === input.sessionID):undefined);
                 return used && input.operation !== 'withdraw-create' ? withWorkspaceAccess(this.queue,used.id,call) : call();
             },
@@ -521,14 +523,14 @@ export class ScopedWorker {
             if (command.machineID !== live.machineID) throw new ApiError('SCOPE_DENIED', 403);
             const reply = await catalog(true);
             // Only the options this grant may select leave the machine.
-            await check(true); return { version: 1, ok: true, data: filterCatalogForGrant(reply, this.registration.launchOptions, live.options) };
+            await check(true); return { version: 1, ok: true, data: filterCatalogForGrant(reply, launchPolicy, live.options) };
         }
         if (command.method === 'tasks.create') {
             const requested = taskOptionsSchema.parse(command.options ?? {});
             const anyOverride = Object.values(requested).some(v => v !== undefined);
             if (anyOverride || this.registration.launchOptions || live.options) {
                 const reply = await catalog();
-                try { resolveTaskOptions(requested, this.registration.launchOptions, live.options, reply.defaultAgent, reply.agents); }
+                try { resolveTaskOptions(requested, launchPolicy, live.options, reply.defaultAgent, reply.agents); }
                 catch (error) { if (error instanceof OptionsDenied) throw new ApiError('OPTION_DENIED', 403); throw error; }
             }
         }
@@ -556,7 +558,7 @@ export class ScopedWorker {
                 const available = await catalog();
                 try {
                     const requested = taskOptionsSchema.parse(w.options ?? {});
-                    const resolved = resolveTaskOptions(requested, this.registration.launchOptions, live.options, available.defaultAgent, available.agents);
+                    const resolved = resolveTaskOptions(requested, launchPolicy, live.options, available.defaultAgent, available.agents);
                     const launched = w.resolvedOptions as Partial<ResolvedTaskOptions>;
                     // Omitted Codex model and effort were settled when this session was created.
                     if (resolved.agent === 'codex') {

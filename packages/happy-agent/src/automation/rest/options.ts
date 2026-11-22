@@ -28,10 +28,28 @@ export const launchAgentPolicySchema = z.object({ ...agentPolicyFields,
 }).strict();
 export const launchOptionsPolicySchema = z.object({
     version: z.literal(1),
+    /** Enables owner edits on individual CodeBuddy service grants. Has no effect on inherited launch options. */
+    allowCodeBuddyApproval: z.literal(true).optional(),
     agents: z.array(launchAgentPolicySchema).min(1).max(launchAgents.length)
         .refine(a => new Set(a.map(p => p.agent)).size === a.length),
 }).strict();
 export type LaunchOptionsPolicy = z.infer<typeof launchOptionsPolicySchema>;
+
+export const codeBuddyLaunchApprovalSchema = z.object({
+    machineModels: z.boolean(),
+    bypassPermissions: z.boolean(),
+}).strict();
+export type CodeBuddyLaunchApproval = z.infer<typeof codeBuddyLaunchApprovalSchema>;
+
+/** Local registration and owner approval are both necessary for an additional launch capability. */
+export function policyForCodeBuddyApproval(policy: LaunchOptionsPolicy | undefined, approval?: CodeBuddyLaunchApproval): LaunchOptionsPolicy | undefined {
+    if (!policy?.allowCodeBuddyApproval || !approval) return policy;
+    return { ...policy, agents: policy.agents.map(row => row.agent !== 'codebuddy' ? row : {
+        ...row,
+        ...(approval.machineModels ? { modelSource: 'machine' as const } : {}),
+        ...(approval.bypassPermissions ? { permissionModes: [...new Set([...row.permissionModes, 'bypassPermissions'])] } : {}),
+    }) };
+}
 
 /** Optional per-task overrides. Omitted fields always fall back to worker defaults. */
 export const taskOptionsSchema = z.object({
@@ -44,7 +62,8 @@ export type TaskOptions = z.infer<typeof taskOptionsSchema>;
 
 /** Connection field (owner-approved) limiting what a grant may select. */
 export const connectionOptionsSchema = z.object({
-    agents: z.array(z.object(agentPolicyFields).strict()).min(1).max(launchAgents.length)
+    agents: z.array(z.object({ ...agentPolicyFields, modelSource: z.literal('machine').optional() }).strict()
+        .refine(row => !row.modelSource || row.agent === 'codebuddy' && row.models.length === 0)).min(1).max(launchAgents.length)
         .refine(a => new Set(a.map(p => p.agent)).size === a.length),
 }).strict();
 export type ConnectionOptions = z.infer<typeof connectionOptionsSchema>;
@@ -131,7 +150,8 @@ export function filterCatalogForGrant(catalog: OptionCatalog, workerPolicy: Laun
             if (grantList) result = result.filter(v => grantList.includes(v) || v === fallback);
             return result;
         };
-        const models = narrow(entry.models, workerAgent.modelSource === 'machine' ? entry.models : workerAgent.models, grantAgent?.models, entry.defaultModel);
+        const models = narrow(entry.models, workerAgent.modelSource === 'machine' ? entry.models : workerAgent.models,
+            grantAgent?.modelSource === 'machine' ? undefined : grantAgent?.models, entry.defaultModel);
         const permissionModes = narrow(entry.permissionModes, workerAgent.permissionModes, grantAgent?.permissionModes, entry.defaultPermissionMode);
         agents.push({ agent: entry.agent, models, permissionModes,
             efforts: entry.efforts,
@@ -192,9 +212,10 @@ export function resolveTaskOptions(requested: TaskOptions, workerPolicy: LaunchO
         if (!workerList.includes(value)) throw new OptionsDenied();
         if (grantList && !grantList.includes(value)) throw new OptionsDenied();
         // A live catalog rejects values the agent does not actually offer.
-        if (catalogList.length && !catalogList.includes(value)) throw new OptionsDenied();
+        if ((catalogList.length || agent === 'codebuddy') && !catalogList.includes(value)) throw new OptionsDenied();
     };
-    check(resolved.model, requested.model, workerAgent.modelSource === 'machine' ? c.models : workerAgent.models, grantAgent?.models, c.models);
+    check(resolved.model, requested.model, workerAgent.modelSource === 'machine' ? c.models : workerAgent.models,
+        grantAgent?.modelSource === 'machine' ? undefined : grantAgent?.models, c.models);
     check(resolved.permissionMode, requested.permissionMode, workerAgent.permissionModes, grantAgent?.permissionModes, c.permissionModes);
     if (requested.effort !== undefined && (c.efforts.length || agent === 'codebuddy') && !c.efforts.includes(resolved.effort)) throw new OptionsDenied();
     return resolved;
@@ -207,6 +228,7 @@ export function validateGrantOptions(requested: ConnectionOptions | undefined, w
     return requested.agents.every(grantAgent => {
         const workerAgent = workerPolicy.agents.find(a => a.agent === grantAgent.agent);
         return !!workerAgent
+            && (!grantAgent.modelSource || workerAgent.modelSource === 'machine')
             && (workerAgent.modelSource === 'machine' || grantAgent.models.every(m => workerAgent.models.includes(m)))
             && grantAgent.permissionModes.every(p => workerAgent.permissionModes.includes(p));
     });

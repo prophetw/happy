@@ -4,6 +4,7 @@ import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
 import { decryptMachine, decryptSession, decryptField, type DecryptedMachine, type DecryptedSession, type RawMachine, type RawSession, type RawMessage } from '../api';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '../encryption';
 import type { Credentials } from '../credentials';
+import type { Connection } from './rest/schema';
 
 export type MessagePage = { messages: { id: string; seq: number; localId: string | null; content: unknown }[]; hasMore: boolean };
 export type TransportSession = DecryptedSession & {
@@ -17,7 +18,7 @@ export interface Transport {
     localSessions?(): TransportSession[];
     /** True only when the local process owner can prove the session has stopped. */
     localSessionStopped?(sessionID: string): boolean;
-    rpc(machine: DecryptedMachine, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    rpc(machine: DecryptedMachine, input: Record<string, unknown>, grant?: Pick<Connection, 'options' | 'codebuddyLaunch'>): Promise<Record<string, unknown>>;
     messages(session: DecryptedSession, cursor: number, limit: number): Promise<MessagePage>;
     send(session: DecryptedSession, requestID: string, text: string): Promise<{ id: string; seq: number }>;
 }

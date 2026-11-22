@@ -114,6 +114,19 @@ describe('durable encrypted automation RPC contract', () => {
 });
 
 describe('launch options: catalog discovery and owner allowlist enforcement', () => {
+    it('requires the local worker grant context for connection-only CodeBuddy overrides', async () => {
+        const s = setup();
+        const policy: LaunchOptionsPolicy = {version:1, allowCodeBuddyApproval:true,
+            agents:[{agent:'codebuddy',models:[],permissionModes:[]}]};
+        const catalog = [{agent:'codebuddy',models:['default','native'],permissionModes:['default','bypassPermissions'],
+            efforts:[], defaultModel:'default',defaultPermissionMode:'default',defaultEffort:''}];
+        const control = createAutomationControl({...s,options:()=>({defaultAgent:'codex',catalog,policy})});
+        const codebuddyLaunch = {machineModels:true,bypassPermissions:true};
+        const command = {...create,options:{agent:'codebuddy',model:'native',permissionMode:'bypassPermissions'}};
+        expect(await control({...command,codebuddyLaunch,grant:{codebuddyLaunch}})).toMatchObject({errorCode:'OPTION_DENIED'});
+        expect(await control(command, {codebuddyLaunch})).toMatchObject({state:'confirmed'});
+        expect(s.spawn).toHaveBeenCalledTimes(1);
+    });
     const policy: LaunchOptionsPolicy = { version: 1, agents: [
         { agent: 'codex', models: ['gpt-6-sol'], permissionModes: ['auto', 'yolo'] },
         { agent: 'claude', models: ['claude-opus-5'], permissionModes: ['acceptEdits'] },

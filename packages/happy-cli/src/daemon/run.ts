@@ -1106,7 +1106,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         observe: observeAutomationSession,
       });
     apiMachine.setRPCHandlers({
-      automationControl,
+      automationControl: input => automationControl(input),
       spawnSession,
       resumeSession,
       stopSession,

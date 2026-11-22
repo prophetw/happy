@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { OptionsDenied, resolveTaskOptions, taskOptionsSchema, type LaunchOptionsPolicy, type OptionCatalogEntry, type ResolvedTaskOptions } from 'happy-agent/automation';
+import { OptionsDenied, policyForCodeBuddyApproval, resolveTaskOptions, taskOptionsSchema, type Connection, type LaunchOptionsPolicy, type OptionCatalogEntry, type ResolvedTaskOptions } from 'happy-agent/automation';
 import { CODEX_AUTOMATION_DEFAULTS } from './automationOptions';
 
 type CreateAttempt = { id: string; digest: string; previous: string | null; titleDigest?: string };
@@ -114,7 +114,7 @@ export function createAutomationControl(deps: Dependencies) {
         ...(receipt.sessionID ? { process: deps.observe(receipt.sessionID) } : {}),
     });
 
-    return async (input: unknown): Promise<unknown> => {
+    return async (input: unknown, grant?: Pick<Connection, 'options' | 'codebuddyLaunch'>): Promise<unknown> => {
         try {
             const req = object(input);
             if (req.version !== 1) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
@@ -148,7 +148,7 @@ export function createAutomationControl(deps: Dependencies) {
             if (!parsed.success) throw new Error('INVALID_REQUEST');
             if (deps.options) {
                 const { defaultAgent, catalog, policy } = deps.options();
-                try { launch = resolveTaskOptions(parsed.data, policy, undefined, defaultAgent, catalog); }
+                try { launch = resolveTaskOptions(parsed.data, policyForCodeBuddyApproval(policy, grant?.codebuddyLaunch), grant?.options, defaultAgent, catalog); }
                 catch (error) { if (error instanceof OptionsDenied) return { version: 1, errorCode: 'OPTION_DENIED' }; throw error; }
             } else if (Object.values(parsed.data).some(v => v !== undefined)) return { version: 1, errorCode: 'OPTION_DENIED' };
             // Fixed key order: idempotency is stable regardless of caller JSON order.

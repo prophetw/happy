@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { hash } from '../journal';
 import { canonicalBody, serviceClientFingerprint } from './auth';
 import { ApiError, checkBoundProjects, checkScopeProjects, scopeSchema, serviceScopeSchema, MAX_SERVICE_GRANT_MS, type Connection, type Registration, type ServiceClientRegistration, type Scope, type WorkerRegistration } from './schema';
-import { validateGrantOptions } from './options';
+import { policyForCodeBuddyApproval, validateGrantOptions } from './options';
 import { MetadataStore } from './store';
 
 export type GrantScopeEdit = { projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[] };
 export type GrantEdit = {
     name?: string; expiresAt?: number; methods?: Scope['methods']; sessionIDs?: string[];
     options?: Connection['options']; scope?: GrantScopeEdit;
+    codebuddyLaunch?: Partial<NonNullable<Connection['codebuddyLaunch']>> & { updateAgentLimit?: true };
 };
 
 export class Grants {
@@ -28,6 +29,8 @@ export class Grants {
         const projects = checkScopeProjects(scope, worker, now);
         // A grant can only narrow the worker's owner-configured launch allowlist.
         if (!validateGrantOptions(scope.options, worker.launchOptions)) throw new ApiError('SCOPE_DENIED', 403);
+        // Pairing clients predate dynamic per-connection model consent. Only the owner edit accepts it.
+        if (scope.options?.agents.some(row => row.modelSource)) throw new ApiError('SCOPE_DENIED', 403);
         const binding = 'projectIDs' in scope ? { projects: projects.map(p => ({ id: p.id, directory: p.directory })) } : { projectDirectory: projects[0].directory };
         const workerFingerprint = hash(worker.publicKey);
         const externalIdentity = 'externalIdentity' in client ? client.externalIdentity : undefined;
@@ -106,6 +109,27 @@ export class Grants {
         if (update.methods !== undefined) c.methods = [...update.methods];
         if (update.sessionIDs !== undefined) c.sessionIDs = [...update.sessionIDs];
         if (update.options !== undefined) c.options = update.options;
+        if (update.codebuddyLaunch !== undefined) {
+            const { updateAgentLimit, ...changes } = update.codebuddyLaunch;
+            const approval = { machineModels: false, bypassPermissions: false, ...c.codebuddyLaunch, ...changes };
+            const { machineModels, bypassPermissions } = approval;
+            if (machineModels || bypassPermissions) {
+                if (!worker.launchOptions?.allowCodeBuddyApproval || !worker.launchOptions.agents.some(a => a.agent === 'codebuddy')
+                    || (c.options && !c.options.agents.some(a => a.agent === 'codebuddy'))) throw new ApiError('SCOPE_DENIED', 403);
+                c.codebuddyLaunch = approval;
+            } else delete c.codebuddyLaunch;
+            const limit = c.options?.agents.find(row => row.agent === 'codebuddy');
+            if (updateAgentLimit && limit) {
+                if (changes.machineModels !== undefined) {
+                    limit.models = [];
+                    if (changes.machineModels) limit.modelSource = 'machine'; else delete limit.modelSource;
+                }
+                if (changes.bypassPermissions !== undefined) {
+                    limit.permissionModes = limit.permissionModes.filter(mode => mode !== 'bypassPermissions');
+                    if (changes.bypassPermissions) limit.permissionModes.push('bypassPermissions');
+                }
+            }
+        }
         if (update.scope !== undefined) {
             const scope = update.scope;
             if ('projectID' in scope) {
@@ -123,7 +147,7 @@ export class Grants {
         }
         // Validate the resulting grant exactly the way execution does, then re-freeze the binding.
         const projects = checkScopeProjects(c, worker, now);
-        if (!validateGrantOptions(c.options, worker.launchOptions)) throw new ApiError('SCOPE_DENIED', 403);
+        if (!validateGrantOptions(c.options, policyForCodeBuddyApproval(worker.launchOptions, c.codebuddyLaunch))) throw new ApiError('SCOPE_DENIED', 403);
         if (c.scopeVersion === 2 || c.scopeVersion === 3) {
             if (projects.length !== c.projectIDs!.length || projects.some((p, i) => p.id !== c.projectIDs![i])) throw new ApiError('SCOPE_DENIED', 403);
             c.projects = projects.map(p => ({ id: p.id, directory: p.directory }));
@@ -147,7 +171,7 @@ export class Grants {
         try { checkBoundProjects(c, worker, this.now()); }
         catch (error) { if (error instanceof ApiError) this.invalidate(c, error.code); throw error; }
         // Owner allowlist shrinkage revokes grants that can no longer be honoured.
-        if (!validateGrantOptions(c.options, worker.launchOptions)) this.invalidate(c, 'SCOPE_DENIED');
+        if (!validateGrantOptions(c.options, policyForCodeBuddyApproval(worker.launchOptions, c.codebuddyLaunch))) this.invalidate(c, 'SCOPE_DENIED');
         return c;
     }
     checkMethod(c: Pick<Scope, 'methods'>, method: string) { if (!c.methods.includes(method as Scope['methods'][number])) throw new ApiError('SCOPE_DENIED', 403); }

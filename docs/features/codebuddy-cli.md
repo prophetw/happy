@@ -14,6 +14,14 @@ Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、失
 
 ## Happy 派活
 
+### 为已批准的 Dot 服务连接授权
+
+在 Happy **设置 → 助手连接**中打开该 Dot 使用的连接，核对连接 ID、机器和项目目录。在「本连接的 CodeBuddy 派工授权」中分别点击「授权 CodeBuddy 机器模型目录」和「授权 CodeBuddy Yolo（bypassPermissions）」。授权立即对这条连接生效，已交付的令牌继续有效。可分别关闭两项授权。若连接已有显式 CodeBuddy 模型白名单，页面会说明启用机器目录会替换该列表。
+
+管理接口为所有者认证的 `POST /happy-control/v1/connections/{id}/edit`，请求体可用 `{"codebuddyLaunch":{"machineModels":true,"bypassPermissions":true}}`。每项可以单独编辑。原有 `options.agents` 仍限制可用范围。有意替换其中 CodeBuddy 的对应字段时，在 `codebuddyLaunch` 内附加 `"updateAgentLimit":true`。只有已批准的服务连接可以这样更新。新连接先完成常规项目授权和批准，再原地启用。回读同一 ID 的 `/consent` 可核对授权，Dot 的 `happy_options` 返回实时有效范围。
+
+运维需在同一机器的 Control Worker 注册及本地 Worker 注册的 `launchOptions` 下设置 `"allowCodeBuddyApproval":true`，并在 `agents` 中登记 CodeBuddy。此设置允许所有者逐连接授权，旧连接继续使用原白名单。模型来自该账号原生 ACP 的模型选择器，当前模型独立记录在 `currentModel`。Dot 用户在消息上选择 **Yolo**，从 `codebuddy.launchOptions.models` 选择型号并传入创建参数 `options.model`。实际模型和权限可在创建的会话里核对。
+
 在现有 Worker 的 `launchOptions.agents` 中授权 `codebuddy`，并按连接授权的项目范围派活。`happy_options` 接收 `machineID`，`agents` 中的 CodeBuddy 条目列出机器与连接均允许的启动选项。`default` 模型沿用该机器的 CLI 配置。可以用 `options.model` 或 `options.permissionMode` 选择获准的创建覆盖值，Happy 通过 ACP 确认后报告会话就绪。省略推理档位时由 CLI 决定。使用授权中的 `projectID` 指定工作目录。
 
 `happy_options.data.codebuddy` 仅在得到 ACP 探测结果时出现，包含获准模型和探测会话的默认模型。每个模型的 `effortOptions` 与 `maxInputTokens` 来自 CLI 公布的模型元数据，后者是只读输入上限。`sessionEffort` 和 `contextWindow` 仅在探测会话选中的模型公布对应选择器时出现。Happy 创建接口当前没有 CodeBuddy 推理、上下文或自动压缩参数。`--autocompact` 由 CodeBuddy CLI 管理，表示自动压缩基准。缺少探测结果时，目录退回默认启动选项。 [CodeBuddy ACP](https://www.codebuddy.cn/docs/cli/acp) · [CodeBuddy CLI 设置](https://www.codebuddy.cn/docs/cli/settings)

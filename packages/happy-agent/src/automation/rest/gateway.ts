@@ -261,9 +261,13 @@ export function createGateway(options: GatewayOptions) {
     });
     app.get<{ Params: { id: string } }>(`${base}/connections/:id/consent`, async req => {
         const c = grants.owner(identifier.parse(req.params.id), await owner(req));
+        const worker = options.workers.find(w => w.id === c.workerID && w.userID === c.userID);
         return ok({ ...grants.view(c), challenge: c.challenge,
+            ...(c.credentialMode === 'service-token-v1' && worker?.launchOptions?.allowCodeBuddyApproval
+                && worker.launchOptions.agents.some(a => a.agent === 'codebuddy') && (!c.options || c.options.agents.some(a => a.agent === 'codebuddy'))
+                ? { canEditCodeBuddyLaunch: true } : {}),
             ...(c.credentialMode === 'service-token-v1' && serviceTokens ? { serviceToken: serviceTokens.metadata(c.id) } : {}),
-            workerName: options.workers.find(w => w.id === c.workerID)?.name,
+            workerName: worker?.name,
             disclosure: '控制组件可见批准范围内的指令与结果；Happy 账号密钥留在用户机器。撤权不自动停止已运行任务。' });
     });
     app.post<{ Params: { id: string } }>(`${base}/connections/:id/approve`, async req => {
@@ -302,7 +306,8 @@ export function createGateway(options: GatewayOptions) {
             if (body.projectIDs !== undefined || body.projects !== undefined || body.selectionID !== undefined) throw new ApiError('INVALID_REQUEST');
             scope = { projectID: body.projectID };
         } else if (body.projectIDs !== undefined || body.projects !== undefined || body.selectionID !== undefined) throw new ApiError('INVALID_REQUEST');
-        const updated = grants.edit(id, userID, { name: body.name, expiresAt, methods: body.methods, sessionIDs: body.sessionIDs, options: body.options, scope });
+        const updated = grants.edit(id, userID, { name: body.name, expiresAt, methods: body.methods, sessionIDs: body.sessionIDs,
+            options: body.options, codebuddyLaunch: body.codebuddyLaunch, scope });
         if (expiresAt !== undefined) serviceTokens?.syncExpiry(id, updated.expiresAt);
         return ok(updated);
     });

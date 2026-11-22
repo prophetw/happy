@@ -9,7 +9,7 @@ export { signedHeaders, happyOwnerVerifier } from './auth';
 export type { Identity, ProofIdentity } from './auth';
 export type { Connection, Registration, WorkerRegistration, ServiceClientRegistration, ServiceTokensConfig } from './schema';
 export { taskOptionsSchema, connectionOptionsSchema, launchOptionsPolicySchema, resolveTaskOptions, filterCatalogForGrant, OptionsDenied } from './options';
-export { codeBuddyOptionsDetailsSchema, type CodeBuddyOptionsDetails } from './options';
+export { codeBuddyOptionsDetailsSchema, policyForCodeBuddyApproval, type CodeBuddyOptionsDetails } from './options';
 export type { LaunchOptionsPolicy, ConnectionOptions, TaskOptions, OptionCatalogEntry, ResolvedTaskOptions } from './options';
 export { createControlMcp, connectControlStdio, callControlTool, startTask, toolContracts } from './mcp';
 export { createDaemonTransport } from './daemonTransport';

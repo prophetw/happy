@@ -35,7 +35,9 @@ try{
   if(req.url==='/favicon.ico'){res.writeHead(204);res.end();return;}
   res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{margin:0;height:100%;font-family:system-ui}</style><div id="root"></div><script src="/bundle.js"></script></html>');
  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
- rig=await fixtureRig({origin,workerIntervalMs:100,multipleProjects:true,serviceTokens:{clients:[{id:'fixture_backend',userID:'userA',name:'Fixture 合作方后端',generation:'fixture_v1'}]}});await rig.startWorker();
+ rig=await fixtureRig({origin,workerIntervalMs:100,multipleProjects:true,launchOptions:{version:1,allowCodeBuddyApproval:true,
+  agents:[{agent:'codex',models:[],permissionModes:[]},{agent:'codebuddy',models:[],permissionModes:[]}]},
+  serviceTokens:{clients:[{id:'fixture_backend',userID:'userA',name:'Fixture 合作方后端',generation:'fixture_v1'}]}});await rig.startWorker();
  browser=await chromium.launch({headless:true});
  for(const profile of [{name:'desktop',width:1440,height:1000},{name:'mobile',width:390,height:844}]){
   const context=await browser.newContext({viewport:{width:profile.width,height:profile.height},locale:'zh-CN',serviceWorkers:'block'});const page=await context.newPage();
@@ -57,6 +59,13 @@ try{
   assert.deepEqual(rig.gateway.grants.get(id).projectIDs,['projectA','projectB']);assert.equal(rig.gateway.grants.get(id).scopeVersion,2);
   await page.getByText(rig.project,{exact:true}).waitFor();await page.getByText(rig.projectB,{exact:true}).waitFor();await page.getByText('内容团队后端',{exact:true}).first().waitFor();
   await page.getByRole('button',{name:'确认批准以上权限',exact:true}).click();const issue=page.getByRole('button',{name:'生成服务访问令牌（仅交付一次）',exact:true});await issue.waitFor();
+  const originalGrant=rig.gateway.grants.get(id);
+  await page.getByRole('button',{name:'授权 CodeBuddy 机器模型目录',exact:true}).click();
+  await page.getByRole('button',{name:'关闭 CodeBuddy 机器模型目录授权',exact:true}).waitFor();
+  await page.getByRole('button',{name:'授权 CodeBuddy Yolo（bypassPermissions）',exact:true}).click();
+  await page.getByRole('button',{name:'关闭 CodeBuddy Yolo 授权',exact:true}).waitFor();
+  assert.deepEqual(rig.gateway.grants.get(id),{...originalGrant,codebuddyLaunch:{machineModels:true,bypassPermissions:true}});
+  checks.push(profile.name+':owner-edits-only-codebuddy');
   assert.equal(rig.gateway.store.list('service-token:').length,profile.name==='desktop'?0:1);await issue.click();
   const input=page.getByLabel('一次性服务访问令牌',{exact:true});await input.waitFor();assert.equal(await input.getAttribute('type'),'password');const token=await input.inputValue();
   assert.equal(await page.evaluate(value=>JSON.stringify(localStorage).includes(value),token),false);

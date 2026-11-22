@@ -123,6 +123,24 @@ export default function AutomationConnections() {
         });
         return () => listener.remove();
     }, [load]);
+    const codeBuddyLimit = consent?.options?.agents.find(row => row.agent === 'codebuddy');
+    const machineModels = !!consent?.codebuddyLaunch?.machineModels && (!codeBuddyLimit || codeBuddyLimit.modelSource === 'machine');
+    const bypass = !!consent?.codebuddyLaunch?.bypassPermissions && (!codeBuddyLimit || codeBuddyLimit.permissionModes.includes('bypassPermissions'));
+    const changeCodeBuddy = async (field: 'machineModels' | 'bypassPermissions', enabled: boolean) => {
+        if (!consent?.canEditCodeBuddyLaunch || busy || displayState(consent, Date.now()) !== 'approved') return;
+        const version = ++operation.current;
+        setBusy(true); setError('');
+        try {
+            await api.edit(consent.id, { codebuddyLaunch: { [field]: enabled, ...(codeBuddyLimit ? { updateAgentLimit: true } : {}) } });
+            const next = await api.consent(consent.id);
+            if (operation.current === version) setConsent(next);
+        } catch {
+            if (operation.current === version) {
+                setConsent(null);
+                setError('请重新审查这条连接，核对 CodeBuddy 授权的保存结果。');
+            }
+        } finally { if (operation.current === version) setBusy(false); }
+    };
     const mutate = async (approve: boolean) => {
         if (!consent || busy || (approve && (unknownMutation || displayState(consent, Date.now()) !== 'pending'))) return;
         const version = ++operation.current, current = () => operation.current === version;
@@ -265,7 +283,7 @@ export default function AutomationConnections() {
                             </View>)}
                             <Detail label="可访问的会话" value={consent.sessionIDs.length ? `本连接新建的专用会话，以及以下既有会话：${consent.sessionIDs.join(', ')}` : '仅本连接新建的专用会话；不含任何既有会话'} />
                             {!!consent.options?.agents.length && <Detail label="允许的启动选项（默认启动始终可用）" value={consent.options.agents.map(a =>
-                                `${a.agent}：模型 [${a.models.length ? a.models.join(', ') : '仅默认'}]；权限模式 [${a.permissionModes.length ? a.permissionModes.join(', ') : '仅默认'}]`).join('\n')} />}
+                                `${a.agent}：模型 [${a.modelSource === 'machine' ? '机器目录' : a.models.length ? a.models.join(', ') : '仅默认'}]；权限模式 [${a.permissionModes.length ? a.permissionModes.join(', ') : '仅默认'}]`).join('\n')} />}
                             <Detail label="授权到期" value={formatTime(consent.expiresAt)} />
                             {consent.credentialMode === 'service-token-v1' && <Detail label="令牌最近使用" value={consent.serviceToken?.lastUsedAt !== undefined ? `${formatTime(consent.serviceToken.lastUsedAt)} · ${lastUsedLabel(consent.serviceToken.lastUsedAt, now)}` : '尚未使用（按令牌认证统计）'} />}
                             {state === 'pending' && <Detail label="请在此时间前确认" value={formatTime(consent.pendingUntil)} />}
@@ -292,6 +310,12 @@ export default function AutomationConnections() {
                             {showQR && <View style={styles.qr}><QRCode data={automationConnectionQR(consent.id)} size={160} /><Text style={styles.caption}>仅适用于支持助手连接的新版 Happy；当前网页可直接审查并批准。</Text></View>}
                         </>}
                         {(state === 'approved' || unknownMutation) && !deletionUnknown && <Action destructive label="撤销连接" disabled={busy} onPress={() => void mutate(false)} />}
+                        {state === 'approved' && !unknownMutation && !deletionUnknown && consent.canEditCodeBuddyLaunch && <>
+                            <Text accessibilityRole="header" style={styles.sectionTitle}>本连接的 CodeBuddy 派工授权</Text>
+                            {codeBuddyLimit && <Text style={styles.description}>启用机器目录会替换本连接的 CodeBuddy 模型白名单。关闭后仅允许默认模型。</Text>}
+                            <Action label={machineModels ? '关闭 CodeBuddy 机器模型目录授权' : '授权 CodeBuddy 机器模型目录'} disabled={busy} onPress={() => void changeCodeBuddy('machineModels', !machineModels)} />
+                            <Action label={bypass ? '关闭 CodeBuddy Yolo 授权' : '授权 CodeBuddy Yolo（bypassPermissions）'} disabled={busy} onPress={() => void changeCodeBuddy('bypassPermissions', !bypass)} />
+                        </>}
                         {state === 'approved' && !unknownMutation && !deletionUnknown && consent.credentialMode === 'service-token-v1' && <ServiceTokenDelivery key={consent.id} consent={consent} api={api} disabled={busy} />}
                         {!deletionUnknown && consent.credentialMode === 'service-token-v1' && <Action label={state === 'approved' ? '续期 / 编辑授权（令牌不变）' : t('settings.automation.editReauthorize')} disabled={busy} onPress={() => router.push(`/settings/automation-service?from=${encodeURIComponent(consent.id)}`)} />}
                         {!deletionUnknown && <Action destructive label={t('settings.automation.deleteRecord')} disabled={busy} onPress={() => void remove()} />}

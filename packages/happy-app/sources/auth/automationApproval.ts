@@ -9,7 +9,9 @@ export interface AutomationConsent {
     externalIdentity?: { issuer: string; subject: string; tenant: string; oauthClientID: string };
     credentialMode?: 'service-token-v1';
     /** Owner-approved launch option subset (v1.5.0). Absent = worker allowlist/defaults only. */
-    options?: { agents: { agent: string; models: string[]; permissionModes: string[] }[] };
+    options?: { agents: { agent: string; models: string[]; modelSource?: 'machine'; permissionModes: string[] }[] };
+    canEditCodeBuddyLaunch?: boolean;
+    codebuddyLaunch?: { machineModels: boolean; bypassPermissions: boolean };
     serviceToken?: { issued: boolean; issuedAt?: number; expiresAt?: number; lastUsedAt?: number };
     state: string; digest: string; challenge: string; disclosure: string;
 }
@@ -25,6 +27,7 @@ export type ServiceConnectionRequest = {
 } & ({ expiresInMs: number; expiresAt?: never } | { expiresAt: number; expiresInMs?: never })
   & ({ projectID: string } | { scopeVersion: 2; projectIDs: string[] } | { scopeVersion: 3; projectIDs: string[]; projects: { id: string; directory: string }[]; selectionID: string });
 export type ServiceConnectionEditRequest = {
+    codebuddyLaunch?: Partial<NonNullable<AutomationConsent['codebuddyLaunch']>> & { updateAgentLimit?: true };
     /** All fields optional; at least one required. Same worker/machine/client as the original grant. */
     name?: string; expiresInMs?: number; methods?: string[]; sessionIDs?: string[];
     options?: NonNullable<AutomationConsent['options']>;

@@ -3,7 +3,7 @@ import { posix } from 'node:path';
 import { hash } from '../journal';
 import { methods } from '../control';
 import { executionSchema } from './execution';
-import { taskOptionsSchema, connectionOptionsSchema, launchOptionsPolicySchema } from './options';
+import { taskOptionsSchema, connectionOptionsSchema, launchOptionsPolicySchema, codeBuddyLaunchApprovalSchema, type CodeBuddyLaunchApproval } from './options';
 
 export const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const method = z.enum(methods);
@@ -45,6 +45,8 @@ export const connectionLabelSchema = z.string().trim().min(1).max(80);
 export const connectionLabelUpdateSchema = z.object({ name: z.string().trim().max(80) }).strict();
 /** In-place owner renewal/scope edit of an approved service grant. The delivered bearer stays valid. */
 export const connectionEditSchema = z.object({
+    codebuddyLaunch: codeBuddyLaunchApprovalSchema.partial().extend({ updateAgentLimit: z.literal(true).optional() })
+        .refine(value => value.machineModels !== undefined || value.bypassPermissions !== undefined).optional(),
     name: z.string().trim().max(80).optional(),
     expiresInMs: z.number().int().positive().optional(),
     methods: z.array(method).min(1).max(16).refine(a => new Set(a).size === a.length).optional(),
@@ -75,6 +77,8 @@ export type WorkerRegistration = Registration & {
     projectConcurrencyOverrides?: Record<string, number>;
 };
 export type Connection = Omit<Scope, 'projectID'> & {
+    /** Explicit owner edit of an approved service grant. Never accepted from a pairing request. */
+    codebuddyLaunch?: CodeBuddyLaunchApproval;
     projectID?: string; projectDirectory?: string;
     scopeVersion?: 2 | 3; projectIDs?: string[]; projects?: { id: string; directory: string }[];
     id: string; clientID: string; userID: string; clientName: string; clientFingerprint: string; workerFingerprint: string;
