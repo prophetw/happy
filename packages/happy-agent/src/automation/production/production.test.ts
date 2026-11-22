@@ -16,6 +16,7 @@ import { prepareHost } from './host';
 import { mountHttpMcp } from './httpMcp';
 import { oauthVerifier, type OAuthConfig } from './oauth';
 import { ProofClient } from '../rest/client';
+import { launchOptionsPolicySchema, type ConnectionOptions } from '../rest/options';
 import { loadControlSkills } from '../rest/skills';
 import { toolContracts } from '../rest/mcp';
 import { MetadataStore } from '../rest/store';
@@ -57,9 +58,9 @@ async function serviceRig(clock?: () => number) {
     const r = await module.fixtureRig({ ...(clock ? { clock } : {}), serviceTokens: { clients: [serviceClient] } });
     cleanup.push(() => r.close()); return r;
 }
-async function serviceGrant(r: any) {
+async function serviceGrant(r: any, scope: { methods?: string[]; options?: ConnectionOptions } = {}) {
     const created = await r.ownerRequest('/service-connections', 'POST', { clientID: serviceClient.id, workerID: 'worker', machineID: 'machineA', projectID: 'projectA',
-        methods: ['machines.list'], sessionIDs: [], expiresAt: r.gatewayOptions.now() + 120000 });
+        methods: ['machines.list'], sessionIDs: [], expiresAt: r.gatewayOptions.now() + 120000, ...scope });
     const id = created.body.data.id;
     const consent = await r.ownerRequest(`/connections/${id}/consent`);
     await r.ownerRequest(`/connections/${id}/approve`, 'POST', { digest: consent.body.data.digest, challenge: consent.body.data.challenge, credentialMode: 'service-token-v1' });
@@ -215,6 +216,66 @@ describe('OAuth resource adaptation without Happy account delegation', () => {
 });
 
 describe('service-token HTTP MCP with the existing REST grant boundary', () => {
+    it('shares the machine CodeBuddy catalog across inherited grants and retains explicit limits', async () => {
+        const policy = launchOptionsPolicySchema.parse({ version: 1, allowCodeBuddyApproval: true,
+            agents: [{ agent: 'codebuddy', models: [], permissionModes: [] }] });
+        const modes = ['default', 'bypassPermissions', 'fullAccess'];
+        let nativeModels = ['model-a', 'model-b'];
+        const { fixtureRig } = await import(resolve('examples/rest-fixture.ts'));
+        const r = await fixtureRig({ serviceTokens: { clients: [serviceClient] }, launchOptions: policy, workerIntervalMs: 5,
+            catalog: () => [{ agent: 'codebuddy', models: ['default', ...nativeModels], permissionModes: modes, efforts: [],
+                defaultModel: 'default', defaultPermissionMode: 'default', defaultEffort: '',
+                codebuddy: { currentModel: nativeModels[0], models: nativeModels.map(model => ({ model })) } }] });
+        cleanup.push(() => r.close());
+        const scope = { methods: ['options.list', 'tasks.create', 'requests.get'] };
+        const existing = await serviceGrant(r, scope);
+        const limited = await serviceGrant(r, { ...scope, options: { agents: [{ agent: 'codebuddy', models: [], permissionModes: [] }] } });
+        const mcp = await serviceMcp(r);
+        const oldClient = await mcp.sdk(existing.token), limitedClient = await mcp.sdk(limited.token);
+        const options = async (client: Client) => result(await client.callTool({ name: 'happy_options', arguments: { machineID: 'machineA' } })).data;
+        await r.startWorker();
+        expect((await options(oldClient)).agents[0].models).toEqual(['default']);
+
+        const machine = launchOptionsPolicySchema.parse(JSON.parse(readFileSync(
+            new URL('../../../../../deploy/automation/site-99-55/dynamic-model-catalog.fragment.json.example', import.meta.url), 'utf8')));
+        policy.agents = machine.agents;
+        delete policy.allowCodeBuddyApproval;
+        const clients = [oldClient, await mcp.sdk((await serviceGrant(r, scope)).token), await mcp.sdk((await serviceGrant(r, scope)).token)];
+        const expectShared = async () => {
+            for (const client of clients) {
+                const view = await options(client);
+                expect(view.defaultAgent).toBe('codex');
+                expect(view.agents.find((a: {agent: string}) => a.agent === 'codebuddy')).toMatchObject({
+                    models: ['default', ...nativeModels], permissionModes: ['default', 'bypassPermissions'] });
+                expect(view.codebuddy.models.map((item: {model: string}) => item.model)).toEqual(nativeModels);
+            }
+        };
+        await expectShared();
+        nativeModels = ['model-b', 'new-model'];
+        await expectShared();
+        const create = async (client: Client, id: string, model: string, mode?: string, projectID = 'projectA') => result(await client.callTool({
+            name: 'happy_create_task', arguments: { requestID: id, machineID: 'machineA', projectID,
+                options: { agent: 'codebuddy', model, ...(mode ? { permissionMode: mode } : {}) } } }));
+        expect((await create(oldClient, 'native', 'new-model', 'bypassPermissions')).data.state).toBe('confirmed');
+        expect((await create(oldClient, 'native', 'new-model', 'bypassPermissions')).data.state).toBe('confirmed');
+        expect((await create(clients[1], 'ambient', 'model-b')).data.state).toBe('confirmed');
+        expect(r.launches.map((launch: {options: unknown}) => launch.options)).toEqual([
+            { agent: 'codebuddy', model: 'new-model', permissionMode: 'bypassPermissions', effort: '' },
+            { agent: 'codebuddy', model: 'model-b', permissionMode: 'default', effort: '' },
+        ]);
+        expect((await create(oldClient, 'retired', 'model-a')).error.code).toBe('OPTION_DENIED');
+        expect((await options(limitedClient)).agents[0]).toMatchObject({ models: ['default'], permissionModes: ['default'] });
+        expect((await create(limitedClient, 'outside-model-limit', 'new-model')).error.code).toBe('OPTION_DENIED');
+        const deniedMode = result(await limitedClient.callTool({ name: 'happy_create_task', arguments: { machineID: 'machineA',
+            projectID: 'projectA', requestID: 'outside-mode-limit', options: { agent: 'codebuddy', permissionMode: 'bypassPermissions' } } }));
+        expect(deniedMode.error.code).toBe('OPTION_DENIED');
+        modes.splice(modes.indexOf('bypassPermissions'), 1);
+        expect((await options(oldClient)).agents[0].permissionModes).toEqual(['default']);
+        expect((await create(oldClient, 'removed-native-mode', 'new-model', 'bypassPermissions')).error.code).toBe('OPTION_DENIED');
+        expect((await create(clients[2], 'other-project', 'new-model', undefined, 'other')).error.code).toBe('SCOPE_DENIED');
+        expect((await r.ownerRequest('/connections/' + existing.id + '/consent', 'GET', undefined, 'B')).status).toBe(404);
+    }, 25000);
+
     it('discovers projects and fixed tools without OAuth, rejects widening and revokes subsequent requests', async () => {
         const r = await serviceRig(), grant = await serviceGrant(r), m = await serviceMcp(r);
         await r.startWorker();

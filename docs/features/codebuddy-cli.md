@@ -14,13 +14,13 @@ Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、失
 
 ## Happy 派活
 
-### 为已批准的 Dot 服务连接授权
+### 同一机器上的 Dot 共用 CodeBuddy 目录
 
-在 Happy **设置 → 助手连接**中打开该 Dot 使用的连接，核对连接 ID、机器和项目目录。在「本连接的 CodeBuddy 派工授权」中分别点击「授权 CodeBuddy 机器模型目录」和「授权 CodeBuddy Yolo（bypassPermissions）」。授权立即对这条连接生效，已交付的令牌继续有效。可分别关闭两项授权。若连接已有显式 CodeBuddy 模型白名单，页面会说明启用机器目录会替换该列表。
+Dot 通过目标机器的 Worker 读取该机 CodeBuddy 登录账号的 ACP 目录。新连接及继承机器策略的已有连接在普通项目授权完成后即可使用。模型增删会在机器刷新目录后反映到 `happy_options` 和创建校验中。连接仍须有相应项目、方法和执行器授权。所有者明确保存的 `options.agents` 继续限制执行器、模型和权限，包括空列表对覆盖值的限制。
 
-管理接口为所有者认证的 `POST /happy-control/v1/connections/{id}/edit`，请求体可用 `{"codebuddyLaunch":{"machineModels":true,"bypassPermissions":true}}`。每项可以单独编辑。原有 `options.agents` 仍限制可用范围。有意替换其中 CodeBuddy 的对应字段时，在 `codebuddyLaunch` 内附加 `"updateAgentLimit":true`。只有已批准的服务连接可以这样更新。新连接先完成常规项目授权和批准，再原地启用。回读同一 ID 的 `/consent` 可核对授权，Dot 的 `happy_options` 返回实时有效范围。
+在同一机器的 Control 注册及本地 Worker 注册的 `launchOptions.agents` 中，已获准使用 CodeBuddy 的条目采用 `{"agent":"codebuddy","modelSource":"machine","models":[],"permissionModes":["default","bypassPermissions"]}`。可派发的权限是机器策略与原生能力的交集。用户在本轮消息选 **Yolo** 后，Dot 才将其映射为 `bypassPermissions`。普通 **Default** 消息沿用默认权限。其他执行器保留各自的策略。 [注册片段](../../deploy/automation/site-99-55/dynamic-model-catalog.fragment.json.example)
 
-运维需在同一机器的 Control Worker 注册及本地 Worker 注册的 `launchOptions` 下设置 `"allowCodeBuddyApproval":true`，并在 `agents` 中登记 CodeBuddy。此设置允许所有者逐连接授权，旧连接继续使用原白名单。模型来自该账号原生 ACP 的模型选择器，当前模型独立记录在 `currentModel`。Dot 用户在消息上选择 **Yolo**，从 `codebuddy.launchOptions.models` 选择型号并传入创建参数 `options.model`。实际模型和权限可在创建的会话里核对。
+从旧的逐连接开关切换时，只更新目标机器的 CodeBuddy 注册条目并移除 `launchOptions.allowCodeBuddyApproval`，保留其他条目和连接记录。旧的 `codebuddyLaunch` 是在机器基础上追加能力的记录。旧客户端关闭两项时会删除该记录，与从未设置的连接无法区分。这些连接继承机器策略。需要长期收窄的范围由显式的 `options.agents` 表达。只有保留旧开关策略的机器仍展示逐连接追加授权的按钮。
 
 在现有 Worker 的 `launchOptions.agents` 中授权 `codebuddy`，并按连接授权的项目范围派活。`happy_options` 接收 `machineID`，`agents` 中的 CodeBuddy 条目列出机器与连接均允许的启动选项。`default` 模型沿用该机器的 CLI 配置。可以用 `options.model` 或 `options.permissionMode` 选择获准的创建覆盖值，Happy 通过 ACP 确认后报告会话就绪。省略推理档位时由 CLI 决定。使用授权中的 `projectID` 指定工作目录。
 
