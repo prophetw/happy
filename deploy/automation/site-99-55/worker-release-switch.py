@@ -148,6 +148,11 @@ class Switch:
             before['registration']['directorySelection'] = {'roots': self.plan['authorizedDirectoryRoots']}
         elif self.plan.get('configChange') == 'dynamic-model-catalog':
             before['registration']['launchOptions'] = dynamic_model_policy(before['registration'].get('launchOptions'))
+        elif self.plan.get('configChange') == 'codebuddy-connection-approval':
+            policy = before['registration']['launchOptions']
+            if not any(row['agent'] == 'codebuddy' for row in policy['agents']):
+                raise RuntimeError('CODEBUDDY_NOT_REGISTERED')
+            policy['allowCodeBuddyApproval'] = True
         else:
             before['registration']['projects'] = self.plan['candidateProjects']
         if before != after: raise RuntimeError('UNEXPECTED_WORKER_CONFIG_DELTA')
