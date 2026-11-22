@@ -1,4 +1,4 @@
-export { AutomationControl, methods } from '../control';
+export { AutomationControl, methods, redact, redactValue } from '../control';
 export { Journal } from '../journal';
 export { createGateway } from './gateway';
 export type { GatewayOptions } from './gateway';

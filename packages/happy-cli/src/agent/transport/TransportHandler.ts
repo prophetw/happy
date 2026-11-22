@@ -69,6 +69,9 @@ export interface TransportHandler {
   /** Interpret native prompt failures, including errors carried in JSON-RPC results. */
   getPromptError?(response: PromptResponse): string | undefined;
 
+  /** A terminal partial result keeps completed output and its provider detail without rejecting the turn. */
+  getPromptPartialError?(response: PromptResponse): string | undefined;
+
   /**
    * Get initialization timeout in milliseconds.
    *

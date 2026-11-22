@@ -12,6 +12,8 @@
  * - Stream model output and events
  */
 
+import type { ToolCallUpdateMessage, ToolResultMessage } from './AgentMessage';
+
 /** Unique identifier for an agent session */
 export type SessionId = string;
 
@@ -24,9 +26,10 @@ export type ToolCallId = string;
  */
 export type AgentMessage =
   | { type: 'model-output'; textDelta?: string; fullText?: string }
-  | { type: 'status'; status: 'starting' | 'running' | 'idle' | 'stopped' | 'error'; detail?: string }
+  | { type: 'status'; status: 'starting' | 'running' | 'idle' | 'stopped' | 'error' | 'partial'; detail?: string }
   | { type: 'tool-call'; toolName: string; args: Record<string, unknown>; callId: ToolCallId }
-  | { type: 'tool-result'; toolName: string; result: unknown; callId: ToolCallId }
+  | ToolCallUpdateMessage
+  | ToolResultMessage
   | { type: 'permission-request'; id: string; reason: string; payload: unknown }
   | { type: 'permission-response'; id: string; approved: boolean }
   | { type: 'fs-edit'; description: string; diff?: string; path?: string }

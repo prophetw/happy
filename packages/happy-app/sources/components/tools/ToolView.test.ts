@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { ToolCall } from '@/sync/typesMessage';
 
 const settings = vi.hoisted(() => ({ compact: false, platform: 'ios', width: 390 }));
+const router = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('react-native', async () => {
     const React = await import('react');
     const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -23,7 +24,7 @@ vi.mock('react-native-unistyles', async () => {
     };
 });
 vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Octicons: () => null }));
-vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('expo-router', () => ({ useRouter: () => router }));
 vi.mock('@/sync/storage', () => ({ useSetting: () => settings.compact, useLocalSetting: () => false }));
 vi.mock('@/hooks/useElapsedTime', () => ({ useElapsedTime: () => 0 }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
@@ -107,6 +108,7 @@ afterEach(() => {
     settings.compact = false;
     settings.platform = 'ios';
     settings.width = 390;
+    router.push.mockClear();
 });
 
 describe('tool rendering on mobile and web', () => {
@@ -164,6 +166,25 @@ describe('tool rendering on mobile and web', () => {
         }
     });
 
+    it('shows a search query before its scope on the compact row', () => {
+        const call = { ...tool('Grep', { pattern: 'fixture-query', path: '/repo' }),
+            title: 'Grep', description: 'Running Grep' };
+        const row = render(React.createElement(ToolView, { tool: call, metadata: null }));
+        const text = JSON.stringify(row.toJSON());
+        expect(text).toContain('fixture-query');
+        expect(text).toContain('/repo');
+        expect(text.indexOf('fixture-query')).toBeLessThan(text.indexOf('/repo'));
+    });
+
+    it('opens CodeBuddy edits on the same tool message instead of the file route', () => {
+        const row = render(React.createElement(ToolView, {
+            tool: { ...tool('Edit', { file_path: '/repo/a.ts', old_string: 'before', new_string: 'after' }), title: 'Edit' },
+            metadata: { flavor: 'codebuddy', path: '/repo', host: 'machine' }, sessionId: 's1', messageId: 'm1',
+        }));
+        act(() => row.root.findByType('TouchableOpacity').props.onPress());
+        expect(router.push).toHaveBeenCalledWith('/session/s1/message/m1');
+    });
+
     it('preserves pending approval inputs and permission controls', () => {
         settings.compact = true;
         const pending = { ...tool('unknown', { path: '/sensitive' }), permission: { id: 'p1', status: 'pending' as const } };
@@ -209,6 +230,13 @@ describe('tool rendering on mobile and web', () => {
         expect(named.root.findByType('Text').children.join('')).toBe('Update component');
     });
 
+    it('uses the file target when a provider title only repeats the tool name', () => {
+        const header = render(React.createElement(ToolHeader, {
+            tool: { ...tool('Edit', { file_path: '/repo/src/a.ts' }), title: 'Edit' }, metadata: { path: '/repo', host: 'machine' },
+        }));
+        expect(header.root.findByType('Text').children.join('')).toBe('src/a.ts');
+    });
+
     it('uses the same readable labels for tools inside a task', () => {
         const children = [
             { ...tool('CodexBash', { command: 'git status' }), description: 'Running CodexBash' },
@@ -231,6 +259,13 @@ describe('tool rendering on mobile and web', () => {
         const full = render(React.createElement(ToolFullView, { tool: { ...tool(name, { command: 'echo hello' }), result: 'hello' } }));
         expect(full.root.findByType('CommandView').props.stdout).toBe('hello');
         expect(full.root.findByType('CommandView').props.syntaxHighlighting).toBe(true);
+    });
+
+    it('keeps a generic failure visible even when the provider omitted a result', () => {
+        const full = render(React.createElement(ToolFullView, {
+            tool: { ...tool('future_tool'), state: 'error', result: undefined },
+        }));
+        expect(JSON.stringify(full.toJSON())).toContain('tools.fullView.error');
     });
 
     it('renders shell input distinctly from its output and keeps failures visible', () => {

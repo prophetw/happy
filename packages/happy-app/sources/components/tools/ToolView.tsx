@@ -43,7 +43,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     // For file-editing tools, navigate to file route instead of message detail
     const fileEditTools = ['Edit', 'MultiEdit', 'Write'];
     const isFileEditTool = fileEditTools.includes(tool.name);
-    const filePath = isFileEditTool && typeof tool.input?.file_path === 'string' ? tool.input.file_path : null;
+    const filePath = isFileEditTool && props.metadata?.flavor !== 'codebuddy' && typeof tool.input?.file_path === 'string' ? tool.input.file_path : null;
 
     // Create default onPress handler for navigation
     const handlePress = React.useCallback(() => {

@@ -166,6 +166,8 @@ export type ReducerState = {
     localIds: Map<string, string>;
     messageIds: Map<string, string>; // originalId -> internalId
     messages: Map<string, ReducerMessage>;
+    /** Tool updates/results received before their start, kept across history pages. */
+    pendingToolEvents: Map<string, NormalizedMessage[]>;
     /**
      * Send outcomes whose message we have not matched yet. A receipt can
      * beat the server's echo of the message it names, and it can also name a
@@ -206,6 +208,7 @@ export function createReducer(): ReducerState {
         sidechainToolIdToMessageId: new Map(),
         permissions: new Map(),
         messages: new Map(),
+        pendingToolEvents: new Map(),
         localIds: new Map(),
         messageIds: new Map(),
         sidechains: new Map(),
@@ -1082,21 +1085,40 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     }
 
     //
-    // Phase 3: Process non-sidechain tool results
+    // Phase 3: Process non-sidechain tool updates and results
     //
 
-    for (let msg of nonSidechainMessages) {
+    const pendingToolEvents = Array.from(state.pendingToolEvents.values()).flat();
+    state.pendingToolEvents.clear();
+    const orderedToolEvents = [...pendingToolEvents, ...nonSidechainMessages]
+        .sort((a, b) => a.createdAt - b.createdAt);
+    for (let msg of orderedToolEvents) {
         if (msg.role === 'agent') {
             for (let c of msg.content) {
-                if (c.type === 'tool-result') {
-                    // Find the message containing this tool
-                    let messageId = state.toolIdToMessageId.get(c.tool_use_id);
-                    if (!messageId) {
+                if (c.type === 'tool-call-update') {
+                    const messageId = state.toolIdToMessageId.get(c.id);
+                    const tool = messageId ? state.messages.get(messageId)?.tool : undefined;
+                    if (!messageId || !tool) {
+                        const pending = state.pendingToolEvents.get(c.id) ?? [];
+                        if (!pending.some(existing => existing.id === msg.id)) pending.push(msg);
+                        state.pendingToolEvents.set(c.id, pending);
                         continue;
                     }
-
-                    let message = state.messages.get(messageId);
-                    if (!message || !message.tool) {
+                    if (c.name !== undefined) {
+                        tool.name = c.name;
+                        tool.title = c.name;
+                    }
+                    if (c.input !== undefined) tool.input = c.input;
+                    if (c.terminal !== undefined) tool.terminal = { ...tool.terminal, ...c.terminal };
+                    changed.add(messageId);
+                } else if (c.type === 'tool-result') {
+                    // Find the message containing this tool
+                    let messageId = state.toolIdToMessageId.get(c.tool_use_id);
+                    let message = messageId ? state.messages.get(messageId) : undefined;
+                    if (!messageId || !message?.tool) {
+                        const pending = state.pendingToolEvents.get(c.tool_use_id) ?? [];
+                        if (!pending.some(existing => existing.id === msg.id)) pending.push(msg);
+                        state.pendingToolEvents.set(c.tool_use_id, pending);
                         continue;
                     }
 
@@ -1554,6 +1576,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
 
         return {
             id: reducerMsg.id,
+            realID: reducerMsg.realID,
             localId: null,
             createdAt: reducerMsg.createdAt,
             kind: 'tool-call',

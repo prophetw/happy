@@ -10,7 +10,13 @@ Happy 可以在所选机器和目录中启动 CodeBuddy Code。机器上的 Happ
 
 启动参数为 `codebuddy --acp --permission-mode default`。发送首条消息前，Happy 通过 ACP 应用所选的模型和权限。默认模型沿用本机 CLI 的配置，默认权限为询问。探测目录期间无需发送消息，登录状态由本机 CodeBuddy 管理。 [CodeBuddy ACP 文档](https://www.codebuddy.cn/docs/cli/acp) · [CodeBuddy CLI 参考](https://www.codebuddy.cn/docs/cli/cli-reference)
 
-Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、失败或取消。登录过期的轮次会提示重新登录。停止当前轮次会发送 `session/cancel`。当 CLI 发布 `loadSession` 能力且原始会话仍存在时，**恢复会话**或 `happy resume <Happy session ID>` 会在原机器和目录中加载它。
+Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、部分完成、失败或取消。`end_turn + PARTIAL_SUCCESS` 记录为 `partial`，保留本轮文本、工具结果及脱敏错误详情，不按全成功验收，也不进入异常重跑；明确失败和认证错误保持失败。登录过期的轮次会提示重新登录。停止当前轮次会发送 `session/cancel`。当 CLI 发布 `loadSession` 能力且原始会话仍存在时，**恢复会话**或 `happy resume <Happy session ID>` 会在原机器和目录中加载它。
+
+## 工具状态与详情
+
+聊天中的 Bash 行显示单行命令；读取、写入和编辑显示目标文件，搜索显示查询和范围，MCP 与未知工具显示实际名称。点击同一行可以查看可用入参、输出、错误、运行状态或 diff。Happy 使用原始 ACP 调用 ID 关联参数、审批和结果，失败保留 `isError`，并发及迟到结果不会串到另一调用或另一轮。补发的结果更新原行，刷新会话后仍可查看，打开详情不会再次执行工具。入参和返回文本沿用 Happy 的脱敏规则。
+
+CodeBuddy 在参数增量中提供 `rawInput`，最终参数也可能出现在同一调用的第二条 `tool_call` 中。Bash 的 `rawOutput` 可以是合并文本。Happy 保留该文本，仅在 ACP 提供相应独立字段时展示 `stdout`、`stderr`、退出码和其他参数；非文本结构化内容（包括 ACP diff）也会保留。旧会话按已保存的字段显示。 [ACP 工具调用](https://agentclientprotocol.com/protocol/v1/tool-calls)
 
 ## Happy 派活
 
@@ -47,3 +53,5 @@ Dot 通过目标机器的 Worker 读取该机 CodeBuddy 登录账号的 ACP 目�
 HAPPY_CODEBUDDY_WEB_ORIGIN=http://127.0.0.1:8989 \
   node packages/happy-app/scripts/codebuddy-session.e2e.mjs
 ~~~
+
+在同一命令前加 `HAPPY_CODEBUDDY_NATIVE=1` 可用 PATH 中已登录的 CodeBuddy CLI 验证真实 Bash 调用。脚本在 Happy 会话中核对并批准指定的 `printf` 命令。夹具覆盖并发归属、分段输出、完成后补发和失败。两种验证都使用 Chromium，以 390 像素宽度检查工具行和详情，截图保存在 `.e2e-artifacts/`。

@@ -27,7 +27,7 @@ visit(storeSource);
 expect(adapters).toHaveLength(adapterNames.length);
 const syncSource = source('./sync.ts');
 const klass = syncSource.statements.find((node): node is ts.ClassDeclaration => ts.isClassDeclaration(node) && node.name?.text === 'Sync')!;
-const methodNames = ['fetchMessages', 'fetchInitialLatestPage', 'fetchForwardSince', 'applyFetchedMessages', 'loadOlderMessages', 'preloadLatestPage', 'fetchOlderMessagesInBackground'];
+const methodNames = ['fetchMessages', 'fetchInitialLatestPage', 'fetchForwardSince', 'applyFetchedMessages', 'loadOlderMessages', 'ensureSessionMessage', 'preloadLatestPage', 'fetchOlderMessagesInBackground'];
 const methods = klass.members.filter(node => node.name && methodNames.includes(node.name.getText(syncSource))).map(node => node.getText(syncSource));
 expect(methods).toHaveLength(methodNames.length);
 
@@ -35,6 +35,15 @@ function record(seq: number, visible = false) {
     const content = visible
         ? { role: 'user', content: { type: 'text', text: `synthetic-${seq}` } }
         : { role: 'agent', content: { type: 'acp', provider: 'codex', data: { type: 'token_count', total_tokens: seq } } };
+    RawRecordSchema.parse(content);
+    return { id: `m${seq}`, seq, localId: null, createdAt: seq, content };
+}
+function toolRecord(seq: number, id = 'target-message', ev: any = {
+    t: 'tool-call-start', call: 'target-call', name: 'Read', title: 'Read', description: '', args: {},
+}): any {
+    const content = { role: 'session', content: { type: 'session', data: {
+        id, time: seq, role: 'agent', turn: 'target-turn', ev,
+    } } };
     RawRecordSchema.parse(content);
     return { id: `m${seq}`, seq, localId: null, createdAt: seq, content };
 }
@@ -112,6 +121,53 @@ describe('history transport with production store adapters', () => {
         await h.sync.loadOlderMessages('session');
         expect(h.messages().messages).toHaveLength(2);
         expect(h.messages().hasMoreOlder).toBe(false);
+    });
+
+    it('loads only the older pages needed by a deep-linked message', async () => {
+        const h = setup([toolRecord(1), ...Array.from({ length: 249 }, (_, i) => record(i + 2, true))]);
+        await h.sync.fetchMessages('session');
+        expect(h.messages().messages.some((message: any) => message.realID === 'target-message')).toBe(false);
+        expect(await h.sync.ensureSessionMessage('session', 'target-message')).toBe(true);
+        expect(h.messages().messages.some((message: any) => message.realID === 'target-message')).toBe(true);
+        expect(h.messages().hasMoreOlder).toBe(false);
+        const calls = h.request.mock.calls.length;
+        expect(await h.sync.ensureSessionMessage('session', 'target-message')).toBe(true);
+        expect(h.request).toHaveBeenCalledTimes(calls);
+        const missing = setup(Array.from({ length: 102 }, (_, i) => record(i + 1, true)));
+        await missing.sync.fetchMessages('session');
+        expect(await missing.sync.ensureSessionMessage('session', 'missing')).toBe(false);
+        expect(missing.messages().hasMoreOlder).toBe(false);
+    });
+
+    it('replays a descending latest page in sequence order so late tool output stays newest', async () => {
+        const h = setup([
+            toolRecord(1),
+            toolRecord(2, 'first-output', { t: 'tool-call-update', call: 'target-call', terminal: { stdout: 'first\n' } }),
+            toolRecord(3, 'tool-end', { t: 'tool-call-end', call: 'target-call', result: 'done', isError: false }),
+            toolRecord(4, 'late-output', { t: 'tool-call-update', call: 'target-call', terminal: { stdout: 'first\nlate\n' } }),
+        ]);
+        await h.sync.fetchMessages('session');
+        const message = h.messages().messages.find((row: any) => row.realID === 'target-message');
+        expect(message).toMatchObject({ kind: 'tool-call', tool: {
+            state: 'completed', terminal: { stdout: 'first\nlate\n' },
+        } });
+    });
+
+    it('replays tool results received in a newer page after their older start arrives', async () => {
+        const h = setup([
+            toolRecord(1),
+            ...Array.from({ length: 100 }, (_, i) => record(i + 2, true)),
+            toolRecord(102, 'first-output', { t: 'tool-call-update', call: 'target-call', terminal: { stdout: 'first\n' } }),
+            toolRecord(103, 'tool-end', { t: 'tool-call-end', call: 'target-call', result: 'done', isError: false }),
+            toolRecord(104, 'late-output', { t: 'tool-call-update', call: 'target-call', terminal: { stdout: 'first\nlate\n' } }),
+        ]);
+        await h.sync.fetchMessages('session');
+        expect(h.messages().messages.some((message: any) => message.realID === 'target-message')).toBe(false);
+        expect(await h.sync.ensureSessionMessage('session', 'target-message')).toBe(true);
+        const message = h.messages().messages.find((row: any) => row.realID === 'target-message');
+        expect(message).toMatchObject({ kind: 'tool-call', tool: {
+            name: 'Read', state: 'completed', result: 'done', terminal: { stdout: 'first\nlate\n' },
+        } });
     });
 
     it('clears loading after 503, preserves the cursor and permits explicit retry', async () => {

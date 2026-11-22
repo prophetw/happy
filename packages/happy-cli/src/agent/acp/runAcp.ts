@@ -627,7 +627,7 @@ export async function runAcp(opts: {
   // process that died while a tool prompt was open — see the matching
   // call in claudeRemoteLauncher for the full rationale.
   permissionHandler.reset('Previous CLI process exited before responding');
-  const sessionManager = new AcpSessionManager(isCodeBuddy);
+  const sessionManager = new AcpSessionManager({ streamOutput: isCodeBuddy, nativeToolIds: isCodeBuddy });
   const messageQueue = new MessageQueue2<AcpSwitchMode>((mode) => hashObject(mode));
   let currentPermissionMode = opts.initialPermissionMode;
   let currentModel: string | null | undefined = opts.initialModel;
@@ -672,6 +672,7 @@ export async function runAcp(opts: {
   let abortController = new AbortController();
   let pendingTurn: PendingTurn | null = null;
   let errorReportedForCurrentTurn = false;
+  let partialTurn = false;
 
   const clearPendingTurn = (error?: Error) => {
     if (!pendingTurn) {
@@ -718,7 +719,12 @@ export async function runAcp(opts: {
         const formatted = formatEnvelopeForServerLog(opts.agentName, envelope);
         logAcp('muted', formatted.text);
       }
-      session.sendSessionProtocolMessage(envelope);
+      if (isCodeBuddy) {
+        // The reducer joins tool updates to their start record in arrival order.
+        session.sendSessionProtocolMessage(envelope, true);
+      } else {
+        session.sendSessionProtocolMessage(envelope);
+      }
       if (verbose) {
         logAcp('muted', `Incoming raw envelope for ${opts.agentName}: ${formatUnknownForConsole(envelope, ACP_RAW_PREVIEW_CHARS)}`);
       }
@@ -962,6 +968,7 @@ export async function runAcp(opts: {
     }
 
     if (msg.type === 'status') {
+      if (msg.status === 'partial') partialTurn = true;
       const suffix = msg.detail ? `: ${msg.detail}` : '';
       const statusLine = `Status: ${msg.status}${suffix}`;
       logAcp('muted', statusLine);
@@ -1162,6 +1169,7 @@ export async function runAcp(opts: {
       changeTitleInstructionSent = true;
 
       sendEnvelopes(sessionManager.startTurn());
+      partialTurn = false;
       if (isCodeBuddy) session.markUserMessageDelivered(batch.seq);
       const turnEnded = waitForTurnEnd();
       // The turn can be rejected (user cancel, backend error) while sendPrompt
@@ -1195,7 +1203,7 @@ export async function runAcp(opts: {
           await backend.sendPrompt(acpSessionId, promptToSend);
           await turnEnded;
         }
-        sendEnvelopes(sessionManager.endTurn('completed'));
+        sendEnvelopes(sessionManager.endTurn(partialTurn ? 'partial' : 'completed', partialTurn ? 'partialSuccess' : undefined));
         session.sendSessionEvent({ type: 'ready' });
         if (verbose) {
           logAcp('muted', `Outgoing prompt completion from ${opts.agentName}`);

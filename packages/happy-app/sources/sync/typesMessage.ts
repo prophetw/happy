@@ -1,4 +1,4 @@
-import { AgentEvent, SessionAuthor } from "./typesRaw";
+import { AgentEvent, SessionAuthor, TerminalToolOutput } from "./typesRaw";
 import { MessageMeta } from "./typesMessageMeta";
 
 /** Tokens and elapsed time behind a sampled model-request rate. */
@@ -28,6 +28,7 @@ export type ToolCall = {
     completedAt: number | null;
     description: string | null;
     result?: any;
+    terminal?: TerminalToolOutput;
     permission?: {
         id: string;
         status: 'pending' | 'approved' | 'denied' | 'canceled';
@@ -111,6 +112,8 @@ export type AgentTextMessage = {
 export type ToolCallMessage = {
     kind: 'tool-call';
     id: string;
+    /** Stable server/envelope id used by detail deep links across reloads. */
+    realID?: string | null;
     localId: string | null;
     createdAt: number;
     turn?: string;

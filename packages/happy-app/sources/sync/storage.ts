@@ -814,7 +814,7 @@ export const storage = create<StorageState>()((set, get) => {
                 }
                 if (didSessionCompleteTurn(oldSession, newSession) && newSession.lastTurnStatus !== 'cancelled'
                     && (!state.appIsActive || state.currentViewingSessionId !== session.id || !isWebTabActive())) {
-                    newSession.attentionKind = newSession.lastTurnStatus === 'failed' ? 'failed' : 'done';
+                    newSession.attentionKind = newSession.lastTurnStatus === 'failed' || newSession.lastTurnStatus === 'partial' ? 'failed' : 'done';
                     if (!unreadSessionIds.has(session.id)) {
                         unreadSessionIds = new Set(unreadSessionIds);
                         unreadSessionIds.add(session.id);
@@ -1838,7 +1838,9 @@ export function useSessionMessages(sessionId: string): {
 export function useMessage(sessionId: string, messageId: string): Message | null {
     return storage(useShallow((state) => {
         const session = state.sessionMessages[sessionId];
-        return session?.messagesMap[messageId] ?? null;
+        return session?.messagesMap[messageId]
+            ?? session?.messages.find(message => message.kind === 'tool-call' && message.realID === messageId)
+            ?? null;
     }));
 }
 

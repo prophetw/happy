@@ -33,8 +33,11 @@ export interface SessionUpdate {
   kind?: string | unknown;
   /** Human-readable tool title; some agents (e.g. dsh) put the real tool name here */
   title?: string | unknown;
+  name?: unknown;
+  _meta?: unknown;
   /** dsh passes the tool input as rawInput instead of content */
   rawInput?: unknown;
+  rawOutput?: unknown;
   content?: {
     text?: string;
     error?: string | { message?: string };
@@ -410,7 +413,8 @@ export function completeToolCall(
   toolCallId: string,
   toolKind: string | unknown,
   content: unknown,
-  ctx: HandlerContext
+  ctx: HandlerContext,
+  isError?: boolean,
 ): void {
   const startTime = ctx.toolCallStartTimes.get(toolCallId);
   const duration = formatDuration(startTime);
@@ -428,13 +432,14 @@ export function completeToolCall(
     ctx.toolCallTimeouts.delete(toolCallId);
   }
 
-  logger.debug(`[AcpBackend] ✅ Tool call COMPLETED: ${toolCallId} (${toolName}) - Duration: ${duration}. Active tool calls: ${ctx.activeToolCalls.size}`);
+  logger.debug(`[AcpBackend] ${isError ? '❌ Tool call FAILED' : '✅ Tool call COMPLETED'}: ${toolCallId} (${toolName}) - Duration: ${duration}. Active tool calls: ${ctx.activeToolCalls.size}`);
 
   ctx.emit({
     type: 'tool-result',
     toolName,
     result: content,
     callId: toolCallId,
+    ...(isError === undefined ? {} : { isError }),
   });
 
   // If no more active tool calls, schedule idle after a quiet period — the

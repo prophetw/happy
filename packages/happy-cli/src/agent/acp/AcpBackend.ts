@@ -116,6 +116,8 @@ import {
   handleThinkingUpdate,
   shouldSuppressIdleStatus,
 } from './sessionUpdateHandlers';
+import { CodeBuddyToolCalls, codeBuddyReportedToolName } from '@/codebuddy/toolCalls';
+import { redact, redactValue } from 'happy-agent/automation';
 
 /**
  * Extended RequestPermissionRequest with additional fields that may be present
@@ -360,9 +362,11 @@ export class AcpBackend implements AgentBackend {
 
   /** Transport handler for agent-specific behavior */
   private readonly transport: TransportHandler;
+  private readonly codeBuddyTools: CodeBuddyToolCalls | undefined;
 
   constructor(private options: AcpBackendOptions) {
     this.transport = options.transportHandler ?? new DefaultTransport(options.agentName);
+    this.codeBuddyTools = options.agentName === 'codebuddy' ? new CodeBuddyToolCalls() : undefined;
   }
 
   onMessage(handler: AgentMessageHandler): void {
@@ -600,6 +604,10 @@ export class AcpBackend implements AgentBackend {
             // If no toolCall, try to extract from params directly
             input = extendedParams.input || extendedParams.arguments || extendedParams.content || {};
           }
+          if (this.codeBuddyTools) {
+            toolName = codeBuddyReportedToolName(toolCall) ?? this.toolCallIdToNameMap.get(toolCallId) ?? toolName;
+            input = redactValue(input) as Record<string, unknown>;
+          }
           
           // If toolName is "other" or "Unknown tool", try to determine real tool name
           const context: ToolNameContext = {
@@ -662,12 +670,18 @@ export class AcpBackend implements AgentBackend {
                   ? options.find(item => item.kind === 'allow_always') ?? allowOnce
                   : result.decision === 'approved' ? allowOnce
                     : result.decision === 'denied' ? options.find(item => item.kind === 'reject_once') : undefined;
-                this.emit({
-                  type: 'tool-result',
-                  toolName,
-                  result: { status: option?.kind?.startsWith('allow_') ? 'approved' : 'denied', decision: result.decision },
-                  callId: permissionId,
-                });
+                // Approval is not an execution result. CodeBuddy sends that
+                // later under the same ID; denial is already terminal.
+                const approved = option?.kind?.startsWith('allow_') === true;
+                if (!this.codeBuddyTools || !approved) {
+                  this.emit({
+                    type: 'tool-result',
+                    toolName,
+                    result: { status: approved ? 'approved' : 'denied', decision: result.decision },
+                    callId: permissionId,
+                    ...(this.codeBuddyTools ? { isError: true } : {}),
+                  });
+                }
                 return { outcome: option?.optionId
                   ? { outcome: 'selected', optionId: option.optionId }
                   : { outcome: 'cancelled' } };
@@ -698,7 +712,7 @@ export class AcpBackend implements AgentBackend {
                 
                 // Emit tool-result with permissionId so UI can close the timer
                 // This is needed because tool_call_update comes with a different ID
-                this.emit({
+                if (!this.codeBuddyTools) this.emit({
                   type: 'tool-result',
                   toolName,
                   result: { status: 'approved', decision: result.decision },
@@ -713,12 +727,13 @@ export class AcpBackend implements AgentBackend {
                   optionId = cancelOption.optionId || 'cancel';
                 }
                 
-                // Emit tool-result for denied/aborted
+                // Denial is terminal; approval still waits for CodeBuddy's execution result.
                 this.emit({
                   type: 'tool-result',
                   toolName,
                   result: { status: 'denied', decision: result.decision },
                   callId: permissionId,
+                  ...(this.codeBuddyTools ? { isError: true } : {}),
                 });
               }
               
@@ -987,6 +1002,14 @@ export class AcpBackend implements AgentBackend {
 
     const sessionUpdateType = update.sessionUpdate;
     const updateType = sessionUpdateType as string | undefined;
+    if (this.codeBuddyTools && (updateType === 'tool_call' || updateType === 'tool_call_update')) {
+      // Accept trailing output for a known live call even after prompt completion.
+      // A resumed backend has no live calls and must not re-record loaded history.
+      if (this.waitingForResponse || (update.toolCallId && this.codeBuddyTools.has(update.toolCallId))) {
+        this.codeBuddyTools.handle(update as SessionUpdate, this.createHandlerContext());
+      }
+      return;
+    }
     // session/load replays provider history. Happy already owns its transcript
     // and only records text and tool activity from live prompts here.
     if (this.transport.getPromptError && !this.waitingForResponse &&
@@ -1142,6 +1165,10 @@ export class AcpBackend implements AgentBackend {
           this.emit({ type: 'status', status: 'stopped', detail: USER_CANCELLED_DETAIL });
           return;
         }
+      }
+      const partialDetail = this.transport.getPromptPartialError?.(response);
+      if (partialDetail) {
+        this.emit({ type: 'status', status: 'partial', detail: redact(partialDetail) });
       }
 
       if (this.transport.turnEndOnPromptResponse?.()) {

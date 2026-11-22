@@ -23,6 +23,44 @@ const update = (sessionUpdate) => write({ method: 'session/update', params: { se
 const chunk = (text) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
 const io = createInterface({ input: process.stdin });
 let pending;
+let toolPrompt;
+let lateOutput = false;
+const toolUpdate = (toolCallId, fields = {}) => update({ sessionUpdate: 'tool_call_update', toolCallId, ...fields });
+
+function bashCalls() {
+    const first = 'fixture-bash-a';
+    const second = 'fixture-bash-b';
+    const meta = { 'codebuddy.ai/toolName': 'Bash' };
+    const command = `printf '%s\\n' 'FIXTURE_LONG_COMMAND${'1234567890'.repeat(8)}'\nprintf '%s\\n' 'second line'`;
+    update({ sessionUpdate: 'tool_call', toolCallId: first, status: 'in_progress', kind: 'other', title: 'Bash', rawInput: {}, _meta: meta });
+    toolUpdate(first, { rawInput: { command: '' }, content: [{ type: 'content', content: { type: 'text', text: 'argument JSON fragment' } }], _meta: meta });
+    update({ sessionUpdate: 'tool_call', toolCallId: second, kind: 'execute', status: 'pending', title: 'Bash', rawInput: { command: 'false' }, _meta: meta });
+    update({ sessionUpdate: 'tool_call', toolCallId: first, kind: 'execute', status: 'pending', title: 'Fixture description',
+        rawInput: { command, cwd, description: 'Fixture probe' }, content: [{ type: 'content', content: { type: 'text', text: 'Fixture probe' } }],
+        _meta: { ...meta, 'codebuddy.ai/toolArgumentsComplete': true },
+    });
+    toolUpdate(first, { rawOutput: { stdout: 'FIXTURE_FIRST_OUTPUT\n' } });
+    toolUpdate(second, { status: 'failed', rawOutput: { stderr: 'FIXTURE_FAILURE_OUTPUT\n', exitCode: 7 } });
+}
+
+function nonBashCalls(prefix = 'fixture') {
+    const read = `${prefix}-read`;
+    const grep = `${prefix}-grep`;
+    const edit = `${prefix}-edit`;
+    const mcp = `${prefix}-mcp`;
+    const custom = `${prefix}-custom`;
+    const file = join(cwd, 'src/example.ts');
+    update({ sessionUpdate: 'tool_call', toolCallId: read, kind: 'read', title: 'Read', status: 'in_progress', rawInput: { file_path: join(cwd, 'README.md') }, _meta: { 'codebuddy.ai/toolName': 'Read' } });
+    toolUpdate(read, { status: 'completed', rawOutput: [{ type: 'text', text: 'FIXTURE_READ_OUTPUT' }] });
+    update({ sessionUpdate: 'tool_call', toolCallId: grep, kind: 'search', title: 'Grep', status: 'in_progress', rawInput: { pattern: 'fixture-query', path: cwd, include: '*.ts' }, _meta: { 'codebuddy.ai/toolName': 'Grep' } });
+    toolUpdate(grep, { status: 'completed', rawOutput: 'FIXTURE_GREP_OUTPUT' });
+    update({ sessionUpdate: 'tool_call', toolCallId: edit, kind: 'edit', title: 'Edit', status: 'in_progress', rawInput: { file_path: file, old_string: 'before fixture', new_string: 'after fixture' }, _meta: { 'codebuddy.ai/toolName': 'Edit' } });
+    toolUpdate(edit, { status: 'completed', content: [{ type: 'diff', path: file, oldText: 'before fixture', newText: 'after fixture' }] });
+    update({ sessionUpdate: 'tool_call', toolCallId: mcp, kind: 'other', title: 'mcp__fixture__lookup', status: 'in_progress', rawInput: { query: 'mcp-query', scope: 'workspace' }, _meta: { 'codebuddy.ai/toolName': 'mcp__fixture__lookup' } });
+    toolUpdate(mcp, { status: 'completed', _meta: { 'codebuddy.ai/rawResponse': { is_error: false, content: [{ type: 'text', text: 'FIXTURE_MCP_OUTPUT' }] } } });
+    update({ sessionUpdate: 'tool_call', toolCallId: custom, kind: 'other', title: 'CustomTool', status: 'in_progress', rawInput: { target: 'preview' }, _meta: { 'codebuddy.ai/toolName': 'CustomTool' } });
+    toolUpdate(custom, { status: 'failed', _meta: { 'codebuddy.ai/rawResponse': { is_error: true, error: 'FIXTURE_CUSTOM_FAILURE token=fixture123' } } });
+}
 
 observe('start', { args: process.argv.slice(2) });
 io.on('line', (line) => {
@@ -76,6 +114,17 @@ io.on('line', (line) => {
                     { optionId: 'deny-id', kind: 'reject_once', name: '拒绝' },
                     { optionId: 'allow-id', kind: 'allow_once', name: '允许' },
                 ] } });
+            } else if (text.includes('ACP_PARTIAL')) {
+                nonBashCalls('fixture-partial');
+                chunk('Partial content preserved');
+                reply(id, { stopReason: 'end_turn', _meta: {
+                    'codebuddy.ai/outcome': 'PARTIAL_SUCCESS',
+                    'codebuddy.ai/errorMessage': 'two reads finished; one tool failed; token=fixture123',
+                } });
+            } else if (text.includes('ACP_TOOLS')) {
+                toolPrompt = id;
+                bashCalls();
+                nonBashCalls();
             } else {
                 chunk('Fixture reply ' + state.prompts);
                 reply(id, { stopReason: 'end_turn' });
@@ -101,6 +150,19 @@ io.on('line', (line) => {
 // Give the browser time to prove that the first chunk is visible before
 // sending the native completion marker. The test releases it explicitly.
 const gate = setInterval(() => {
+    if (toolPrompt !== undefined && existsSync(process.env.HAPPY_CODEBUDDY_FIXTURE_LOG + '.tools-finish')) {
+        toolUpdate('fixture-bash-a', { status: 'completed', _meta: { 'codebuddy.ai/rawResponse': { exitCode: 0 } } });
+        chunk('Fixture tools finished');
+        reply(toolPrompt, { stopReason: 'end_turn' });
+        toolPrompt = undefined;
+        lateOutput = true;
+    }
+    if (lateOutput && existsSync(process.env.HAPPY_CODEBUDDY_FIXTURE_LOG + '.tools-late')) {
+        const fields = { rawOutput: { stdout: 'FIXTURE_FIRST_OUTPUT\nFIXTURE_LATE_OUTPUT\n' } };
+        toolUpdate('fixture-bash-a', fields);
+        toolUpdate('fixture-bash-a', fields);
+        lateOutput = false;
+    }
     if (pending === undefined || !existsSync(process.env.HAPPY_CODEBUDDY_FIXTURE_LOG + '.finish')) return;
     if (state.prompts !== 1) return;
     chunk(' reply');

@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "November 22 - Clearer CodeBuddy tools",
+      "summary": "Requires the updated Happy CLI.",
+      "markdown": "- **See what each tool used** — file targets, search terms, MCP names, and unknown tool names appear directly in the conversation.\n- **Inspect work in one place** — open a tool to review its inputs, output, errors, status, or diff, including after a refresh.\n- **Keep partial results honest** — completed text stays visible while failed tools and partial turn details remain clearly identified.\n- Community Credits: [@prophetw](https://github.com/prophetw)."
+    },
+    {
       "title": "November 21 - CodeBuddy sessions",
       "summary": "Requires the updated Happy CLI and a signed-in CodeBuddy CLI on the selected machine.",
       "markdown": "- **Start a CodeBuddy session** by choosing CodeBuddy in Happy's new session screen.\n- **Choose a CodeBuddy model and permission mode** before sending your first message.\n- Thanks to [@prophetw](https://github.com/prophetw)."
@@ -186,5 +191,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "November 21 - CodeBuddy sessions"
+  "latestTitle": "November 22 - Clearer CodeBuddy tools"
 }

@@ -8,6 +8,40 @@ function mapMany(mapper: AcpSessionManager, messages: AgentMessage[]) {
 }
 
 describe('AcpSessionManager turn lifecycle', () => {
+  it('keeps native tool updates on the originating turn after a new prompt starts', () => {
+    const mapper = new AcpSessionManager({ nativeToolIds: true });
+    const [firstTurn] = mapper.startTurn();
+    const [started] = mapper.mapMessage({ type: 'tool-call', toolName: 'Bash', callId: 'codebuddy-call', args: {} });
+    expect(started.ev).toMatchObject({ t: 'tool-call-start', call: 'codebuddy-call' });
+    mapper.endTurn('completed');
+    mapper.startTurn();
+    expect(mapper.mapMessage({ type: 'tool-call-update', callId: 'codebuddy-call', terminal: { output: 'late' } })[0]).toMatchObject({
+      turn: firstTurn.turn, ev: { t: 'tool-call-update', call: 'codebuddy-call', terminal: { output: 'late' } },
+    });
+    expect(mapper.mapMessage({ type: 'tool-result', callId: 'codebuddy-call', toolName: 'Bash', result: undefined, isError: true })[0]).toMatchObject({
+      turn: firstTurn.turn, ev: { t: 'tool-call-end', call: 'codebuddy-call', isError: true },
+    });
+  });
+
+  it('records partial details on the original turn without reporting full success', () => {
+    const mapper = new AcpSessionManager({ nativeToolIds: true });
+    const [started] = mapper.startTurn();
+    expect(mapper.mapMessage({ type: 'status', status: 'partial', detail: 'two edits applied; tests failed' })).toMatchObject([
+      { turn: started.turn, ev: { t: 'service', text: 'Error: two edits applied; tests failed' } },
+    ]);
+    expect(mapper.endTurn('partial', 'partialSuccess')).toMatchObject([
+      { turn: started.turn, ev: { t: 'turn-end', status: 'partial', errorCode: 'partialSuccess' } },
+    ]);
+  });
+
+  it('drops unknown native results instead of assigning them to a later turn', () => {
+    const mapper = new AcpSessionManager({ nativeToolIds: true });
+    mapper.startTurn();
+    mapper.endTurn('completed');
+    mapper.startTurn();
+    expect(mapper.mapMessage({ type: 'tool-result', toolName: 'Read', callId: 'unknown', result: 'late' })).toEqual([]);
+  });
+
   it('emits turn-start from startTurn()', () => {
     const mapper = new AcpSessionManager();
     const envelopes = mapper.startTurn();

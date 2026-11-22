@@ -2614,7 +2614,8 @@ class Sync {
         };
         assertPreloadActive();
         if (messages.length === 0) return;
-        const decryptedMessages = await encryption.decryptMessages(messages);
+        const orderedMessages = [...messages].sort((a, b) => a.seq - b.seq);
+        const decryptedMessages = await encryption.decryptMessages(orderedMessages);
         assertPreloadActive();
         const normalizedMessages: NormalizedMessage[] = [];
         for (let i = 0; i < decryptedMessages.length; i++) {
@@ -2699,6 +2700,22 @@ class Sync {
         } finally {
             storage.getState().applyOlderMessagesLoading(sessionId, false);
         }
+    }
+
+    /** Resolve a deep-linked message without forcing full history on ordinary chat visits. */
+    ensureSessionMessage = async (sessionId: string, messageId: string): Promise<boolean> => {
+        for (let page = 0; page < 10000; page++) {
+            const session = storage.getState().sessionMessages[sessionId];
+            if (session?.messagesMap[messageId]
+                || session?.messages.some(message => message.kind === 'tool-call' && message.realID === messageId)) return true;
+            if (!session?.isLoaded || !session.hasMoreOlder) return false;
+            if (session.isLoadingOlder) {
+                await this.getSessionMessageLock(sessionId).inLock(async () => {});
+                continue;
+            }
+            if (!await this.loadOlderMessages(sessionId)) return false;
+        }
+        return false;
     }
 
     private registerPushToken = async () => {
@@ -2837,6 +2854,7 @@ class Sync {
                     if (session && (!(isTaskComplete || isTaskStarted) || updateData.body.message.seq > (session.lastTurnSeq ?? -1))) {
                         const turnStatus = rawContent?.content?.data?.ev?.status ?? rawContent?.content?.data?.status;
                         const failed = turnStatus === 'failed' || (rawContent?.content?.data?.error != null);
+                        const partial = turnStatus === 'partial';
                         const errorCode = rawContent?.content?.data?.ev?.errorCode;
                         this.applySessions([{
                             ...session,
@@ -2844,9 +2862,9 @@ class Sync {
                             seq: updateData.seq,
                             // Update thinking state based on task lifecycle events
                             ...(isTaskComplete ? { thinking: false, lastTurnSeq: updateData.body.message.seq,
-                                lastTurnStatus: failed ? 'failed' as const : dataType === 'turn_aborted' || ['cancelled', 'canceled', 'interrupted', 'aborted'].includes(turnStatus ?? '')
+                                lastTurnStatus: failed ? 'failed' as const : partial ? 'partial' as const : dataType === 'turn_aborted' || ['cancelled', 'canceled', 'interrupted', 'aborted'].includes(turnStatus ?? '')
                                     ? 'cancelled' as const : 'completed' as const,
-                                lastTurnErrorCode: failed ? errorCode : undefined } : {}),
+                                lastTurnErrorCode: failed || partial ? errorCode : undefined } : {}),
                             ...(isTaskStarted ? { thinking: true, lastTurnSeq: updateData.body.message.seq, lastTurnStatus: undefined, lastTurnErrorCode: undefined } : {})
                         }])
                         if (isTaskComplete && failed) {

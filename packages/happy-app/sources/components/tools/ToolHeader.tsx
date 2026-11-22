@@ -3,7 +3,7 @@ import { Platform, Text } from 'react-native';
 import { ToolCall } from '@/sync/typesMessage';
 import type { Metadata } from '@/sync/storageTypes';
 import { knownTools } from '@/components/tools/knownTools';
-import { getToolActivityLabel, getToolDisplayTitle, isTerminalToolName } from '@/utils/toolDisplay';
+import { formatMCPTitle, getToolActivityLabel, getToolDisplayTitle, isTerminalToolName } from '@/utils/toolDisplay';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { StyleSheet } from 'react-native-unistyles';
@@ -19,11 +19,13 @@ export function ToolHeader({ tool, metadata = null }: ToolHeaderProps) {
     if (tool) {
         const knownTool = knownTools[tool.name as keyof typeof knownTools];
         title = getToolDisplayTitle(tool);
-        if (!tool.title?.trim() && knownTool && 'title' in knownTool && knownTool.title) {
+        const genericTitle = !tool.title?.trim() || tool.title.trim().toLowerCase() === tool.name.trim().toLowerCase();
+        if (genericTitle && knownTool && 'title' in knownTool && knownTool.title) {
             title = typeof knownTool.title === 'function'
                 ? knownTool.title({ tool, metadata })
                 : knownTool.title;
         }
+        if (genericTitle && tool.name.startsWith('mcp__')) title = formatMCPTitle(tool.name);
         if (isTerminalToolName(tool.name)) title = getToolActivityLabel(tool);
     }
 

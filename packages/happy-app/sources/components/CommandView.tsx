@@ -3,6 +3,8 @@ import { Text, View, StyleSheet, Platform, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { darkTheme } from '@/theme';
 import { SyntaxText } from './SyntaxText';
+import type { TerminalToolOutput } from '@/sync/typesRaw';
+import { t } from '@/text';
 
 interface CommandViewProps {
     command: string;
@@ -10,6 +12,9 @@ interface CommandViewProps {
     stdout?: string | null;
     stderr?: string | null;
     error?: string | null;
+    terminal?: TerminalToolOutput;
+    terminalOutputLabel?: string;
+    wrapText?: boolean;
     // Legacy prop for backward compatibility
     output?: string | null;
     maxHeight?: number;
@@ -27,6 +32,9 @@ export const CommandView = React.memo<CommandViewProps>(({
     stdout,
     stderr,
     error,
+    terminal,
+    terminalOutputLabel,
+    wrapText,
     output,
     maxHeight,
     fullWidth,
@@ -36,7 +44,10 @@ export const CommandView = React.memo<CommandViewProps>(({
 }) => {
     const { theme } = useUnistyles();
     // Use legacy output if new props aren't provided
-    const hasNewProps = stdout !== undefined || stderr !== undefined || error !== undefined;
+    const hasNewProps = stdout !== undefined || stderr !== undefined || error !== undefined || terminal !== undefined;
+    const outputStdout = terminal ? terminal.stdout : stdout;
+    const outputStderr = terminal ? terminal.stderr : stderr;
+    const combinedOutput = terminal && outputStdout === undefined && outputStderr === undefined ? terminal.output : undefined;
 
     const styles = React.useMemo(() => StyleSheet.create({
         container: {
@@ -51,6 +62,14 @@ export const CommandView = React.memo<CommandViewProps>(({
             alignItems: 'baseline',
             flexDirection: 'row',
             flexWrap: 'wrap',
+        },
+        wrappedLine: {
+            width: '100%',
+            flexWrap: 'nowrap',
+        },
+        wrappedText: {
+            minWidth: 0,
+            maxWidth: '100%',
         },
         promptText: {
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
@@ -95,13 +114,22 @@ export const CommandView = React.memo<CommandViewProps>(({
             marginTop: 8,
             fontStyle: 'italic',
         },
+        outputLabel: {
+            fontSize: 12,
+            fontWeight: '600',
+            color: theme.colors.terminal.emptyOutput,
+            marginTop: 10,
+        },
     }), [theme]);
 
     // The terminal surface stays dark in both themes. Plain runs inherit the
     // command/stdout/stderr color; classified tokens use the dark diff palette.
-    const terminalText = (code: string, style: TextStyle, language: string | null) => syntaxHighlighting && language ? (
-        <SyntaxText code={code} language={language} style={style} colors={darkTheme.colors.diff.syntax} />
-    ) : <Text style={style} selectable={syntaxHighlighting}>{code}</Text>;
+    const terminalText = (code: string, style: TextStyle, language: string | null) => {
+        const textStyle = wrapText ? [style, styles.wrappedText] : style;
+        return syntaxHighlighting && language ? (
+            <SyntaxText code={code} language={language} style={textStyle} colors={darkTheme.colors.diff.syntax} />
+        ) : <Text style={textStyle} selectable={syntaxHighlighting}>{code}</Text>;
+    };
 
     return (
         <View style={[
@@ -110,22 +138,34 @@ export const CommandView = React.memo<CommandViewProps>(({
             fullWidth ? { width: '100%' } : undefined
         ]}>
             {/* Command Line */}
-            <View style={styles.line}>
+            <View style={[styles.line, wrapText && styles.wrappedLine]}>
                 {prompt ? <Text style={styles.promptText}>{prompt} </Text> : null}
                 {terminalText(command, styles.commandText, commandLanguage)}
             </View>
 
             {hasNewProps ? (
                 <>
+                    {combinedOutput ? (
+                        <>
+                            <Text style={styles.outputLabel}>{terminalOutputLabel}</Text>
+                            {terminalText(combinedOutput, styles.stdout, 'shell-session')}
+                        </>
+                    ) : null}
                     {/* Standard Output */}
-                    {stdout && stdout.trim() && (
-                        terminalText(stdout, styles.stdout, 'shell-session')
-                    )}
+                    {outputStdout && (terminal || outputStdout.trim()) ? (
+                        <>
+                            {terminal ? <Text style={styles.outputLabel}>stdout</Text> : null}
+                            {terminalText(outputStdout, styles.stdout, 'shell-session')}
+                        </>
+                    ) : null}
 
                     {/* Standard Error */}
-                    {stderr && stderr.trim() && (
-                        terminalText(stderr, styles.stderr, 'shell-session')
-                    )}
+                    {outputStderr && (terminal || outputStderr.trim()) ? (
+                        <>
+                            {terminal ? <Text style={styles.outputLabel}>stderr</Text> : null}
+                            {terminalText(outputStderr, styles.stderr, 'shell-session')}
+                        </>
+                    ) : null}
 
                     {/* Error Message */}
                     {error && (
@@ -133,9 +173,10 @@ export const CommandView = React.memo<CommandViewProps>(({
                     )}
 
                     {/* Empty output indicator */}
-                    {!stdout && !stderr && !error && !hideEmptyOutput && (
+                    {!combinedOutput && !outputStdout && !outputStderr && !error && !hideEmptyOutput && (
                         <Text style={styles.emptyOutput}>[Command completed with no output]</Text>
                     )}
+                    {terminal?.exitCode !== undefined ? <Text style={styles.outputLabel}>{t('tools.fullView.exitCode', { code: terminal.exitCode })}</Text> : null}
                 </>
             ) : (
                 /* Legacy output format */

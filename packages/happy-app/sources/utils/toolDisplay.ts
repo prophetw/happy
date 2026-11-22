@@ -193,12 +193,17 @@ export function getToolSummaryDetail(tool: Pick<ToolCall, 'name' | 'input' | 'de
         return `${patchFiles[0]} +${patchFiles.length - 1}`;
     }
 
+    const pattern = tool.input?.pattern;
     const path = tool.input?.path ?? tool.input?.target_directory;
+    if (getToolSummaryCategory(tool.name) === 'search'
+        && typeof pattern === 'string' && pattern.trim().length > 0
+        && typeof path === 'string' && path.trim().length > 0) {
+        return `${pattern.trim()} · ${path.trim()}`;
+    }
     if (typeof path === 'string' && path.trim().length > 0) {
         return path.trim();
     }
 
-    const pattern = tool.input?.pattern;
     if (typeof pattern === 'string' && pattern.trim().length > 0) {
         return pattern.trim();
     }

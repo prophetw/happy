@@ -32,14 +32,29 @@ export function validatePolicy(v: unknown): Policy {
     return p as unknown as Policy;
 }
 
-// Deliberate projection, not recursive serialization of decrypted records.
+const secretField = String.raw`[a-z_-]*(?:token|secret|password|api[_-]?key|encryption[_-]?key)`;
+const secretAssignment = new RegExp(String.raw`(["']?${secretField}["']?\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)`, 'gi');
+const secretKey = new RegExp(`^${secretField}$`, 'i');
+
 export function redact(text: string): string {
     return text.replace(/-----BEGIN [^-\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-\n]*PRIVATE KEY-----|$)/g, '[REDACTED]')
         .replace(/\bhsvc1\.[A-Za-z0-9_-]{1,128}\.[A-Za-z0-9_-]{43}\b/g, '[REDACTED]')
         .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
         .replace(/\b(?:sk-[a-zA-Z0-9_-]+|gh[pousr]_[a-zA-Z0-9]+)\b/g, '[REDACTED]')
-        .replace(/(["']?(?:[a-z_]*(?:token|secret|password|api[_-]?key|encryption[_-]?key))["']?\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '$1[REDACTED]');
+        .replace(secretAssignment, '$1[REDACTED]');
 }
+
+/** Apply the same rules to tool payloads without serializing their types away. */
+export function redactValue(value: unknown): unknown {
+    if (typeof value === 'string') return redact(value);
+    if (Array.isArray(value)) return value.map(redactValue);
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, secretKey.test(key) ? '[REDACTED]' : redactValue(item)]));
+    }
+    return value;
+}
+
+// Deliberate projection, not recursive serialization of decrypted records.
 export function projectMessage(message: { id: string; seq: number; content: unknown }, includeServiceErrors = false) {
     const c = obj(message.content), body = obj(c.content), ev = obj(body.ev);
     const base = { messageID: message.id, seq: message.seq };
@@ -47,7 +62,7 @@ export function projectMessage(message: { id: string; seq: number; content: unkn
     // Compatibility adapter for the current Happy stream. No frozen schema imports.
     if (c.role === 'session' && body.role === 'agent' && !body.subagent) {
         if (ev.t === 'turn-start') return { ...base, kind: 'turn', turnID, state: 'running' };
-        if (ev.t === 'turn-end' && ['completed', 'failed', 'cancelled'].includes(String(ev.status))) return { ...base, kind: 'turn', turnID, state: ev.status };
+        if (ev.t === 'turn-end' && ['completed', 'partial', 'failed', 'cancelled'].includes(String(ev.status))) return { ...base, kind: 'turn', turnID, state: ev.status };
         if (ev.t === 'text' && typeof ev.text === 'string' && ev.thinking !== true) return { ...base, kind: 'text', turnID, text: redact(ev.text).slice(0, 16000), truncated: ev.text.length > 16000 };
         if (includeServiceErrors && ev.t === 'service' && typeof ev.text === 'string' && ev.text.startsWith('Error: ')) {
             return { ...base, kind: 'text', turnID, text: redact(ev.text).slice(0, 16000), truncated: ev.text.length > 16000 };
@@ -231,7 +246,7 @@ export class AutomationControl {
             const turn = [...messages].reverse().find(m => m.kind === 'turn');
             if (requestedTurn) {
                 const evidence = messages.filter(m => 'turnID' in m && m.turnID === requestedTurn);
-                const end = evidence.find(m => m.kind === 'turn' && 'state' in m && ['completed', 'failed', 'cancelled'].includes(String(m.state)));
+                const end = evidence.find(m => m.kind === 'turn' && 'state' in m && ['completed', 'partial', 'failed', 'cancelled'].includes(String(m.state)));
                 return { sessionID, turnID: requestedTurn, attribution: 'session_turn_only', ready: !!end,
                     outcome: end && 'state' in end ? end.state : 'unknown', messages: evidence,
                     nextCursor: page.messages.at(-1)?.seq ?? cursor, hasMore: page.hasMore };

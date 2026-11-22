@@ -741,6 +741,7 @@ export const en: TranslationStructure = {
             error: 'Error',
             completed: 'Tool completed successfully',
             noOutput: 'No output was produced',
+            exitCode: ({ code }: { code: number }) => `Exit code ${code}`,
             running: 'Tool is running...',
             rawJsonDevMode: 'Raw JSON (Dev Mode)',
         },

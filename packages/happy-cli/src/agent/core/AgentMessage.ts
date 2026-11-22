@@ -12,6 +12,8 @@
  * @module AgentMessage
  */
 
+import type { TerminalToolOutput } from '@slopus/happy-wire';
+
 /** Unique identifier for an agent session */
 export type SessionId = string;
 
@@ -21,7 +23,7 @@ export type ToolCallId = string;
 /**
  * Agent status values
  */
-export type AgentStatus = 'starting' | 'running' | 'idle' | 'stopped' | 'error';
+export type AgentStatus = 'starting' | 'running' | 'idle' | 'stopped' | 'error' | 'partial';
 
 /**
  * Model output message - text chunks from the agent
@@ -54,6 +56,14 @@ export interface ToolCallMessage {
   callId: ToolCallId;
 }
 
+export interface ToolCallUpdateMessage {
+  type: 'tool-call-update';
+  callId: ToolCallId;
+  name?: string;
+  args?: Record<string, unknown>;
+  terminal?: TerminalToolOutput;
+}
+
 /**
  * Tool result message - result from a tool call
  */
@@ -62,6 +72,7 @@ export interface ToolResultMessage {
   toolName: string;
   result: unknown;
   callId: ToolCallId;
+  isError?: boolean;
 }
 
 /**
@@ -158,6 +169,7 @@ export type AgentMessage =
   | ModelOutputMessage
   | StatusMessage
   | ToolCallMessage
+  | ToolCallUpdateMessage
   | ToolResultMessage
   | PermissionRequestMessage
   | PermissionResponseMessage

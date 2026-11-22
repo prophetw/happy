@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { AutomationControl, methods, projectMessage, redact, validatePolicy, type Policy } from './control';
+import { AutomationControl, methods, projectMessage, redact, redactValue, validatePolicy, type Policy } from './control';
 import { Journal } from './journal';
 import { serveJsonLines } from './main';
 import type { Transport } from './relay';
@@ -83,6 +83,10 @@ describe('scoped JSONL automation contract', () => {
         expect(await call(s, req('sessions.logs', { sessionID: 's1', cursor: 10, limit: 1 }))).toMatchObject({ data: { nextCursor: 11, hasMore: true, turn: { state: 'failed' } } });
         expect(s.transport.messages).toHaveBeenCalledWith(session, 10, 1);
         expect(projectMessage({ id: 'msg', seq: 1, content: { role: 'session', content: { role: 'agent', ev: { t: 'turn-end', status: 'cancelled' } } } })).toMatchObject({ state: 'cancelled' });
+        expect(projectMessage({ id: 'msg', seq: 2, content: { role: 'session', content: { role: 'agent', turn: 'partial-turn', ev: { t: 'turn-end', status: 'partial', errorCode: 'partialSuccess' } } } })).toMatchObject({ state: 'partial', turnID: 'partial-turn' });
+        expect(projectMessage({ id: 'msg', seq: 3, content: { role: 'session', content: { role: 'agent', turn: 'partial-turn', ev: { t: 'service', text: 'Error: edits applied; token=fixture123' } } } }, true)).toMatchObject({ text: 'Error: edits applied; token=[REDACTED]' });
+        expect(redactValue({ 'access-token': 'raw-token', 'client-secret': 'raw-secret', 'x-api-key': 'raw-key', nested: { safe: 'visible' } }))
+            .toEqual({ 'access-token': '[REDACTED]', 'client-secret': '[REDACTED]', 'x-api-key': '[REDACTED]', nested: { safe: 'visible' } });
     });
     it('paginates sessions beyond v1 150 limit and filters unauthorized records', async () => {
         const s = setup();

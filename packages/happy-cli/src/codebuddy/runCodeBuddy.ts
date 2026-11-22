@@ -29,6 +29,48 @@ export function formatCodeBuddyError(error: unknown): string {
   return detail;
 }
 
+export type CodeBuddyPromptResult = {
+  status: 'completed' | 'partial' | 'failed' | 'cancelled';
+  detail?: string;
+};
+
+function codeBuddyMetaError(error: unknown): string | undefined {
+  if (typeof error !== 'string' || !error) return undefined;
+  const formatted = formatCodeBuddyError(error);
+  if (formatted !== error) return formatted;
+  // CodeBuddy can embed model-request diagnostics as JSON, including
+  // authentication or request details that belong on the host.
+  try {
+    const { message } = JSON.parse(error) as { message?: unknown };
+    if (typeof message === 'string' && message.trim()) return message;
+  } catch {
+    return error;
+  }
+  return 'CodeBuddy reported an error during the turn.';
+}
+
+/** Classify the JSON-RPC result without turning partial work into an exception. */
+export function getCodeBuddyPromptResult(response: PromptResponse): CodeBuddyPromptResult {
+  const outcome = response._meta?.['codebuddy.ai/outcome'];
+  const error = codeBuddyMetaError(response._meta?.['codebuddy.ai/errorMessage']);
+  if (outcome === 'PERMISSION_DENIED') return { status: 'failed', detail: 'CodeBuddy tool permission was denied.' };
+  if (response.stopReason === 'cancelled') return { status: 'cancelled' };
+  if (outcome === 'PARTIAL_SUCCESS' && response.stopReason === 'end_turn') {
+    return {
+      status: 'partial',
+      detail: `CodeBuddy partially completed the turn (PARTIAL_SUCCESS): ${error ?? 'some work may be incomplete.'}`,
+    };
+  }
+  if (error) return { status: 'failed', detail: error };
+  if (typeof outcome === 'string' && (outcome.startsWith('FAILED_') || outcome === 'REFUSED_OR_BLOCKED')) {
+    return { status: 'failed', detail: `CodeBuddy reported ${outcome}.` };
+  }
+  if (response.stopReason !== 'end_turn') {
+    return { status: 'failed', detail: `CodeBuddy ended the turn with ${response.stopReason ?? 'no ACP stop reason'}.` };
+  }
+  return { status: 'completed' };
+}
+
 class CodeBuddyTransport extends DefaultTransport {
   getInitTimeout(): number {
     return 15_000;
@@ -39,30 +81,13 @@ class CodeBuddyTransport extends DefaultTransport {
   }
 
   getPromptError(response: PromptResponse): string | undefined {
-    const outcome = response._meta?.['codebuddy.ai/outcome'];
-    const error = response._meta?.['codebuddy.ai/errorMessage'];
-    if (outcome === 'PERMISSION_DENIED') return 'CodeBuddy tool permission was denied.';
-    if (response.stopReason === 'cancelled') return undefined;
-    if (typeof error === 'string' && error) {
-      const formatted = formatCodeBuddyError(error);
-      if (formatted !== error) return formatted;
-      // CodeBuddy can embed model-request diagnostics as JSON, including
-      // authentication or request details that belong on the host.
-      try {
-        const { message } = JSON.parse(error) as { message?: unknown };
-        if (typeof message === 'string' && message.trim()) return message;
-      } catch {
-        return error;
-      }
-      return 'CodeBuddy reported an error during the turn.';
-    }
-    if (typeof outcome === 'string' && (outcome.startsWith('FAILED_') || outcome === 'PARTIAL_SUCCESS' || outcome === 'REFUSED_OR_BLOCKED')) {
-      return `CodeBuddy reported ${outcome}.`;
-    }
-    if (response.stopReason !== 'end_turn') {
-      return `CodeBuddy ended the turn with ${response.stopReason ?? 'no ACP stop reason'}.`;
-    }
-    return undefined;
+    const result = getCodeBuddyPromptResult(response);
+    return result.status === 'failed' ? result.detail : undefined;
+  }
+
+  getPromptPartialError(response: PromptResponse): string | undefined {
+    const result = getCodeBuddyPromptResult(response);
+    return result.status === 'partial' ? result.detail : undefined;
   }
 }
 

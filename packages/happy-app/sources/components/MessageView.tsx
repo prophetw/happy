@@ -461,7 +461,7 @@ function ToolCallBlock(props: {
           metadata={props.metadata}
           messages={props.message.children}
           sessionId={props.sessionId}
-          messageId={props.message.id}
+          messageId={props.message.realID ?? props.message.id}
         />
       )}
     </View>

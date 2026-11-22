@@ -16,6 +16,37 @@ function message(id: string, ev: Record<string, unknown>) {
 }
 
 describe('Happy Agent tool wire → rendered message contract', () => {
+    it('applies CodeBuddy argument and terminal snapshots to the original row, including late output', () => {
+        const state = createReducer();
+        const start = (call: string) => message(`start-${call}`, {
+            t: 'tool-call-start', call, name: 'Bash', title: 'Bash', description: '', args: {},
+        });
+        const first = reducer(state, [start('a'), start('b')]).messages;
+        const firstId = first.find(row => row.kind === 'tool-call' && row.tool.callId === 'a')?.id;
+        expect(firstId).toBeTruthy();
+
+        const update = (id: string, call: string, fields: Record<string, unknown>) => message(id, {
+            t: 'tool-call-update', call, ...fields,
+        });
+        const end = (id: string, call: string, isError: boolean) => message(id, { t: 'tool-call-end', call, isError });
+        const args = { command: "printf 'first\\n'\nprintf 'second\\n'", cwd: '/work' };
+        const running = reducer(state, [update('args-a', 'a', { args, terminal: { stdout: 'first\n' } })]).messages;
+        expect(running[0]).toMatchObject({ id: firstId, tool: { input: args, state: 'running', terminal: { stdout: 'first\n' } } });
+
+        const late = update('late-a', 'a', { terminal: { stdout: 'first\nsecond\n', exitCode: 0 } });
+        const results = reducer(state, [end('end-a', 'a', false), update('failed-b', 'b', {
+            terminal: { stderr: 'second call failed', exitCode: 1 },
+        }), end('end-b', 'b', true), late]).messages;
+        expect(results).toHaveLength(2);
+        expect(results.find(row => row.id === firstId)).toMatchObject({
+            tool: { callId: 'a', input: args, state: 'completed', terminal: { stdout: 'first\nsecond\n', exitCode: 0 } },
+        });
+        expect(results.find(row => row.id !== firstId)).toMatchObject({
+            tool: { callId: 'b', state: 'error', terminal: { stderr: 'second call failed', exitCode: 1 } },
+        });
+        expect(reducer(state, [late]).messages).toHaveLength(0);
+    });
+
     it.each([
         ['hello\nworld\n', false, 'hello\nworld\n'],
         [[{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }], false, 'first\nsecond'],

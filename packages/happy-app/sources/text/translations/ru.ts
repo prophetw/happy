@@ -696,6 +696,7 @@ export const ru: TranslationStructure = {
             error: 'Ошибка',
             completed: 'Инструмент выполнен успешно',
             noOutput: 'Результат не получен',
+            exitCode: ({ code }: { code: number }) => `Код выхода: ${code}`,
             running: 'Выполняется...',
             rawJsonDevMode: 'Исходный JSON (режим разработчика)',
         },

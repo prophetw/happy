@@ -679,6 +679,7 @@ export const pt: TranslationStructure = {
             error: 'Erro',
             completed: 'Ferramenta concluída com sucesso',
             noOutput: 'Nenhuma saída foi produzida',
+            exitCode: ({ code }: { code: number }) => `Código de saída: ${code}`,
             running: 'Ferramenta está executando...',
             rawJsonDevMode: 'JSON bruto (modo desenvolvedor)',
         },

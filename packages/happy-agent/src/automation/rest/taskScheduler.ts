@@ -4,7 +4,7 @@ import type { TestEvidence } from './execution';
 
 export type Observation = { resultCommit?: string; worktreeDirty?: boolean; pendingInput?: boolean; process: string; cursor: number; seq?: number; messageID?: string; turnID?: string;
     sessionOwnerVerified?: boolean; dispatchable?: boolean;
-    outcome?: 'running' | 'completed' | 'failed' | 'cancelled'; externalRunning?: boolean;
+    outcome?: 'running' | 'completed' | 'partial' | 'failed' | 'cancelled'; externalRunning?: boolean;
     checkoutDigest?: string; testResult?: TestEvidence; candidateError?: string };
 export type QueueExecutor = {
     authorize: (task: QueueTask) => Promise<void>;
@@ -55,9 +55,13 @@ export class TaskScheduler {
                 } else if (observation.candidateError) {
                     current.state = 'failed'; current.reason = observation.candidateError; current.finishedAt = Date.now();
                 } else if (observation.outcome && observation.outcome !== 'running' && !observation.externalRunning) {
-                    if (observation.outcome !== 'completed' && observation.process !== 'stopped') { current.state = 'blocked'; current.reason = 'turn_ended_process_unconfirmed'; }
+                    // Partial is a terminal turn outcome, not a process-exit claim.
+                    // CodeBuddy stays alive for the next prompt; close this queue item
+                    // without stopping the process or replaying the completed input.
+                    if (!['completed', 'partial'].includes(observation.outcome) && observation.process !== 'stopped') { current.state = 'blocked'; current.reason = 'turn_ended_process_unconfirmed'; }
                     else {
-                        current.state = observation.outcome; current.finishedAt = Date.now(); current.reason = undefined;
+                        current.state = observation.outcome === 'partial' ? 'failed' : observation.outcome;
+                        current.finishedAt = Date.now(); current.reason = observation.outcome === 'partial' ? 'partial_success' : undefined;
                         current.checkoutDigest = observation.checkoutDigest; current.testResult = observation.testResult;
                     }
                 } else if (observation.externalRunning && !current.legacy) {

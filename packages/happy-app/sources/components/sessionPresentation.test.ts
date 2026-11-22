@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
     push: vi.fn(),
     back: vi.fn(),
     sessionVisible: vi.fn(),
+    ensureSessionMessage: vi.fn(async () => false),
 }));
 
 vi.mock('react-native', async () => {
@@ -96,7 +97,7 @@ vi.mock('@/sync/storage', () => ({
     useSessionGitStatus: () => null,
     useSessionGitStatusFiles: () => null,
 }));
-vi.mock('@/sync/sync', () => ({ sync: { onSessionVisible: state.sessionVisible } }));
+vi.mock('@/sync/sync', () => ({ sync: { onSessionVisible: state.sessionVisible, ensureSessionMessage: state.ensureSessionMessage } }));
 vi.mock('@/track', () => ({ trackSessionSwitched: vi.fn() }));
 vi.mock('@/components/Deferred', async () => {
     const ReactModule = await import('react');
@@ -166,6 +167,7 @@ afterEach(() => {
     state.push.mockClear();
     state.back.mockClear();
     state.sessionVisible.mockClear();
+    state.ensureSessionMessage.mockClear();
 });
 afterAll(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -406,12 +408,14 @@ describe('tool-detail navigation', () => {
         expect(state.back).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps navigation available while a missing loaded message returns to the session', () => {
+    it('keeps navigation available while a missing loaded message returns to the session', async () => {
         state.messagesLoaded = true;
         state.message = null;
+        state.params = { id: 'session-id', messageId: 'missing' };
         const screen = render(React.createElement(MessageDetails));
         expect(screen.root.findAllByType('StackScreen')).toHaveLength(1);
         expect(screen.root.findAllByType('ActivityIndicator')).toHaveLength(1);
+        await act(async () => { await Promise.resolve(); });
         expect(state.back).toHaveBeenCalledTimes(1);
     });
 });

@@ -680,6 +680,7 @@ export const ca: TranslationStructure = {
             error: 'Error',
             completed: 'Eina completada amb èxit',
             noOutput: 'No s\'ha produït cap sortida',
+            exitCode: ({ code }: { code: number }) => `Codi de sortida: ${code}`,
             running: 'L\'eina s\'està executant...',
             rawJsonDevMode: 'JSON en brut (mode desenvolupador)',
         },

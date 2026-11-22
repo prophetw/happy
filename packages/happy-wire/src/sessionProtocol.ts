@@ -54,6 +54,24 @@ export const sessionToolCallStartEventSchema = z.object({
   args: z.record(z.string(), z.unknown()),
 });
 
+const terminalToolOutputSchema = z.object({
+  output: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+  exitCode: z.number().int().optional(),
+  error: z.string().optional(),
+});
+export type TerminalToolOutput = z.infer<typeof terminalToolOutputSchema>;
+
+const sessionToolCallUpdateEventSchema = z.object({
+  t: z.literal('tool-call-update'),
+  call: z.string(),
+  name: z.string().optional(),
+  args: z.record(z.string(), z.unknown()).optional(),
+  // Each supplied field is its latest value. Omitted fields stay as they were.
+  terminal: terminalToolOutputSchema.optional(),
+});
+
 export const sessionToolCallEndEventSchema = z.object({
   t: z.literal('tool-call-end'),
   call: z.string(),
@@ -86,7 +104,7 @@ export const sessionStartEventSchema = z.object({
   title: z.string().optional(),
 });
 
-export const sessionTurnEndStatusSchema = z.enum(['completed', 'failed', 'cancelled']);
+export const sessionTurnEndStatusSchema = z.enum(['completed', 'partial', 'failed', 'cancelled']);
 export type SessionTurnEndStatus = z.infer<typeof sessionTurnEndStatusSchema>;
 
 export const sessionTurnEndEventSchema = z.object({
@@ -103,6 +121,7 @@ export const sessionEventSchema = z.discriminatedUnion('t', [
   sessionTextEventSchema,
   sessionServiceMessageEventSchema,
   sessionToolCallStartEventSchema,
+  sessionToolCallUpdateEventSchema,
   sessionToolCallEndEventSchema,
   sessionFileEventSchema,
   sessionTurnStartEventSchema,

@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { createEnvelope, type CreateEnvelopeOptions, type SessionEnvelope } from '@slopus/happy-wire';
+import { createEnvelope, type CreateEnvelopeOptions, type SessionEnvelope, type SessionTurnEndStatus } from '@slopus/happy-wire';
 import type { AgentMessage } from '@/agent/core';
 
 function turnOptions(turnId: string | null, time: number): CreateEnvelopeOptions {
@@ -31,6 +31,7 @@ function parseThinkingPayload(payload: unknown): { text: string; streaming: bool
 export class AcpSessionManager {
   private currentTurnId: string | null = null;
   private readonly acpCallToSessionCall = new Map<string, string>();
+  private readonly nativeToolTurns = new Map<string, string>();
 
   /** Monotonic clock: max(lastTime + 1, Date.now()) */
   private lastTime = 0;
@@ -40,7 +41,7 @@ export class AcpSessionManager {
   private pendingType: 'thinking' | 'output' | null = null;
   private outputStream: { id: string; offset: number } | null = null;
 
-  constructor(private readonly streamOutput = false) {}
+  constructor(private readonly options: { streamOutput?: boolean; nativeToolIds?: boolean } = {}) {}
 
   private nextTime(): number {
     this.lastTime = Math.max(this.lastTime + 1, Date.now());
@@ -91,7 +92,7 @@ export class AcpSessionManager {
     ];
   }
 
-  endTurn(status: 'completed' | 'failed' | 'cancelled'): SessionEnvelope[] {
+  endTurn(status: SessionTurnEndStatus, errorCode?: string): SessionEnvelope[] {
     const flushed = this.flush();
     if (!this.currentTurnId) {
       return flushed;
@@ -105,7 +106,7 @@ export class AcpSessionManager {
     this.pendingType = null;
     return [
       ...flushed,
-      createEnvelope('agent', { t: 'turn-end', status }, { turn: turnId, time: this.nextTime() }),
+      createEnvelope('agent', { t: 'turn-end', status, ...(errorCode ? { errorCode } : {}) }, { turn: turnId, time: this.nextTime() }),
     ];
   }
 
@@ -137,7 +138,7 @@ export class AcpSessionManager {
     }
 
     if (msg.type === 'status') {
-      if (msg.status === 'error' && this.currentTurnId) {
+      if ((msg.status === 'error' || msg.status === 'partial') && this.currentTurnId) {
         const detail = msg.detail?.trim() || 'The agent stopped because of an unknown error.';
         return [
           ...this.flush(),
@@ -158,7 +159,7 @@ export class AcpSessionManager {
       }
       // Accumulate output, flush if switching from a different type
       const flushed = this.pendingType !== 'output' ? this.flush() : [];
-      if (this.streamOutput && this.currentTurnId) {
+      if (this.options.streamOutput && this.currentTurnId) {
         const stream = this.outputStream ??= { id: createId(), offset: 0 };
         // The app already uses this wire field to join text deltas within a turn.
         const envelope = createEnvelope('agent', { t: 'text', text, textOffset: stream.offset }, {
@@ -173,9 +174,12 @@ export class AcpSessionManager {
     }
 
     if (msg.type === 'tool-call') {
+      if (this.options.nativeToolIds && this.currentTurnId) {
+        this.nativeToolTurns.set(msg.callId, this.currentTurnId);
+      }
       this.outputStream = null;
       const flushed = this.flush();
-      const call = this.ensureSessionCallId(msg.callId);
+      const call = this.options.nativeToolIds ? msg.callId : this.ensureSessionCallId(msg.callId);
       return [
         ...flushed,
         createEnvelope('agent', {
@@ -189,10 +193,24 @@ export class AcpSessionManager {
       ];
     }
 
+    if (msg.type === 'tool-call-update') {
+      const turn = this.nativeToolTurns.get(msg.callId);
+      if (!turn) return [];
+      return [createEnvelope('agent', {
+        t: 'tool-call-update', call: msg.callId,
+        ...(msg.name === undefined ? {} : { name: msg.name }),
+        ...(msg.args === undefined ? {} : { args: msg.args }),
+        ...(msg.terminal === undefined ? {} : { terminal: msg.terminal }),
+      }, turnOptions(turn, this.nextTime()))];
+    }
+
     if (msg.type === 'tool-result') {
-      this.outputStream = null;
-      const flushed = this.flush();
-      const call = this.ensureSessionCallId(msg.callId);
+      const turn = this.options.nativeToolIds ? this.nativeToolTurns.get(msg.callId) : this.currentTurnId;
+      if (this.options.nativeToolIds && !turn) return [];
+      const belongsToCurrentTurn = turn === this.currentTurnId;
+      if (belongsToCurrentTurn) this.outputStream = null;
+      const flushed = belongsToCurrentTurn ? this.flush() : [];
+      const call = this.options.nativeToolIds ? msg.callId : this.ensureSessionCallId(msg.callId);
       const result = typeof msg.result === 'string' ? msg.result
         : msg.result == null ? undefined : JSON.stringify(msg.result);
       return [
@@ -200,7 +218,8 @@ export class AcpSessionManager {
         createEnvelope('agent', {
           t: 'tool-call-end', call,
           ...(result !== undefined ? { result } : {}),
-        }, turnOptions(this.currentTurnId, this.nextTime())),
+          ...(msg.isError === undefined ? {} : { isError: msg.isError }),
+        }, turnOptions(turn ?? null, this.nextTime())),
       ];
     }
 

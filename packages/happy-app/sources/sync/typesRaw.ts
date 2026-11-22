@@ -77,6 +77,23 @@ const sessionToolCallStartEventSchema = z.object({
     args: z.record(z.string(), z.unknown()),
 });
 
+const terminalToolOutputSchema = z.object({
+    output: z.string().optional(),
+    stdout: z.string().optional(),
+    stderr: z.string().optional(),
+    exitCode: z.number().int().optional(),
+    error: z.string().optional(),
+});
+export type TerminalToolOutput = z.infer<typeof terminalToolOutputSchema>;
+
+const sessionToolCallUpdateEventSchema = z.object({
+    t: z.literal('tool-call-update'),
+    call: z.string(),
+    name: z.string().optional(),
+    args: z.record(z.string(), z.unknown()).optional(),
+    terminal: terminalToolOutputSchema.optional(),
+});
+
 const sessionToolCallEndEventSchema = z.object({
     t: z.literal('tool-call-end'),
     call: z.string(),
@@ -110,7 +127,7 @@ const sessionStartEventSchema = z.object({
 
 const sessionTurnEndEventSchema = z.object({
     t: z.literal('turn-end'),
-    status: z.enum(['completed', 'failed', 'cancelled']),
+    status: z.enum(['completed', 'partial', 'failed', 'cancelled']),
     errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional(),
 });
 
@@ -139,6 +156,7 @@ const sessionEventSchema = z.discriminatedUnion('t', [
     sessionTextEventSchema,
     sessionServiceMessageEventSchema,
     sessionToolCallStartEventSchema,
+    sessionToolCallUpdateEventSchema,
     sessionToolCallEndEventSchema,
     sessionFileEventSchema,
     sessionTurnStartEventSchema,
@@ -552,6 +570,14 @@ type NormalizedAgentContent =
         uuid: string;
         parentUUID: string | null;
     } | {
+        type: 'tool-call-update';
+        id: string;
+        name?: string;
+        input?: Record<string, unknown>;
+        terminal?: TerminalToolOutput;
+        uuid: string;
+        parentUUID: string | null;
+    } | {
         type: 'tool-result'
         tool_use_id: string;
         content: any;
@@ -785,6 +811,27 @@ function normalizeSessionEnvelope(
             }],
             meta,
             usage: envelope.usage,
+            turn: envelope.turn,
+        } satisfies NormalizedMessage;
+    }
+
+    if (envelope.ev.t === 'tool-call-update') {
+        return {
+            id: messageId,
+            localId,
+            createdAt: messageCreatedAt,
+            role: 'agent',
+            isSidechain,
+            content: [{
+                type: 'tool-call-update',
+                id: envelope.ev.call,
+                name: envelope.ev.name,
+                input: envelope.ev.args,
+                terminal: envelope.ev.terminal,
+                uuid: contentUUID,
+                parentUUID,
+            }],
+            meta,
             turn: envelope.turn,
         } satisfies NormalizedMessage;
     }

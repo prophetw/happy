@@ -681,6 +681,7 @@ export const ja: TranslationStructure = {
             error: 'エラー',
             completed: 'ツールが正常に完了しました',
             noOutput: '出力がありません',
+            exitCode: ({ code }: { code: number }) => `終了コード ${code}`,
             running: 'ツールを実行中...',
             rawJsonDevMode: 'Raw JSON (開発モード)',
         },

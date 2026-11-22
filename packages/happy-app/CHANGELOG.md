@@ -1,3 +1,12 @@
+# November 22 - Clearer CodeBuddy tools
+
+Requires the updated Happy CLI.
+
+- **See what each tool used** — file targets, search terms, MCP names, and unknown tool names appear directly in the conversation.
+- **Inspect work in one place** — open a tool to review its inputs, output, errors, status, or diff, including after a refresh.
+- **Keep partial results honest** — completed text stays visible while failed tools and partial turn details remain clearly identified.
+- Community Credits: [@prophetw](https://github.com/prophetw).
+
 # November 21 - CodeBuddy sessions
 
 Requires the updated Happy CLI and a signed-in CodeBuddy CLI on the selected machine.

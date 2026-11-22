@@ -43,19 +43,47 @@ export default React.memo(() => {
         [tool, session?.metadata],
     );
     
-    // Trigger session visibility when component mounts
+    // Trigger session visibility when component mounts, and again after a
+    // direct reload hydrates the session list. Message fetches intentionally
+    // ignore ids that are not in that list yet.
+    const hasSession = !!session;
     React.useEffect(() => {
         if (sessionId) {
             sync.onSessionVisible(sessionId);
         }
-    }, [sessionId]);
+    }, [sessionId, hasSession]);
     
-    // Navigate back if message doesn't exist after messages are loaded
+    const [missingMessage, setMissingMessage] = React.useState(false);
+
+    // A direct deep link may not be in the latest page. Load older pages until
+    // this exact message is found; only preserve the old back navigation when
+    // the complete history confirms that it no longer exists.
     React.useEffect(() => {
-        if (messagesLoaded && !message) {
-            router.back();
-        }
-    }, [messagesLoaded, message, router]);
+        setMissingMessage(false);
+        if (!messagesLoaded || message || !sessionId || !messageId) return;
+        let active = true;
+        let retry: ReturnType<typeof setTimeout> | undefined;
+        const resolve = async () => {
+            while (active) {
+                try {
+                    const found = await sync.ensureSessionMessage(sessionId, messageId);
+                    if (active && !found) setMissingMessage(true);
+                    return;
+                } catch {
+                    await new Promise<void>(done => { retry = setTimeout(done, 1000); });
+                }
+            }
+        };
+        void resolve();
+        return () => {
+            active = false;
+            if (retry) clearTimeout(retry);
+        };
+    }, [messagesLoaded, message, messageId, sessionId]);
+
+    React.useEffect(() => {
+        if (missingMessage) router.back();
+    }, [missingMessage, router]);
     
     return (
         <>

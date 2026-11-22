@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage } from '@/agent/core';
 import type { HandlerContext, SessionUpdate } from './sessionUpdateHandlers';
+import { CodeBuddyToolCalls } from '@/codebuddy/toolCalls';
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   completeToolCall,
@@ -55,6 +56,92 @@ function createMockCtx(): MockCtx {
 function toolCallUpdate(partial: Partial<SessionUpdate> & { toolCallId: string }): SessionUpdate {
   return { sessionUpdate: 'tool_call_update', ...partial };
 }
+
+describe('CodeBuddy native tool notifications', () => {
+  it('uses finalized arguments and the actual Bash result, applying existing redaction', () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, messages } = createMockCtx();
+      const calls = new CodeBuddyToolCalls();
+      const toolCallId = 'bash-native';
+      const meta = { 'codebuddy.ai/toolName': 'Bash' };
+      calls.handle({ sessionUpdate: 'tool_call', toolCallId, title: 'Bash', kind: 'other', rawInput: {}, _meta: meta }, ctx);
+      const input = { command: 'printf "one\ntwo" # token=fixture123', cwd: '/workspace', env: { API_KEY: 123 } };
+      calls.handle(toolCallUpdate({ toolCallId, rawInput: input, content: 'raw argument fragment', _meta: meta }), ctx);
+      expect(messages.map(message => message.type)).toEqual(['status', 'tool-call']);
+
+      const pending = { sessionUpdate: 'tool_call', toolCallId, kind: 'execute', status: 'pending', rawInput: input, content: 'Tool description', _meta: meta };
+      calls.handle(pending, ctx);
+      calls.handle(pending, ctx);
+      calls.handle(toolCallUpdate({ toolCallId, status: 'completed', rawOutput: { type: 'text', text: 'one\ntwo\npassword=fixture123' }, _meta: {
+        ...meta, 'codebuddy.ai/rawResponse': { exitCode: 1, is_error: true },
+      } }), ctx);
+      expect(messages.filter(message => message.type !== 'status')).toEqual([
+        { type: 'tool-call', toolName: 'Bash', args: {}, callId: toolCallId },
+        { type: 'tool-call-update', callId: toolCallId, args: { ...input, command: 'printf "one\ntwo" # token=[REDACTED]', env: { API_KEY: '[REDACTED]' } } },
+        { type: 'tool-call-update', callId: toolCallId, terminal: { output: 'one\ntwo\npassword=[REDACTED]', exitCode: 1 } },
+        { type: 'tool-result', callId: toolCallId, toolName: 'Bash', result: undefined, isError: true },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves representative non-Bash inputs, structured output and redacted failures', () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, messages } = createMockCtx();
+      const calls = new CodeBuddyToolCalls();
+      const start = (toolCallId: string, toolName: string, rawInput: Record<string, unknown>) => calls.handle({
+        sessionUpdate: 'tool_call', toolCallId, kind: 'other', rawInput,
+        _meta: { 'codebuddy.ai/toolName': toolName },
+      }, ctx);
+      start('read', 'Read', { file_path: '/src/a.ts' });
+      calls.handle(toolCallUpdate({ toolCallId: 'read', status: 'completed', rawOutput: [{ type: 'text', text: 'file contents' }] }), ctx);
+      start('grep', 'Grep', { pattern: 'needle', path: '/src', include: '*.ts' });
+      calls.handle(toolCallUpdate({ toolCallId: 'grep', status: 'completed', rawOutput: 'src/a.ts:needle' }), ctx);
+      start('edit', 'Edit', { file_path: '/src/a.ts', old_string: 'before', new_string: 'after' });
+      const diff = { type: 'diff', path: '/src/a.ts', oldText: 'before', newText: 'after' };
+      calls.handle(toolCallUpdate({ toolCallId: 'edit', status: 'completed', content: [diff] }), ctx);
+      start('mcp', 'mcp__acme__search', { query: 'happy', scope: 'workspace' });
+      const mcpResponse = { is_error: false, content: [{ type: 'text', text: 'match' }] };
+      calls.handle(toolCallUpdate({ toolCallId: 'mcp', status: 'completed', _meta: { 'codebuddy.ai/rawResponse': mcpResponse } }), ctx);
+      start('custom', 'CustomTool', { target: 'release' });
+      calls.handle(toolCallUpdate({ toolCallId: 'custom', status: 'failed', _meta: {
+        'codebuddy.ai/rawResponse': { is_error: true, error: 'token=fixture123' },
+      } }), ctx);
+
+      expect(messages.filter(message => message.type === 'tool-call')).toMatchObject([
+        { callId: 'read', toolName: 'Read', args: { file_path: '/src/a.ts' } },
+        { callId: 'grep', toolName: 'Grep', args: { pattern: 'needle', path: '/src', include: '*.ts' } },
+        { callId: 'edit', toolName: 'Edit', args: { file_path: '/src/a.ts', old_string: 'before', new_string: 'after' } },
+        { callId: 'mcp', toolName: 'mcp__acme__search', args: { query: 'happy', scope: 'workspace' } },
+        { callId: 'custom', toolName: 'CustomTool', args: { target: 'release' } },
+      ]);
+      expect(messages.filter(message => message.type === 'tool-result')).toMatchObject([
+        { callId: 'read', result: 'file contents', isError: false },
+        { callId: 'grep', result: 'src/a.ts:needle', isError: false },
+        { callId: 'edit', result: diff, isError: false },
+        { callId: 'mcp', result: mcpResponse, isError: false },
+        { callId: 'custom', result: { is_error: true, error: 'token=[REDACTED]' }, isError: true },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an unknown tool usable when ACP provides only a completion', () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, messages } = createMockCtx();
+      new CodeBuddyToolCalls().handle(toolCallUpdate({ toolCallId: 'unknown', status: 'completed' }), ctx);
+      expect(messages).toContainEqual({ type: 'tool-call', callId: 'unknown', toolName: 'unknown', args: {} });
+      expect(messages).toContainEqual({ type: 'tool-result', callId: 'unknown', toolName: 'unknown', isError: false, result: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('resolveToolCallName', () => {
   it('prefers the transport-extracted name', () => {

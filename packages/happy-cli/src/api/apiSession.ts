@@ -986,18 +986,8 @@ export class ApiSessionClient extends EventEmitter {
         this.enqueueMessage(content, invalidate, localId, verify, ordered);
     }
 
-    sendSessionProtocolMessage(envelope: SessionEnvelope) {
-        if (envelope.role !== 'user') {
-            this.enqueueSessionProtocolEnvelope(envelope);
-            return;
-        }
-
-        if (envelope.ev.t !== 'text') {
-            this.enqueueSessionProtocolEnvelope(envelope);
-            return;
-        }
-
-        this.enqueueSessionProtocolEnvelope(envelope);
+    sendSessionProtocolMessage(envelope: SessionEnvelope, ordered = false) {
+        this.enqueueSessionProtocolEnvelope(envelope, true, undefined, false, ordered);
     }
 
     /** The ordinary outbox, with a caller-owned identity and confirmed encrypted readback. */

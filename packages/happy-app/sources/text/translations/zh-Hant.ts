@@ -712,6 +712,7 @@ export const zhHant: TranslationStructure = {
             error: '錯誤',
             completed: '工具已成功完成',
             noOutput: '未產生輸出',
+            exitCode: ({ code }: { code: number }) => `結束代碼 ${code}`,
             running: '工具正在執行...',
             rawJsonDevMode: '原始 JSON（開發模式）',
         },

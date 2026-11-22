@@ -724,6 +724,7 @@ export const zhHans: TranslationStructure = {
             error: '错误',
             completed: '工具已成功完成',
             noOutput: '未产生输出',
+            exitCode: ({ code }: { code: number }) => `退出码 ${code}`,
             running: '工具正在运行...',
             rawJsonDevMode: '原始 JSON（开发模式）',
         },

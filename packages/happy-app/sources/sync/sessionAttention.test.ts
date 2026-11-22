@@ -23,6 +23,7 @@ describe('attention event reconciliation', () => {
         const session = { attentionKind: 'done', lastTurnStatus: 'completed', agentState: { humanIntervention: { id: 'old' } } } as unknown as Session;
         expect(getSessionAttentionKind(session, record())).toBe('done');
         expect(getSessionAttentionKind({ ...session, lastTurnStatus: 'failed' }, record({ kind: 'intervention' }))).toBe('failed');
+        expect(getSessionAttentionKind({ ...session, lastTurnStatus: 'partial' }, record({ kind: 'done' }))).toBe('failed');
     });
     it('synchronizes only event metadata and strips local retry fields from the wire value', () => {
         const value = encodeAttentionValue(record({ pendingRead: true }));

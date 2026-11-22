@@ -16,7 +16,7 @@ export type SessionAttentionRecord = z.infer<typeof AttentionValueSchema> & { ve
 export type SessionAttentionRecords = Record<string, SessionAttentionRecord>;
 
 export function getSessionAttentionKind(session: Session, record: SessionAttentionRecord | undefined): AttentionKind | undefined {
-    if (session.lastTurnStatus === 'failed') return 'failed';
+    if (session.lastTurnStatus === 'failed' || session.lastTurnStatus === 'partial') return 'failed';
     // Keep old intervention notifications neutral rather than presenting them
     // as completed work. Legacy agent state no longer controls attention.
     if (record?.kind === 'intervention' || (!record && session.attentionKind === 'intervention')) return 'intervention';

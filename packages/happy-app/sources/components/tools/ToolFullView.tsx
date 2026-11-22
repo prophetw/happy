@@ -63,7 +63,7 @@ export function ToolFullView({ tool, metadata, messages = [], focusFile }: ToolF
                     )}
 
                     {/* Result/Output */}
-                    {tool.state === 'completed' && tool.result && (
+                    {tool.state === 'completed' && tool.result != null && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="log-out" size={20} color="#34C759" />
@@ -76,20 +76,29 @@ export function ToolFullView({ tool, metadata, messages = [], focusFile }: ToolF
                     )}
 
                     {/* Error Details */}
-                    {tool.state === 'error' && tool.result && (
+                    {tool.state === 'error' && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="close-circle" size={20} color="#FF3B30" />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                             </View>
                             <View style={styles.errorContainer}>
-                                <Text style={styles.errorText}>{toolResultText(tool.result)}</Text>
+                                <Text style={styles.errorText}>{toolResultText(tool.result) || tool.terminal?.error || tool.terminal?.stderr || t('tools.fullView.error')}</Text>
+                            </View>
+                        </View>
+                    )}
+
+                    {/* Running Status */}
+                    {tool.state === 'running' && (
+                        <View style={styles.section}>
+                            <View style={styles.emptyOutputContainer}>
+                                <Text style={styles.emptyOutputText}>{t('tools.fullView.running')}</Text>
                             </View>
                         </View>
                     )}
 
                     {/* No Output Message */}
-                    {tool.state === 'completed' && !tool.result && (
+                    {tool.state === 'completed' && tool.result == null && (
                         <View style={styles.section}>
                             <View style={styles.emptyOutputContainer}>
                                 <Ionicons name="checkmark-circle-outline" size={48} color="#34C759" />
@@ -129,6 +138,7 @@ export function ToolFullView({ tool, metadata, messages = [], focusFile }: ToolF
                                 description: tool.description,
                                 input: tool.input,
                                 result: tool.result,
+                                terminal: tool.terminal,
                                 createdAt: tool.createdAt,
                                 startedAt: tool.startedAt,
                                 completedAt: tool.completedAt,
