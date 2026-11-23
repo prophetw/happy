@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, testloopDotsLimitsText,
-    TestloopDotsRequestSchema, TESTLOOP_DOTS_PREFIX, TestloopDotsSnapshotSchema, testloopWorkStatus } from './testloopDots';
+    TestloopDotsRequestSchema, TESTLOOP_DOTS_PREFIX, TestloopDotsSnapshotSchema, testloopWorkQueueReason, testloopWorkStatus } from './testloopDots';
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';
 const otherWorkspace = '22222222-2222-4222-8222-222222222222';
@@ -14,6 +14,12 @@ const agent = (value: unknown, extra = {}) => ({ kind: 'agent-text', id: 'agent-
 const user = (extra = {}) => ({ kind: 'user-text', id: 'user-1', createdAt: 5, text: testloopDotsCommand(request), ...extra });
 
 describe('TestLoop Dots directory protocol', () => {
+    it('distinguishes project decisions and failed reviews from waiting for the user to continue', () => {
+        expect(testloopWorkQueueReason('decision_required')).toBe('项目遇到阻塞，等待处理决定。');
+        expect(testloopWorkQueueReason('review_blocked')).toBe('独立验收未通过，项目已停止推进。');
+        expect(testloopWorkQueueReason('project_new_user_input_pending')).toContain('等待你明确继续');
+    });
+
     it('reads optional bounded project progress on the authorized Dot detail', () => {
         const detail = { dotId: dot.id, taskTotal: 0, tasks: [], memory: null };
         const card = { id: dot.id, available: true, taskTotal: 0, tasks: [] };

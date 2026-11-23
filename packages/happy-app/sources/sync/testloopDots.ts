@@ -202,6 +202,8 @@ export function testloopWorkQueueReason(reason: string): string {
         'scheduler-ready': '等待调度', 'project-limit': '等待本项目执行名额', 'machine-limit': '等待机器硬上限名额',
         'resource-wait': '等待共享排他资源', execution_slot: '等待机器执行槽',
         project_new_user_input_pending: '收到新指令，等待你明确继续项目。',
+        decision_required: '项目遇到阻塞，等待处理决定。',
+        review_blocked: '独立验收未通过，项目已停止推进。',
         legacy_observation: '正在核对占用资源的旧会话', candidate_review: '等待原目录的候选验收结束',
         CANDIDATE_REQUIRED: '请选择要审查的提交或执行候选。', CANDIDATE_UNAVAILABLE: '指定候选已无法读取。',
         CANDIDATE_CHANGED: '指定候选已经变化，验收无法继续。',
