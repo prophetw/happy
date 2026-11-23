@@ -242,7 +242,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                         onChangeText={editing ? setEditInstruction : setInstruction} maxLength={2000} multiline editable={!formPending}
                         style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} />
                     <Text style={s.muted}>{editing
-                        ? '模型设置在当前轮次完成后应用。长期职责调整暂需停机维护；模型调整保留任务、记忆和授权。'
+                        ? '保存后从宿主同步完成的下一轮起使用新职责和模型设置。旧宿主调整长期职责时需停机维护。'
                         : '创建不消耗模型额度。新 Dot 默认未授权项目，创建后请在「连接与授权」中选择可执行项目。'}</Text>
                     {editing && <View style={{ gap: 10, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.divider }}>
                         <Text style={s.heading}>危险操作</Text>

@@ -3,7 +3,7 @@ import { type BigIntStats, closeSync, constants, existsSync, fstatSync, fsyncSyn
 import { spawn, spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { z } from 'zod';
-import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, hash, HostedDotJournal, savePrivate } from './hostedDotState';
+import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, HOSTED_INSTRUCTION_FILE, HostedInstructionSettings, hash, HostedDotJournal, savePrivate } from './hostedDotState';
 import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend } from './hostedDotStorage';
 import { withLockedHostedAdmission } from './hostedDotAdmission';
 
@@ -136,6 +136,13 @@ export function statusHostedDot(raw: HostedDotBinding) {
         clearPending: present(join(b.directory, 'lifecycle-clear.json')),
         controls: state?.controls ?? [], pendingInputs: state?.inputs.filter(row => ['queued', ...uncertain].includes(row.status)).length ?? 0 };
 }
+/** Old producers never advertise settings reload. Tie the capability to the live owner. */
+export function supportsHostedDotInstruction(raw: HostedDotBinding): boolean {
+    const b = binding(raw), status = statusHostedDot(b);
+    if (!status.running || status.clearPending || !['ready', 'running'].includes(status.status)) return false;
+    const journal = journalFor(b, configFor(b));
+    return journal?.instructionSettings === true && hash(journal.authority?.producer ?? null) === hash(status.owner);
+}
 /** For configuration switches. Caller holds the shared launch lock until commit. */
 export function assertHostedDotStopped(raw: HostedDotBinding) {
     const b = binding(raw), status = statusHostedDot(b);
@@ -208,18 +215,26 @@ export function recoverHostedDot(raw: HostedDotBinding) {
     const release = lock(join(b.directory, 'launch.lock')); try { return recoverLocked(b); } finally { release(); }
 }
 export function startHostedDot(raw: { config: HostedDotConfig; entrypoint: string; settings?: z.infer<typeof settingsSchema>; authFile?: string }) {
-    const config = HostedDotConfig.parse(raw.config), b = binding({ directory: config.directory, dotId: config.dotId, sessionId: config.sessionId });
+    const desired = HostedDotConfig.parse(raw.config), b = binding({ directory: desired.directory, dotId: desired.dotId, sessionId: desired.sessionId });
     safePath(raw.entrypoint); if (!lstatSync(raw.entrypoint).isFile()) throw Error('hosted_lifecycle_entrypoint_invalid');
     mkdirSync(b.directory, { recursive: true, mode: 0o700 });
     const release = lock(join(b.directory, 'launch.lock'));
     try {
         unfenced(b);
         const old = configFor(b);
-        if (old && hash(old) !== hash(config)) throw Error('hosted_lifecycle_configuration_changed');
+        if (old && hash(old) !== hash({ ...desired, instruction: old.instruction })) throw Error('hosted_lifecycle_configuration_changed');
+        // The launch config remains the journal's immutable identity. The scanner
+        // projects the ledger's latest instruction separately, as it does model settings.
+        const config = old ?? desired;
         let status = statusHostedDot(b);
         const pendingControl = join(b.directory, 'control.json');
         if (present(pendingControl) && !status.controls.includes(read(pendingControl).id)) throw Error('hosted_lifecycle_control_pending');
         if (status.status === 'blocked' && !recoverLocked(b).recovered) throw Error('hosted_lifecycle_recovery_blocked');
+        const instructionFile = join(b.directory, HOSTED_INSTRUCTION_FILE);
+        if (present(instructionFile) || config.instruction !== desired.instruction) {
+            const settings = HostedInstructionSettings.parse({ dotId: b.dotId, sessionId: b.sessionId, instruction: desired.instruction });
+            if (!present(instructionFile) || hash(read(instructionFile, 16_000)) !== hash(settings)) write(instructionFile, settings);
+        }
         if (raw.settings) write(join(b.directory, 'settings.json'), settingsSchema.parse(raw.settings));
         if (status.running) {
             const recovery = join(b.directory, 'recovery.json');
@@ -360,7 +375,7 @@ export function clearHostedDot(raw: ClearRequest) {
             if (floor(c.directory) > c.epoch) throw Error('hosted_lifecycle_epoch_changed');
             write(join(c.directory, 'reset-epoch.json'), { epoch: c.epoch });
             removeHostedStorage(c.directory);
-            for (const name of ['config.json', 'control.json', 'task-gateway.json', 'events', 'recovery.json', 'bootstrap.json', 'owner.json', 'admission-intent.json', 'admission-status.json']) {
+            for (const name of ['config.json', HOSTED_INSTRUCTION_FILE, 'control.json', 'task-gateway.json', 'events', 'recovery.json', 'bootstrap.json', 'owner.json', 'admission-intent.json', 'admission-status.json']) {
                 const path = join(c.directory, name); safePath(path); rmSync(path, { recursive: true, force: true });
             }
             for (const name of ['sessions', 'archived_sessions']) { const path = join(c.codexHome, name); safePath(path); rmSync(path, { recursive: true, force: true }); }

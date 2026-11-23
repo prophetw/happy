@@ -9,10 +9,17 @@ const hooks = vi.hoisted(() => ({
     paths: new Map<number, string>(),
     onOpen: undefined as undefined | ((file: string) => void),
     onRead: undefined as undefined | ((file: string) => void),
+    onNamedStat: undefined as undefined | ((file: string) => boolean),
 }));
 vi.mock('node:fs', async importOriginal => {
     const fs = await importOriginal<typeof import('node:fs')>();
     return { ...fs,
+        lstatSync: (...args: Parameters<typeof fs.lstatSync>) => {
+            const stat = fs.lstatSync(...args);
+            if (stat && (!args[1] || args[1].bigint) && hooks.onNamedStat?.(String(args[0])))
+                Object.assign(stat, { nlink: typeof stat.nlink === 'bigint' ? 0n : 0 });
+            return stat;
+        },
         openSync: (...args: Parameters<typeof fs.openSync>) => {
             const fd = fs.openSync(...args), file = String(args[0]); hooks.paths.set(fd, file); hooks.onOpen?.(file); return fd;
         },
@@ -35,7 +42,7 @@ function replace(file: string, value: unknown) {
     const temporary = file + '.' + randomUUID(); writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 }); renameSync(temporary, file);
 }
 afterEach(() => {
-    hooks.onOpen = hooks.onRead = undefined; hooks.paths.clear();
+    hooks.onOpen = hooks.onRead = hooks.onNamedStat = undefined; hooks.paths.clear();
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -47,6 +54,31 @@ for (const timing of ['onOpen', 'onRead'] as const) it(`${timing}: atomic rename
     };
     expect(readHostedStorage(f.file)).toEqual(after);
     expect(replacements).toBe(1);
+});
+
+it('a pathname stat can observe the inode just detached by atomic publication', () => {
+    const f = fixture(); let replacements = 0;
+    hooks.onNamedStat = path => {
+        if (path !== f.file) return false;
+        hooks.onNamedStat = undefined; replacements++; replace(f.file, after);
+        return true;
+    };
+    expect(readHostedStorage(f.file)).toEqual(after);
+    expect(replacements).toBe(1);
+});
+
+it('holds the old descriptor while opening its replacement so its inode cannot be recycled', () => {
+    const f = fixture(); let opens = 0, concurrent = 0;
+    hooks.onOpen = path => {
+        if (path !== f.file) return;
+        opens++;
+        if (opens === 1) replace(f.file, after);
+        else concurrent = [...hooks.paths.values()].filter(value => value === f.file).length;
+    };
+    expect(readHostedStorage(f.file)).toEqual(after);
+    expect(opens).toBe(2);
+    expect(concurrent).toBe(2);
+    expect(hooks.paths.size).toBe(0);
 });
 
 it('repeated inode replacement fails after one complete reopen', () => {

@@ -1230,6 +1230,7 @@ export class CodexAppServerClient {
         approvalPolicy?: ApprovalPolicy;
         sandbox?: SandboxMode;
         effort?: ReasoningEffort;
+        developerInstructions?: string;
         extraInputItems?: InputItem[];
     }): Promise<void> {
         if (!this._threadId) {
@@ -1252,6 +1253,15 @@ export class CodexAppServerClient {
         if (opts?.approvalPolicy) params.approvalPolicy = opts.approvalPolicy;
         if (opts?.model) params.model = opts.model;
         if (opts?.effort) params.effort = opts.effort;
+        if (opts?.developerInstructions !== undefined) {
+            // Thread resume can retain the original rollout's instruction. The
+            // per-turn override applies the saved instruction on the same thread.
+            const model = opts.model ?? this.threadDefaults?.model;
+            if (!model) throw new Error('developer_instructions_model_required');
+            params.collaborationMode = { mode: 'default', settings: {
+                model, reasoning_effort: opts.effort ?? null, developer_instructions: opts.developerInstructions,
+            } };
+        }
 
         // Map sandbox mode to the camelCase policy format the server expects
         if (opts?.sandbox) {
@@ -1291,6 +1301,7 @@ export class CodexAppServerClient {
         approvalPolicy?: ApprovalPolicy;
         sandbox?: SandboxMode;
         effort?: ReasoningEffort;
+        developerInstructions?: string;
         extraInputItems?: InputItem[];
     }): Promise<{ aborted: boolean }> {
         // Wait for any in-flight interruptTurn() to complete before starting a new
