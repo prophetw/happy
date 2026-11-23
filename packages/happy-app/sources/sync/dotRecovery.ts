@@ -6,6 +6,7 @@ const messages: Record<string, string> = {
     dot_recovery_account_denied: '当前账号无权恢复这个 Dot。',
     dot_recovery_binding_changed: 'Dot 的会话或归属已变化，请返回工作台刷新。',
     dot_recovery_runtime_blocked: 'Dot 存在待核对的运行状态，无法自动恢复。请在活动页查看原因。',
+    dot_recovery_pending_delivery_queue_full: '待投递队列已满，请先排空',
     dot_recovery_relay_unavailable: '无法连接消息服务，请稍后重试。',
 };
 

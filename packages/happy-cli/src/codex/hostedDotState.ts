@@ -34,6 +34,7 @@ export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.op
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
     bootstrap: z.object({ stage: z.enum(['injecting', 'applied']), threadId: z.string() }).optional(),
     inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(100000),
+    outputReceipts: z.array(z.string()).default([]),
     controls: z.array(z.string()).default([]) });
 export type HostedState = z.infer<typeof HostedDotJournal>;
 /** Dispatch snapshots are recovery evidence only while an input is unresolved.
@@ -49,6 +50,24 @@ export function compactSettledDispatchSnapshots(state: HostedState): void {
 }
 
 type Output = HostedState['outputs'][number];
+const outputReceiptSets = new WeakMap<HostedState, Set<string>>();
+function outputReceiptSet(state: HostedState): Set<string> {
+    const rows = state.outputReceipts ?? [], cached = outputReceiptSets.get(state);
+    if (cached && cached.size === rows.length) return cached;
+    const receipts = new Set(rows);
+    if (receipts.size !== rows.length) throw Error('hosted_output_receipt_invalid');
+    outputReceiptSets.set(state, receipts); return receipts;
+}
+function appendOutputReceipts(state: HostedState, localIds: string[]): void {
+    if (!localIds.length) return;
+    const receipts = outputReceiptSet(state), additions = new Set<string>();
+    for (const localId of localIds) {
+        if (typeof localId !== 'string' || !localId || receipts.has(localId) || additions.has(localId)) throw Error('hosted_output_receipt_invalid');
+        additions.add(localId);
+    }
+    state.outputReceipts ??= [];
+    for (const localId of additions) { state.outputReceipts.push(localId); receipts.add(localId); }
+}
 type TextEnvelope = SessionEnvelope & { ev: Extract<SessionEnvelope['ev'], { t: 'text' }> };
 type Boundary = { starts: number; ends: number; startSent: boolean; endSent: boolean };
 const storedEnvelope = (row: Output): SessionEnvelope | undefined => {
@@ -100,7 +119,7 @@ function finalSnapshot(row: Output): { envelope: TextEnvelope; prefix: string } 
 }
 
 /** Keep the final, fully ACKed text item; unknown or incomplete history fails closed. */
-export function compactFinalTextOutputs(outputs: Output[]): number {
+export function compactFinalTextOutputs(outputs: Output[], receiptState?: HostedState): number {
     const groups = new Map<string, { epoch: string; rows: Output[] }>(), turnBoundaries = boundaries(outputs);
     for (const row of outputs) {
         const envelope = textEnvelope(row), epoch = outputEpoch(row);
@@ -129,6 +148,10 @@ export function compactFinalTextOutputs(outputs: Output[]): number {
         for (const row of group.rows) if (row !== snapshots[0]) remove.add(row);
     }
     if (!remove.size) return 0;
+    if (receiptState) {
+        if (receiptState.outputs !== outputs) throw Error('hosted_output_receipt_invalid');
+        appendOutputReceipts(receiptState, [...remove].map(row => row.localId));
+    }
     let write = 0;
     for (let read = 0; read < outputs.length; read++) {
         if (remove.has(outputs[read])) continue;
@@ -137,6 +160,16 @@ export function compactFinalTextOutputs(outputs: Output[]): number {
     }
     outputs.length = write;
     return remove.size;
+}
+
+/** Reclaim only the oldest contiguous verified prefix; pending rows retain identity and order. */
+export function reclaimDeliveredOutputPrefix(state: HostedState): number {
+    let count = 0;
+    while (count < state.outputs.length && state.outputs[count].sent) count++;
+    if (!count) return 0;
+    appendOutputReceipts(state, state.outputs.slice(0, count).map(row => row.localId));
+    state.outputs.splice(0, count);
+    return count;
 }
 
 /** A retained final snapshot also proves which canonical deltas were compacted. */
@@ -188,13 +221,13 @@ export function loadHostedState(file: string, config: HostedDotConfig): HostedSt
     if (existsSync(config.directory + '/reset-epoch.json') && z.object({ epoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch > state.epoch)
         throw new Error('hosted_epoch_stale');
     if (state.bootstrap?.stage === 'injecting') throw new Error('hosted_bootstrap_unconfirmed');
-    compactFinalTextOutputs(state.outputs);
+    compactFinalTextOutputs(state.outputs, state);
     return state;
 }
 export function addOutput(state: HostedState, envelope: SessionEnvelope): boolean {
     const localId = `hosted:${state.epoch}:${envelope.id}`;
     const existing = state.outputs.find(o => o.localId === localId);
-    if (existing || coveredByFinalSnapshot(state, envelope)) return false;
+    if (existing || outputReceiptSet(state).has(localId) || coveredByFinalSnapshot(state, envelope)) return false;
     state.outputs.push({ localId, envelope, sent: false });
     return true;
 }

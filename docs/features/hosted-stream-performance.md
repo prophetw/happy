@@ -33,15 +33,17 @@ ACK 提交失败沿用宿主 fail-stop，重启读取原 journal 并核对相同
 缓存只在完整事务提交和文件身份核对成功后推进；失败保留 dirty 记录，不能把未落盘 ACK
 当作已确认。另一写者改变 generation、数据库被替换或 backend 改变时拒绝继续覆盖。
 
-磁盘继续使用原来的 v1 records/metadata、UTF-8 字节上限和摘要格式。
-历史输出的 SHA-256 前缀每 256 条缓存一次；追加与靠近尾部的 ACK 从最近前缀继续计算，
-不重新编码已确认正文，也不查询全部历史行摘要。较早记录的 ACK 仍需重算其后的摘要，
+活跃records继续使用原有UTF-8字节上限和逐行摘要格式；已送达正文回收使用SQLite v2的独立`output_receipts`表。
+receipt count/root与活跃records一起受metadata摘要认证，精确localId只追加、不覆盖。writer在receipts未变化的
+ACK事务中复用提交后缓存，不重算或回读全部receipts；append时才验证旧前缀并写入新增位置。
+历史输出的SHA-256前缀每256条缓存一次；追加与靠近尾部的ACK从最近前缀继续计算，
+不重新编码已确认正文，也不查询全部历史行摘要。较早记录的ACK仍需重算其后的摘要，
 但不重新编码这些正文。首次提交及重启重新建立缓存，成本仍随历史量增长。
 行、header、authority revision 和 ACK 仍在同一个 `synchronous=FULL` 事务中原子提交。
 
-JSON 会话继续使用原有快照写入，不自动转换存储；大 JSON 文件的完整写盘成本仍存在。
-此次优化针对已有 SQLite runtime，不增加迁移 API。生命周期、清空和离线 stop 继续使用
-完整快照边界；原 reader 可以直接读增量写入后的数据库。
+JSON 会话继续使用原有快照写入，不自动转换存储，也不执行通用已送达prefix pruning；已有receipts会完整roundtrip。
+大 JSON 文件的完整写盘成本仍存在。生命周期、清空和离线 stop 继续使用完整快照边界；
+空receipt的v1账本保持旧格式，真正写入receipts后只能由v2兼容reader/writer接管。
 
 ## 文本 item 持久化合批
 
@@ -51,9 +53,9 @@ JSON 会话继续使用原有快照写入，不自动转换存储；大 JSON 文
 从活跃 journal 移除。snapshot 自身及其 envelope.id/localId/sent 原样保留，其他事件和相对顺序不变。
 
 空快照、重复/畸形快照、非 canonical ID、空洞、重叠、后缀、正文不一致、缺 turn 边界以及任何
-相关行未确认都整组保留。保留的 snapshot 同时作为去重描述符：恢复重放只有在 canonical ID、
-完整路由键以及 offset 对应的正文区间都匹配时才被抑制；snapshot 末尾及其后的新后缀仍正常追加。
-因此不需要新收据表或存储格式，也不会通过改写旧 delta ID 来更新正文。
+相关行未确认都整组保留。保留的 snapshot 仍校验canonical ID、完整路由键和正文区间；
+生产路径另把每个被删delta的精确localId写入同一事务的receipts。后续即使snapshot和turn边界
+也被已送达prefix回收，旧delta仍不能重新入队；snapshot末尾及其后的新后缀正常追加。
 
 冷加载在 writer 建立前执行一次合批。运行中只在成功 flush 后的 quiescent 边界原位压缩并重设
 投递游标；存在 active/pending、未 ACK 行或新 durable 批次时拒绝合批。启动恢复、最终 snapshot
@@ -62,6 +64,16 @@ JSON 会话继续使用原有快照写入，不自动转换存储；大 JSON 文
 
 这是最终正文与恢复去重无损的派生合批，不是逐 delta 字节的 lossless archive。100,000 条 output、
 128 MiB journal 的临时上限继续作为异常保护，不因合批而提高或降低。
+
+## 已送达前缀回收与队列高水位
+
+SQLite在50,000条或32 MiB起回收最旧连续已送达前缀，遇到第一条未确认output即停止。
+运行中只允许无active send时执行，pending未确认对象保持原引用，scanned减去实际移除前缀长度；
+即使flush返回未确认，也可回收其前方的已确认前缀。冷启动先于native resume/reconcile执行。
+
+90,000条或112 MiB进入`hosted_pending_delivery_queue_full`，停止新dispatch但继续flush/ACK；
+80,000条和96 MiB以下才解除。高水位冷启动延迟native恢复，离线错误不覆盖queue-full原因。
+这些是容量与恢复行为，不是低延迟承诺；90,000条真实ACK排空仍需要逐批SQLite事务，不能用测试超时推断已排空。
 
 ## 隔离复现
 

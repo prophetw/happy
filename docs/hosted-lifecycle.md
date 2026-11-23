@@ -71,3 +71,13 @@ v1 数据格式不变。回退到旧构建仍能识别空数组派发标记，�
 - 冷加载先于 writer 合批；运行中只在成功 flush 后且无 active/pending/未ACK行时原位合批并重建游标。保留的 snapshot 提供被删 delta 的恢复去重，不新增存储格式或receipt表。
 - 该机制保留最终正文与投递去重，不保存每个 delta 的独立原文，不替代后续 lossless archive。详见[流式投递与持久化合批](features/hosted-stream-performance.md#文本-item-持久化合批)。
 - 当前临时扩容 reader 可以读取合批后的 v1 账本，但旧 producer 不具备 snapshot 重放抑制，原生恢复可能重新累积 delta；回退只允许使用兼容的临时扩容构建，不能回到50,000条/32 MiB reader，也不能恢复旧大账本覆盖新状态。
+
+## 2026-11-23：待投递队列与 SQLite v2 receipts
+
+- 本地output journal不再永久保存全部已送达正文。50,000条或32 MiB触发最旧连续`sent=true`前缀回收；100,000条/128 MiB硬上限保持不变。所有未确认output及未决input/task-result原样保留。
+- v2以独立、唯一、带认证count/root的`output_receipts`表保存精确localId。ACK、receipt追加、活跃行删除和metadata在同一SQLite事务提交；producer、lifecycle、inputAuthority必须同步支持v2。
+- main上的文本delta合批也写入被删localId receipts，不再只依赖最终snapshot做永久去重。legacy JSON不执行通用prefix pruning。
+- 90,000条或112 MiB进入`hosted_pending_delivery_queue_full`，新dispatch暂停而delivery继续；80,000条和96 MiB以下才自动解除。该错误不属于lifecycle自动recoverable集合，不能用反复重启代替排空。
+- 高水位冷启动延迟native resume/reconcile/importHistory，先完成Relay drain和回收。真正硬溢出仍保留最后可读journal并fail-stop。
+- v2写入后不能回退到v1-only hotfix。发布清单使用能读写v2、保留receipt去重的兼容构建A作为回退，完整自动回收构建为B；副本必须验证`v1→B→A`及未确认原ID补送。
+- 定向验收覆盖50,000条（49,783 sent+217 unsent）、事务回滚、重放去重、90,000条离线queue-full、恢复后不清空已确认历史，以及TestLoop/Web专用恢复原因。隔离fixture不等于线上账本、Relay或浏览器已验收。

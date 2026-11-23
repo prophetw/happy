@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate, loadHostedState, HostedDotConfig } from './hostedDotState';
+import { saveHostedStorage, readHostedStorage } from './hostedDotStorage';
 import * as sessionProtocolMapper from './utils/sessionProtocolMapper';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any,
@@ -35,7 +36,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
 } }));
 import { runHostedDot } from './hostedDotMain';
 import { readHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
-function fixture(gateway = false, imported = false, seed?: (state: any) => void) {
+function fixture(gateway = false, imported = false, seed?: (state: any) => void, sqlite = false) {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-loop-')), home = join(dir, 'happy'), data = join(dir, 'runtime');
     mkdirSync(home); mkdirSync(data, { mode: 0o700 });
     writeFileSync(join(home, 'credential-target.key'), JSON.stringify({ token: 'fixture-token', serverUrl: 'http://127.0.0.1:1234' }));
@@ -54,9 +55,17 @@ function fixture(gateway = false, imported = false, seed?: (state: any) => void)
     const servers = { happy_fixture: { command: '/usr/bin/node', args: ['/fixture/gateway.mjs'], startup_timeout_sec: 30, tool_timeout_sec: 30, required: true, default_tools_approval_mode: 'approve' } };
     const policy = (value: unknown) => writeFileSync(join(data, 'task-gateway.json'), JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, servers: value }));
     if (gateway) policy(servers);
-    if (seed) { const initial = loadHostedState(join(data, 'state.json'), HostedDotConfig.parse(config)); seed(initial); writeFileSync(join(data, 'state.json'), JSON.stringify(initial)); }
+    if (seed) {
+        if (sqlite) {
+            writeFileSync(join(data, 'storage.json'), JSON.stringify({ version: 1, kind: 'happy-dot-state', directory: data, backend: 'sqlite', pending: true }), { mode: 0o600 });
+            writeFileSync(join(data, 'state.json'), JSON.stringify({ version: 0, storage: 'sqlite', error: 'hosted_sqlite_reader_required' }), { mode: 0o600 });
+        }
+        const initial = loadHostedState(join(data, 'state.json'), HostedDotConfig.parse(config)); seed(initial);
+        if (sqlite) saveHostedStorage(join(data, 'state.json'), initial);
+        else writeFileSync(join(data, 'state.json'), JSON.stringify(initial));
+    }
     let controller = new AbortController(), running = runHostedDot(config, controller.signal);
-    const state = () => readPrivate(join(data, 'state.json'));
+    const state = () => readHostedStorage(join(data, 'state.json'))!;
     const event = (id: string, epoch = 0, overrides: any = {}) => {
         mkdirSync(join(data, 'events'), { recursive: true });
         writeFileSync(join(data, 'events', `task-${id.repeat(64)}.json`), JSON.stringify({ version: 1, id: `task-${id.repeat(64)}`, dotId: config.dotId, sessionId: config.sessionId, epoch, createdAt: new Date().toISOString(), text: 'result event ' + id, ...overrides }));
@@ -75,6 +84,75 @@ const emit = (method: string, params: any) => {
     });
 };
 beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.flush.mockReset().mockResolvedValue(undefined); h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockReset().mockResolvedValue({}); });
+it('reclaims 49,783 confirmed rows at a 50,000-row SQLite restart and resends only the original 217', async () => {
+    const envelopes = Array.from({ length: 50000 }, (_, n) => ({ id: `history-${n}`, time: n, role: 'agent', ev: { t: 'service', text: `body-${n}` } }));
+    const f = fixture(false, false, state => {
+        state.status = 'stopped'; state.threadId = 'native-thread';
+        state.inputs = [{ id: 'settled', seq: 1, text: 'original', status: 'completed', beforeTurns: [], epoch: 0 }];
+        state.outputs = envelopes.map((envelope, n) => ({ localId: `hosted:0:history-${n}`, envelope, sent: n < 49783 }));
+    }, true);
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'), { timeout: 20000 });
+        await vi.waitFor(() => expect(h.sent).toHaveLength(217), { timeout: 20000 });
+        expect(h.sent.map(row => row.localId)).toEqual(envelopes.slice(49783).map(envelope => `hosted:0:${envelope.id}`));
+        expect(f.state().outputs).toHaveLength(217);
+        expect(f.state().outputReceipts).toHaveLength(49783);
+        expect(f.state().afterSeq).toBe(0); expect(f.state().threadId).toBe('native-thread');
+        expect(f.state().inputs).toEqual([expect.objectContaining({ id: 'settled', status: 'completed', beforeTurns: [] })]);
+        h.sent = [];
+        await f.restart();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'), { timeout: 20000 });
+        expect(h.sent).toEqual([]);
+        expect(f.state().outputs).toHaveLength(0);
+        expect(f.state().outputReceipts).toHaveLength(50000);
+    } finally { await f.stop(); }
+}, 60000);
+it('keeps a genuinely full unsent SQLite queue alive with a stable explicit reason and fences dispatch', async () => {
+    h.flush.mockRejectedValue(Error('hosted_output_unconfirmed'));
+    const f = fixture(false, false, state => {
+        state.status = 'stopped'; state.threadId = 'native-thread';
+        state.inputs = [{ id: 'settled', seq: 1, text: 'original', status: 'completed', beforeTurns: [], epoch: 0 }];
+        state.outputs = Array.from({ length: 90000 }, (_, n) => ({
+            localId: `hosted:0:pending-${n}`, sent: false,
+            envelope: { id: `pending-${n}`, time: n, role: 'agent', ev: { t: 'service', text: `pending-${n}` } },
+        }));
+    }, true);
+    let finished = false; void f.running.catch(() => {}).then(() => { finished = true; });
+    try {
+        await vi.waitFor(() => expect(f.state().error).toBe('hosted_pending_delivery_queue_full'), { timeout: 20000 });
+        expect(f.state().status).toBe('blocked'); expect(f.state().outputs).toHaveLength(90000);
+        expect(h.resume).not.toHaveBeenCalled();
+        expect(f.state().outputReceipts).toHaveLength(0);
+        h.rows.push(row(2, 'must remain queued'));
+        await vi.waitFor(() => expect(f.state().inputs).toHaveLength(2));
+        await vi.waitFor(() => expect(h.flush.mock.calls.length).toBeGreaterThan(2));
+        expect(h.send).not.toHaveBeenCalled(); expect(finished).toBe(false);
+        expect(f.state().inputs[1].status).toBe('queued'); expect(f.state().outputs).toHaveLength(90000);
+        expect(f.state().error).toBe('hosted_pending_delivery_queue_full');
+    } finally {
+        await f.stop().catch(error => expect(error.message).toContain('hosted_pending_delivery_queue_full'));
+    }
+}, 60000);
+it('drains the last pending row at the high watermark without resending confirmed history and clears the block', async () => {
+    h.flush.mockRejectedValueOnce(Error('hosted_output_unconfirmed')).mockResolvedValue(undefined);
+    const f = fixture(false, false, state => {
+        state.status = 'stopped'; state.threadId = 'native-thread';
+        state.inputs = [{ id: 'settled', seq: 1, text: 'original', status: 'completed', beforeTurns: [], epoch: 0 }];
+        state.outputs = Array.from({ length: 90000 }, (_, n) => ({
+            localId: `hosted:0:pressure-${n}`, sent: n > 0,
+            envelope: { id: `pressure-${n}`, time: n, role: 'agent', ev: { t: 'service', text: `pressure-${n}` } },
+        }));
+    }, true);
+    try {
+        await vi.waitFor(() => expect(f.state().error).toBe('hosted_pending_delivery_queue_full'), { timeout: 20000 });
+        await vi.waitFor(() => expect(f.state().outputReceipts).toHaveLength(90000), { timeout: 20000 });
+        expect(h.sent.map(row => row.localId)).toEqual(['hosted:0:pressure-0']);
+        expect(f.state().outputs).toHaveLength(0);
+        await vi.waitFor(() => expect(f.state().error).toBeNull());
+        expect(f.state().status).toBe('ready');
+        expect(h.resume).toHaveBeenCalledTimes(1);
+    } finally { await f.stop(); }
+}, 60000);
 it('commits actual native frame mutations once and skips raw/timing/no-op callbacks', async () => {
     const f = fixture();
     try {

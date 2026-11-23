@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { HostedDotConfig, HostedDotJournal, loadHostedState, addOutput, hostedProducerIdentity } from './hostedDotState';
+import { HostedDotConfig, HostedDotJournal, loadHostedState, addOutput, hostedProducerIdentity, reclaimDeliveredOutputPrefix } from './hostedDotState';
 import { readHostedStorage, saveHostedStorage, hostedStorageBackend } from './hostedDotStorage';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
 import { stopHostedDot, statusHostedDot, readHostedDotJournal, prepareHostedDotClear, clearHostedDot } from './hostedDotLifecycle';
@@ -60,6 +60,15 @@ it('reads expanded journals through producer, lifecycle and input authority with
  expect(readHostedStorage(f.file)!.outputs).toHaveLength(50001);
 },60000);
 
+it('preserves v2 receipts through producer, lifecycle, input authority and an offline stop', async () => {
+ const f=fixture(true);createHostedAuthorityPublisher(f.file,f.state,{pid:99999999,start:'1',boot:'00000000-0000-4000-8000-000000000001'})();f.state.outputs[0].sent=true;
+ expect(reclaimDeliveredOutputPrefix(f.state)).toBe(1);saveHostedStorage(f.file,f.state);
+ const producer=loadHostedState(f.file,f.config);expect(producer.outputs).toHaveLength(0);expect(producer.outputReceipts).toEqual(['hosted:0:synthetic']);
+ expect(statusHostedDot({directory:f.directory,dotId:f.config.dotId,sessionId:f.config.sessionId}).threadId).toBe('synthetic-thread');
+ expect(readHostedInputAuthority(f.config).inputs).toEqual([]);
+ await stopHostedDot({directory:f.directory,dotId:f.config.dotId,sessionId:f.config.sessionId,requestId:'v2-stop'});
+ const stopped=readHostedStorage(f.file)!;expect(stopped.outputReceipts).toEqual(['hosted:0:synthetic']);expect(stopped.controls).toContain('v2-stop');
+});
 it('SQLite sentinel rejects legacy JSON schema and conversion APIs are absent',async()=>{
  const f=fixture(true);expect(JSON.parse(readFileSync(f.file,'utf8')).error).toBe('hosted_sqlite_reader_required');
  const storage=await import('./hostedDotStorage');expect('migrateHostedStorage' in storage).toBe(false);expect('rollbackHostedStorage' in storage).toBe(false);expect('recoverHostedStorage' in storage).toBe(false);

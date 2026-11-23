@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createEnvelope } from '@slopus/happy-wire';
 import { HostedOutputDelivery } from './hostedOutputDelivery';
-import { addOutput, compactFinalTextOutputs, type HostedState } from './hostedDotState';
+import { addOutput, compactFinalTextOutputs, reclaimDeliveredOutputPrefix, type HostedState } from './hostedDotState';
 const row = (n: number, item = 'item', epoch = 0, snapshot = false) => ({ localId: `hosted:${epoch}:${item}:${n}`, sent: false,
     envelope: createEnvelope('agent', { t: 'text', text: n % 2 ? '文' : '🙂', textOffset: n, ...(snapshot ? { textSnapshot: true } : {}) },
         { id: `${item}:${n}`, turn: 'turn', codexItemId: item }) });
@@ -82,6 +82,24 @@ it('sends an oversized indivisible snapshot alone without rewriting its ID or co
     delivery.durable(); await delivery.flush();
     expect(send.mock.calls.map(call => call[0].length)).toEqual([1, 1]);
     expect(send.mock.calls[0][0][0]).toEqual({ envelope: snapshot.envelope, localId: snapshot.localId });
+    await delivery.close();
+});
+
+it('reclaims an acknowledged prefix with an unsent tail without skipping later durable output', async () => {
+    const rows = [row(0), row(1), row(2), row(3)], state = { epoch: 0, outputs: rows, outputReceipts: [] } as unknown as HostedState;
+    const tail = rows.slice(2), send = vi.fn().mockImplementationOnce(async (batch: any[]) => batch.slice(0, 2).map(r => r.localId))
+        .mockImplementation(async (batch: any[]) => batch.map(r => r.localId));
+    const delivery = new HostedOutputDelivery(rows, send, () => {});
+    delivery.durable(); await expect(delivery.flush()).rejects.toThrow('hosted_output_unconfirmed');
+    expect(delivery.reclaimAcknowledgedPrefix(() => reclaimDeliveredOutputPrefix(state))).toBe(2);
+    expect(rows).toEqual(tail); expect(state.outputReceipts).toEqual(['hosted:0:item:0', 'hosted:0:item:1']);
+
+    const next = row(4); rows.push(next); delivery.durable(); await delivery.flush();
+    expect(send.mock.calls.at(-1)![0].map((r: any) => r.localId)).toEqual([
+        'hosted:0:item:2', 'hosted:0:item:3', 'hosted:0:item:4',
+    ]);
+    expect(addOutput(state, tail[0].envelope)).toBe(false);
+    expect(addOutput(state, row(0).envelope)).toBe(false);
     await delivery.close();
 });
 

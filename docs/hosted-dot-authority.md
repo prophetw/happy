@@ -72,25 +72,29 @@ revision 不得倒退。只有输出日志和递增 revision 的差异不改变�
 
 宿主 fail-stop 只撤销其存活身份，不证明原生子进程已退出，也不保证已发出的请求或副作用被取消。
 
-普通发布与blocked撤销写入前都检查完整紧凑JSON的UTF-8字节数（含authority元数据），
-不允许超过128 MiB；活跃journal另限制最多100,000条output和10,000条input。若新增元数据使旧journal超过上限，
+普通发布与blocked撤销写入前都检查活跃journal的UTF-8逻辑字节数（含authority元数据），
+不允许超过128 MiB；活跃journal另限制最多100,000条output和10,000条input。若新增元数据使旧journal超过硬上限，
 且blocked也无法容纳，则fail-stop，保留磁盘中最后可读取的journal，不删除历史或写入无法恢复的超限文件。
-这些上限是为既有长期会话保留的临时余量，不表示无限存储，也不要求改变v1 SQLite格式、记录ID或ACK语义。
+100,000条/128 MiB只是异常积压的应急硬上限；正常运行在50,000条或32 MiB开始回收已送达前缀。
+90,000条或112 MiB进入待投递高水位，80,000条和96 MiB以下才解除该阻塞。
+
+## SQLite v2 已送达正文回收
+
+1. 只有持久化`sent=true`的最旧连续output前缀可以回收，遇到第一条未确认output即停止。未确认行的localId、envelope和相对顺序不变。
+2. 每个被移除localId追加到唯一、位置连续的`output_receipts`表。receipt count/root与活跃count/tree一起纳入metadata摘要；producer同时查询活跃行和receipts去重，二者不得重叠。
+3. receipt追加、活跃行移动/尾部删除、ACK、generation和metadata在同一个`BEGIN IMMEDIATE`事务提交。失败整体回滚，提交后才推进writer缓存；full writer、incremental writer和restart reader使用同一格式约束。
+4. 空receipt的v1账本保持旧版本可读；首次真正写入receipts才升级为v2。不懂receipts的旧binary不能接管v2账本，发布必须保留可读v2且继续按receipts去重的兼容回退构建。
+5. receipts只保存精确localId，不保存已送达正文；Relay保留已验证投递的消息。它们仍受私有SQLite 512 MiB物理上限保护，逻辑回收不承诺文件缩小，也不执行事务内`VACUUM`。
+6. legacy JSON不做通用prefix pruning；若已有receipts则完整roundtrip。所有input/task-result、thread、epoch、afterSeq、bootstrap和controls继续保留。
+7. 达到高水位且没有可回收前缀时，持久化`hosted_pending_delivery_queue_full`，暂停新dispatch并继续Relay flush/ACK。离线错误不覆盖该原因；冷启动先排空，再允许native resume/reconcile/importHistory。
 
 ## 文本 item 派生合批
 
 已完成文本流可以只保留最终 snapshot，但必须满足完整 turn/ACK、唯一合法快照、完整路由键、
 canonical ID 以及 delta 连续拼接正文与快照完全一致。未确认、正文不符、缺边界、重复或畸形记录
-全部留在活跃 journal。保留的快照同时提供被删 canonical delta 的恢复去重证据，不改写任何保留ID。
-具体投递游标、崩溃边界和测试见[流式投递与持久化合批](features/hosted-stream-performance.md#文本-item-持久化合批)。
-该合批保留最终正文与去重语义，不等于保存每个 delta 原文的 lossless archive。
-
-## 后续无损归档方案（尚未实现）
-
-1. 只有本地已持久ACK且Relay可回读的终态记录才进入lossless archive；全部未确认output和未决input继续留在活跃journal。
-2. 活跃journal保留精简dedup/receipt索引、epoch floor、游标和必要的thread派发标记，归档ID不能重新生成或重放。
-3. archive发布与active-row移除必须具备同一崩溃安全事务语义，并覆盖重启、恢复和真实账本副本测试。
-4. 需要逐 delta 原文时仍走独立 lossless archive；文本 item 的派生合批不能替代该归档，也不能借容量维护清空会话。
+全部留在活跃 journal。生产路径在同一事务为每个被删delta写入receipt，因此后续即使snapshot和turn边界
+也被prefix回收，重放旧delta仍会被拒绝。具体投递游标、崩溃边界和测试见[流式投递与持久化合批](features/hosted-stream-performance.md#文本-item-持久化合批)。
+该合批与正文回收都不构成逐delta原文的lossless archive，也不能借容量维护清空会话。
 
 ## 定向回归入口
 

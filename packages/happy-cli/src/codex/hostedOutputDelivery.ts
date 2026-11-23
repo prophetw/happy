@@ -63,6 +63,25 @@ export class HostedOutputDelivery {
         this.lastTextKey = undefined;
         return removed;
     }
+    /** Rebase the durable frontier after removing only a verified prefix. Unsent pending refs stay intact. */
+    reclaimAcknowledgedPrefix(reclaim: () => number): number {
+        if (this.active || this.closed || this.scanned !== this.outputs.length) return 0;
+        let prefix = 0;
+        while (prefix < this.outputs.length && this.outputs[prefix].sent) prefix++;
+        if (!prefix) return 0;
+        const before = this.outputs.length, retainedIds = this.outputs.slice(prefix).map(row => row.localId);
+        const pendingIds = this.pending.map(row => row.localId), removed = reclaim();
+        if (removed !== prefix || this.outputs.length !== before - removed
+            || this.outputs.some((row, position) => row.localId !== retainedIds[position])) throw new Error('hosted_output_compaction_invalid');
+        const retained = new Map(this.outputs.map(row => [row.localId, row]));
+        if (retained.size !== this.outputs.length) throw new Error('hosted_output_compaction_invalid');
+        const pending = pendingIds.map(localId => retained.get(localId));
+        if (pending.some(row => !row || row.sent)) throw new Error('hosted_output_compaction_invalid');
+        this.pending = pending as Output[];
+        this.scanned = this.outputs.length;
+        this.lastTextKey = undefined;
+        return removed;
+    }
     private async drain(): Promise<void> {
         while (this.pending.length && !this.closed) {
             const key = this.textKey(this.pending[0]), batch: Output[] = [];
