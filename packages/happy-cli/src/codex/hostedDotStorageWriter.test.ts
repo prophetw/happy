@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHostedStorageWriter, readHostedStorage, saveHostedStorage, HOSTED_STORAGE_LIMIT } from './hostedDotStorage';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
-import { hostedProducerIdentity } from './hostedDotState';
+import { hostedProducerIdentity, addOutput, compactFinalTextOutputs } from './hostedDotState';
+import { createEnvelope } from '@slopus/happy-wire';
 
 const roots: string[] = [];
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
@@ -26,6 +27,16 @@ function fixture(history = 600) {
     return { directory, file, state, commit, encodedHistory: () => historicalEncodings };
 }
 const output = (id: string, text = '文🙂') => ({ localId: `hosted:0:${id}`, sent: false, envelope: { id, ev: { t: 'text', text, textOffset: 0 } } });
+const stream = (turn: string, item: string, text: string, offset: number, snapshot = false) => {
+    const envelope = createEnvelope('agent', { t: 'text', text, textOffset: offset, ...(snapshot ? { textSnapshot: true } : {}) },
+        { id: `thread:${turn}:${item}:${snapshot ? 'snapshot' : offset}`, turn, codexItemId: `thread:${item}` });
+    return { localId: `hosted:0:${envelope.id}`, sent: true, envelope };
+};
+const turnBoundary = (turn: string, end = false) => {
+    const envelope = createEnvelope('agent', end ? { t: 'turn-end', status: 'completed' } : { t: 'turn-start' },
+        { id: `thread:${turn}:${end ? 'end' : 'start'}`, turn });
+    return { localId: `hosted:0:${envelope.id}`, sent: true, envelope };
+};
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 it('appends and acknowledges output without serializing settled historical bodies again', () => {
@@ -137,3 +148,42 @@ it('keeps JSON compatibility and refuses projection writeback in the incremental
     const commit = createHostedStorageWriter(file, state); commit(); state.outputs[0].sent = true; commit();
     expect(readHostedStorage(file)).toEqual(state);
 });
+
+it('compacts through the output proxy and preserves shifted ACK positions after writer restart', () => {
+    const f = fixture(0), open = output('open');
+    f.state.outputs = [turnBoundary('turn'), stream('turn', 'item', 'a', 0), stream('turn', 'item', 'b', 1),
+        stream('turn', 'item', 'ab', 0, true), turnBoundary('turn', true), open];
+    f.commit();
+    const snapshot = JSON.stringify(f.state.outputs[3]);
+    expect(compactFinalTextOutputs(f.state.outputs)).toBe(2); f.commit();
+    expect(f.state.outputs.map((row: any) => row.localId)).toEqual([
+        'hosted:0:thread:turn:start', 'hosted:0:thread:turn:item:snapshot', 'hosted:0:thread:turn:end', 'hosted:0:open',
+    ]);
+    expect(JSON.stringify(f.state.outputs[1])).toBe(snapshot);
+    f.state.outputs[3].sent = true; f.commit();
+    let recovered = readHostedStorage(f.file)!;
+    expect(recovered.outputs[3].sent).toBe(true); expect(recovered.outputs[1].envelope.ev.text).toBe('ab');
+    expect(compactFinalTextOutputs(recovered.outputs)).toBe(0);
+    const resume = createHostedStorageWriter(f.file, recovered); resume();
+    recovered = readHostedStorage(f.file)!;
+    expect(recovered.outputs).toHaveLength(4); expect(recovered.outputs[3].sent).toBe(true);
+});
+
+it('compacts a 50,000-row SQLite journal before append and preserves replay dedup and the open item', () => {
+    const f = fixture(0), deltas = Array.from({ length: 49996 }, (_, n) => stream('turn', 'item', 'x', n));
+    f.state.outputs = [turnBoundary('turn'), ...deltas, stream('turn', 'item', 'x'.repeat(49996), 0, true),
+        turnBoundary('turn', true), output('open')];
+    expect(f.state.outputs).toHaveLength(50000); f.commit();
+    const recovered: any = readHostedStorage(f.file)!, open = JSON.stringify(recovered.outputs.at(-1));
+    expect(compactFinalTextOutputs(recovered.outputs)).toBe(49996);
+    const writer = createHostedStorageWriter(f.file, recovered); writer();
+    expect(recovered.outputs).toHaveLength(4); expect(JSON.stringify(recovered.outputs.at(-1))).toBe(open);
+    expect(addOutput(recovered, deltas[0].envelope)).toBe(false);
+    expect(addOutput(recovered, deltas.at(-1)!.envelope)).toBe(false);
+    expect(addOutput(recovered, createEnvelope('agent', { t: 'service', text: 'after' }, { id: 'after' }))).toBe(true);
+    writer(); recovered.outputs.at(-1).sent = true; writer();
+    const reloaded = readHostedStorage(f.file)!;
+    expect(reloaded.outputs).toHaveLength(5); expect(reloaded.outputs.at(-1).sent).toBe(true);
+    expect(reloaded.outputs.filter((row: any) => row.localId.endsWith(':snapshot'))).toHaveLength(1);
+    expect(reloaded.outputs[1].envelope.ev.text).toBe('x'.repeat(49996));
+}, 60000);

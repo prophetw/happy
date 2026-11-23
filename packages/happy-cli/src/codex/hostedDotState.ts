@@ -47,6 +47,121 @@ export function compactSettledDispatchSnapshots(state: HostedState): void {
             row.beforeTurns = [];
     }
 }
+
+type Output = HostedState['outputs'][number];
+type TextEnvelope = SessionEnvelope & { ev: Extract<SessionEnvelope['ev'], { t: 'text' }> };
+type Boundary = { starts: number; ends: number; startSent: boolean; endSent: boolean };
+const storedEnvelope = (row: Output): SessionEnvelope | undefined => {
+    const envelope = row.envelope as SessionEnvelope | null;
+    return envelope && typeof envelope === 'object' && envelope.ev && typeof envelope.ev.t === 'string' ? envelope : undefined;
+};
+const textEnvelope = (row: Output): TextEnvelope | undefined => {
+    const envelope = storedEnvelope(row);
+    return envelope?.ev.t === 'text' ? envelope as TextEnvelope : undefined;
+};
+function outputEpoch(row: Output): string | undefined {
+    const envelope = storedEnvelope(row);
+    const match = /^hosted:(0|[1-9]\d*):/.exec(row.localId);
+    if (!envelope || !match || typeof envelope.id !== 'string' || row.localId !== `hosted:${match[1]}:${envelope.id}`) return;
+    return match[1];
+}
+const validTextRouting = (envelope: TextEnvelope) => envelope.role === 'agent'
+    && typeof envelope.turn === 'string' && envelope.turn.length > 0
+    && typeof envelope.codexItemId === 'string' && envelope.codexItemId.length > 0
+    && (envelope.subagent === undefined || typeof envelope.subagent === 'string')
+    && (envelope.ev.thinking === undefined || typeof envelope.ev.thinking === 'boolean');
+const textKey = (epoch: string, envelope: TextEnvelope) => JSON.stringify([
+    epoch, envelope.turn, envelope.subagent, envelope.codexItemId, envelope.ev.thinking,
+]);
+function boundaries(outputs: Output[]): Map<string, Boundary> {
+    const result = new Map<string, Boundary>();
+    for (const row of outputs) {
+        const envelope = storedEnvelope(row);
+        if (!envelope || envelope.role !== 'agent' || !['turn-start', 'turn-end'].includes(envelope.ev.t)
+            || typeof envelope.turn !== 'string' || !envelope.turn) continue;
+        const epoch = outputEpoch(row); if (!epoch) continue;
+        const key = JSON.stringify([epoch, envelope.turn]), boundary = result.get(key) ?? { starts: 0, ends: 0, startSent: true, endSent: true };
+        if (envelope.ev.t === 'turn-start') { boundary.starts++; boundary.startSent &&= row.sent; }
+        else { boundary.ends++; boundary.endSent &&= row.sent; }
+        result.set(key, boundary);
+    }
+    return result;
+}
+const settledTurn = (map: Map<string, Boundary>, epoch: string, turn: string) => {
+    const boundary = map.get(JSON.stringify([epoch, turn]));
+    return boundary?.starts === 1 && boundary.ends === 1 && boundary.startSent && boundary.endSent;
+};
+function finalSnapshot(row: Output): { envelope: TextEnvelope; prefix: string } | undefined {
+    const envelope = textEnvelope(row);
+    if (!envelope || !validTextRouting(envelope) || envelope.ev.textSnapshot !== true
+        || envelope.ev.textOffset !== 0 || typeof envelope.ev.text !== 'string' || !envelope.ev.text.length
+        || !envelope.id.endsWith(':snapshot') || !outputEpoch(row)) return;
+    return { envelope, prefix: envelope.id.slice(0, -'snapshot'.length) };
+}
+
+/** Keep the final, fully ACKed text item; unknown or incomplete history fails closed. */
+export function compactFinalTextOutputs(outputs: Output[]): number {
+    const groups = new Map<string, { epoch: string; rows: Output[] }>(), turnBoundaries = boundaries(outputs);
+    for (const row of outputs) {
+        const envelope = textEnvelope(row), epoch = outputEpoch(row);
+        if (!envelope || !epoch || !validTextRouting(envelope)) continue;
+        const key = textKey(epoch, envelope), group = groups.get(key) ?? { epoch, rows: [] };
+        group.rows.push(row); groups.set(key, group);
+    }
+    const remove = new Set<Output>();
+    for (const group of groups.values()) {
+        const snapshots = group.rows.filter(row => textEnvelope(row)?.ev.textSnapshot === true);
+        if (snapshots.length !== 1 || group.rows.at(-1) !== snapshots[0]
+            || !group.rows.every(row => row.sent)) continue;
+        const snapshot = finalSnapshot(snapshots[0]);
+        if (!snapshot || !settledTurn(turnBoundaries, group.epoch, snapshot.envelope.turn!)) continue;
+        let offset = 0, text = '', valid = true;
+        for (const row of group.rows) {
+            if (row === snapshots[0]) continue;
+            const envelope = textEnvelope(row)!;
+            if (envelope.ev.textSnapshot !== undefined || typeof envelope.ev.text !== 'string' || !envelope.ev.text.length
+                || typeof envelope.ev.textOffset !== 'number' || !Number.isSafeInteger(envelope.ev.textOffset)
+                || envelope.ev.textOffset !== offset
+                || envelope.id !== snapshot.prefix + offset) { valid = false; break; }
+            text += envelope.ev.text; offset += envelope.ev.text.length;
+        }
+        if (!valid || text !== snapshot.envelope.ev.text) continue;
+        for (const row of group.rows) if (row !== snapshots[0]) remove.add(row);
+    }
+    if (!remove.size) return 0;
+    let write = 0;
+    for (let read = 0; read < outputs.length; read++) {
+        if (remove.has(outputs[read])) continue;
+        if (write !== read) outputs[write] = outputs[read];
+        write++;
+    }
+    outputs.length = write;
+    return remove.size;
+}
+
+/** A retained final snapshot also proves which canonical deltas were compacted. */
+function coveredByFinalSnapshot(state: HostedState, envelope: SessionEnvelope): boolean {
+    if (envelope.ev.t !== 'text' || envelope.ev.textSnapshot !== undefined) return false;
+    const text = envelope as TextEnvelope;
+    if (!validTextRouting(text) || typeof envelope.ev.text !== 'string' || !envelope.ev.text.length
+        || typeof envelope.ev.textOffset !== 'number' || !Number.isSafeInteger(envelope.ev.textOffset)
+        || envelope.ev.textOffset < 0) return false;
+    const epoch = String(state.epoch), offset = envelope.ev.textOffset;
+    const key = textKey(epoch, text); let snapshot: { envelope: TextEnvelope; prefix: string } | undefined;
+    for (const row of state.outputs) {
+        const candidate = textEnvelope(row), rowEpoch = outputEpoch(row);
+        if (!candidate || candidate.ev.textSnapshot !== true || !rowEpoch || !validTextRouting(candidate)
+            || textKey(rowEpoch, candidate) !== key) continue;
+        if (snapshot || !row.sent) return false;
+        snapshot = finalSnapshot(row);
+        if (!snapshot) return false;
+    }
+    if (!snapshot || envelope.id !== snapshot.prefix + offset || offset >= snapshot.envelope.ev.text.length) return false;
+    const end = offset + envelope.ev.text.length;
+    return settledTurn(boundaries(state.outputs), epoch, text.turn!)
+        && Number.isSafeInteger(end) && end <= snapshot.envelope.ev.text.length
+        && snapshot.envelope.ev.text.slice(offset, end) === envelope.ev.text;
+}
 export function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function readPrivate(file: string): any {
     const stat = lstatSync(file);
@@ -73,12 +188,13 @@ export function loadHostedState(file: string, config: HostedDotConfig): HostedSt
     if (existsSync(config.directory + '/reset-epoch.json') && z.object({ epoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch > state.epoch)
         throw new Error('hosted_epoch_stale');
     if (state.bootstrap?.stage === 'injecting') throw new Error('hosted_bootstrap_unconfirmed');
+    compactFinalTextOutputs(state.outputs);
     return state;
 }
 export function addOutput(state: HostedState, envelope: SessionEnvelope): boolean {
     const localId = `hosted:${state.epoch}:${envelope.id}`;
     const existing = state.outputs.find(o => o.localId === localId);
-    if (existing) return false;
+    if (existing || coveredByFinalSnapshot(state, envelope)) return false;
     state.outputs.push({ localId, envelope, sent: false });
     return true;
 }

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createEnvelope } from '@slopus/happy-wire';
 import { HostedOutputDelivery } from './hostedOutputDelivery';
+import { addOutput, compactFinalTextOutputs, type HostedState } from './hostedDotState';
 const row = (n: number, item = 'item', epoch = 0, snapshot = false) => ({ localId: `hosted:${epoch}:${item}:${n}`, sent: false,
     envelope: createEnvelope('agent', { t: 'text', text: n % 2 ? '文' : '🙂', textOffset: n, ...(snapshot ? { textSnapshot: true } : {}) },
         { id: `${item}:${n}`, turn: 'turn', codexItemId: item }) });
@@ -82,4 +83,33 @@ it('sends an oversized indivisible snapshot alone without rewriting its ID or co
     expect(send.mock.calls.map(call => call[0].length)).toEqual([1, 1]);
     expect(send.mock.calls[0][0][0]).toEqual({ envelope: snapshot.envelope, localId: snapshot.localId });
     await delivery.close();
+});
+
+it('compacts only at quiescence, rebases the cursor, and suppresses replay without skipping new output', async () => {
+    const output = (envelope: any) => ({ localId: `hosted:0:${envelope.id}`, envelope, sent: false });
+    const start = output(createEnvelope('agent', { t: 'turn-start' }, { id: 'thread:turn:start', turn: 'turn' }));
+    const first = output(createEnvelope('agent', { t: 'text', text: 'a', textOffset: 0 },
+        { id: 'thread:turn:item:0', turn: 'turn', codexItemId: 'thread:item' }));
+    const second = output(createEnvelope('agent', { t: 'text', text: 'b', textOffset: 1 },
+        { id: 'thread:turn:item:1', turn: 'turn', codexItemId: 'thread:item' }));
+    const snapshot = output(createEnvelope('agent', { t: 'text', text: 'ab', textOffset: 0, textSnapshot: true },
+        { id: 'thread:turn:item:snapshot', turn: 'turn', codexItemId: 'thread:item' }));
+    const end = output(createEnvelope('agent', { t: 'turn-end', status: 'completed' }, { id: 'thread:turn:end', turn: 'turn' }));
+    const rows = [start, first, second, snapshot, end], state = { epoch: 0, outputs: rows } as HostedState;
+    const send = vi.fn(async (batch: any[]) => batch.map(r => r.localId));
+    const delivery = new HostedOutputDelivery(rows, send, () => {});
+    delivery.durable();
+    expect(delivery.compactQuiescent(() => compactFinalTextOutputs(rows))).toBe(0);
+    await delivery.flush();
+    expect(delivery.compactQuiescent(() => compactFinalTextOutputs(rows))).toBe(2);
+    expect(rows.map(row => row.localId)).toEqual(['hosted:0:thread:turn:start', 'hosted:0:thread:turn:item:snapshot', 'hosted:0:thread:turn:end']);
+    expect(delivery.compactQuiescent(() => { throw new Error('idle rescans are disabled'); })).toBe(0);
+    expect(addOutput(state, first.envelope)).toBe(false); expect(addOutput(state, second.envelope)).toBe(false);
+
+    const next = createEnvelope('agent', { t: 'service', text: 'next' }, { id: 'next' });
+    expect(addOutput(state, next)).toBe(true); delivery.durable(); await delivery.flush();
+    expect(send.mock.calls.at(-1)![0].map((row: any) => row.localId)).toEqual(['hosted:0:next']);
+    expect(send.mock.calls.flatMap(call => call[0]).filter((row: any) => row.localId === 'hosted:0:next')).toHaveLength(1);
+    await delivery.close();
+    expect(delivery.compactQuiescent(() => compactFinalTextOutputs(rows))).toBe(0);
 });

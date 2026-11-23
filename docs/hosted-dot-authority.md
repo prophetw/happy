@@ -77,12 +77,20 @@ revision 不得倒退。只有输出日志和递增 revision 的差异不改变�
 且blocked也无法容纳，则fail-stop，保留磁盘中最后可读取的journal，不删除历史或写入无法恢复的超限文件。
 这些上限是为既有长期会话保留的临时余量，不表示无限存储，也不要求改变v1 SQLite格式、记录ID或ACK语义。
 
+## 文本 item 派生合批
+
+已完成文本流可以只保留最终 snapshot，但必须满足完整 turn/ACK、唯一合法快照、完整路由键、
+canonical ID 以及 delta 连续拼接正文与快照完全一致。未确认、正文不符、缺边界、重复或畸形记录
+全部留在活跃 journal。保留的快照同时提供被删 canonical delta 的恢复去重证据，不改写任何保留ID。
+具体投递游标、崩溃边界和测试见[流式投递与持久化合批](features/hosted-stream-performance.md#文本-item-持久化合批)。
+该合批保留最终正文与去重语义，不等于保存每个 delta 原文的 lossless archive。
+
 ## 后续无损归档方案（尚未实现）
 
 1. 只有本地已持久ACK且Relay可回读的终态记录才进入lossless archive；全部未确认output和未决input继续留在活跃journal。
 2. 活跃journal保留精简dedup/receipt索引、epoch floor、游标和必要的thread派发标记，归档ID不能重新生成或重放。
 3. archive发布与active-row移除必须具备同一崩溃安全事务语义，并覆盖重启、恢复和真实账本副本测试。
-4. 文本delta合并先作为派生视图优化，不破坏原localId到envelope/ACK的映射；实现和部署另立任务，不能借容量维护清空会话。
+4. 需要逐 delta 原文时仍走独立 lossless archive；文本 item 的派生合批不能替代该归档，也不能借容量维护清空会话。
 
 ## 定向回归入口
 

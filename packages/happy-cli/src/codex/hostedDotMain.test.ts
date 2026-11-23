@@ -534,6 +534,32 @@ it('persists a text delta and its ACK without rewriting the journal for timing, 
     } finally { await f.stop(); }
 });
 
+it('compacts a completed native text item after ACK and does not resend replayed deltas after restart', async () => {
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        const turn = 'compaction-turn';
+        emit('turn/started', { turn: { id: turn } });
+        h.event({ type: 'agent_message_delta', thread_id: 'native-thread', turn_id: turn, item_id: 'item', delta: 'a' });
+        h.event({ type: 'agent_message_delta', thread_id: 'native-thread', turn_id: turn, item_id: 'item', delta: 'b' });
+        h.event({ type: 'agent_message', thread_id: 'native-thread', turn_id: turn, item_id: 'item', message: 'ab' });
+        emit('turn/completed', { turn: { id: turn, status: 'completed' } });
+        await vi.waitFor(() => {
+            expect(f.state().outputs.map((row: any) => row.envelope.ev.t)).toEqual(['turn-start', 'text', 'turn-end']);
+            expect(f.state().outputs.every((row: any) => row.sent)).toBe(true);
+        });
+        const compacted = f.state();
+        expect(compacted.outputs[1]).toMatchObject({ localId: 'hosted:0:native-thread:compaction-turn:item:snapshot',
+            envelope: { ev: { text: 'ab', textOffset: 0, textSnapshot: true } } });
+        const sends = h.sent.length;
+        await f.restart();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(f.state().outputs).toHaveLength(3); expect(h.sent).toHaveLength(sends);
+        h.event({ type: 'agent_message_delta', thread_id: 'native-thread', turn_id: turn, item_id: 'item', delta: 'a' });
+        expect(f.state().outputs).toHaveLength(3); expect(h.sent).toHaveLength(sends);
+    } finally { await f.stop(); }
+});
+
 it('durably accepts and completes input before returning from lifecycle notifications', async () => {
     let finish!: () => void;
     h.send.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));

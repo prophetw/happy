@@ -10,6 +10,7 @@ export class HostedOutputDelivery {
     private timer?: ReturnType<typeof setTimeout>;
     private closed = false;
     private lastTextKey?: string;
+    private compactionPending = true;
     readonly stats = { batches: 0, verified: 0, queuePeak: 0 };
     constructor(private readonly outputs: Output[],
         private readonly send: (rows: Array<{ localId: string; envelope: SessionEnvelope }>) => Promise<string[]>,
@@ -21,6 +22,9 @@ export class HostedOutputDelivery {
         let boundary = false;
         for (; this.scanned < this.outputs.length; this.scanned++) if (!this.outputs[this.scanned].sent) {
             const row = this.outputs[this.scanned];
+            const envelope = row.envelope as SessionEnvelope;
+            if (envelope.ev.t === 'turn-end' || envelope.ev.t === 'text' && envelope.ev.textSnapshot === true)
+                this.compactionPending = true;
             if (!this.textKey(row) || this.textKey(row) !== this.lastTextKey) boundary = true;
             this.pending.push(row);
         }
@@ -45,6 +49,19 @@ export class HostedOutputDelivery {
         if (this.closed) return Promise.resolve();
         this.active = this.drain().finally(() => { this.active = undefined; });
         return this.active;
+    }
+    /** Main may compact only after a successful flush; a new durable batch vetoes it. */
+    compactQuiescent(compact: () => number): number {
+        if (!this.compactionPending || this.active || this.pending.length || this.closed || this.scanned !== this.outputs.length
+            || this.outputs.some(row => !row.sent)) return 0;
+        this.compactionPending = false;
+        const before = this.outputs.length, removed = compact();
+        if (!removed) return 0;
+        if (!Number.isSafeInteger(removed) || removed < 0 || this.outputs.length !== before - removed)
+            throw new Error('hosted_output_compaction_invalid');
+        this.scanned = this.outputs.length;
+        this.lastTextKey = undefined;
+        return removed;
     }
     private async drain(): Promise<void> {
         while (this.pending.length && !this.closed) {

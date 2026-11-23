@@ -64,3 +64,10 @@ v1 数据格式不变。回退到旧构建仍能识别空数组派发标记，�
 - 该余量用于保留完整历史并恢复已达到50,000条/接近32 MiB的旧会话，不是长期归档替代。后续无损归档和dedup/receipt索引方案见[本地只读授权快照](hosted-dot-authority.md#后续无损归档方案尚未实现)，本次不实现。
 - producer、lifecycle、inputAuthority各自包含生成的state/storage校验副本，必须同步切换。账本一旦超过旧50,000条或32 MiB，旧二进制不再是兼容回退目标；不得删除记录迎合旧reader。
 - 定向回归覆盖第50,001条、跨旧32 MiB、增量ACK、重启writer、三条实际读取链和100,001条拒绝；隔离fixture不等于真实Relay、浏览器或线上恢复已经验收。
+
+## 2026-11-23：文本 item 派生合批
+
+- 对已完成且全部确认的文本 item，只在 canonical delta 能精确重建最终 snapshot 时移除中间分片；snapshot、turn/tool/service、inputs/controls 和相对顺序不变。未确认或异常流整组保留，临时100,000条/128 MiB上限不变。
+- 冷加载先于 writer 合批；运行中只在成功 flush 后且无 active/pending/未ACK行时原位合批并重建游标。保留的 snapshot 提供被删 delta 的恢复去重，不新增存储格式或receipt表。
+- 该机制保留最终正文与投递去重，不保存每个 delta 的独立原文，不替代后续 lossless archive。详见[流式投递与持久化合批](features/hosted-stream-performance.md#文本-item-持久化合批)。
+- 当前临时扩容 reader 可以读取合批后的 v1 账本，但旧 producer 不具备 snapshot 重放抑制，原生恢复可能重新累积 delta；回退只允许使用兼容的临时扩容构建，不能回到50,000条/32 MiB reader，也不能恢复旧大账本覆盖新状态。

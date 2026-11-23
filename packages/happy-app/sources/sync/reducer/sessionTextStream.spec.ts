@@ -14,6 +14,14 @@ describe('Happy session item text streaming', () => {
         const messages = [...state.messages.values()].filter(m => m.role === 'agent');
         expect(messages).toHaveLength(1); expect(messages[0].text).toBe('z'.repeat(5000));
     });
+    it('replaces earlier deltas when the final snapshot arrives', () => {
+        const state = createReducer();
+        reducer(state, [chunk(0, 'hello'), chunk(5, ' world')]);
+        const final = chunk(0, 'final snapshot'); final.id = 'final-snapshot'; final.textStreamSnapshot = true;
+        reducer(state, [final]);
+        const messages = [...state.messages.values()].filter(m => m.role === 'agent');
+        expect(messages).toHaveLength(1); expect(messages[0].text).toBe('final snapshot');
+    });
     it('grows one message, including out-of-order history and replay', () => {
         const state = createReducer();
         expect(chunk(0, 'hello').textStreamOffset).toBe(0);

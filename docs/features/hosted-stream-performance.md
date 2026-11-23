@@ -43,6 +43,26 @@ JSON 会话继续使用原有快照写入，不自动转换存储；大 JSON 文
 此次优化针对已有 SQLite runtime，不增加迁移 API。生命周期、清空和离线 stop 继续使用
 完整快照边界；原 reader 可以直接读增量写入后的数据库。
 
+## 文本 item 持久化合批
+
+流式 delta 仍逐条持久化并实时投递；合批不改变运输批次、正文、localId 或 ACK。只有完整 turn
+已经确认、同一 epoch/turn/subagent/codexItemId/thinking 下存在唯一合法最终 snapshot，
+且 canonical delta 的 offset 从零连续、拼接正文与 snapshot 完全一致时，才把已确认的中间 delta
+从活跃 journal 移除。snapshot 自身及其 envelope.id/localId/sent 原样保留，其他事件和相对顺序不变。
+
+空快照、重复/畸形快照、非 canonical ID、空洞、重叠、后缀、正文不一致、缺 turn 边界以及任何
+相关行未确认都整组保留。保留的 snapshot 同时作为去重描述符：恢复重放只有在 canonical ID、
+完整路由键以及 offset 对应的正文区间都匹配时才被抑制；snapshot 末尾及其后的新后缀仍正常追加。
+因此不需要新收据表或存储格式，也不会通过改写旧 delta ID 来更新正文。
+
+冷加载在 writer 建立前执行一次合批。运行中只在成功 flush 后的 quiescent 边界原位压缩并重设
+投递游标；存在 active/pending、未 ACK 行或新 durable 批次时拒绝合批。启动恢复、最终 snapshot
+和 turn-end 设置一次合批提示，普通 delta 与空闲主循环不重复全扫。压缩与 ACK 一样经现有 authority
+事务落盘，失败仍 fail-stop；崩溃前保留旧账本，提交后只保留紧凑账本。
+
+这是最终正文与恢复去重无损的派生合批，不是逐 delta 字节的 lossless archive。100,000 条 output、
+128 MiB journal 的临时上限继续作为异常保护，不因合批而提高或降低。
+
 ## 隔离复现
 
 从仓库根执行（Node 22 支持 `node:sqlite`）：
