@@ -1,7 +1,7 @@
 /** Happy-owned storage. JSON remains readable until an explicit, cold migration. */
 import { createRequire } from 'node:module';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { type BigIntStats, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
 const nativeRequire = createRequire(import.meta.url);
@@ -33,34 +33,44 @@ function regular(file: string, limit = HOSTED_STORAGE_LIMIT) {
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > limit) throw Error('hosted_storage_file_invalid');
     return stat;
 }
-function readBytes(file: string, limit: number): Buffer {
-    regular(file, limit);
-    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-        const before = fstatSync(fd, { bigint: true });
-        if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(limit)) throw Error('hosted_storage_file_invalid');
-        const result = Buffer.alloc(Number(before.size) + 1); let used = 0, n: number;
-        while (used < result.length && (n = readSync(fd, result, used, result.length - used, null))) used += n;
-        const after = fstatSync(fd, { bigint: true }), path = lstatSync(file, { bigint: true });
-        if (used !== Number(before.size) || [after, path].some(s => s.dev !== before.dev || s.ino !== before.ino || s.size !== before.size
-            || s.mtimeNs !== before.mtimeNs || s.ctimeNs !== before.ctimeNs || s.nlink !== 1n)) throw Error('hosted_storage_file_changed');
-        return result.subarray(0, used);
-    } finally { closeSync(fd); }
-}
 function bytes(file: string, limit = HOSTED_STORAGE_LIMIT): Buffer {
-    // Atomic publication invalidates the old snapshot, not the new private file.
-    // Reopen only a different valid inode; same-inode changes remain fail closed.
-    for (let attempt = 0; attempt < 2; attempt++) {
-        const before = regular(file, limit);
-        try { return readBytes(file, limit); }
-        catch (error) {
-            if (!(error instanceof Error) || !['hosted_storage_file_changed', 'hosted_storage_file_invalid'].includes(error.message)) throw error;
-            const after = regular(file, limit);
-            if (after.dev === before.dev && after.ino === before.ino) throw error;
-            if (attempt === 1) throw Error('hosted_storage_file_changed');
+    const sameInode = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
+    const validFile = (stat: BigIntStats) => stat.isFile() && stat.nlink <= 1n && stat.size <= BigInt(limit);
+    let detached: BigIntStats | undefined;
+    const descriptors: number[] = [];
+    try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            safePath(file);
+            const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+            // Keep the old descriptor open so the filesystem cannot reuse its inode
+            // before the replacement has been verified.
+            descriptors.push(fd);
+            const before = fstatSync(fd, { bigint: true });
+            if (!validFile(before)) throw Error('hosted_storage_file_invalid');
+            if (detached && sameInode(before, detached)) throw Error('hosted_storage_file_changed');
+            if (before.nlink === 0n) { detached = before; continue; }
+
+            const result = Buffer.alloc(Number(before.size) + 1); let used = 0, n: number;
+            while (used < result.length && (n = readSync(fd, result, used, result.length - used, null))) used += n;
+            const after = fstatSync(fd, { bigint: true });
+            if (!validFile(after) || !sameInode(before, after) || used !== Number(before.size) || after.size !== before.size
+                || after.mtimeNs !== before.mtimeNs || after.nlink !== 0n && after.ctimeNs !== before.ctimeNs)
+                throw Error('hosted_storage_file_changed');
+
+            safePath(file);
+            const named = lstatSync(file, { bigint: true });
+            if (!validFile(named)) throw Error('hosted_storage_file_invalid');
+            // Publication can detach the inode after open or during lstat. Only a
+            // different, fully verified descriptor can supply the retry's bytes.
+            if (!sameInode(before, named) || named.nlink === 0n) { detached = before; continue; }
+            if (after.nlink !== 1n || named.size !== before.size || named.mtimeNs !== before.mtimeNs
+                || named.ctimeNs !== before.ctimeNs) throw Error('hosted_storage_file_changed');
+            return result.subarray(0, used);
         }
+        throw Error('hosted_storage_file_changed');
+    } finally {
+        for (const fd of descriptors) closeSync(fd);
     }
-    throw Error('hosted_storage_file_changed');
 }
 function json(file: string, limit?: number): any { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes(file, limit))); }
 function syncDirectory(directory: string) {
