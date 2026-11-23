@@ -90,13 +90,14 @@ it('compacts only settled dispatch snapshots and preserves the v1 thread marker 
 });
 
 it('keeps completed legacy history linear without changing unknown recovery evidence', async () => {
-    const { compactSettledDispatchSnapshots, HOSTED_STATE_MAX_BYTES } = await import('./hostedDotState');
+    const { compactSettledDispatchSnapshots } = await import('./hostedDotState');
     const dir = mkdtempSync(join(tmpdir(), 'hosted-growth-')), file = join(dir, 'state.json'), c = config();
     try {
         const state = loadHostedState(file, c), ids = Array.from({ length: 1400 }, () => randomUUID());
         state.inputs = ids.map((turnId, i) => ({ epoch: 0, delivery: 'queue' as const, seq: i + 1, id: `input-${i}`,
             text: 'test', status: 'completed' as const, turnId, beforeTurns: ids.slice(0, i) }));
-        expect(Buffer.byteLength(JSON.stringify(state))).toBeGreaterThan(HOSTED_STATE_MAX_BYTES);
+        // Preserve the historical quadratic journal that exceeded the former 32 MiB limit.
+        expect(Buffer.byteLength(JSON.stringify(state))).toBeGreaterThan(32 * 1024 * 1024);
         state.inputs.push({ epoch: 0, delivery: 'queue', seq: 1401, id: 'pending', text: 'test', status: 'unknown', beforeTurns: [...ids] });
         compactSettledDispatchSnapshots(state);
         expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThan(1024 * 1024);

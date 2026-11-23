@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { HostedDotConfig, loadHostedState, addOutput, hostedProducerIdentity } from './hostedDotState';
+import { HostedDotConfig, HostedDotJournal, loadHostedState, addOutput, hostedProducerIdentity } from './hostedDotState';
 import { readHostedStorage, saveHostedStorage, hostedStorageBackend } from './hostedDotStorage';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
-import { stopHostedDot, readHostedDotJournal, prepareHostedDotClear, clearHostedDot } from './hostedDotLifecycle';
+import { stopHostedDot, statusHostedDot, readHostedDotJournal, prepareHostedDotClear, clearHostedDot } from './hostedDotLifecycle';
 import { createHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
+import { readHostedInputAuthority } from './hostedDotAuthority';
 const roots:string[]=[];
 function fixture(sqlite=false){
  const root=mkdtempSync(join(tmpdir(),'happy-sqlite-deploy-'));roots.push(root);
@@ -40,6 +41,25 @@ describe.each([false,true])('deployed storage backend sqlite=%s',sqlite=>{
   const value=readHostedStorage(f.file)!;expect(value.threadId).toBe('synthetic-thread');expect(value.outputs).toEqual(f.state.outputs);expect(value.authority.revision).toBeGreaterThan(0);
  });
 });
+it('reads expanded journals through producer, lifecycle and input authority without removing the upper bound', () => {
+ const f=fixture(true),legacyLimit=32*1024*1024;
+ createHostedAuthorityPublisher(f.file,f.state,hostedProducerIdentity())();
+ f.state.outputs=Array.from({length:50000},(_,n)=>({localId:`hosted:0:history-${n}`,sent:n<49783,
+  envelope:{id:`history-${n}`,ev:{t:'text',text:'history'}}}));
+ const initialBytes=Buffer.byteLength(JSON.stringify(f.state));expect(initialBytes).toBeLessThan(legacyLimit);
+ f.state.outputs.push({localId:'hosted:0:after-legacy-cap',sent:false,
+  envelope:{id:'after-legacy-cap',ev:{t:'text',text:'x'.repeat(legacyLimit-initialBytes+2048)}}});
+ saveHostedStorage(f.file,f.state);expect(Buffer.byteLength(JSON.stringify(f.state))).toBeGreaterThan(legacyLimit);
+ const producer=loadHostedState(f.file,f.config);expect(producer.outputs).toHaveLength(50001);
+ expect(HostedDotJournal.parse(producer).outputs).toHaveLength(50001);
+ expect(statusHostedDot({directory:f.directory,dotId:f.config.dotId,sessionId:f.config.sessionId}).threadId).toBe('synthetic-thread');
+ expect(readHostedInputAuthority(f.config).inputs).toEqual([]);
+ f.state.outputs=Array.from({length:100001},(_,n)=>({localId:`hosted:0:overflow-${n}`,sent:false,envelope:{id:n}}));
+ expect(()=>HostedDotJournal.parse(f.state)).toThrow();
+ expect(()=>saveHostedStorage(f.file,f.state)).toThrow('hosted_storage_records_invalid');
+ expect(readHostedStorage(f.file)!.outputs).toHaveLength(50001);
+},60000);
+
 it('SQLite sentinel rejects legacy JSON schema and conversion APIs are absent',async()=>{
  const f=fixture(true);expect(JSON.parse(readFileSync(f.file,'utf8')).error).toBe('hosted_sqlite_reader_required');
  const storage=await import('./hostedDotStorage');expect('migrateHostedStorage' in storage).toBe(false);expect('rollbackHostedStorage' in storage).toBe(false);expect('recoverHostedStorage' in storage).toBe(false);

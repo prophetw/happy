@@ -20,7 +20,7 @@
 
 ## 所有权和安全边界
 
-私有布局暂不改名、不迁移，以便旧版本兼容。正式消费者不应再解析或改写上述生命周期文件。start/recover/clear 使用 launch 与 runtime 锁；控制遵循 control→launch 顺序。写入使用限制大小的原子文件发布并同步父目录。所有读写拒绝符号链接，JSON 读取限制 32 MiB 并校验 inode/字节快照；PID 同时绑定启动时间和 boot ID。
+私有布局暂不改名、不迁移，以便旧版本兼容。正式消费者不应再解析或改写上述生命周期文件。start/recover/clear 使用 launch 与 runtime 锁；控制遵循 control→launch 顺序。写入使用限制大小的原子文件发布并同步父目录。所有读写拒绝符号链接，JSON 读取限制 128 MiB 并校验 inode/字节快照；PID 同时绑定启动时间和 boot ID。
 
 公开 authority 读取在快照前后检查 clear fence，不能用 clear 前的 active 输入恢复授权。clear 不把 task-result 变成用户输入，不改变已发送副作用或执行任务的回执。
 
@@ -57,3 +57,10 @@ node packages/happy-cli/scripts/hosted-lifecycle.test.mjs
 5. 源码测试：`pnpm exec vitest run --config vitest.hosted-authority.config.ts`；生命周期离线测试按本文现有 build/test 命令运行。离线 fixture 不代表真实 Relay/模型已验收。
 
 v1 数据格式不变。回退到旧构建仍能识别空数组派发标记，但旧代码会重新累积快照。回退前先停写并保留最新账本，不使用旧备份覆盖后续输入。
+
+## 2026-11-23：长期会话临时容量余量
+
+- producer、lifecycle和inputAuthority统一允许最多100,000条output，JSON与SQLite逻辑账本上限统一为128 MiB；input上限仍为10,000条。只调整校验上限，不迁移v1格式、重写ID、删除输出或修改ACK。
+- 该余量用于保留完整历史并恢复已达到50,000条/接近32 MiB的旧会话，不是长期归档替代。后续无损归档和dedup/receipt索引方案见[本地只读授权快照](hosted-dot-authority.md#后续无损归档方案尚未实现)，本次不实现。
+- producer、lifecycle、inputAuthority各自包含生成的state/storage校验副本，必须同步切换。账本一旦超过旧50,000条或32 MiB，旧二进制不再是兼容回退目标；不得删除记录迎合旧reader。
+- 定向回归覆盖第50,001条、跨旧32 MiB、增量ACK、重启writer、三条实际读取链和100,001条拒绝；隔离fixture不等于真实Relay、浏览器或线上恢复已经验收。

@@ -57,6 +57,32 @@ it('preserves old readers, UTF-8 byte counts and digest trees across checkpoint 
     ]);
 });
 
+it('preserves every output and ACK across the legacy row and byte limits after restart', () => {
+    const f = fixture(50000), legacyLimit = 32 * 1024 * 1024;
+    for (let n = 49783; n < 50000; n++) f.state.outputs[n].sent = false;
+    const originalFirst = JSON.stringify(f.state.outputs[0]), originalTail = JSON.stringify(f.state.outputs[49999]);
+    const originalUnsent = f.state.outputs.slice(49783).map((row: any) => row.localId);
+    const initialBytes = Buffer.byteLength(JSON.stringify(f.state));
+    expect(initialBytes).toBeLessThan(legacyLimit);
+    f.state.outputs.push(output('after-legacy-cap', 'x'.repeat(legacyLimit - initialBytes + 2048)));
+    expect(f.commit().logicalBytes).toBeGreaterThan(legacyLimit);
+
+    const recovered = readHostedStorage(f.file)!;
+    expect(recovered.outputs).toHaveLength(50001);
+    expect(JSON.stringify(recovered.outputs[0])).toBe(originalFirst);
+    expect(JSON.stringify(recovered.outputs[49999])).toBe(originalTail);
+    expect(recovered.outputs.slice(49783, 50000).map((row: any) => row.localId)).toEqual(originalUnsent);
+    expect(recovered.outputs.slice(49783).every((row: any) => !row.sent)).toBe(true);
+
+    const resume = createHostedStorageWriter(f.file, recovered);
+    recovered.outputs[49783].sent = true; recovered.outputs[50000].sent = true; resume();
+    const reloaded = readHostedStorage(f.file)!;
+    expect(reloaded.outputs[49783].sent).toBe(true); expect(reloaded.outputs[50000].sent).toBe(true);
+    expect(reloaded.outputs.slice(49784, 50000).every((row: any) => !row.sent)).toBe(true);
+    saveHostedStorage(f.file, reloaded);
+    expect(readHostedStorage(f.file)!.outputs).toHaveLength(50001);
+}, 60000);
+
 it('uses the incremental writer at the actual authority publication seam', () => {
     const f = fixture();
     const publish = createHostedAuthorityPublisher(f.file, f.state, hostedProducerIdentity()); publish();
