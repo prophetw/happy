@@ -11,7 +11,7 @@ const snapshot = readHostedInputAuthority({ directory, dotId, sessionId });
 `directory` 必须是可信配置提供的绝对真实目录，不能来自待授权消息或工具参数。
 `dotId`、`sessionId` 同样来自已验证的宿主绑定。函数同步读取当前 `config.json`
 和 `state.json`，不缓存、不补写、不调用带恢复默认值的 `loadHostedState`。
-文件缺失、符号链接、非普通文件、超出 32 MiB、格式错误、版本不支持或绑定不符都会抛错。
+文件缺失、符号链接、非普通文件、超出 128 MiB、格式错误、版本不支持或绑定不符都会抛错。
 配置按照 Happy 配置 schema 规范化后核对 journal hash，并兼容省略 effort 的历史 hash。
 
 返回结构：
@@ -73,8 +73,16 @@ revision 不得倒退。只有输出日志和递增 revision 的差异不改变�
 宿主 fail-stop 只撤销其存活身份，不证明原生子进程已退出，也不保证已发出的请求或副作用被取消。
 
 普通发布与blocked撤销写入前都检查完整紧凑JSON的UTF-8字节数（含authority元数据），
-不允许超过32 MiB。若新增元数据使旧journal超过上限，且blocked也无法容纳，则fail-stop，
-保留磁盘中最后可读取的journal，不删除历史或写入无法恢复的超限文件。
+不允许超过128 MiB；活跃journal另限制最多100,000条output和10,000条input。若新增元数据使旧journal超过上限，
+且blocked也无法容纳，则fail-stop，保留磁盘中最后可读取的journal，不删除历史或写入无法恢复的超限文件。
+这些上限是为既有长期会话保留的临时余量，不表示无限存储，也不要求改变v1 SQLite格式、记录ID或ACK语义。
+
+## 后续无损归档方案（尚未实现）
+
+1. 只有本地已持久ACK且Relay可回读的终态记录才进入lossless archive；全部未确认output和未决input继续留在活跃journal。
+2. 活跃journal保留精简dedup/receipt索引、epoch floor、游标和必要的thread派发标记，归档ID不能重新生成或重放。
+3. archive发布与active-row移除必须具备同一崩溃安全事务语义，并覆盖重启、恢复和真实账本副本测试。
+4. 文本delta合并先作为派生视图优化，不破坏原localId到envelope/ACK的映射；实现和部署另立任务，不能借容量维护清空会话。
 
 ## 定向回归入口
 
