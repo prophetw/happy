@@ -57,6 +57,10 @@ const workDetail = workSummary.extend({ execution: executionLocation.optional(),
     steps: z.array(z.object({ id: z.string().max(100), title: z.string().max(500), status: z.string().max(80) })).max(10),
     result: z.string().max(1200).nullable(), resultTruncated: z.boolean() });
 const dotDetail = z.object({ dotId: uuid, taskTotal: z.number().int().nonnegative(), tasks: z.array(workDetail).max(10),
+    projects: z.object({ total: z.number().int().nonnegative(), items: z.array(z.object({
+        id: uuid, title: z.string().max(160), projectID: z.string().max(200), status: z.string().max(80),
+        reason: z.string().max(160).nullable(), passed: z.number().int().nonnegative(), total: z.number().int().nonnegative(),
+    })).max(10) }).optional(),
     pendingIntegration: z.object({ total: z.number().int().nonnegative(), items: z.array(z.object({ id: uuid, title: z.string().max(200),
         projectID: z.string().max(200), commit: gitObjectID, sessionId: sessionId.nullable(), test: testResult.nullable() })).max(20) }).optional(),
     memory: z.object({ total: z.number().int().nonnegative(), omittedCount: z.number().int().nonnegative(),
@@ -197,6 +201,7 @@ export function testloopWorkQueueReason(reason: string): string {
     const labels: Record<string, string> = {
         'scheduler-ready': '等待调度', 'project-limit': '等待本项目执行名额', 'machine-limit': '等待机器硬上限名额',
         'resource-wait': '等待共享排他资源', execution_slot: '等待机器执行槽',
+        project_new_user_input_pending: '收到新指令，等待你明确继续项目。',
         legacy_observation: '正在核对占用资源的旧会话', candidate_review: '等待原目录的候选验收结束',
         CANDIDATE_REQUIRED: '请选择要审查的提交或执行候选。', CANDIDATE_UNAVAILABLE: '指定候选已无法读取。',
         CANDIDATE_CHANGED: '指定候选已经变化，验收无法继续。',

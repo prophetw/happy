@@ -524,15 +524,26 @@ it('ignores a delayed save receipt after switching Dot and rejects the old save 
 it('shows queue/resource/location state and routes targeted cancellation through the existing user composer',async()=>{
     const task={id:'11111111-1111-4111-8111-111111111111',title:'隔离代码任务',kind:'delegate',status:'queued',needsReview:false,projectID:'project',goalPhase:null,
         instruction:'写入独立文件',runId:null,reason:null,nextWakeAt:null,finishedAt:null,executionSessionId:'actual-session',executionOutcome:null,businessVerification:'unverified',steps:[],result:null,resultTruncated:false,
-        queueReason:'execution_slot',canCancel:true,execution:{mode:'worktree',directory:'/fixture/worktrees/task-a',branch:'dot-task/task-a',projectID:'project'}};
-    const snapshot={dots:[{id:'22222222-2222-4222-8222-222222222222',sessionId:'dot-session'}]},detail={dotId:'22222222-2222-4222-8222-222222222222',taskTotal:1,tasks:[task],memory:null};
-    mocks.data={projection:{snapshot,details:{'22222222-2222-4222-8222-222222222222':{asOf:'2026-11-09T00:00:00Z',data:detail}}}};
+        queueReason:'execution_slot',recovery:'等待独立验收：/session/review-a。共享资源 service:fixture。',canCancel:true,execution:{mode:'worktree',directory:'/fixture/worktrees/task-a',branch:'dot-task/task-a',projectID:'project'}};
+    const snapshot={dots:[{id:'22222222-2222-4222-8222-222222222222',sessionId:'dot-session'}]},detail={dotId:'22222222-2222-4222-8222-222222222222',taskTotal:1,tasks:[task],memory:null,projects:{total:1,items:[{id:task.id,title:'持续交付',projectID:'project',status:'active',reason:'project_new_user_input_pending',passed:1,total:2}]}};
+    const refresh = vi.fn();
+    mocks.data={refresh,projection:{snapshot,details:{'22222222-2222-4222-8222-222222222222':{asOf:'2026-11-09T00:00:00Z',data:detail}}}};
     let request:any,renderer!:ReturnType<typeof create>;
     const props={session:{id:'dot-session',presence:'online'} as any,active:true,metadata:{schemaVersion:1 as const,kind:'dot' as const,workspaceId:'11111111-1111-4111-8111-111111111111',workspaceSessionId:'workspace-session',dotId:'22222222-2222-4222-8222-222222222222'},children:(value:unknown)=>{request=value;return React.createElement('Composer');}};
     await act(async()=>{renderer=create(React.createElement(DotSessionContent,props));});
     await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());
-    const open=()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='查看工作项：隔离代码任务')!;await act(async()=>open().props.onPress());
-    const text=()=>JSON.stringify(renderer.root.findAllByType('Text').map((node:any)=>node.props.children));
+    const button = (label: string) => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === label)!;
+    const open = () => button('查看工作项：隔离代码任务');
+    const text=()=>renderer.root.findAllByType('Text').map((node:any)=>[node.props.children].flat(Infinity).join('')).join('\n');
+    expect(text()).toContain('持续交付'); expect(text()).toContain('已验收 1/2');
+    expect(text()).toContain('等待你明确继续项目');
+    expect(text()).toContain('/session/review-a'); expect(text()).toContain('service:fixture');
+    await act(async () => button('刷新工作项').props.onPress());
+    await act(async () => open().props.onPress());
+    await act(async () => button('刷新此工作进度').props.onPress());
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(request).toBeNull();
+    expect(mocks.submit).not.toHaveBeenCalled();
     expect(text()).toContain('已排队，尚未开始');expect(text()).toContain('dot-task/task-a');expect(text()).toContain('/fixture/worktrees/task-a');
     for(const [reason,label] of [['project-limit','等待本项目执行名额'],['machine-limit','等待机器硬上限名额'],['resource-wait','等待共享排他资源']]) {
         task.queueReason=reason;

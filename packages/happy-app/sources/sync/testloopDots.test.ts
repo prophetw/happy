@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { projectTestloopDotsMessages, readTestloopDotsMetadata, testloopDotsCommand, testloopDotsLimitsText,
-    TestloopDotsRequestSchema, TESTLOOP_DOTS_PREFIX, testloopWorkStatus } from './testloopDots';
+    TestloopDotsRequestSchema, TESTLOOP_DOTS_PREFIX, TestloopDotsSnapshotSchema, testloopWorkStatus } from './testloopDots';
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';
 const otherWorkspace = '22222222-2222-4222-8222-222222222222';
@@ -14,6 +14,19 @@ const agent = (value: unknown, extra = {}) => ({ kind: 'agent-text', id: 'agent-
 const user = (extra = {}) => ({ kind: 'user-text', id: 'user-1', createdAt: 5, text: testloopDotsCommand(request), ...extra });
 
 describe('TestLoop Dots directory protocol', () => {
+    it('reads optional bounded project progress on the authorized Dot detail', () => {
+        const detail = { dotId: dot.id, taskTotal: 0, tasks: [], memory: null };
+        const card = { id: dot.id, available: true, taskTotal: 0, tasks: [] };
+        const workbench = { schemaVersion: 1, revision: 1, asOf: '2026-11-23T00:00:00Z', dots: [card], detail };
+        expect(TestloopDotsSnapshotSchema.parse(snapshot({ workbench })).workbench?.detail?.projects).toBeUndefined();
+        const projects = { total: 1, items: [{ id: requestId, title: '持续交付', projectID: 'project',
+            status: 'active', reason: null, passed: 1, total: 2 }] };
+        const result = snapshot({ workbench: { ...workbench, detail: { ...detail, projects } } });
+        expect(TestloopDotsSnapshotSchema.parse(result).workbench?.detail?.projects).toEqual(projects);
+        projects.items[0].passed = -1;
+        expect(TestloopDotsSnapshotSchema.safeParse(result).success).toBe(false);
+    });
+
     it('recognizes only explicit workspace and Dot metadata without changing legacy sessions', () => {
         expect(readTestloopDotsMetadata({ flavor: 'codex' })).toBeNull();
         expect(readTestloopDotsMetadata({ testloopDots: { schemaVersion: 1, kind: 'workspace', workspaceId } })?.kind).toBe('workspace');

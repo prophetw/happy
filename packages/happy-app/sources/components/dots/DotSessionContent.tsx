@@ -292,10 +292,21 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {(data.error || error) && <Text accessibilityRole="alert" style={body}>{data.error || error}</Text>}
             {pending && action('核对回执', () => void data.checkReceipt(pending.request.requestId), pending.checking)}
             {(wide ? sideTab : tab) !== 'work' ? observationPanel('memory') : !detail ? <Text style={muted}>尚未收到这个 Dot 的工作快照，请刷新核对。</Text> : <>
+                    {detail.projects && <>
+                        <Text accessibilityRole="header" style={heading}>持续项目 · {detail.projects.total}</Text>
+                        {detail.projects.items.map(project => <View key={project.id} style={{ gap: 4, paddingVertical: 8 }}>
+                            <Text style={body}>{project.title}</Text>
+                            <Text style={muted}>{project.projectID} · {({ active: '推进中', paused: '已暂停', blocked: '有阻塞', completed: '已完成', canceled: '已取消' } as Record<string, string>)[project.status] ?? project.status} · 已验收 {project.passed}/{project.total}</Text>
+                            {project.reason && <Text style={muted}>{testloopWorkQueueReason(project.reason)}</Text>}
+                        </View>)}
+                        {detail.projects.total > detail.projects.items.length && <Text style={muted}>当前展示 {detail.projects.items.length} 个项目。</Text>}
+                    </>}
                     <Text style={heading}>工作项 · {detail.taskTotal}</Text>
-                    <Text style={muted}>不同项目可以同时执行，同一项目默认最多 2 项，其余按排队顺序开始。</Text>
+                    <Text style={muted}>不同仓库可以并行。同一目录的冲突写入会等待，释放后自动继续。</Text>
                     {detail.tasks.map(task => <Pressable key={task.id} accessibilityRole="button" accessibilityLabel={`查看工作项：${task.title}`} onPress={() => setTaskId(task.id)} style={{ gap: 6, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                         <Text style={body}>{task.title}</Text><Text style={muted}>{testloopWorkStatus(task)}{task.projectID ? ` · ${task.projectID}` : ''}</Text>
+                        {task.queueReason && ['queued', 'waiting-resource', 'preparing'].includes(task.status) &&
+                            <Text style={muted}>{task.recovery || testloopWorkQueueReason(task.queueReason)}</Text>}
                     </Pressable>)}
                     {!detail.tasks.length && <Text style={muted}>这个 Dot 还没有可查看的工作项。在对话中交办即可。</Text>}
                     {detail.taskTotal > detail.tasks.length && <Text style={muted}>当前展示 {detail.tasks.length} 项，其余工作可在对话中按名称或编号查询。</Text>}
@@ -359,7 +370,8 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {['delegate', 'goal'].includes(selectedTask.kind) && <Text style={muted}>{selectedTask.businessVerification === 'independent_agent_report' ? '已有独立执行会话提供的验收报告' : '业务验收尚未核验'}</Text>}
             {selectedTask.result && <><Text style={heading}>实际回报{selectedTask.resultTruncated ? '（已截断）' : ''}</Text><Text selectable style={body}>{selectedTask.result}</Text></>}
             {selectedTask.executionSessionId && action('查看执行会话', () => void openExecution(selectedTask.executionSessionId!))}
-            {action('在对话中跟进此工作', () => toConversation(`请跟进当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），说明最新进展和仍需处理的事项。`))}
+            {action('刷新此工作进度', () => void data.refresh(), data.refreshing)}
+            {action('在对话中追加指令', () => toConversation(`关于当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），我想补充：`))}
         </>)}
         {!memoryOpen && memoryEdit?.binding === memoryBinding && memoryAttempt.current && <View style={{ padding: 12 }}>
             {action('恢复上次记忆操作', () => setMemoryOpen(true))}
