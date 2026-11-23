@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { hash, HostedDotConfig, hostedProducerIdentity } from './hostedDotState';
+import { hash, HOSTED_STATE_MAX_BYTES, HostedDotConfig, hostedProducerIdentity } from './hostedDotState';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
 import { HOSTED_INPUT_AUTHORITY_VERSION, readHostedInputAuthority } from './hostedDotAuthority';
 const hooks = vi.hoisted(() => ({ onRead: undefined as undefined | (() => void) }));
@@ -54,7 +54,7 @@ it.each([
 });
 it('rejects missing, oversized, symlinked files and symlink directories', () => {
     const f = fixture(), file = join(f.config.directory, 'state.json');
-    truncateSync(file, 32 * 1024 * 1024 + 1); expect(f.read).toThrow();
+    truncateSync(file, HOSTED_STATE_MAX_BYTES + 1); expect(f.read).toThrow();
     rmSync(file); expect(f.read).toThrow();
     symlinkSync(join(f.config.directory, 'config.json'), file); expect(f.read).toThrow();
     const link = join(f.config.directory, 'link'); symlinkSync(f.config.directory, link);

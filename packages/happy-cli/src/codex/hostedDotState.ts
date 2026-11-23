@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { SessionEnvelope } from '@slopus/happy-wire';
 import { readHostedStorage, assertHostedStorageReadyForStart } from './hostedDotStorage';
 
-export const HOSTED_STATE_MAX_BYTES = 32 * 1024 * 1024;
+export const HOSTED_STATE_MAX_BYTES = 128 * 1024 * 1024;
 
 export const HostedDotConfig = z.strictObject({ version: z.literal(1), dotId: z.string().uuid(), sessionId: z.string().min(1),
     happyHome: z.string().startsWith('/'), serverUrl: z.string().url(), directory: z.string().startsWith('/'),
@@ -33,7 +33,7 @@ export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.op
     threadId: z.string().nullable(), creating: z.boolean(), afterSeq: z.number().int().nonnegative(),
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
     bootstrap: z.object({ stage: z.enum(['injecting', 'applied']), threadId: z.string() }).optional(),
-    inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(50000),
+    inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(100000),
     controls: z.array(z.string()).default([]) });
 export type HostedState = z.infer<typeof HostedDotJournal>;
 /** Dispatch snapshots are recovery evidence only while an input is unresolved.
