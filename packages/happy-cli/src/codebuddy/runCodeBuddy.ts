@@ -55,10 +55,16 @@ export function getCodeBuddyPromptResult(response: PromptResponse): CodeBuddyPro
   const error = codeBuddyMetaError(response._meta?.['codebuddy.ai/errorMessage']);
   if (outcome === 'PERMISSION_DENIED') return { status: 'failed', detail: 'CodeBuddy tool permission was denied.' };
   if (response.stopReason === 'cancelled') return { status: 'cancelled' };
+  // CodeBuddy reports PARTIAL_SUCCESS for any turn that recorded a tool
+  // error, including exploratory commands that failed and were recovered
+  // before the final answer. Without a provider error message there is no
+  // actionable partial detail to show, so keep completed work successful
+  // instead of presenting a misleading error line.
   if (outcome === 'PARTIAL_SUCCESS' && response.stopReason === 'end_turn') {
+    if (!error) return { status: 'completed' };
     return {
       status: 'partial',
-      detail: `CodeBuddy partially completed the turn (PARTIAL_SUCCESS): ${error ?? 'some work may be incomplete.'}`,
+      detail: `CodeBuddy partially completed the turn (PARTIAL_SUCCESS): ${error}`,
     };
   }
   if (error) return { status: 'failed', detail: error };

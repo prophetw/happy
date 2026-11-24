@@ -10,7 +10,7 @@ Happy 可以在所选机器和目录中启动 CodeBuddy Code。机器上的 Happ
 
 启动参数为 `codebuddy --acp --permission-mode default`。发送首条消息前，Happy 通过 ACP 应用所选的模型和权限。默认模型沿用本机 CLI 的配置，默认权限为询问。探测目录期间无需发送消息，登录状态由本机 CodeBuddy 管理。 [CodeBuddy ACP 文档](https://www.codebuddy.cn/docs/cli/acp) · [CodeBuddy CLI 参考](https://www.codebuddy.cn/docs/cli/cli-reference)
 
-Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、部分完成、失败或取消。`end_turn + PARTIAL_SUCCESS` 记录为 `partial`，保留本轮文本、工具结果及脱敏错误详情，不按全成功验收，也不进入异常重跑；明确失败和认证错误保持失败。登录过期的轮次会提示重新登录。停止当前轮次会发送 `session/cancel`。当 CLI 发布 `loadSession` 能力且原始会话仍存在时，**恢复会话**或 `happy resume <Happy session ID>` 会在原机器和目录中加载它。
+Happy 显示 ACP 文本流，按原生 `session/prompt` 结果记录完成、部分完成、失败或取消。`end_turn + PARTIAL_SUCCESS` 只有在 CodeBuddy 提供错误详情时才记录为 `partial`，保留本轮文本、工具结果及脱敏错误详情，不按全成功验收，也不进入异常重跑；没有错误详情时按 `completed` 处理，避免把已被后续步骤恢复的工具失败显示成任务错误。明确失败和认证错误保持失败。登录过期的轮次会提示重新登录。停止当前轮次会发送 `session/cancel`。当 CLI 发布 `loadSession` 能力且原始会话仍存在时，**恢复会话**或 `happy resume <Happy session ID>` 会在原机器和目录中加载它。
 
 ## 工具状态与详情
 

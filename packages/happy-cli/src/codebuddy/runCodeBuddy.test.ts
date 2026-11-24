@@ -13,10 +13,8 @@ function response(stopReason: string, outcome?: string, errorMessage?: string): 
 }
 
 describe('CodeBuddy prompt outcomes', () => {
-  it('keeps partial work terminal and identifiable without turning it into an exception', () => {
-    expect(getCodeBuddyPromptResult(response('end_turn', 'PARTIAL_SUCCESS'))).toMatchObject({
-      status: 'partial', detail: expect.stringContaining('PARTIAL_SUCCESS'),
-    });
+  it('treats a detail-free PARTIAL_SUCCESS as completed', () => {
+    expect(getCodeBuddyPromptResult(response('end_turn', 'PARTIAL_SUCCESS'))).toEqual({ status: 'completed' });
   });
 
   it('preserves the provider detail for a partial result', () => {
