@@ -455,6 +455,32 @@ describe('durable dispatch evidence', () => {
         await r.ownerRequest('/connections/' + grant, 'DELETE');
         expect((await create(r, grant, 'offered')).error.code).toBe('GRANT_REVOKED');
     });
+    it('re-offers a delivered but unacknowledged job without replacing its durable claim', async () => {
+        let clock = Date.now();
+        const r = await setup({ timeoutMs: 1000, offerRetryMs: 100, clock: () => clock }), grant = await r.connect();
+        const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });
+        await poll();
+        const pending = create(r, grant, 'lost-offer');
+        let job;
+        do { job = (await poll()).data; } while (!job);
+        const jobID = job.id, key = 'intent:' + grant + ':lost-offer';
+        expect(r.gateway.store.get(key).claimID).toBe(jobID);
+        expect((await poll()).data).toBeNull();
+        clock += 100;
+        expect((await poll()).data.id).toBe(jobID);
+        expect(r.gateway.store.get(key).claimID).toBe(jobID);
+        expect((await r.workerClient.request('POST', '/worker/check', { jobID })).ok).toBe(true);
+        clock += 100;
+        expect((await poll()).data).toBeNull();
+        expect(await pending).toMatchObject({ error: { code: 'UNAVAILABLE_OR_UNKNOWN' } });
+    });
+    it('recovers a lost poll response through the real worker by re-offering the same job', async () => {
+        const r = await setup({ timeoutMs: 5000, offerRetryMs: 100 }), grant = await r.connect();
+        r.losePollOnce(); await r.startWorker();
+        const created = await create(r, grant, 'lost-poll');
+        expect(created.ok).toBe(true); expect(r.spawnCount).toBe(1);
+        expect((await r.client.request('GET', '/requests/lost-poll', undefined, grant)).data.state).toBe('confirmed');
+    }, 10000);
     it('only looks up a claimed request after loss, even if the worker never returned a receipt', async () => {
         const r = await setup({ timeoutMs: 200 }), grant = await r.connect();
         const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });

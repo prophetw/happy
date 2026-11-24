@@ -22,7 +22,7 @@ import type { Transport } from '../src/automation/relay';
 import type { DecryptedSession, DecryptedMachine } from '../src/api';
 
 /** Isolated real loopback HTTP + real receipts + synthetic encrypted relay. Never reads Happy home. */
-export async function fixtureRig(options: { timeoutMs?: number; clock?: () => number; externalIdentity?: import('../src/automation/rest/schema').ExternalIdentity;
+export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: number; clock?: () => number; externalIdentity?: import('../src/automation/rest/schema').ExternalIdentity;
     origin?: string; additionalBrowserOrigins?: string[]; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig;
     launchOptions?: LaunchOptionsPolicy; catalog?: () => OptionCatalogEntry[] } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'happy-rest-fixture-')), project = join(dir, 'project'); mkdirSync(project);
@@ -39,7 +39,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     const audit: unknown[] = [];
     const gatewayOptions = { directory: join(dir, 'gateway'), origin: options.origin ?? 'http://127.0.0.1', additionalBrowserOrigins: options.additionalBrowserOrigins, clients: [clientRegistration,
         { id: otherIdentity.id, userID: 'userB', name: 'Other user', publicKey: otherIdentity.publicKey }], workers: [registration],
-        now, timeoutMs: options.timeoutMs ?? 5000, serviceTokens: options.serviceTokens, audit: (e: unknown) => { audit.push(e); },
+        now, timeoutMs: options.timeoutMs ?? 5000, offerRetryMs: options.offerRetryMs, serviceTokens: options.serviceTokens, audit: (e: unknown) => { audit.push(e); },
         verifyOwner: async (authorization: string | undefined) => {
             if (authorization === 'Bearer fixture-owner-A') return 'userA';
             if (authorization === 'Bearer fixture-owner-B') return 'userB';
@@ -53,7 +53,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     const machine = { id: 'machineA', encryption, active: true, activeAt: now(), metadata: {} } as DecryptedMachine;
     const sessions: DecryptedSession[] = [];
     const ciphertext = new Map<string, { id: string; seq: number; localId: string | null; c: string }[]>();
-    let spawnCount = 0, sendCount = 0, processState = 'running', spawnDelay = 0, loseAck = false;
+    let spawnCount = 0, sendCount = 0, processState = 'running', spawnDelay = 0, loseAck = false, losePoll = false;
     const launches: { directory: string; options: unknown }[] = [];
     let spawnBarrier: Promise<void> | undefined, releaseSpawn: (() => void) | undefined;
     function addSession(id: string, directory = project, flavor = 'codex') {
@@ -87,7 +87,16 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
     const statuses: unknown[] = [];
     async function startWorker() {
         abort = new AbortController();
-        runner = new HTTPWorkerRunner(workerClient, registration, transport, join(dir, 'worker'), now, undefined, join(dir, 'queue'));
+        // Simulate a poll response lost after the gateway recorded its delivery.
+        const workerTransport = new Proxy(workerClient, { get(target, prop, receiver) {
+            if (prop !== 'request') return Reflect.get(target, prop, receiver);
+            return async (method: string, route: string, body?: unknown, grantID = '') => {
+                const reply = await target.request(method, route, body, grantID);
+                if (losePoll && route === '/worker/poll' && reply?.data) { losePoll = false; throw new Error('fixture poll response lost'); }
+                return reply;
+            };
+        } });
+        runner = new HTTPWorkerRunner(workerTransport, registration, transport, join(dir, 'worker'), now, undefined, join(dir, 'queue'));
         await runner.pollOnce(); running = runner.run(abort.signal, options.workerIntervalMs ?? 25, s => { statuses.push(s); });
     }
     async function stopWorker() { abort?.abort(); await running; abort = undefined; running = undefined; }
@@ -108,7 +117,7 @@ export async function fixtureRig(options: { timeoutMs?: number; clock?: () => nu
         get gateway() { return gateway; }, get client() { return client; }, get workerClient() { return workerClient; }, get address() { return address; },
         get spawnCount() { return spawnCount; }, get sendCount() { return sendCount; }, get launches() { return launches; },
         pauseSpawn() { spawnBarrier = new Promise<void>(resolve => { releaseSpawn = resolve; }); return () => { releaseSpawn?.(); spawnBarrier = undefined; }; },
-        delaySpawn(ms: number) { spawnDelay = ms; }, loseSendAck() { loseAck = true; }, setProcess(state: string) { processState = state; },
+        delaySpawn(ms: number) { spawnDelay = ms; }, loseSendAck() { loseAck = true; }, losePollOnce() { losePoll = true; }, setProcess(state: string) { processState = state; },
         complete(sessionID: string, turnID = 'turn1', outcome = 'completed', text = 'fixture result') {
             append(sessionID, { role: 'session', content: { role: 'agent', turn: turnID, ev: { t: 'turn-start' } } });
             append(sessionID, { role: 'session', content: { role: 'agent', turn: turnID, ev: { t: 'text', text } } });

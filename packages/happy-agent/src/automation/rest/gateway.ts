@@ -14,11 +14,15 @@ import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectio
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null; closedCreateAttempt?: string; createTitleDigest?: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; createAttempt?: CreateAttempt; deadline: number };
-type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer?: ReturnType<typeof setTimeout>; delivered: boolean };
+type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer?: ReturnType<typeof setTimeout>; delivered: boolean;
+    offeredAt?: number; acked?: boolean };
 export type GatewayOptions = {
     directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
     verifyOwner: (authorization: string | undefined) => Promise<string>;
     now?: () => number; timeoutMs?: number; maxGrantMs?: number;
+    /** A poll response can be lost after the gateway marks the job delivered. Re-offer the same
+     * claim only until the worker calls /worker/check; checked jobs are never re-offered. */
+    offerRetryMs?: number;
     // Mandatory sink. Only a fixed, non-content projection is passed.
     ipRateLimit?: number; httpMcp?: boolean;
     serviceTokens?: ServiceTokensConfig;
@@ -39,7 +43,8 @@ export function createGateway(options: GatewayOptions) {
     const serviceConfig = options.serviceTokens ? serviceTokensConfigSchema.parse(options.serviceTokens) : undefined;
     const clientIDs = [...options.clients, ...(serviceConfig?.clients ?? [])].map(c => c.id);
     if (new Set(clientIDs).size !== clientIDs.length || new Set(options.workers.map(w => w.id)).size !== options.workers.length) throw new ApiError('DUPLICATE_REGISTRATION');
-    const now = options.now ?? Date.now, store = new MetadataStore(`${options.directory}/state`), proofs = new MetadataStore(`${options.directory}/proofs`);
+    const now = options.now ?? Date.now, offerRetryMs = Math.max(0, options.offerRetryMs ?? 2000), offerRecoveryMs = 120000;
+    const store = new MetadataStore(`${options.directory}/state`), proofs = new MetadataStore(`${options.directory}/proofs`);
     const unlock = lockGateway(options.directory);
     const grants = new Grants(store, options.workers, now, options.maxGrantMs, options.clients, serviceConfig?.clients, serviceConfig?.maxGrantMs);
     const serviceTokens = serviceConfig ? new ServiceTokens(store, grants, serviceConfig.clients, now) : undefined;
@@ -152,8 +157,10 @@ export function createGateway(options: GatewayOptions) {
             const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, createAttempt, deadline: now() + timeout, delivered: false,
                 resolve, timer: setTimeout(() => {
                     job.timer = undefined;
-                    // Keep delivered jobs briefly: a dispatched OS operation may still finish.
+                    // A delivered but never-checked job may have lost its poll response. Keep it
+                    // eligible for a bounded re-offer instead of stranding the durable claim.
                     if (!job.delivered) jobs.delete(jobID);
+                    else if (!job.acked) job.deadline = now() + offerRecoveryMs;
                     resolve(!job.delivered && intent ? unsent(intent) : unknown());
                 }, timeout) };
             jobs.set(jobID, job);
@@ -447,7 +454,8 @@ export function createGateway(options: GatewayOptions) {
             clearTimeout(job.timer); jobs.delete(id);
             job.resolve(!job.delivered && job.intent ? unsent(job.intent) : unknown());
         }
-        const job = [...jobs.values()].find(j => j.workerID === registration.id && !j.delivered && j.deadline > now());
+        const job = [...jobs.values()].find(j => j.workerID === registration.id && j.deadline > now()
+            && (!j.delivered || (!j.acked && (j.offeredAt ?? 0) + offerRetryMs <= now())));
         if (!job) return ok(null);
         try { grants.active(job.grantID); } catch (error) {
             if (!(error instanceof ApiError) || !['GRANT_REVOKED', 'GRANT_EXPIRED', 'GRANT_NOT_APPROVED'].includes(error.code)) throw error;
@@ -463,11 +471,14 @@ export function createGateway(options: GatewayOptions) {
             const key = intentKey(grants.get(job.grantID), job.intent.requestID);
             try {
                 const current = store.get<Intent>(key);
-                if (!current || current.claimID !== null || current.fingerprint !== job.intent.fingerprint)
+                if (!current || (current.claimID !== null && current.claimID !== job.id) || current.fingerprint !== job.intent.fingerprint)
                     throw new ApiError('STORE_UNAVAILABLE', 503);
-                // The Worker can see the command only after its claim is durable.
-                current.claimID = job.id;
-                store.set(key, current);
+                // The Worker can see the command only after its claim is durable. A re-offer of
+                // the same job already has that claim; never replace it with a new job ID.
+                if (current.claimID === null) {
+                    current.claimID = job.id;
+                    store.set(key, current);
+                }
             } catch (error) {
                 clearTimeout(job.timer); jobs.delete(job.id); job.resolve(unknown());
                 throw error;
@@ -475,6 +486,7 @@ export function createGateway(options: GatewayOptions) {
             job.intent.claimID = job.id;
         }
         job.delivered = true;
+        job.offeredAt = now();
         return ok({ id: job.id, workerID: job.workerID, grantID: job.grantID, command: job.command, createAttempt: job.createAttempt, deadline: job.deadline });
     });
     app.post(`${base}/worker/directory-check`, async req => {
@@ -497,6 +509,8 @@ export function createGateway(options: GatewayOptions) {
         if (!job || job.workerID !== p.registration.id || !job.delivered) throw new ApiError('JOB_UNAVAILABLE', 403);
         const c = grants.active(job.grantID);
         if (c.userID !== p.registration.userID || c.workerID !== p.registration.id) throw new ApiError('SCOPE_DENIED', 403);
+        // First check is the worker's durable acknowledgement: stop re-offering this job.
+        job.acked = true;
         return ok(c);
     });
     app.post(`${base}/worker/result`, { bodyLimit: 32 * 1024 * 1024 }, async req => {
