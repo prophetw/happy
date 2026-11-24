@@ -17,13 +17,17 @@ export function readTestloopDotsMetadata(metadata: unknown): TestloopDotsMetadat
     return parsed.success ? parsed.data : null;
 }
 
+const launchID = z.string().regex(/^[A-Za-z0-9_.:\[\]-]{1,128}$/);
+const launchModel = z.string().regex(/^[A-Za-z0-9_.:\[\]() -]{1,256}$/);
+export const dotDispatchDefaults = z.object({ agent: launchID, model: launchModel.optional(), effort: launchID.optional() }).strict();
+const dispatchOptions = dotDispatchDefaults.partial().extend({ confirmed: z.boolean() });
 const modelSettings = z.object({ agent: z.literal('codex'), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) }).strict();
 export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('list') }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('create'),
         name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional() }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('update'), dotId: uuid,
-        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional() }).strict(),
+        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional(), dispatchDefaults: dotDispatchDefaults.nullable().optional() }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('clear'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('delete'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('inspect'), dotId: uuid }).strict(),
@@ -52,7 +56,7 @@ const executionLocation = z.object({ mode: z.string(), directory: z.string().max
     checkoutDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(), candidateCommit: gitObjectID.optional(),
     testResult: testResult.optional(), testCleanup: z.enum(['removed', 'retained']).optional() });
 const workDetail = workSummary.extend({ execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
-    nextWakeAt: z.string().nullable(), finishedAt: z.string().nullable(), executionSessionId: sessionId.nullable(),
+    dispatchOptions: dispatchOptions.optional(), nextWakeAt: z.string().nullable(), finishedAt: z.string().nullable(), executionSessionId: sessionId.nullable(),
     executionOutcome: z.string().max(80).nullable(), businessVerification: z.string().max(80),
     steps: z.array(z.object({ id: z.string().max(100), title: z.string().max(500), status: z.string().max(80) })).max(10),
     result: z.string().max(1200).nullable(), resultTruncated: z.boolean() });
@@ -71,7 +75,7 @@ export const TestloopDotsSnapshotSchema = z.object({
     schemaVersion: z.literal(1), workspaceId: uuid, revision: z.number().int().nonnegative(), requestId: uuid,
     ok: z.boolean(), error: z.string().max(1000).optional(),
     dots: z.array(z.object({ id: uuid, name: z.string().min(1).max(80), instruction: z.string().max(2000),
-        sessionId, conversationEpoch: z.number().int().nonnegative().optional(), status: z.literal('active'), settings: modelSettings.optional() }).strict()).max(1000),
+        sessionId, conversationEpoch: z.number().int().nonnegative().optional(), status: z.literal('active'), settings: modelSettings.optional(), dispatchDefaults: dotDispatchDefaults.optional() }).strict()).max(1000),
     deletedDot: z.object({ id: uuid, sessionId }).strict().optional(),
     deletedDots: z.array(z.object({ requestId: uuid, revision: z.number().int().nonnegative(), id: uuid, sessionId }).strict()).max(50).optional(),
     modelOptions: z.array(z.object({ code: z.string(), value: z.string(), thinkingLevels: z.array(z.string()), defaultThinkingLevel: z.string() })).optional(),

@@ -226,3 +226,13 @@ it('retires only an older offline Dot epoch and never removes a newer cached ses
     expect(retiredDotSessionIds(snapshot, [cached('old'), cached('new', 4), cached('future', 5)])).toEqual(['old']);
     expect(retiredDotSessionIds({ ...snapshot, ok: false }, [cached('old')])).toEqual([]);
 });
+
+it('accepts dispatch settings on an update and in the directory, but not permission overrides', () => {
+    const defaults = { agent: 'codex', model: 'gpt-6.2-sol', effort: 'max' };
+    const request = { schemaVersion: 1, requestId, action: 'update', dotId: dot.id, name: dot.name, instruction: dot.instruction };
+    expect(TestloopDotsRequestSchema.safeParse({ ...request, dispatchDefaults: defaults }).success).toBe(true);
+    expect(TestloopDotsRequestSchema.safeParse({ ...request, dispatchDefaults: null }).success).toBe(true);
+    expect(TestloopDotsRequestSchema.safeParse({ ...request, dispatchDefaults: { ...defaults, permissionMode: 'yolo' } }).success).toBe(false);
+    expect(projectTestloopDotsMessages([agent(snapshot({ dots: [{ ...dot, dispatchDefaults: defaults }] }))] as any, workspaceId)
+        .snapshot?.dots[0]?.dispatchDefaults).toEqual(defaults);
+});

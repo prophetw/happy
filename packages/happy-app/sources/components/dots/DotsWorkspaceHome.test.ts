@@ -255,3 +255,30 @@ it('opens the native edit modal, loads settings, and saves effort through the wo
     expect(mocks.navigate).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
 });
+
+it('edits and resets per-Dot dispatch defaults without requiring the chat model catalog', async () => {
+    const configuredDot = { ...dot, settings: { agent: 'codex', model: 'chat-model', effort: 'xhigh' },
+        dispatchDefaults: { agent: 'codex', model: 'dispatch-model', effort: 'high' } };
+    const projection = { snapshot: { workspaceId: 'workspace-id', revision: 1, ok: true, dots: [configuredDot] },
+        receipts: {}, deletions: {}, details: {}, pendingRequests: [] };
+    mocks.data = { projection };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, {
+        session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true,
+    })); });
+    await press(button(renderer, '管理 写作助理'));
+    const input = (label: string) => renderer.root.findAllByType('TextInput').find((n: any) => n.props.accessibilityLabel === label)!;
+    expect(input('派活模型').props.value).toBe('dispatch-model');
+    await act(async () => input('派活推理强度').props.onChangeText('max'));
+    expect(button(renderer, '保存 Dot').props.disabled).toBe(false);
+    await press(button(renderer, '保存 Dot'));
+    expect(mocks.submit).toHaveBeenLastCalledWith({ schemaVersion: 1, requestId: deleteRequest.requestId,
+        action: 'update', dotId: dot.id, name: dot.name, instruction: dot.instruction,
+        dispatchDefaults: { agent: 'codex', model: 'dispatch-model', effort: 'max' } });
+    await press(button(renderer, '恢复派活默认值'));
+    expect(input('派活模型').props.value).toBe('');
+    await press(button(renderer, '保存 Dot'));
+    expect(mocks.submit).toHaveBeenLastCalledWith({ schemaVersion: 1, requestId: deleteRequest.requestId,
+        action: 'update', dotId: dot.id, name: dot.name, instruction: dot.instruction, dispatchDefaults: null });
+    await act(async () => renderer.unmount());
+});

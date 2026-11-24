@@ -15,7 +15,7 @@ import { sync } from '@/sync/sync';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
 import { useDotsWorkspace } from './useDotsWorkspace';
 import type { Session } from '@/sync/storageTypes';
-import { readTestloopDotsMetadata, testloopDotsLimitsText, testloopWorkStatus, type TestloopDot } from '@/sync/testloopDots';
+import { dotDispatchDefaults, readTestloopDotsMetadata, testloopDotsLimitsText, testloopWorkStatus, type TestloopDot } from '@/sync/testloopDots';
 
 function DotRow({ dot, onOpen, onEdit, disabled }: {
     dot: TestloopDot; onOpen: () => void; onEdit: () => void; disabled: boolean;
@@ -59,6 +59,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     const [width, setWidth] = React.useState(0), [creating, setCreating] = React.useState(false);
     const [name, setName] = React.useState(''), [instruction, setInstruction] = React.useState('');
     const [model, setModel] = React.useState('gpt-6.1-sol'), [effort, setEffort] = React.useState('xhigh');
+    const [dispatch, setDispatch] = React.useState({ agent: '', model: '', effort: '' });
     const [editing, setEditing] = React.useState<TestloopDot | null>(null);
     const editingRef = React.useRef<TestloopDot | null>(null);
     editingRef.current = editing;
@@ -111,8 +112,16 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
     };
     const openEdit = (dot: TestloopDot) => {
         setModel(dot.settings?.model ?? 'gpt-6.1-sol'); setEffort(dot.settings?.effort ?? 'xhigh');
+        setDispatch({ agent: dot.dispatchDefaults?.agent ?? '', model: dot.dispatchDefaults?.model ?? '', effort: dot.dispatchDefaults?.effort ?? '' });
         setEditing(dot); setEditName(dot.name); setEditInstruction(dot.instruction);
     };
+    const launch = { agent: dispatch.agent.trim(), model: dispatch.model.trim(), effort: dispatch.effort.trim() };
+    const launchChanged = Boolean(editing && (launch.agent !== (editing.dispatchDefaults?.agent ?? '')
+        || launch.model !== (editing.dispatchDefaults?.model ?? '') || launch.effort !== (editing.dispatchDefaults?.effort ?? '')));
+    const launchValid = !launch.agent && !launch.model && !launch.effort || dotDispatchDefaults.safeParse({
+        agent: launch.agent, model: launch.model || undefined, effort: launch.effort || undefined,
+    }).success;
+    const chatSettingsChanged = Boolean(editing?.settings && (model !== editing.settings.model || effort !== editing.settings.effort));
     const closeEdit = () => { setEditing(null); setEditName(''); setEditInstruction(''); };
     const saveForm = async () => {
         const target = editing?.id;
@@ -123,7 +132,8 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
             if (editing) {
                 updateIds.current.set(editing.id, requestId);
                 await currentData.current.submit({ schemaVersion: 1, requestId, action: 'update', dotId: editing.id,
-                    name: editName.trim(), instruction: editInstruction.trim(), ...(editing.settings ? { settings: { agent: 'codex' as const, model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } } : {}) });
+                    name: editName.trim(), instruction: editInstruction.trim(), ...(chatSettingsChanged ? { settings: { agent: 'codex' as const, model, effort: effort as NonNullable<TestloopDot['settings']>['effort'] } } : {}),
+                    ...(launchChanged ? { dispatchDefaults: launch.agent ? { agent: launch.agent, ...(launch.model ? { model: launch.model } : {}), ...(launch.effort ? { effort: launch.effort } : {}) } : null } : {}) });
             } else {
                 createId.current = requestId;
                 await currentData.current.submit({ schemaVersion: 1, requestId, action: 'create', name: name.trim(), instruction: instruction.trim(),
@@ -149,11 +159,11 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
             setDeleteConfirming(false);
         }
     };
-    const editUnchanged = !!editing && editName.trim() === editing.name && editInstruction.trim() === editing.instruction && (!editing.settings || model === editing.settings.model && effort === editing.settings.effort);
+    const editUnchanged = !!editing && editName.trim() === editing.name && editInstruction.trim() === editing.instruction && !chatSettingsChanged && !launchChanged;
     const formPending = data.pendingFor(editing?.id);
     const formError = data.errorFor(editing?.id) || openError;
     const canSubmit = data.ready && !formPending && (editing
-        ? !!editName.trim() && !!editInstruction.trim() && !editUnchanged
+        ? !!editName.trim() && !!editInstruction.trim() && !editUnchanged && launchValid
         : !!name.trim() && !!instruction.trim());
     const snapshot = data.projection?.snapshot;
     const attention = snapshot?.workbench?.dots.flatMap(dot => dot.tasks
@@ -228,7 +238,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                     <Text style={s.muted}>名称</Text><TextInput accessibilityLabel="Dot 名称" value={editing ? editName : name}
                         onChangeText={editing ? setEditName : setName} maxLength={80} editable={!formPending} style={s.input} />
                     {(!editing || editing.settings) && <>
-                    <Text style={s.muted}>Agent：codex · 后续轮次设置（当前轮次完成后应用）</Text>
+                    <Text style={s.muted}>Dot 对话：codex · 当前轮次完成后应用</Text>
                     <Text style={s.muted}>模型：{model} · 推理强度：{effort}</Text>
                     {(snapshot?.modelOptions ?? []).map(option => <Pressable key={option.code} accessibilityRole="button" accessibilityLabel={`模型 ${option.code}`}
                         disabled={Boolean(formPending)} onPress={() => { setModel(option.code); if (!option.thinkingLevels.includes(effort)) setEffort(option.defaultThinkingLevel); }} style={s.button}>
@@ -238,7 +248,20 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                         <Text style={s.muted}>{effort === level ? '● ' : ''}{level}</Text></Pressable>)}</View>
                     {!snapshot?.modelOptions?.length && <Text style={s.muted}>宿主尚未提供模型目录，请等待宿主启动后刷新。不会静默回退模型或强度。</Text>}
                     </>}
-                    <Text style={s.muted}>长期职责</Text><TextInput accessibilityLabel="Dot 长期职责" value={editing ? editInstruction : instruction}
+                    {editing && <View style={{ gap: 8 }}>
+                         <Text accessibilityRole="header" style={s.heading}>派活默认值</Text>
+                         <Text style={s.muted}>仅用于派发新任务，不影响 Dot 对话模型和已派任务。全部留空使用系统默认。</Text>
+                         <Text style={s.muted}>填目标执行机支持的 ID。单次覆盖：把 /dispatch effort=max 放在消息第一行，下一行写任务。</Text>
+                         {([['agent', '执行器', 128], ['model', '模型', 256], ['effort', '推理强度', 128]] as const).map(([key, label, limit]) =>
+                             <TextInput key={key} accessibilityLabel={`派活${label}`} placeholder={`${label}${key === 'agent' ? '（如 codex）' : '（可留空）'}`}
+                                 value={dispatch[key]} onChangeText={(value: string) => setDispatch(previous => ({ ...previous, [key]: value }))}
+                                 autoCapitalize="none" autoCorrect={false} maxLength={limit} editable={!formPending} style={s.input} />)}
+                         {!launchValid && <Text accessibilityRole="alert" style={s.muted}>请填写有效的执行器、模型和推理强度 ID；执行器必填，后两项可留空。</Text>}
+                         {(dispatch.agent || dispatch.model || dispatch.effort) ? <Pressable accessibilityRole="button" accessibilityLabel="恢复派活默认值"
+                             disabled={Boolean(formPending)} onPress={() => setDispatch({ agent: '', model: '', effort: '' })} style={s.button}>
+                             <Text style={s.muted}>恢复系统默认</Text></Pressable> : null}
+                     </View>}
+                     <Text style={s.muted}>长期职责</Text><TextInput accessibilityLabel="Dot 长期职责" value={editing ? editInstruction : instruction}
                         onChangeText={editing ? setEditInstruction : setInstruction} maxLength={2000} multiline editable={!formPending}
                         style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]} />
                     <Text style={s.muted}>{editing
@@ -260,7 +283,7 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                             onPress={() => void data.checkReceipt(formPending.request.requestId)} style={s.button}><Text style={s.muted}>核对回执</Text></Pressable>
                     </View>}
                     {formError && <Text accessibilityRole="alert" style={s.muted}>{formError}</Text>}
-                    <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || Boolean(editing.settings)) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => void saveForm()}
+                    <Pressable accessibilityRole="button" accessibilityLabel={editing ? '保存 Dot' : '创建 Dot'} disabled={!canSubmit || (!editing || chatSettingsChanged) && !snapshot?.modelOptions?.some(o => o.code === model && o.thinkingLevels.includes(effort))} onPress={() => void saveForm()}
                         style={[s.button, { backgroundColor: '#6650b7', opacity: canSubmit ? 1 : 0.5 }]}><Text style={{ color: '#fff' }}>{editing ? '保存修改' : '创建 Dot'}</Text></Pressable>
                     <Pressable accessibilityRole="button" accessibilityLabel={editing ? '关闭编辑表单' : '关闭创建表单'}
                         onPress={() => { setCreating(false); closeEdit(); }} style={s.button}><Text style={s.muted}>关闭</Text></Pressable>

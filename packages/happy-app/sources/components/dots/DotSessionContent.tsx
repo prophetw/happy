@@ -349,6 +349,9 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         {selectedTask && sheet(selectedTask.title, () => setTaskId(null), <>
             <Text style={body}>{testloopWorkStatus(selectedTask)}</Text>
             <Text style={body}>{selectedTask.instruction}</Text>
+            {selectedTask.dispatchOptions && <Text style={muted}>{selectedTask.dispatchOptions.confirmed ? '执行回执' : '派活参数'}：{[
+                selectedTask.dispatchOptions.agent, selectedTask.dispatchOptions.model, selectedTask.dispatchOptions.effort,
+            ].filter(Boolean).join(' / ')}{(!selectedTask.dispatchOptions.confirmed && (!selectedTask.dispatchOptions.model || !selectedTask.dispatchOptions.effort)) ? '（未指定项由执行机决定）' : ''}</Text>}
             {selectedTask.projectID && <Text style={muted}>项目：{selectedTask.projectID}</Text>}
             {selectedTask.queueReason && <Text style={muted}>排队原因：{testloopWorkQueueReason(selectedTask.queueReason)}</Text>}
             {selectedTask.execution && <><Text selectable style={muted}>执行位置：{selectedTask.execution.directory}</Text>{selectedTask.execution.branch && <Text selectable style={muted}>分支：{selectedTask.execution.branch}</Text>}{selectedTask.execution.resultCommit && <Text selectable style={muted}>提交：{selectedTask.execution.resultCommit}</Text>}{selectedTask.execution.dirty && <Text style={muted}>存在未提交改动，现场已保留</Text>}</>}
