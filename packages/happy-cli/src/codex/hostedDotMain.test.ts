@@ -107,6 +107,37 @@ it('reclaims 49,783 confirmed rows at a 50,000-row SQLite restart and resends on
         expect(f.state().outputReceipts).toHaveLength(50000);
     } finally { await f.stop(); }
 }, 60000);
+it('checkpoints settled input history on restart and accepts the 10,001st input on the same thread', async () => {
+    vi.stubEnv('HAPPY_HOSTED_INPUT_CHECKPOINT', '1');
+    const f = fixture(false, false, state => {
+        state.status = 'stopped'; state.threadId = 'native-thread'; state.afterSeq = 10000;
+        state.authority = { version: 1, producer: { pid: 1, start: '1', boot: randomUUID() }, revision: 1 };
+        state.inputs = Array.from({ length: 10000 }, (_, n) => ({
+            id: String(n + 1), seq: n + 1, epoch: 0, delivery: 'queue', text: 'same prompt', status: 'completed',
+            turnId: `history-${n + 1}`, beforeTurns: [],
+        }));
+    }, true);
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'), { timeout: 20000 });
+        expect(f.state().retiredUserSeq).toBe(6000);
+        expect(f.state().inputs).toHaveLength(4000);
+        expect(h.start).not.toHaveBeenCalled();
+        expect(h.resume).toHaveBeenCalledTimes(1);
+        h.send.mockImplementation(async () => {
+            emit('turn/started', { turn: { id: 'continuation-turn' } });
+            emit('turn/completed', { turn: { id: 'continuation-turn', status: 'completed' } });
+        });
+        h.rows.push(row(1, 'same prompt'), row(10001, 'same prompt'));
+        await vi.waitFor(() => expect(f.state().inputs.at(-1)).toMatchObject({ seq: 10001, status: 'completed', turnId: 'continuation-turn' }), { timeout: 20000 });
+        expect(h.send).toHaveBeenCalledTimes(1);
+        await f.restart();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'), { timeout: 20000 });
+        expect(f.state().afterSeq).toBe(10001);
+        expect(f.state().threadId).toBe('native-thread');
+        expect(h.start).not.toHaveBeenCalled();
+        expect(h.send).toHaveBeenCalledTimes(1);
+    } finally { try { await f.stop(); } finally { vi.unstubAllEnvs(); } }
+}, 60000);
 it('keeps a genuinely full unsent SQLite queue alive with a stable explicit reason and fences dispatch', async () => {
     h.flush.mockRejectedValue(Error('hosted_output_unconfirmed'));
     const f = fixture(false, false, state => {

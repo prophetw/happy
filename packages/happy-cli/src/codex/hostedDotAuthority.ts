@@ -2,7 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpat
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { hash, HOSTED_STATE_MAX_BYTES, HostedAuthorityMetadata, HostedDotConfig } from './hostedDotState';
-import { hostedStorageBackend, readHostedStorage } from './hostedDotStorage';
+import { hostedStorageBackend, readHostedStorage, type HostedArchivedInput, type HostedInputKey } from './hostedDotStorage';
 
 export const HOSTED_INPUT_AUTHORITY_VERSION = 1 as const;
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -14,9 +14,15 @@ const Input = z.object({ origin: z.enum(['user', 'task-result']).optional(), seq
 const Journal = z.object({ version: z.literal(1), binding: z.string(), epoch: integer,
     authority: HostedAuthorityMetadata,
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), inputs: z.array(Input).max(10000) });
+const ArchiveRow = z.strictObject({ epoch: integer, seq: integer.positive(), id: z.string(),
+    status: z.enum(['completed', 'failed', 'interrupted', 'rejected']),
+    textDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), permissionMode: z.string().optional() });
+const ArchiveKeys = z.array(z.strictObject({ seq: integer.positive(), id: z.string() })).max(2);
+type Request = { directory: string; dotId: string; sessionId: string; archiveKeys?: readonly HostedInputKey[] };
 export type HostedInputAuthority = {
     version: 1; dotId: string; sessionId: string; epoch: number; revision: number;
     producer: z.infer<typeof HostedAuthorityMetadata>['producer']; status: z.infer<typeof Journal>['status'];
+    archivedInputs?: HostedArchivedInput[];
     inputs: Array<Omit<z.infer<typeof Input>, 'origin' | 'seq'> & { origin: 'user'; seq: number }>;
 };
 /** Bounded descriptor reads avoid following links and stat/read replacement races. */
@@ -53,7 +59,7 @@ function assertNotClearing(directory: string) {
  * This token is not a lifetime authorization: callers must verify producer liveness
  * and re-read immediately before each guarded operation. No recovery defaults apply.
  */
-function readSnapshot(expected: { directory: string; dotId: string; sessionId: string }, observe: (value: unknown, revision: number) => void): HostedInputAuthority {
+function readSnapshot(expected: Request, observe: (value: unknown, revision: number) => void): HostedInputAuthority {
     if (!expected || typeof expected.directory !== 'string' || !isAbsolute(expected.directory)
         || realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
     assertNotClearing(expected.directory);
@@ -63,8 +69,11 @@ function readSnapshot(expected: { directory: string; dotId: string; sessionId: s
     if (config.dotId !== expected.dotId || config.sessionId !== expected.sessionId || config.directory !== expected.directory)
         throw new Error('hosted_authority_binding_changed');
     const sqlite = hostedStorageBackend(expected.directory) === 'sqlite';
-    const stateRead = sqlite ? { value: readHostedStorage(stateFile, ['inputs']), stamp: stamp(stateFile) } : readBounded(stateFile, true);
-    const state = Journal.parse(stateRead.value);
+    const keys = ArchiveKeys.parse(expected.archiveKeys ?? []);
+    const stateRead = sqlite ? { value: readHostedStorage(stateFile, ['inputs'], keys), stamp: stamp(stateFile) } : readBounded(stateFile, true);
+    const read = (value: unknown) => ({ state: Journal.parse(value),
+        archivedInputs: sqlite && keys.length ? z.array(ArchiveRow).max(2).parse((value as any)?.archivedInputs ?? []) : undefined });
+    const { state, archivedInputs } = read(stateRead.value);
     const floorFile = join(expected.directory, 'reset-epoch.json');
     let floorRead: ReturnType<typeof readBounded> | undefined;
     try {
@@ -91,7 +100,7 @@ function readSnapshot(expected: { directory: string; dotId: string; sessionId: s
     unchanged(configFile, configRead.stamp);
     // Compare only authorization semantics across attempts, never output/log fields.
     // revision advances on every persistence, including output acknowledgements.
-    observe({ config, epoch: state.epoch, producer: state.authority.producer, status: state.status, inputs }, state.authority.revision);
+    observe({ config, epoch: state.epoch, producer: state.authority.producer, status: state.status, inputs, archivedInputs }, state.authority.revision);
     const currentDirectory = stamp(expected.directory);
     if (!currentDirectory.isDirectory() || currentDirectory.dev !== directoryStamp.dev || currentDirectory.ino !== directoryStamp.ino)
         throw new Error('hosted_authority_directory_invalid');
@@ -101,11 +110,11 @@ function readSnapshot(expected: { directory: string; dotId: string; sessionId: s
         if (currentState.dev !== stateRead.stamp.dev || currentState.ino !== stateRead.stamp.ino) throw new StateSnapshotRace();
         throw new Error('hosted_authority_file_changed');
     }
-    if (sqlite && hash(Journal.parse(readHostedStorage(stateFile, ['inputs']))) !== hash(state)) throw new StateSnapshotRace();
+    if (sqlite && hash(read(readHostedStorage(stateFile, ['inputs'], keys))) !== hash({ state, archivedInputs })) throw new StateSnapshotRace();
     if (realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
     assertNotClearing(expected.directory);
     return { version: 1, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch,
-        revision: state.authority.revision, producer: state.authority.producer, status: state.status, inputs };
+        revision: state.authority.revision, producer: state.authority.producer, status: state.status, inputs, ...(archivedInputs === undefined ? {} : { archivedInputs }) };
 }
 
 // Only atomic state pathname replacement is recoverable. Descriptor mutation,
@@ -113,7 +122,7 @@ function readSnapshot(expected: { directory: string; dotId: string; sessionId: s
 class StateSnapshotRace extends Error {
     constructor() { super('hosted_authority_file_changed'); }
 }
-export function readHostedInputAuthority(expected: { directory: string; dotId: string; sessionId: string }): HostedInputAuthority {
+export function readHostedInputAuthority(expected: Request): HostedInputAuthority {
     let baseline: string | undefined;
     let revision = 0;
     for (let attempt = 0; attempt < 4; attempt++) {

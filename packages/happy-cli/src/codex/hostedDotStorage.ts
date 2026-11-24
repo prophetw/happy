@@ -127,7 +127,37 @@ function metadata(db: Database, directory: string) {
         || db.prepare('PRAGMA journal_mode').get()?.journal_mode !== 'delete') throw Error('hosted_storage_metadata_invalid');
     return row;
 }
-function readDatabase(directory: string, file: string, selected: readonly Group[] = groups): State {
+export type HostedInputKey = { seq: number; id: string };
+export type HostedArchivedInput = HostedInputKey & {
+    epoch: number; status: 'completed' | 'failed' | 'interrupted' | 'rejected';
+    textDigest: string; permissionMode?: string;
+};
+const archiveTable = `CREATE TABLE IF NOT EXISTS input_archive (
+    epoch INTEGER NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL, digest TEXT NOT NULL,
+    PRIMARY KEY(epoch,seq,id)) WITHOUT ROWID`;
+function writeInputArchive(db: Database, retired: readonly HostedArchivedInput[]) {
+    if (!retired.length) return;
+    db.exec(archiveTable);
+    const stmt = db.prepare('INSERT INTO input_archive(epoch,seq,id,value,digest) VALUES(?,?,?,?,?)');
+    for (const row of retired) {
+        const value = JSON.stringify(row);
+        stmt.run(row.epoch, row.seq, row.id, value, digest(value));
+    }
+}
+function readInputArchive(db: Database, header: State, keys: readonly HostedInputKey[]): HostedArchivedInput[] {
+    if (!keys.length || header.retiredUserSeq === undefined) return [];
+    const statement = db.prepare('SELECT value,digest FROM input_archive WHERE epoch=? AND seq=? AND id=?');
+    return keys.flatMap(key => {
+        if (key.seq > header.retiredUserSeq) return [];
+        const row = statement.get(header.epoch, key.seq, key.id);
+        if (!row) return [];
+        if (typeof row.value !== 'string' || digest(row.value) !== row.digest) throw Error('hosted_input_archive_invalid');
+        const value = JSON.parse(row.value);
+        if (value.epoch !== header.epoch || value.seq !== key.seq || value.id !== key.id) throw Error('hosted_input_archive_invalid');
+        return [value];
+    });
+}
+function readDatabase(directory: string, file: string, selected: readonly Group[] = groups, archiveKeys: readonly HostedInputKey[] = []): State {
     return database(directory, file, true, db => {
         db.exec('BEGIN');
         try {
@@ -154,16 +184,17 @@ function readDatabase(directory: string, file: string, selected: readonly Group[
                 });
                 if (Array.isArray(result.outputs) && result.outputs.some((row: any) => seen.has(row?.localId))) throw Error('hosted_storage_receipts_invalid');
             }
+            if (archiveKeys.length) result.archivedInputs = readInputArchive(db, result, archiveKeys);
             return result;
         } finally { db.exec('ROLLBACK'); }
     });
 }
 /** Small projections deliberately skip output bodies. Always uses a fresh read transaction. */
-export function readHostedStorage(file: string, selected: readonly Group[] = groups): State | null {
+export function readHostedStorage(file: string, selected: readonly Group[] = groups, archiveKeys: readonly HostedInputKey[] = []): State | null {
     const directory = dirname(file);
     if (basename(file) === 'state.json' && hostedStorageBackend(directory) === 'sqlite') {
         if (json(paths(directory).marker, 4096).pending) return null;
-        const value = readDatabase(directory, paths(directory).db, selected);
+        const value = readDatabase(directory, paths(directory).db, selected, archiveKeys);
         if (groups.some(kind => !selected.includes(kind))) Object.defineProperty(value, projection, { value: true, enumerable: true });
         return value;
     }
@@ -406,7 +437,7 @@ export function createHostedStorageWriter(file: string, state: State) {
     let receiptSource: string[] | undefined, receiptCache: ReceiptCache | undefined, receiptCandidate: ReceiptCache | undefined;
     let previousRows = new Map<string, string>();
     let identity: { dev: number; ino: number } | undefined;
-    return () => {
+    return (retired: readonly HostedArchivedInput[] = []) => {
         if (Reflect.get(state, projection)) throw Error('hosted_storage_projection_read_only');
         if (hostedStorageBackend(directory) !== 'sqlite') throw Error('hosted_storage_backend_changed');
         if (!outputs || outputs.rows !== state.outputs) {
@@ -437,7 +468,10 @@ export function createHostedStorageWriter(file: string, state: State) {
         const rows = [...encoded.rows.filter(row => previousRows.get(row.kind + ':' + row.position) !== row.digest),
             ...output.rows.map(row => ({ ...row, kind: 'outputs' as const }))];
         let result;
-        if (json(p.marker, 4096).pending) result = saveHostedStorage(file, state);
+        if (json(p.marker, 4096).pending) {
+            if (retired.length) throw Error('hosted_input_archive_requires_active_sqlite');
+            result = saveHostedStorage(file, state);
+        }
         else {
             const stat = regular(p.db, 512 * 1024 * 1024);
             if (identity && (identity.dev !== stat.dev || identity.ino !== stat.ino)) throw Error('hosted_storage_file_changed');
@@ -448,6 +482,7 @@ export function createHostedStorageWriter(file: string, state: State) {
                     if (generation !== undefined && previous.generation !== generation) throw Error('hosted_storage_revision_changed');
                     const version = previous.version === HOSTED_STORAGE_VERSION || encoded.receiptRows.length ? HOSTED_STORAGE_VERSION : 1;
                     writeReceipts(db, previous, encoded, version, receiptsUnchanged);
+                    writeInputArchive(db, retired);
                     const next = previous.generation + 1;
                     if (!Number.isSafeInteger(next)) throw Error('hosted_storage_revision_exhausted');
                     const upsert = db.prepare('INSERT INTO records(kind,position,value,digest) VALUES(?,?,?,?) ON CONFLICT(kind,position) DO UPDATE SET value=excluded.value,digest=excluded.digest WHERE records.digest<>excluded.digest');

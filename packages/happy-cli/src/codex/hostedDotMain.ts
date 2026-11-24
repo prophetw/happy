@@ -1,3 +1,4 @@
+import { checkpointHostedUserInputs, hostedUnboundRecoveryTurns } from './hostedInputCheckpoint';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
 import { createHostedAdmission } from './hostedDotAdmission';
 import { HostedOutputDelivery } from './hostedOutputDelivery';
@@ -66,7 +67,10 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
         if (notificationDepth) { notificationDirty = true; return; }
         try {
             const start = observe ? performance.now() : 0;
-            compactSettledDispatchSnapshots(state); logicalBytes = publishAuthority().logicalBytes;
+            compactSettledDispatchSnapshots(state);
+            const checkpoint = sqlite && process.env.HAPPY_HOSTED_INPUT_CHECKPOINT === '1'
+                ? checkpointHostedUserInputs(state, logicalBytes) : [];
+            logicalBytes = publishAuthority(checkpoint).logicalBytes;
             if (observe) { stats.commits++; stats.commitMs += performance.now() - start; }
             clearTimeout(ackTimer); ackTimer = undefined;
             for (const waiter of ackWaiters.splice(0)) waiter.resolve();
@@ -197,8 +201,8 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     const reconcile = (turns: ThreadTurn[]) => {
         let confirmed = false;
         for (const row of state.inputs.filter(r => ['dispatching', 'accepted', 'unknown'].includes(r.status))) {
-            const matching = row.turnId ? turns.filter(t => t.id === row.turnId && (row.status === 'accepted' || t.items?.some((i: any) => i.type === 'userMessage' && i.content?.some((p: any) => p.type === 'text' && p.text === row.text)))) : turns.filter(t => !row.beforeTurns?.includes(t.id)
-                && t.items?.some((i: any) => i.type === 'userMessage' && i.content?.some((p: any) => p.type === 'text' && p.text === row.text)));
+            const unboundCandidates = row.turnId ? [] : hostedUnboundRecoveryTurns(turns, row.beforeTurns, state.retiredUserSeq !== undefined);
+            const matching = row.turnId ? turns.filter(t => t.id === row.turnId && (row.status === 'accepted' || t.items?.some((i: any) => i.type === 'userMessage' && i.content?.some((p: any) => p.type === 'text' && p.text === row.text)))) : unboundCandidates.filter(t => t.items?.some((i: any) => i.type === 'userMessage' && i.content?.some((p: any) => p.type === 'text' && p.text === row.text)));
             if (matching.length !== 1) { row.status = 'unknown'; continue; }
             const turn = matching[0]; row.turnId = turn.id;
             if (typeof turn.status !== 'string' || !['completed', 'failed', 'interrupted'].includes(turn.status)) { row.status = 'unknown'; continue; }
@@ -560,4 +564,3 @@ export async function main(): Promise<void> {
     if (process.argv.length !== 3) throw new Error('hosted_config_path_required');
     await runHostedDot(readPrivate(process.argv[2]));
 }
-

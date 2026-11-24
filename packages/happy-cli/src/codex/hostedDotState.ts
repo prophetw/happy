@@ -37,6 +37,7 @@ export function hostedProducerIdentity(): z.infer<typeof HostedAuthorityMetadata
 export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.optional(), instructionSettings: z.literal(true).optional(),
     version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),
     threadId: z.string().nullable(), creating: z.boolean(), afterSeq: z.number().int().nonnegative(),
+    retiredUserSeq: z.number().int().positive().optional(),
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
     bootstrap: z.object({ stage: z.enum(['injecting', 'applied']), threadId: z.string() }).optional(),
     inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(100000),
@@ -273,4 +274,3 @@ export function hostedTaskStatusNotice(id: string, text: string): string | undef
     if (status === 'awaiting_user') return;
     return status === 'blocked' && reason !== '无' ? blockage : 'background';
 }
-
