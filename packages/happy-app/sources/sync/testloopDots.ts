@@ -45,7 +45,7 @@ export function testloopDotsCommand(raw: TestloopDotsRequest): string {
 }
 
 const workSummary = z.object({ id: uuid, title: z.string().max(200), kind: z.string().max(60), status: z.string().max(80),
-    needsReview: z.boolean(), projectID: z.string().max(200).nullable(), goalPhase: z.string().max(80).nullable() });
+    statusLabel: z.string().min(1).max(80).optional(), needsReview: z.boolean(), projectID: z.string().max(200).nullable(), goalPhase: z.string().max(80).nullable() });
 const gitObjectID = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const testResult = z.object({ command: z.string().min(1).max(300), exitCode: z.number().int() });
 const executionLocation = z.object({ mode: z.string(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional(),
@@ -176,7 +176,8 @@ export function mergeDotsWorkspaceReceipt(history: ReturnType<typeof projectTest
     return { ...next, receipts: { ...next.receipts, [request.requestId]: receipt }, deletions };
 }
 
-export function testloopWorkStatus(task: { status: string; needsReview: boolean; goalPhase?: string | null }) {
+export function testloopWorkStatus(task: { status: string; statusLabel?: string; needsReview: boolean; goalPhase?: string | null }) {
+    if (task.statusLabel) return task.statusLabel;
     const stopped: Record<string, string> = { paused: '已暂停', canceled: '已取消', failed: '执行失败', blocked: '遇到阻塞' };
     if (stopped[task.status]) return stopped[task.status];
     if (task.needsReview) return '执行已结束，待验收';

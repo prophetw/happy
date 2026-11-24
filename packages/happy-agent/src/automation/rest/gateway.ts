@@ -15,13 +15,13 @@ import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectio
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null; closedCreateAttempt?: string; createTitleDigest?: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; createAttempt?: CreateAttempt; deadline: number };
 type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer?: ReturnType<typeof setTimeout>; delivered: boolean;
-    offeredAt?: number; acked?: boolean };
+    offeredAt?: number; acked?: boolean; reoffered?: boolean };
 export type GatewayOptions = {
     directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
     verifyOwner: (authorization: string | undefined) => Promise<string>;
     now?: () => number; timeoutMs?: number; maxGrantMs?: number;
-    /** A poll response can be lost after the gateway marks the job delivered. Re-offer the same
-     * claim only until the worker calls /worker/check; checked jobs are never re-offered. */
+    /** Re-offer the same claim if handoff is incomplete. For send, a check authorizes
+     * the Worker but only its bound durable queue (or legacy submission) receipt settles it. */
     offerRetryMs?: number;
     // Mandatory sink. Only a fixed, non-content projection is passed.
     ipRateLimit?: number; httpMcp?: boolean;
@@ -30,6 +30,19 @@ export type GatewayOptions = {
 };
 const base = '/happy-control/v1';
 const failure = (code: string) => ({ version: 1, ok: false, error: { code, retryable: false } });
+// These refusals occur before enqueue (or inside its transaction before insertion).
+// Authorization, storage, and transport errors may also occur after the queue commit.
+const sendPreAdmissionRefusals = new Set(['INVALID_REQUEST', 'REQUEST_ID_CONFLICT', 'WORKSPACE_RETIRED', 'TEST_CHECKOUT_SETTLED']);
+function boundSendReceipt(job: Job, result: Record<string, unknown>) {
+    if (result.ok !== true || !result.data || typeof result.data !== 'object') return false;
+    const data = result.data as Record<string, unknown>;
+    const { requestID, sessionID } = job.command;
+    if (data.requestID !== requestID || data.sessionID !== sessionID) return false;
+    if (data.queueID !== undefined) return data.queueID === hash(`${job.grantID}\n${requestID}`) && data.taskID === data.queueID;
+    // An older journal can already have submitted this input without a queue ID.
+    return data.state === 'submitted' && typeof data.messageID === 'string' && !!data.messageID
+        && Number.isSafeInteger(data.seq) && (data.seq as number) >= 0;
+}
 export function createGateway(options: GatewayOptions) {
     const origin = parseBrowserOrigin(options.origin);
     const parsedAdditionalOrigins = additionalBrowserOriginsSchema.safeParse(options.additionalBrowserOrigins);
@@ -157,8 +170,7 @@ export function createGateway(options: GatewayOptions) {
             const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, createAttempt, deadline: now() + timeout, delivered: false,
                 resolve, timer: setTimeout(() => {
                     job.timer = undefined;
-                    // A delivered but never-checked job may have lost its poll response. Keep it
-                    // eligible for a bounded re-offer instead of stranding the durable claim.
+                    // Leave a bounded re-offer window for incomplete handoff.
                     if (!job.delivered) jobs.delete(jobID);
                     else if (!job.acked) job.deadline = now() + offerRecoveryMs;
                     resolve(!job.delivered && intent ? unsent(intent) : unknown());
@@ -485,6 +497,7 @@ export function createGateway(options: GatewayOptions) {
             }
             job.intent.claimID = job.id;
         }
+        if (job.delivered) job.reoffered = true;
         job.delivered = true;
         job.offeredAt = now();
         return ok({ id: job.id, workerID: job.workerID, grantID: job.grantID, command: job.command, createAttempt: job.createAttempt, deadline: job.deadline });
@@ -509,8 +522,7 @@ export function createGateway(options: GatewayOptions) {
         if (!job || job.workerID !== p.registration.id || !job.delivered) throw new ApiError('JOB_UNAVAILABLE', 403);
         const c = grants.active(job.grantID);
         if (c.userID !== p.registration.userID || c.workerID !== p.registration.id) throw new ApiError('SCOPE_DENIED', 403);
-        // First check is the worker's durable acknowledgement: stop re-offering this job.
-        job.acked = true;
+        if (job.command.method !== 'sessions.send') job.acked = true;
         return ok(c);
     });
     app.post(`${base}/worker/result`, { bodyLimit: 32 * 1024 * 1024 }, async req => {
@@ -518,6 +530,14 @@ export function createGateway(options: GatewayOptions) {
         if (!job || job.workerID !== p.registration.id || !job.delivered) throw new ApiError('JOB_UNAVAILABLE', 403);
         grants.active(job.grantID);
         const result = projectResponse(body.result);
+        if (job.command.method === 'sessions.send' && !boundSendReceipt(job, result)) {
+            // Check or result transport can fail on either side of enqueue. A fault
+            // is not an admission receipt. A definitive pre-admission refusal may
+            // settle only the single offer; after a re-offer another attempt may win.
+            const code = (result.error as { code?: string } | undefined)?.code;
+            if (result.ok !== false || job.reoffered || !code || !sendPreAdmissionRefusals.has(code))
+                return ok({ accepted: true });
+        }
         const attempt = job.createAttempt;
         const closed = (body.result as { closedCreate?: unknown }).closedCreate;
         if (job.command.method === 'requests.get' && attempt && closed

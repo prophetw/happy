@@ -53,7 +53,9 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
     const machine = { id: 'machineA', encryption, active: true, activeAt: now(), metadata: {} } as DecryptedMachine;
     const sessions: DecryptedSession[] = [];
     const ciphertext = new Map<string, { id: string; seq: number; localId: string | null; c: string }[]>();
-    let spawnCount = 0, sendCount = 0, processState = 'running', spawnDelay = 0, loseAck = false, losePoll = false;
+    let spawnCount = 0, sendCount = 0, sendAttempts = 0, processState = 'running', spawnDelay = 0, loseAck = false, losePoll = false;
+    let sendHandoffFault: 'poll' | 'check' | 'result' | undefined, sendHandoffDrops = 0;
+    const sendOffers: string[] = [];
     const launches: { directory: string; options: unknown }[] = [];
     let spawnBarrier: Promise<void> | undefined, releaseSpawn: (() => void) | undefined;
     function addSession(id: string, directory = project, flavor = 'codex') {
@@ -76,6 +78,7 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
         messages: async (s, after, limit) => { const all = ciphertext.get(s.id)!.filter(m => m.seq > after); return { hasMore: all.length > limit,
             messages: all.slice(0,limit).map(m => ({ id: m.id, seq: m.seq, localId: m.localId, content: decrypt(key, 'dataKey', decodeBase64(m.c)) })) }; },
         send: async (s, requestID, text) => {
+            sendAttempts++;
             const previous = ciphertext.get(s.id)!.find(m => m.localId === `automation:${requestID}`);
             const message = previous ?? append(s.id, { role: 'user', content: { type: 'text', text } }, `automation:${requestID}`);
             if (!previous) sendCount++;
@@ -87,11 +90,21 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
     const statuses: unknown[] = [];
     async function startWorker() {
         abort = new AbortController();
-        // Simulate a poll response lost after the gateway recorded its delivery.
+        // Lose a handoff after the real HTTP request, or before posting a committed queue receipt.
         const workerTransport = new Proxy(workerClient, { get(target, prop, receiver) {
             if (prop !== 'request') return Reflect.get(target, prop, receiver);
             return async (method: string, route: string, body?: unknown, grantID = '') => {
+                const posted = body as { jobID?: string; result?: { ok?: boolean; data?: { queueID?: string } } } | undefined;
+                const sendJob = !!posted?.jobID && sendOffers.includes(posted.jobID);
+                const drop = () => { sendHandoffFault = undefined; sendHandoffDrops++; throw new Error('fixture send handoff lost'); };
+                if (sendHandoffFault === 'result' && sendJob && route === '/worker/result'
+                    && posted?.result?.ok && posted.result.data?.queueID) drop();
                 const reply = await target.request(method, route, body, grantID);
+                if (route === '/worker/poll' && reply?.data?.command?.method === 'sessions.send') {
+                    sendOffers.push(reply.data.id);
+                    if (sendHandoffFault === 'poll') drop();
+                }
+                if (sendHandoffFault === 'check' && sendJob && route === '/worker/check' && reply?.ok) drop();
                 if (losePoll && route === '/worker/poll' && reply?.data) { losePoll = false; throw new Error('fixture poll response lost'); }
                 return reply;
             };
@@ -116,6 +129,9 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
         dir, project, projectB, projectC, registration, gatewayOptions, clientIdentity, workerIdentity, otherIdentity, clientRegistration, transport, ciphertext, audit, statuses, addSession,
         get gateway() { return gateway; }, get client() { return client; }, get workerClient() { return workerClient; }, get address() { return address; },
         get spawnCount() { return spawnCount; }, get sendCount() { return sendCount; }, get launches() { return launches; },
+        get sendAttempts() { return sendAttempts; }, get sendHandoffDrops() { return sendHandoffDrops; }, sendOffers,
+        loseSendHandoff(stage: NonNullable<typeof sendHandoffFault>) { sendHandoffFault = stage; },
+        queueTasks() { return runner?.worker.queue.tasks() ?? []; },
         pauseSpawn() { spawnBarrier = new Promise<void>(resolve => { releaseSpawn = resolve; }); return () => { releaseSpawn?.(); spawnBarrier = undefined; }; },
         delaySpawn(ms: number) { spawnDelay = ms; }, loseSendAck() { loseAck = true; }, losePollOnce() { losePoll = true; }, setProcess(state: string) { processState = state; },
         complete(sessionID: string, turnID = 'turn1', outcome = 'completed', text = 'fixture result') {

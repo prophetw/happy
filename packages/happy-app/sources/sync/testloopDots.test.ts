@@ -169,6 +169,25 @@ describe('real Dots workbench reads', () => {
         expect(result.snapshot?.workbench?.dots[0].tasks[0].needsReview).toBe(true);
         expect(projectTestloopDotsMessages([agent(snapshot({ workbench: realWorkbench() }), { kind: 'user-text' })], workspaceId).details[dot.id]).toBeUndefined();
     });
+    it('uses host milestone labels for work cards and detail without changing the underlying status', () => {
+        for (const [status, statusLabel] of [
+            ['queued', '交办未发出'], ['observing', '派发交接待确认'], ['waiting-resource', '已入队，等待资源'],
+            ['awaiting_user', '等待审批'], ['awaiting_user', '等待你的答复'], ['running', '执行已结束，等待收齐结果'],
+        ]) {
+            const card = { ...realSummary, status, statusLabel, needsReview: false };
+            const detail = { ...realDetail.tasks[0], ...card, recovery: '保留宿主提供的恢复提示' };
+            const workbench = { ...realWorkbench(), dots: [{ id: dot.id, available: true, taskTotal: 1, tasks: [card] }],
+                detail: { ...realDetail, tasks: [detail] } };
+            const result = projectTestloopDotsMessages([agent(snapshot({ workbench }))], workspaceId);
+            const parsedCard = result.snapshot!.workbench!.dots[0].tasks[0], parsedDetail = result.details[dot.id].data.tasks[0];
+            expect(parsedCard.status).toBe(status);
+            expect(testloopWorkStatus(parsedCard)).toBe(statusLabel);
+            expect(testloopWorkStatus(parsedDetail)).toBe(statusLabel);
+            expect(parsedDetail.recovery).toBe(detail.recovery);
+        }
+        const old = projectTestloopDotsMessages([agent(snapshot({ workbench: realWorkbench() }))], workspaceId);
+        expect(testloopWorkStatus(old.details[dot.id].data.tasks[0])).toBe('执行已结束，待验收');
+    });
     it('rejects a detail bound to an unknown Dot instead of mixing private memory', () => {
         const workbench = { ...realWorkbench(), detail: { ...realDetail, dotId: otherRequest } };
         expect(projectTestloopDotsMessages([agent(snapshot({ workbench }))], workspaceId).snapshot).toBeNull();

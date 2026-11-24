@@ -727,7 +727,7 @@ export class HTTPWorkerRunner {
     }
 
     async run(signal: AbortSignal, intervalMs: number, report: (event: { state: string; code?: string }) => void) {
-        const active = new Set<Promise<void>>();
+        const active = new Map<string, Promise<void>>();
         let schedulerWork: Promise<void> | undefined;
         let lastScheduled = -Infinity;
         let lastEvent: string | undefined, lastReportedAt = -Infinity;
@@ -754,16 +754,16 @@ export class HTTPWorkerRunner {
                         lastScheduled = this.now();
                         schedulerWork = this.worker.tick({ signal, onError: error => { schedulerFailure = errorCode(error); notify(); } }).then(() => { schedulerFailure = undefined; notify(); }, error => { schedulerFailure = errorCode(error); notify(); }).finally(() => { schedulerWork = undefined; });
                     }
-                    if (job && !signal.aborted) {
-                        const work = this.handleJob(job).catch(unavailable).finally(() => active.delete(work));
-                        active.add(work);
+                    if (job && !signal.aborted && !active.has(job.id)) {
+                        const work = this.handleJob(job).catch(unavailable).finally(() => active.delete(job.id));
+                        active.set(job.id, work);
                     }
                     notify();
                 } catch (error) { unavailable(error); }
                 await new Promise<void>(resolve => { const timer = setTimeout(done, intervalMs); function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); } signal.addEventListener('abort', done, { once: true }); if (signal.aborted) done(); });
             }
         } finally {
-            await Promise.allSettled([...active, ...(schedulerWork ? [schedulerWork] : [])]);
+            await Promise.allSettled([...active.values(), ...(schedulerWork ? [schedulerWork] : [])]);
             await this.worker.drain();
         }
     }

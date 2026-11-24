@@ -6,6 +6,8 @@ import { signedHeaders, canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { ScopedWorker } from './worker';
 import { callControlTool, startTask, toolContracts } from './mcp';
+import { hash, Journal } from '../journal';
+import type { QueueTask } from './taskQueue';
 
 const fixturePath = new URL('../../../examples/rest-fixture.ts', import.meta.url).pathname;
 const rigs: any[] = [];
@@ -481,6 +483,54 @@ describe('durable dispatch evidence', () => {
         expect(created.ok).toBe(true); expect(r.spawnCount).toBe(1);
         expect((await r.client.request('GET', '/requests/lost-poll', undefined, grant)).data.state).toBe('confirmed');
     }, 10000);
+    it.each(['poll', 'check', 'result'] as const)('admits and submits one send when the %s handoff is lost', async stage => {
+        const r = await setup({ offerRetryMs: 100 }), grant = await r.connect();
+        await r.startWorker();
+        const { sessionID } = (await create(r, grant)).data;
+        const body = { requestID: 'send-handoff', text: 'fixture send handoff instruction' };
+        r.loseSendHandoff(stage);
+        const sent = await r.client.request('POST', `/sessions/${sessionID}/messages`, body, grant);
+        expect(r.sendHandoffDrops).toBe(1);
+        expect(sent.ok).toBe(true);
+        expect(sent.data).toMatchObject({ requestID: body.requestID, sessionID, queueID: expect.any(String) });
+        expect(r.sendOffers.length).toBeGreaterThanOrEqual(2);
+        const jobID = r.sendOffers[0];
+        expect(new Set(r.sendOffers)).toEqual(new Set([jobID]));
+        expect(r.gateway.store.get(`intent:${grant}:${body.requestID}`)).toMatchObject({ claimID: jobID });
+        const receipt = await r.waitForSubmitted(grant, body.requestID);
+        expect(receipt.data).toMatchObject({ queueID: sent.data.queueID, sessionID });
+        expect(r.queueTasks().filter((row: QueueTask) => row.grantID === grant && row.requestID === body.requestID).map((row: QueueTask) => row.id))
+            .toEqual([sent.data.queueID]);
+        expect(r.ciphertext.get(sessionID)).toHaveLength(1);
+        expect(r.sendAttempts).toBe(1);
+    }, 10000);
+    it('preserves an explicit pre-admission send refusal without re-offering it', async () => {
+        const r = await setup({ offerRetryMs: 100 }), grant = await r.connect();
+        await r.startWorker();
+        const { sessionID } = (await create(r, grant)).data;
+        const requestID = 'invalid-send';
+        const sent = await r.client.request('POST', `/sessions/${sessionID}/messages`, { requestID, text: ' ' }, grant);
+        expect(sent).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } });
+        expect(r.sendOffers).toHaveLength(1);
+        expect(r.queueTasks().some((row: QueueTask) => row.requestID === requestID)).toBe(false);
+        expect(r.sendAttempts).toBe(0);
+    });
+    it('accepts an already-submitted legacy send receipt without creating a queue item', async () => {
+        const r = await setup({ offerRetryMs: 100 }), grant = await r.connect();
+        await r.startWorker();
+        const { sessionID } = (await create(r, grant)).data;
+        const requestID = 'legacy-send', text = 'legacy fixture instruction', method = 'sessions.send';
+        new Journal(join(r.dir, 'worker', hash(`assistant\n${grant}`))).save({
+            requestID, fingerprint: hash(JSON.stringify({ method, sessionID, text })), method, machineID: 'machineA',
+            sessionID, state: 'submitted', messageID: 'legacy-message', seq: 1,
+        });
+        const sent = await r.client.request('POST', `/sessions/${sessionID}/messages`, { requestID, text }, grant);
+        expect(sent).toMatchObject({ ok: true, data: { requestID, sessionID, state: 'submitted', messageID: 'legacy-message', seq: 1 } });
+        expect(sent.data.queueID).toBeUndefined();
+        expect(r.sendOffers).toHaveLength(1);
+        expect(r.queueTasks().some((row: QueueTask) => row.requestID === requestID)).toBe(false);
+        expect(r.sendAttempts).toBe(0);
+    });
     it('only looks up a claimed request after loss, even if the worker never returned a receipt', async () => {
         const r = await setup({ timeoutMs: 200 }), grant = await r.connect();
         const poll = () => r.workerClient.request('POST', '/worker/poll', { protocol: 1 });
