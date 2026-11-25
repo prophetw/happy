@@ -1,4 +1,4 @@
-import { closeSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { workspacePlanSchema, workspaceDispositionSchema, workspaceOperationSchema, type WorkspaceItem } from '@slopus/happy-wire';
@@ -10,6 +10,7 @@ import { privateDirectory } from './privateFs';
 import { TaskQueue, terminalTask, holdsReviewCheckout, type Workspace, type QueueTask } from './taskQueue';
 import { workspaceGit, workspaceLock } from './taskWorkspaces';
 import { retirementProcessProof } from './sessionProcessProofs';
+import { scanWorkspaceProcesses, type Activity, type ProcessScope } from './workspaceProcessScan';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), digest = z.string().regex(/^[a-f0-9]{64}$/);
 const commit = z.string().regex(/^[a-f0-9]{40,64}$/);
@@ -20,7 +21,7 @@ export const workspacePolicySchema = z.object({ version: z.literal(1), id, machi
     allowArchive: z.boolean().default(false), allowDiscard: z.boolean().default(false),
 }).strict();
 export type WorkspacePolicy = z.input<typeof workspacePolicySchema>;
-export type Activity = { confirmed: boolean; blockers: string[]; fingerprint: string };
+export type { Activity } from './workspaceProcessScan';
 export type ActivityProbe = (workspace: Workspace, tasks: Pick<QueueTask,'processID'|'sessionID'>[]) => Promise<Activity>;
 const inside = (path: string, parent: string) => path === parent || path.startsWith(parent + '/');
 const overlaps = (a: string, b: string) => inside(a,b) || inside(b,a);
@@ -30,53 +31,19 @@ function error(code: string): never { throw new ApiError(code,409); }
 /** Cold, local operator probe. An unreadable process/namespace is uncertainty, not absence.
  * No argv, environment, process name or unrelated task data is returned to callers.
  */
-export async function linuxWorkspaceActivity(workspace:Workspace,tasks:Pick<QueueTask,'processID'|'sessionID'>[],queueDirectory?:string,machineID?:string):Promise<Activity> {
-    const blockers = new Set<string>(), identities: string[] = [];
+export async function linuxWorkspaceActivity(workspace:Workspace,tasks:Pick<QueueTask,'processID'|'sessionID'>[],queueDirectory?:string,machineID?:string,
+    scan: (cwd: string, scope: ProcessScope) => Promise<Activity> = scanWorkspaceProcesses):Promise<Activity> {
     if (process.platform !== 'linux') return { confirmed: false, blockers: ['activity_platform_unconfirmed'], fingerprint: '' };
     try {
-        const names = readdirSync('/proc').filter(n => /^\d+$/.test(n));
-        if (names.length > 32768) throw Error();
-        const mounts = new Set<string>(), knownPids = new Set(tasks.map(t=>t.processID).filter(Boolean)), groups = new Set<number>();
+        const knownPids = new Set(tasks.flatMap(t=>t.processID ? [t.processID] : [])), groups = new Set<number>();
         const sessions=new Set([...tasks.map(t=>t.sessionID),...(workspace.sessionID?[workspace.sessionID]:[])]);
         for(const sessionID of sessions) {
             const proof=queueDirectory&&machineID?retirementProcessProof(join(queueDirectory,'session-process-proofs'),machineID,sessionID,workspace):null;
-            if(!proof)blockers.add('session_mapping_unconfirmed');
-            else {knownPids.add(proof.pid);groups.add(proof.processGroup!);}
+            if(!proof)return {confirmed:false,blockers:['session_mapping_unconfirmed'],fingerprint:''};
+            knownPids.add(proof.pid);groups.add(proof.processGroup!);
         }
-        if(!sessions.size||blockers.has('session_mapping_unconfirmed'))return {confirmed:false,blockers:['session_mapping_unconfirmed'],fingerprint:''};
-        let inspected=0;
-        for (const name of names) {
-            if(++inspected%64===0)await new Promise<void>(resolve=>setImmediate(resolve));
-            try {
-                const path = `/proc/${name}`, first = readFileSync(path+'/stat','utf8');
-                const fields = first.slice(first.lastIndexOf(')')+2).split(/\s+/);
-                if (['Z','X'].includes(fields[0])) continue;
-                const cwd = readlinkSync(path+'/cwd');
-                if (inside(cwd,workspace.cwd) || knownPids.has(Number(name)) || groups.has(Number(fields[2]))) blockers.add('live_session_or_process');
-                const args = readFileSync(path+'/cmdline');
-                if (args.includes(Buffer.from(workspace.cwd))) blockers.add('process_entrypoint_reference');
-                if([...sessions].some(sessionID=>args.toString('utf8').split('\0').includes(sessionID)))blockers.add('live_session_or_process');
-                for (const fd of readdirSync(path+'/fd')) {
-                    try { if (inside(readlinkSync(path+'/fd/'+fd).replace(/ \(deleted\)$/,''),workspace.cwd)) blockers.add('open_file_reference'); }
-                    catch (e) { if (!['ENOENT','ESRCH'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e; }
-                }
-                const namespace = readlinkSync(path+'/ns/mnt');
-                if (!mounts.has(namespace)) {
-                    mounts.add(namespace);
-                    for (const line of readFileSync(path+'/mountinfo','utf8').split('\n').filter(Boolean)) {
-                        const parts = line.split(' '), decode = (s: string) => s.replace(/\\([0-7]{3})/g,(_,oct)=>String.fromCharCode(parseInt(oct,8)));
-                        const source = decode(parts[3]), target = decode(parts[4]);
-                        if (inside(target,workspace.cwd) || source !== '/' && overlaps(source,workspace.cwd)) blockers.add('mount_reference');
-                    }
-                }
-                const last = readFileSync(path+'/stat','utf8');
-                if (last.slice(last.lastIndexOf(')')+2).split(/\s+/)[19] !== fields[19]) throw Error();
-                identities.push(`${name}:${fields[19]}:${cwd}:${namespace}`);
-            } catch (e) {
-                if (!['ENOENT','ESRCH'].includes((e as NodeJS.ErrnoException).code ?? '')) blockers.add('process_visibility_unconfirmed');
-            }
-        }
-        return { confirmed: !blockers.has('process_visibility_unconfirmed')&&!blockers.has('session_mapping_unconfirmed'), blockers: [...blockers].sort(), fingerprint: fingerprint(identities.sort()) };
+        if(!sessions.size)return {confirmed:false,blockers:['session_mapping_unconfirmed'],fingerprint:''};
+        return await scan(workspace.cwd, { pids: [...knownPids], groups: [...groups], sessions: [...sessions] });
     } catch { return { confirmed: false, blockers: ['activity_visibility_unconfirmed'], fingerprint: '' }; }
 }
 

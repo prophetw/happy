@@ -8,7 +8,8 @@ import { TaskQueue } from '../rest/taskQueue';
 import { ApiError } from '../rest/schema';
 import { canonicalRepository, workspaceGit } from '../rest/taskWorkspaces';
 import { directoryAllowed, directoryProjectID } from '../rest/schema';
-import { WorkspaceLifecycle, workspacePolicySchema, type ActivityProbe } from '../rest/workspaceLifecycle';
+import { linuxWorkspaceActivity, WorkspaceLifecycle, workspacePolicySchema, type ActivityProbe } from '../rest/workspaceLifecycle';
+import { workspaceProcessProbe } from './workspaceProcessProbe';
 
 const commands = {
     inventory: ['limit','after'], plan: ['id'], result: ['id'],
@@ -19,7 +20,7 @@ export const workspaceUsage = 'happy-control workspaces inventory|plan|result|ad
 
 /** Same owner-authoritative queue for local CLI and authenticated owner UI. */
 export function openWorkspaceLifecycle(workerConfig: string, policyFile: string, options: {
-    homeDirectory?: string; activity?: ActivityProbe; readOnly?: boolean; authorize?: () => void | Promise<void>;
+    homeDirectory?: string; activity?: ActivityProbe; processProbeSocket?: string; readOnly?: boolean; authorize?: () => void | Promise<void>;
     authorizationCurrent?: () => void; ownerDirectorySelection?: boolean;
 } = {}) {
     const policy = workspacePolicySchema.parse(JSON.parse(privateRead(policyFile, 32768).toString('utf8')));
@@ -36,7 +37,10 @@ export function openWorkspaceLifecycle(workerConfig: string, policyFile: string,
     const queue = new TaskQueue(directory, { projectConcurrency: registration.projectConcurrency ?? 2,
         machineConcurrency: registration.machineConcurrency ?? registration.maxConcurrency ?? null, projectOverrides },
         { machineID: policy.machineID, readOnly: options.readOnly ?? true });
-    return { lifecycle: new WorkspaceLifecycle(queue, policy, options.activity, Date.now, workspaceGit, options.authorize, options.authorizationCurrent), registration };
+    const probe = options.processProbeSocket ? workspaceProcessProbe(options.processProbeSocket, directory) : undefined;
+    const activity: ActivityProbe | undefined = options.activity
+        ?? (probe ? (workspace, tasks) => linuxWorkspaceActivity(workspace, tasks, directory, policy.machineID, probe) : undefined);
+    return { lifecycle: new WorkspaceLifecycle(queue, policy, activity, Date.now, workspaceGit, options.authorize, options.authorizationCurrent), registration };
 }
 
 /** Local owner CLI only. No REST/MCP method, credential loading, worker startup or scanner. */

@@ -11,6 +11,7 @@ import { workspaceReadSchema, workspaceWriteSchema } from '@slopus/happy-wire';
 const absolute = z.string().startsWith('/').max(4096);
 export const workspaceOwnerConfigSchema = z.object({ version: z.literal(1), workerConfig: absolute, stateDirectory: absolute,
     homeDirectory: absolute.optional(),
+    processProbeSocket: absolute.optional(),
     listen: z.object({ host: z.literal('127.0.0.1'), port: z.number().int().min(1024).max(65535) }).strict(),
     origins: z.array(z.string().url().refine(s => new URL(s).origin === s)).min(1).max(10),
     projects: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), name: z.string().min(1).max(100), policyFile: absolute }).strict()).min(1).max(50),
@@ -66,6 +67,7 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
     const { lifecycle } = openWorkspaceLifecycle(scope.config.workerConfig, project.policyFile, {
         homeDirectory: scope.config.homeDirectory,
         activity: dependencies.activity,
+        processProbeSocket: scope.config.processProbeSocket,
         readOnly: ['inventory','detail','result','plan'].includes(request.action),
         ownerDirectorySelection:true,authorizationCurrent:validateLocal,
         authorize: async () => {

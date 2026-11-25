@@ -22,7 +22,7 @@ const virtual={
     '@/sync/storage':`export const storage={getState:()=>({sessions:{}})};export const useSession=()=>({presence:'online',thinking:false});`,
     '@/sync/sync':`export const sync={ensureSessionReady:async()=>{}};`,
     './DotsConnectionsPanel':`export const DotsConnectionsPanel=()=>null;`,
-    './useDotsWorkspace':`export const useDotsWorkspace=()=>({ready:true,pending:null,refreshing:false,error:null,projection:{snapshot:{dots:[{id:'fixture-dot',name:'验证助理',instruction:'隔离验收环境，无真实消息和记忆',sessionId:'fixture-session',status:'active'}],receipts:{}}},retry:()=>{},retryArchive:()=>{}});`,
+    './useDotsWorkspace':`export const useDotsWorkspace=()=>({ready:true,pendingCommands:[],pendingFor:()=>false,errorFor:()=>null,refreshing:false,error:null,projection:{snapshot:{dots:[{id:'fixture-dot',name:'验证助理',instruction:'隔离验收环境，无真实消息和记忆',sessionId:'fixture-session',status:'active'}],receipts:{}}},refresh:()=>{},retryArchive:()=>{}});`,
     './DotsWorkspacesPanel':`import React from 'react';import {WorkspaceManagerPanel} from ${JSON.stringify(path('components/dots/WorkspaceManagerPanel.tsx'))};import {workspaceManagerClient} from ${JSON.stringify(path('sync/workspaceManagement.ts'))};const current=()=>true;const client=workspaceManagerClient('fixture-owner',current);export const DotsWorkspacesPanel=({onClose})=>React.createElement(WorkspaceManagerPanel,{client,current,contextKey:'fixture-workspace',onClose});`,
     '@react-native-async-storage/async-storage':`export default {getItem:async key=>localStorage.getItem(key),setItem:async(key,value)=>localStorage.setItem(key,value),removeItem:async key=>localStorage.removeItem(key)};`,
 };
@@ -35,7 +35,10 @@ await build({entryPoints:[join(repo,'packages/happy-app/scripts/fixtures/workspa
         b.onResolve({filter:/^@\//},args=>{const p=path(args.path.slice(2));return {path:['.ts','.tsx','/index.ts'].map(s=>p+s).find(existsSync)};});
     }}]});
 await build({entryPoints:[join(repo,'packages/happy-agent/src/automation/rest/fixtures/workspaceOwnerBrowserHarness.ts')],outfile:join(out,'harness.mjs'),bundle:true,packages:'external',platform:'node',format:'esm',logLevel:'silent',
-    plugins:[{name:'current-wire',setup(b){b.onResolve({filter:/^@slopus\/happy-wire$/},()=>({path:join(repo,'packages/happy-wire/src/index.ts')}));}}]});
+    plugins:[{name:'current-wire',setup(b){
+        b.onResolve({filter:/^@slopus\/happy-wire$/},()=>({path:join(repo,'packages/happy-wire/src/index.ts')}));
+        b.onResolve({filter:/^@slopus\/happy-wire\/serverUrl$/},()=>({path:join(repo,'packages/happy-wire/src/serverUrl.ts')}));
+    }}]});
 const child=fork(join(out,'harness.mjs'),[out],{stdio:['ignore','pipe','pipe','ipc']});let log='';child.stdout.on('data',d=>{log+=d;});child.stderr.on('data',d=>{log+=d;});
 const ready=await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('exit',code=>reject(Error(`Fixture exited ${code}: ${log}`)));});
 const browser=await chromium.launch({headless:true}),evidence={isolated:true,root:ready.root,scenarios:[],consoleErrors:[],pageErrors:[],httpErrors:[],payloads:[]};

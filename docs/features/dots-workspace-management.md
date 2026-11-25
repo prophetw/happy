@@ -43,6 +43,15 @@ policy每次请求重新读取；allowApply由原策略控制，不改allowArchi
 8989的Metro只有在配置合法loopback `HAPPY_WORKSPACE_OWNER_URL` 时转发API；缺少配置明确报不可用，不伪装空列表。
 配置代理需重启8989，但不清浏览器storage/认证或修改Relay目标。HMR仍由原Metro处理。
 
+### Linux 占用核验权限
+
+`workspace-owner.json` 可配置 `processProbeSocket`。管理服务验证已有会话进程凭据，再将工作区 ID 和进程范围交给本机探针。探针与 CLI 共用 `/proc` 扫描，单独检查当前目录、进程组、打开文件和挂载。连接、协议或扫描失败会使计划保留阻塞。
+
+通过 `deploy/automation/workspace-probe/` 的系统级 socket 单元按请求启动探针。填入管理服务的 Linux 用户、`/run` 下的专用 socket，以及该机器的固定 `worktrees` 根路径。将 `packages/happy-agent/src/automation/production/workspaceProcessProbeMain.ts` 用 `esbuild --bundle --platform=node --target=node22 --format=esm` 打包为单个 `.mjs` 文件。单元引用的 Node 运行时与探针产物由 root 持有，socket 只允许该管理用户连接。只有扫描子进程具备 `CAP_SYS_PTRACE` 和 `CAP_DAC_READ_SEARCH`，并禁止代码调用进程内存读写接口。
+
+启动并核对 socket 后，将路径写入上述可选字段并重启 `happy-workspace-owner.service`。原来的 8989 页面沿用同源代理。回退时恢复旧服务入口与配置，并停止对应 socket 单元。
+
 隔离浏览器回归脚本是 `packages/happy-app/scripts/test-workspace-manager-browser.mjs <private output>`：
 使用实际Dots Home和管理组件，注入虚构账号/theme/locale/storage适配；HTTP、队列、Git删除、持久回执和重建真实执行，
 与真实账号/业务模型验收分开。临时夹具仅监听20082，截图不包含真实机器目录或用户内容。
+设置 `HAPPY_WORKSPACE_FIXTURE_ROOT` 与 `HAPPY_WORKSPACE_FIXTURE_SOCKET` 可通过仅指向该夹具的独立 socket 验证真实进程核验。夹具根为新建的 `/tmp/happy-owner-ui-*`，单元的工作区根对应夹具内的 `fixture-machine`。
