@@ -53,6 +53,7 @@ it('closes create -> queue/run -> pending result -> integrated -> planned -> rem
     expect(removed.state).toBe('removed');expect(removed.removal).toBe('git-confirmed');expect(existsSync(f.w.cwd)).toBe(false);
     expect(git(f.repo,'rev-parse','main')).toBe(main);expect(git(f.repo,'rev-parse',f.w.branch!)).toBe(main);
     const result=m.result(f.w.id);expect(result.workspaceState).toBe('retired');expect(result.disposition!.sourceTaskID).toBe(f.task.id);
+    expect(await m.plan(f.w.id)).toMatchObject({workspaceState:'retired',outcome:'resolved',eligible:false,reasons:['already_retired'],head:main});
     expect(git(f.repo,'show',`${result.disposition!.retainedRef}:feature.txt`)).toBe('feature');
     expect(f.queue.receipt(f.task).execution!.workspaceState).toBe('retired');
     expect((projectResponse({version:1,ok:true,data:f.queue.receipt(f.task)}).data as any).execution.retainedRef).toBe(result.disposition!.retainedRef);

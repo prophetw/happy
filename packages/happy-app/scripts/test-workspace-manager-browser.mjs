@@ -61,7 +61,9 @@ try {
     assert.ok(await button('确认并回收').isDisabled());await page.screenshot({path:join(out,'plan-desktop.png'),fullPage:true});
     await page.getByRole('checkbox',{name:'我确认回收上方列出的这个目录'}).click();await button('确认并回收').dblclick();
     await page.getByText('目录已回收',{exact:true}).first().waitFor();assert.equal(existsSync(ready.workspaces.ready.cwd),false);
-    await page.getByText('重建与恢复资料',{exact:true}).waitFor();await page.screenshot({path:join(out,'receipt-desktop.png'),fullPage:true});
+    await page.getByText('重建与恢复资料',{exact:true}).waitFor();
+    assert.equal(await page.getByText('Git 或文件系统检查未能完成，目录继续保留。').count(),0);
+    await page.screenshot({path:join(out,'receipt-desktop.png'),fullPage:true});
     evidence.scenarios.push('real Git plan -> explicit confirmed apply -> persistent removed receipt');
     await button('返回列表').click();await find('unknown-reply');await button('核验无代码改动').click();await button('确认核验并记录证据').click();await page.getByText('成果证据已记录',{exact:true}).first().waitFor();await button('生成回收计划').click();await page.getByRole('checkbox',{name:'我确认回收上方列出的这个目录'}).click();
     phase='unknown';await page.route('**/api/workspace-owner/v1/write',async route=>{const payload=route.request().postDataJSON();if(payload.action==='apply'){await route.fetch();await route.abort('failed');}else await route.continue();});

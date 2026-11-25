@@ -229,30 +229,34 @@ export class WorkspaceLifecycle {
         return { item: { ...item, reasons: plan.reasons }, plan, inspectedHead, adoptionVerified, result: this.result(workspaceID, undefined, true) };
     }
     async plan(workspaceID: string): Promise<WorkspacePlan> {
-        const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w),reasons=this.runtimeReasons(s);
+        const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w);
+        const retired = w.retirement?.phase === 'retired';
+        const reasons = retired ? ['already_retired'] : this.runtimeReasons(s);
         let state:GitState|undefined;
-        try {
-            state=await this.inspectGit(w);
-            if(state.dirty)reasons.push('staged_unstaged_or_untracked');
-            if(state.ignored)reasons.push('ignored_artifacts');
-            if(!r.disposition||r.disposition.head!==state.head)reasons.push(state.head===w.baseCommit?'no_change_needs_resolution':'result_needs_disposition');
-            else {
-                if(r.disposition.policy!==this.policyHash)reasons.push('policy_changed_reverify_disposition');
-                if(r.disposition.mainCommit!==state.mainCommit||r.disposition.remoteCommit!==state.remoteCommit)reasons.push('target_main_changed_reverify_disposition');
-                if(r.disposition.taskDigest!==this.taskDigest(s))reasons.push('result_changed_reverify_disposition');
-                if(await this.git(w.root,['rev-parse','--verify',r.disposition.retainedRef])!==state.head)reasons.push('retained_ref_changed');
-            }
-            const activity=await this.activity(w,s.tasks);
-            if(!activity.confirmed)reasons.push('activity_unconfirmed');reasons.push(...activity.blockers);
-        } catch(e) {reasons.push(e instanceof ApiError?e.code:'git_or_path_unconfirmed');}
-        if(w.retirement)reasons.push(w.retirement.phase==='retired'?'already_retired':'retirement_in_progress');
-        if(!this.policy.allowApply)reasons.push('policy_apply_disabled');
+        if (!retired) {
+            try {
+                state=await this.inspectGit(w);
+                if(state.dirty)reasons.push('staged_unstaged_or_untracked');
+                if(state.ignored)reasons.push('ignored_artifacts');
+                if(!r.disposition||r.disposition.head!==state.head)reasons.push(state.head===w.baseCommit?'no_change_needs_resolution':'result_needs_disposition');
+                else {
+                    if(r.disposition.policy!==this.policyHash)reasons.push('policy_changed_reverify_disposition');
+                    if(r.disposition.mainCommit!==state.mainCommit||r.disposition.remoteCommit!==state.remoteCommit)reasons.push('target_main_changed_reverify_disposition');
+                    if(r.disposition.taskDigest!==this.taskDigest(s))reasons.push('result_changed_reverify_disposition');
+                    if(await this.git(w.root,['rev-parse','--verify',r.disposition.retainedRef])!==state.head)reasons.push('retained_ref_changed');
+                }
+                const activity=await this.activity(w,s.tasks);
+                if(!activity.confirmed)reasons.push('activity_unconfirmed');reasons.push(...activity.blockers);
+            } catch(e) {reasons.push(e instanceof ApiError?e.code:'git_or_path_unconfirmed');}
+            if (w.retirement) reasons.push('retirement_in_progress');
+            if (!this.policy.allowApply) reasons.push('policy_apply_disabled');
+        }
         const checkedAt=this.now();
         const body:Omit<WorkspacePlan,'id'>={version:1 as const,policy:this.policyHash,workspaceID,revision:r.revision,checkedAt,expiresAt:checkedAt+60000,
             workspaceState:w.retirement?.phase??'active',
-            outcome:(!state?'unknown':state.dirty||state.ignored?'pending_commit':r.disposition?.head===state.head?'resolved':state.head===w.baseCommit?'no_change_unreviewed':'pending_integration') as WorkspacePlan['outcome'],
+            outcome:(retired&&r.disposition?'resolved':!state?'unknown':state.dirty||state.ignored?'pending_commit':r.disposition?.head===state.head?'resolved':state.head===w.baseCommit?'no_change_unreviewed':'pending_integration') as WorkspacePlan['outcome'],
             eligible:reasons.length===0,reasons:[...new Set(reasons)].sort(),binding:this.binding(w),git:state?.digest??fingerprint(null),tasks:this.taskDigest(s),
-            head:state?.head,branch:state?.branch,mainCommit:state?.mainCommit,remoteCommit:state?.remoteCommit,checkout:state?.checkout};
+            head:retired?w.retirement?.retainedCommit:state?.head,branch:state?.branch,mainCommit:state?.mainCommit,remoteCommit:state?.remoteCommit,checkout:state?.checkout};
         return {...body,id:fingerprint(body)};
     }
     private async locked<T>(workspaceID:string,action:(fd:number)=>Promise<T>) {
