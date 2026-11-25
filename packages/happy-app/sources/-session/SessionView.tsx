@@ -86,6 +86,7 @@ import { AnimatedFade } from '@/components/AnimatedOverlay';
 import { DotsWorkspacePanel, DotWorkspaceHeaderLink } from './DotsWorkspacePanel';
 import { DotSessionContent } from '@/components/dots/DotSessionContent';
 import { readTestloopDotsMetadata, type TestloopDotsMetadata } from '@/sync/testloopDots';
+import { MessageView } from '@/components/MessageView';
 
 export const SessionView = React.memo((props: { id: string }) => {
     const routeId = props.id;
@@ -1201,6 +1202,11 @@ export function SessionViewLoaded({
 
     useSessionVisibility(sessionId, active, embedded, realtimeStatus);
 
+    const newestMessage = messages[0];
+    // Keep a new Dot failure within reach of the composer even when a long
+    // prompt takes the transcript's scroll position far from its newest row.
+    const pinnedInputError = newestMessage?.kind === 'agent-event' && newestMessage.event.type === 'input-error'
+        && readTestloopDotsMetadata(session?.metadata)?.kind === 'dot' ? newestMessage : undefined;
     let content = session ? (
         <>
             <Deferred>
@@ -1214,6 +1220,7 @@ export function SessionViewLoaded({
                         key={sessionId}
                         session={session}
                         active={active}
+                        pinnedInputErrorId={pinnedInputError?.id}
                         topContentInset={chatListTopContentInset}
                         bottomContentInset={usesFloatingMobileDock ? bottomDockInset : undefined}
                         scrollButtonInset={usesFloatingMobileDock ? scrollButtonInset : undefined}
@@ -1344,6 +1351,11 @@ export function SessionViewLoaded({
             <AnimatedFade visible={showBottomDockDetails}>
                 <RigActivityBar metadata={session?.metadata ?? null} />
             </AnimatedFade>
+            {pinnedInputError && session && (
+                <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
+                    <MessageView message={pinnedInputError} metadata={session.metadata} sessionId={session.id} />
+                </CenteredInputWidth>
+            )}
             {composer}
         </>
     );

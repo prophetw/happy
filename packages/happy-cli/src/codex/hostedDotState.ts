@@ -2,7 +2,7 @@ import { existsSync, lstatSync, openSync, closeSync, fsyncSync, readFileSync, wr
 import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { SessionEnvelope } from '@slopus/happy-wire';
-import { readHostedStorage, assertHostedStorageReadyForStart } from './hostedDotStorage';
+import { readHostedStorage, assertHostedStorageReadyForStart, HOSTED_INPUT_MAX_ROWS, HOSTED_OUTPUT_MAX_ROWS } from './hostedDotStorage';
 
 export const HOSTED_STATE_MAX_BYTES = 128 * 1024 * 1024;
 
@@ -40,7 +40,7 @@ export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.op
     retiredUserSeq: z.number().int().positive().optional(),
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
     bootstrap: z.object({ stage: z.enum(['injecting', 'applied']), threadId: z.string() }).optional(),
-    inputs: z.array(Input).max(10000), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(100000),
+    inputs: z.array(Input).max(HOSTED_INPUT_MAX_ROWS), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(HOSTED_OUTPUT_MAX_ROWS),
     outputReceipts: z.array(z.string()).default([]),
     controls: z.array(z.string()).default([]) });
 export type HostedState = z.infer<typeof HostedDotJournal>;

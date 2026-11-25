@@ -3,14 +3,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
-import { readPrivate, loadHostedState, HostedDotConfig } from './hostedDotState';
+import { readPrivate, loadHostedState, HostedDotConfig, type HostedState } from './hostedDotState';
 import { saveHostedStorage, readHostedStorage } from './hostedDotStorage';
 import * as sessionProtocolMapper from './utils/sessionProtocolMapper';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any,
     listModels: vi.fn(async () => ({ data: [{ model: 'test', displayName: 'test', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'xhigh', isDefault: true }, { model: 'alternate', displayName: 'Alternate', description: '', supportedReasoningEfforts: [{ reasoningEffort: 'high' }], defaultReasoningEffort: 'high', isDefault: false }] })),
 }));
-vi.mock('./codexAppServerClient', () => ({ CodexAppServerClient: class {
+vi.mock('./codexAppServerClient', async importOriginal => ({ CodexRpcError: (await importOriginal<typeof import('./codexAppServerClient')>()).CodexRpcError, CodexAppServerClient: class {
     constructor(_: unknown, options: any) { h.options = options; }
     listModels = h.listModels;
     connect = async () => {}; disconnect = async () => {};
@@ -35,6 +35,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     sendSessionProtocolMessagesVerified = async (rows: any[]) => { await h.flush(); h.sent.push(...rows); return rows.map(row => row.localId); };
 } }));
 import { runHostedDot } from './hostedDotMain';
+import { CodexRpcError } from './codexAppServerClient';
 import { readHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
 function fixture(gateway = false, imported = false, seed?: (state: any) => void, sqlite = false) {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-loop-')), home = join(dir, 'happy'), data = join(dir, 'runtime');
@@ -84,6 +85,59 @@ const emit = (method: string, params: any) => {
     });
 };
 beforeEach(() => { vi.clearAllMocks(); h.rows = []; h.history = []; h.sent = []; h.flush.mockReset().mockResolvedValue(undefined); h.start.mockResolvedValue({ threadId: 'native-thread', model: 'test' }); h.resume.mockResolvedValue({ threadId: 'native-thread' }); h.reconnect.mockResolvedValue(true); h.inject.mockReset().mockResolvedValue({}); });
+it('persists and dispatches complete ordinary input past the old UTF-16 limit', async () => {
+    h.send.mockImplementation(async () => {
+        const turn = { id: 'long-' + h.send.mock.calls.length };
+        emit('turn/started', { turn });
+        emit('turn/completed', { turn: { ...turn, status: 'completed' } });
+    });
+    const texts = [
+        'a'.repeat(12001),
+        '开头\n' + '今天整理旧照片和读书笔记。'.repeat(4000) + '\n末尾',
+        ' begin\n' + 'ASCII with "quotes" and \\slashes\n'.repeat(1600) + 'end  ',
+        '开头' + '🏳️‍🌈🙂'.repeat(10000) + '末尾',
+    ];
+    const f = fixture();
+    try {
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        h.rows.push(...texts.map((text, index) => row(index + 1, text)));
+        const inputs = (): HostedState['inputs'] => f.state().inputs;
+        await vi.waitFor(() => expect(inputs().map(input => input.status)).toEqual(texts.map(() => 'completed')), { timeout: 2000 });
+        expect(h.send.mock.calls.map(([text]) => text)).toEqual(texts);
+        expect(inputs().map(input => input.text)).toEqual(texts);
+        h.rows.push(row(1, texts[0]));
+        await f.restart();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.send).toHaveBeenCalledTimes(texts.length);
+    } finally { await f.stop(); }
+});
+it('durably reports an explicit pre-turn RPC rejection, and can start a new turn after restart', async () => {
+    const text = 'original body '.repeat(4000);
+    h.send.mockRejectedValueOnce(new CodexRpcError('turn/start', text, -32602, {
+        input_error_code: 'input_too_large', max_chars: 42000, actual_chars: text.length,
+    })).mockImplementation(async () => {
+        emit('turn/started', { turn: { id: 'success' } });
+        emit('turn/completed', { turn: { id: 'success', status: 'completed' } });
+    });
+    const f = fixture();
+    try {
+        h.rows.push(row(1, text));
+        const receipt = () => h.sent.find(output => output.localId === 'hosted:0:input-rejected:1')?.envelope;
+        await vi.waitFor(() => expect(receipt()?.ev).toMatchObject({
+            t: 'service', kind: 'input-error', ref: '1', text: expect.stringContaining('42,000 个 Unicode 码点'),
+        }));
+        expect(receipt().turn).toBeUndefined();
+        expect(receipt().ev.text).not.toContain('original body');
+        expect(f.state().inputs[0]).toMatchObject({ status: 'rejected', error: 'hosted_native_input_limit' });
+        expect(f.state().inputs[0].beforeTurns).toBeUndefined();
+        await f.restart();
+        h.rows.push(row(1, text), row(2, 'retry with a shorter message'));
+        await vi.waitFor(() => expect(f.state().inputs[1]?.status).toBe('completed'));
+        expect(h.resume).not.toHaveBeenCalled();
+        expect(h.send).toHaveBeenCalledTimes(2);
+        expect(h.sent.filter(output => output.localId === 'hosted:0:input-rejected:1')).toHaveLength(1);
+    } finally { await f.stop(); }
+});
 it('reclaims 49,783 confirmed rows at a 50,000-row SQLite restart and resends only the original 217', async () => {
     const envelopes = Array.from({ length: 50000 }, (_, n) => ({ id: `history-${n}`, time: n, role: 'agent', ev: { t: 'service', text: `body-${n}` } }));
     const f = fixture(false, false, state => {
@@ -295,6 +349,33 @@ it('settles steering when completion arrives before its RPC acknowledgement', as
         h.rows.push(row(2, 'steering', 'steer')); await vi.waitFor(() => expect(f.state().inputs[1]?.status).toBe('completed'));
         expect(h.send).toHaveBeenCalledTimes(1); expect(h.steer).toHaveBeenCalledTimes(1);
     } finally { await f.stop(); }
+});
+it('records a definitive steer rejection once while the original turn continues', async () => {
+    let complete!: () => void;
+    h.send.mockImplementationOnce(() => {
+        const turn = { id: 'original-turn' };
+        emit('turn/started', { turn });
+        return new Promise(resolve => { complete = () => {
+            emit('turn/completed', { turn: { ...turn, status: 'completed' } });
+            resolve({ aborted: false });
+        }; });
+    });
+    h.steer.mockRejectedValueOnce(new CodexRpcError('turn/steer', 'input limit', -32602, {
+        input_error_code: 'input_too_large', max_chars: 1048576, actual_chars: 1048577,
+    }));
+    const f = fixture();
+    try {
+        h.rows.push(row(1, 'original'), row(2, 'long steer', 'steer'));
+        await vi.waitFor(() => expect(h.sent).toContainEqual(expect.objectContaining({
+            localId: 'hosted:0:input-rejected:2',
+            envelope: expect.objectContaining({ ev: expect.objectContaining({ ref: '2', kind: 'input-error' }) }),
+        })));
+        expect(f.state().inputs.map((input: HostedState['inputs'][number]) => input.status)).toEqual(['accepted', 'rejected']);
+        complete();
+        await vi.waitFor(() => expect(f.state().status).toBe('ready'));
+        expect(h.send).toHaveBeenCalledTimes(1);
+        expect(h.steer).toHaveBeenCalledTimes(1);
+    } finally { complete?.(); await f.stop(); }
 });
 it('reconciles a native child crash without replaying accepted input', async () => {
     h.send.mockImplementation(async () => {
@@ -794,6 +875,19 @@ it('accepts a late native terminal receipt after the completion promise resolved
         emit('turn/completed', { turn: { id: 'late-terminal', status: 'completed' } });
         await vi.waitFor(() => expect(f.state()).toMatchObject({ status: 'ready', error: null, inputs: [{ id: '1', status: 'completed' }] }));
         expect(h.send).toHaveBeenCalledTimes(1);
+        expect(f.state().outputs).not.toContainEqual(expect.objectContaining({ localId: 'hosted:0:input-unconfirmed:1' }));
+    } finally { await f.stop(); }
+});
+it('reports a provisionally finished input after native history cannot confirm it', async () => {
+    h.send.mockImplementation(async () => emit('turn/started', { turn: { id: 'absent-from-history' } }));
+    const f = fixture();
+    try {
+        h.rows.push(row(1, 'unconfirmed native receipt'));
+        await vi.waitFor(() => expect(f.state().inputs[0]?.status).toBe('unknown'));
+        expect(f.state().outputs).not.toContainEqual(expect.objectContaining({ localId: 'hosted:0:input-unconfirmed:1' }));
+        await vi.waitFor(() => expect(h.sent.filter(output => output.localId === 'hosted:0:input-unconfirmed:1')).toHaveLength(1), { timeout: 3500 });
+        expect(f.state().status).toBe('blocked');
+        expect(h.send).toHaveBeenCalledTimes(1);
     } finally { await f.stop(); }
 });
 it('keeps a definitive failed native receipt when the send promise rejects', async () => {
@@ -807,10 +901,11 @@ it('keeps a definitive failed native receipt when the send promise rejects', asy
     } finally { await f.stop(); }
 });
 it('releases only an input-unconfirmed block proved by exact original native history without replay', async () => {
-    h.history = [{ id: 'original-turn', status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'original request' }] }] }];
+    const text = '原始输入\n' + '今天整理旧照片和读书笔记。🙂'.repeat(3500) + '\n保留末尾';
+    h.history = [{ id: 'original-turn', status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text }] }] }];
     const f = fixture(false, false, state => {
         state.threadId = 'native-thread'; state.status = 'blocked'; state.error = 'hosted_input_unconfirmed';
-        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'original', text: 'original request', status: 'unknown', turnId: 'original-turn', beforeTurns: [] }];
+        state.inputs = [{ epoch: 0, delivery: 'queue', seq: 1, id: 'original', text, status: 'unknown', turnId: 'original-turn', beforeTurns: [] }];
     });
     try {
         await vi.waitFor(() => expect(f.state()).toMatchObject({ status: 'ready', error: null, inputs: [{ id: 'original', status: 'completed' }] }));

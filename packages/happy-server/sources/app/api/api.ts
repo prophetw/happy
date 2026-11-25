@@ -29,6 +29,7 @@ import { isLocalStorage, getLocalFilesDir } from "@/storage/files";
 import { publicLocalFilePath } from './publicLocalFilePath';
 import * as path from "path";
 import * as fs from "fs";
+import { SESSION_MESSAGE_HTTP_BODY_LIMIT } from "@slopus/happy-wire";
 
 export interface StartApiOptions {
     port?: number;
@@ -46,7 +47,7 @@ export async function startApi(opts: StartApiOptions = {}) {
     const app = fastify({
         loggerInstance: logger,
         disableRequestLogging: isProduction,
-        bodyLimit: 1024 * 1024 * 100, // 100MB
+        bodyLimit: SESSION_MESSAGE_HTTP_BODY_LIMIT,
     });
     app.register(import('@fastify/cors'), {
         origin: '*',

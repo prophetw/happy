@@ -1731,6 +1731,19 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             }
         });
 
+        it('recovers the old Dot input-limit notice without a turn', () => {
+            const service = (id: string, text: string) => normalizeRawMessage('db-notice', null, 1, {
+                role: 'session',
+                content: { type: 'session', data: { id, time: 1, role: 'agent', ev: { t: 'service', text } } },
+            });
+            expect(service('input-rejected:347', '这条消息超过12000字符，请拆分后发送。')).toMatchObject({
+                role: 'event',
+                content: { type: 'input-error', message: expect.stringContaining('12,000 个 UTF-16 码元') },
+            });
+            expect(service('internal-1', 'unrelated service event')).toBeNull();
+            expect(service('input-rejected:347', 'unrelated service event')).toBeNull();
+        });
+
         it('normalizes service events to visible agent text', () => {
             const normalized = normalizeRawMessage('db-service-1', null, 1, {
                 ...base,

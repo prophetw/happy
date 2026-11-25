@@ -1,4 +1,5 @@
 export * from './messages';
+export * from './sessionMessageLimits';
 export * from './legacyProtocol';
 export * from './sessionProtocol';
 export * from './controlMessages';

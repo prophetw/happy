@@ -77,6 +77,45 @@ SQLite在50,000条或32 MiB起回收最旧连续已送达前缀，遇到第一�
 
 ## 隔离复现
 
+### 普通聊天文本与失败回执
+
+Web 和手机使用同一个聊天输入，完整正文按 UTF-8 JSON 加密并以 Base64 写入 Relay。
+App 以 8 MiB 为合批目标，每个 POST 最多 100 条。单条超过合批目标时单独传输，
+Fastify 的 100 MiB 上限以整个请求体的字节数计算。反向代理可以有自己的上限。
+Relay 按序号和 8 MiB 加密内容预算分页，越过分页预算的首条记录仍会完整返回，
+前向和后向都从实际返回的序号继续。App 的解密缓存也按加密大小估算容量，达到一页后淘汰旧缓存。
+Web 或手机在收到单条 413 时保留草稿，
+并尝试用同一个 outbox 保存一条简短的失败提示。
+
+Hosted Dot 将完整输入先写进 journal，再向 Codex 发出一次 `turn/start` 或 `turn/steer`。
+当前 Codex 0.170.0 对单次 RPC 的文本使用 1,048,576 个 Unicode 码点上限。
+运行时以 Codex 实际返回的结构化 `max_chars` 为准。
+模型可用上下文以 token 计算，随模型、正文和已有历史变化。模型拒收时，聊天会说明原因，
+可以缩短消息或开启新的对话。 [Codex 文本边界](https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/protocol/src/user_input.rs) · [Codex App Server 校验](https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/app-server/src/request_processors/turn_processor.rs)
+
+明确的输入拒收和模型失败使用带 Relay 消息 ID 的回执，在对话中显示为独立的错误提示。
+最新一条记录为错误时，提示固定在输入框上方，后续消息到达后回到正常的历史位置。
+宿主在同一事务里保存回执和输入状态，重连及刷新读取原记录。连接异常且结果未知时，
+宿主记录可见提示并保留核对所需的正文和状态，等待原轮次证据。
+没有待核对的输入时，恢复只加载 native thread 元数据。
+历史 12,000 码元拒收提示仍按旧事件读取。单条失败回执只含原因和消息 ID。
+
+会话累计写入仍受既有 journal 容量（10,000 条输入、128 MiB 总大小）及 112 MiB 写入保护约束。
+一次性历史导入使用已有的 8 MiB 文件校验。剩余存储不足时用简短回执告知用户，
+完整正文可从 Relay 已保存的消息取回。
+
+### 验证命令
+
+Web 聊天回归使用 Playwright、临时 PGlite Relay、真实 Codex App Server 和本地模型夹具。
+从仓库根构建共享包、生成 Relay 客户端并导出 Web 后运行。
+
+```sh
+pnpm --filter @slopus/happy-wire build
+pnpm --filter happy-server generate
+APP_ENV=development CI=1 EXPO_OFFLINE=1 EXPO_NO_TELEMETRY=1 pnpm --filter happy-app exec expo export --platform web --output-dir ../../.e2e-artifacts/dot-chat-web
+TSX_TSCONFIG_PATH=packages/happy-cli/tsconfig.json node --import tsx packages/happy-app/scripts/hosted-dot-chat.e2e.mjs .e2e-artifacts/dot-chat-web
+```
+
 从仓库根执行（Node 22 支持 `node:sqlite`）：
 
 ```sh

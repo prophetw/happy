@@ -194,6 +194,19 @@ const {
             findMany: sessionMessageFindMany,
             createManyAndReturn: sessionMessageCreateManyAndReturn
         },
+        $queryRaw: vi.fn(async (_strings: TemplateStringsArray, ...values: any[]) => {
+            const [sessionId, cursor, direction, take, , limit, budget] = values;
+            const backwards = direction.sql === 'DESC';
+            const candidates = state.messages.filter(row => row.sessionId === sessionId
+                && (backwards ? row.seq < cursor.values[0] : row.seq > cursor.values[0]))
+                .sort((a, b) => backwards ? b.seq - a.seq : a.seq - b.seq).slice(0, take);
+            let bytes = 0;
+            const page = candidates.filter((row, i) => {
+                bytes += Buffer.byteLength(JSON.stringify(row.content));
+                return i === 0 || (i < limit && bytes <= budget);
+            });
+            return page.map(row => ({ ...row, hasMore: page.length < candidates.length }));
+        }),
         $transaction: vi.fn(async (fn: any) => fn(txClient))
     };
 
@@ -361,6 +374,23 @@ describe("v3SessionRoutes", () => {
         const body3 = oldest.json();
         expect(body3.messages.map((message: any) => message.seq)).toEqual([1]);
         expect(body3.hasMore).toBe(false);
+    });
+
+    it("caps page bytes without skipping an oversized singleton in either direction", async () => {
+        seedSession({ id: "session-1", accountId: "user-1" });
+        seedMessage({ sessionId: "session-1", seq: 1, localId: "small", content: { t: "encrypted", c: "a" } });
+        seedMessage({ sessionId: "session-1", seq: 2, localId: "large", content: { t: "encrypted", c: "a".repeat(8 * 1024 * 1024) } });
+        seedMessage({ sessionId: "session-1", seq: 3, localId: "small2", content: { t: "encrypted", c: "b" } });
+        app = await createApp();
+        for (const [query, expected] of [["after_seq=0", 1], ["after_seq=1", 2], ["before_seq=4", 3], ["before_seq=3", 2]]) {
+            const response = await app.inject({
+                method: "GET", url: `/v3/sessions/session-1/messages?${query}`, headers: { "x-user-id": "user-1" },
+            });
+            expect(response.statusCode).toBe(200);
+            const { messages, hasMore } = response.json();
+            expect(messages.map((message: any) => message.seq)).toEqual([expected]);
+            expect(hasMore).toBe(true);
+        }
     });
 
     it("rejects requests that combine after_seq and before_seq", async () => {

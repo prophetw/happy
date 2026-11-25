@@ -2,6 +2,8 @@ import { buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { allocateSessionSeqBatch, allocateUserSeq } from "@/storage/seq";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { Prisma } from "@prisma/client";
+import { SESSION_MESSAGE_BATCH_BYTES, SESSION_MESSAGE_POST_MAX_COUNT } from "@slopus/happy-wire";
 import { z } from "zod";
 import { type Fastify } from "../types";
 
@@ -28,7 +30,7 @@ const sendMessagesBodySchema = z.object({
     messages: z.array(z.object({
         content: z.string(),
         localId: z.string().min(1)
-    })).min(1).max(100)
+    })).min(1).max(SESSION_MESSAGE_POST_MAX_COUNT)
 });
 
 type SelectedMessage = {
@@ -89,34 +91,33 @@ export function v3SessionRoutes(app: Fastify) {
 
         // Backward direction is opt-in via `before_seq`; everything else (no
         // params, or explicit `after_seq`) keeps the legacy forward semantics.
-        const isBackward = before_seq !== undefined;
-        const where = isBackward
-            ? { sessionId, seq: { lt: before_seq } }
-            : { sessionId, seq: { gt: after_seq ?? 0 } };
-        const orderBy = isBackward
-            ? { seq: 'desc' as const }
-            : { seq: 'asc' as const };
-
-        const messages = await db.sessionMessage.findMany({
-            where,
-            orderBy,
-            take: limit + 1,
-            select: {
-                id: true,
-                seq: true,
-                content: true,
-                localId: true,
-                createdAt: true,
-                updatedAt: true
-            }
-        });
-
-        const hasMore = messages.length > limit;
-        const page = hasMore ? messages.slice(0, limit) : messages;
+        const cursor = before_seq !== undefined ? Prisma.sql`"seq" < ${before_seq}` : Prisma.sql`"seq" > ${after_seq ?? 0}`;
+        const direction = before_seq !== undefined ? Prisma.sql`DESC` : Prisma.sql`ASC`;
+        // Bound the page before transferring the ciphertext to the Relay.
+        // Keep the first record even if it exceeds the page budget so older
+        // (and valid larger singleton) rows can still be read in either direction.
+        const page = await db.$queryRaw<(SelectedMessage & { hasMore: boolean })[]>`
+            WITH candidates AS (
+                SELECT "id", "seq", octet_length("content"::text) AS bytes
+                FROM "SessionMessage"
+                WHERE "sessionId" = ${sessionId} AND ${cursor}
+                ORDER BY "seq" ${direction}
+                LIMIT ${limit + 1}
+            ),
+            ranked AS (
+                SELECT "id", "seq", row_number() OVER ordering AS n, sum(bytes) OVER ordering AS total
+                FROM candidates WINDOW ordering AS (ORDER BY "seq" ${direction} ROWS UNBOUNDED PRECEDING)
+            )
+            SELECT m."id", m."seq", m."content", m."localId", m."createdAt", m."updatedAt",
+                EXISTS (SELECT 1 FROM ranked WHERE n > ${limit} OR (n > 1 AND total > ${SESSION_MESSAGE_BATCH_BYTES})) AS "hasMore"
+            FROM ranked r JOIN "SessionMessage" m ON m."id" = r."id"
+            WHERE r.n = 1 OR (r.n <= ${limit} AND r.total <= ${SESSION_MESSAGE_BATCH_BYTES})
+            ORDER BY r."seq" ${direction}
+        `;
 
         return reply.send({
             messages: page.map(toResponseMessage),
-            hasMore
+            hasMore: page[0]?.hasMore ?? false
         });
     });
 

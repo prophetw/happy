@@ -43,6 +43,8 @@ export type SessionUsage = z.infer<typeof sessionUsageSchema>;
 export const sessionServiceMessageEventSchema = z.object({
   t: z.literal('service'),
   text: z.string(),
+  kind: z.literal('input-error').optional(),
+  ref: z.string().optional(),
 });
 
 export const sessionToolCallStartEventSchema = z.object({

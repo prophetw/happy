@@ -48,6 +48,7 @@ export type NewConversationResponse = {
 
 export type ResumeConversationParams = {
     threadId: ThreadId;
+    excludeTurns?: boolean;
     model: string | null;
     modelProvider: string | null;
     cwd: string | null;

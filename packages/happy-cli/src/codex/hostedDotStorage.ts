@@ -7,9 +7,11 @@ import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 const nativeRequire = createRequire(import.meta.url);
 export const HOSTED_STORAGE_VERSION = 2 as const;
 export const HOSTED_STORAGE_LIMIT = 128 * 1024 * 1024;
+export const HOSTED_INPUT_MAX_ROWS = 10000;
+export const HOSTED_OUTPUT_MAX_ROWS = 100000;
 const groups = ['inputs', 'outputs', 'controls'] as const;
 type Group = typeof groups[number];
-const maxRows = (kind: Group) => kind === 'inputs' ? 10000 : kind === 'outputs' ? 100000 : HOSTED_STORAGE_LIMIT;
+const maxRows = (kind: Group) => kind === 'inputs' ? HOSTED_INPUT_MAX_ROWS : kind === 'outputs' ? HOSTED_OUTPUT_MAX_ROWS : HOSTED_STORAGE_LIMIT;
 type State = Record<string, any>;
 const projection = Symbol('hosted-storage-read-only-projection');
 // Lazy loading keeps JSON-only and older-Node consumers independent of node:sqlite.

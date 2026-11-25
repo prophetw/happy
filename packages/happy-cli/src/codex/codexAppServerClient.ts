@@ -62,7 +62,11 @@ type PendingRequest = {
     epoch: number;
 };
 
-class CodexRpcError extends Error {}
+export class CodexRpcError extends Error {
+    constructor(readonly method: string, readonly rpcMessage: string, readonly code: number, readonly data?: unknown) {
+        super(`${method}: ${rpcMessage} (code=${code})`);
+    }
+}
 
 type LegacyPatchChanges = Record<string, Record<string, unknown>>;
 
@@ -280,7 +284,7 @@ export class CodexAppServerClient {
         for (const id of ids) this.userInputResolvedHandler?.(String(id));
     }
 
-    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; onNotification?: (method: string, params: any) => void; onExit?: () => void; notificationTransaction?: (dispatch: () => void) => void }) {
+    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; excludeResumeTurns?: boolean; onNotification?: (method: string, params: any) => void; onExit?: () => void; notificationTransaction?: (dispatch: () => void) => void }) {
         this.sandboxConfig = sandboxConfig;
     }
 
@@ -975,6 +979,7 @@ export class CodexAppServerClient {
         const defaults = this.threadDefaults ?? {};
         const params: ResumeConversationParams = {
             threadId,
+            ...(this.host?.excludeResumeTurns ? { excludeTurns: true } : {}),
             model: opts?.model ?? defaults.model ?? null,
             modelProvider: null,
             cwd: opts?.cwd ?? defaults.cwd ?? process.cwd(),
@@ -1232,6 +1237,7 @@ export class CodexAppServerClient {
         effort?: ReasoningEffort;
         developerInstructions?: string;
         extraInputItems?: InputItem[];
+        onAcceptedTurnId?: (turnId: string) => void;
     }): Promise<void> {
         if (!this._threadId) {
             throw new Error('No active thread. Call startThread first.');
@@ -1288,6 +1294,7 @@ export class CodexAppServerClient {
             if (this.pendingTurnCompletion) {
                 this.pendingTurnCompletion.turnId = turnId;
             }
+            opts?.onAcceptedTurnId?.(turnId);
         }
     }
 
@@ -1303,6 +1310,7 @@ export class CodexAppServerClient {
         effort?: ReasoningEffort;
         developerInstructions?: string;
         extraInputItems?: InputItem[];
+        onAcceptedTurnId?: (turnId: string) => void;
     }): Promise<{ aborted: boolean }> {
         // Wait for any in-flight interruptTurn() to complete before starting a new
         // turn. Otherwise the stale turn/interrupt RPC can reach Codex after our
@@ -1416,8 +1424,8 @@ export class CodexAppServerClient {
         logger.debug(`[CodexAppServer] → ${method} (notification)`);
     }
 
-    /** Returns false only when no turn is active or Codex explicitly rejects the input. */
-    async steerTurn(text: string, extraInputItems: InputItem[] = []): Promise<boolean> {
+    /** Hosted callers can distinguish a definitive rejection from a turn that just ended. */
+    async steerTurn(text: string, extraInputItems: InputItem[] = [], opts?: { reportRejection?: boolean }): Promise<boolean> {
         const threadId = this._threadId;
         const expectedTurnId = this._turnId;
         if (!threadId || !expectedTurnId || !this.pendingTurnCompletion) return false;
@@ -1430,11 +1438,11 @@ export class CodexAppServerClient {
             await this.request('turn/steer', { threadId, expectedTurnId, input });
             return true;
         } catch (error) {
-            // An explicit error response means the input was rejected (including
-            // a turn that finished while we sent). Queue it for the next turn.
-            // A timeout/disconnect is ambiguous and must not replay the input.
             if (error instanceof CodexRpcError) {
-                logger.debug('[CodexAppServer] Steer rejected; input can be queued', error.message);
+                const turnChanged = error.rpcMessage === 'no active turn to steer'
+                    || /^expected active turn id `[^`]+` but found `[^`]+`$/.test(error.rpcMessage);
+                if (opts?.reportRejection && !turnChanged) throw error;
+                logger.debug('[CodexAppServer] Steer rejected; input can be queued', error.code);
                 return false;
             }
             throw error;
@@ -1472,7 +1480,7 @@ export class CodexAppServerClient {
                 }
                 this.pending.delete(msg.id);
                 if (msg.error) {
-                    pending.reject(new CodexRpcError(`${pending.method}: ${msg.error.message} (code=${msg.error.code})`));
+                    pending.reject(new CodexRpcError(pending.method, msg.error.message, msg.error.code, msg.error.data));
                 } else {
                     pending.resolve(msg.result);
                 }

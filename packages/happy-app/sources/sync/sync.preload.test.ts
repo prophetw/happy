@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_MESSAGE_BATCH_BYTES, SESSION_MESSAGE_POST_MAX_COUNT } from '@slopus/happy-wire';
 import { messagePlanMode } from './messagePlanMode';
 
 const mocks = vi.hoisted(() => ({
@@ -117,6 +118,36 @@ beforeEach(() => {
     engine = new (sync.constructor as new () => typeof sync)();
     encryption = { decryptMessages: vi.fn(async (messages: any[]) => messages) };
     engine.encryption = { getSessionEncryption: (id: string) => mocks.state.sessions[id] ? encryption : undefined };
+});
+
+it('limits and retries outbox batches without splitting or reordering individual records', async () => {
+    const cipher = 'a'.repeat(Math.floor(SESSION_MESSAGE_BATCH_BYTES / 3));
+    const first = ['first', 'second', 'third'].map(localId => ({ kind: 'attachment', localId, content: cipher }));
+    const tail = Array.from({ length: SESSION_MESSAGE_POST_MAX_COUNT + 1 }, (_, index) => ({
+        kind: 'attachment', localId: `tail-${index}`, content: 'small',
+    }));
+    engine.getMessagesSync = () => ({ invalidate: vi.fn() });
+    engine.pendingOutbox.set('a', [...first, ...tail]);
+    const delivered: string[] = [];
+    let proxyRejected = false;
+    mocks.request.mockImplementation(async (_url, options) => {
+        const { messages } = JSON.parse(options.body) as { messages: { localId: string; content: string }[] };
+        expect(messages.length).toBeLessThanOrEqual(SESSION_MESSAGE_POST_MAX_COUNT);
+        expect(options.body.length).toBeLessThanOrEqual(SESSION_MESSAGE_BATCH_BYTES);
+        if (!proxyRejected) {
+            expect(messages.map(message => message.localId)).toEqual(['first', 'second']);
+            proxyRejected = true;
+            return { ok: false, status: 413 };
+        }
+        for (const message of messages) {
+            expect(message.content.length).toBe(message.localId.startsWith('tail-') ? 5 : cipher.length);
+            delivered.push(message.localId);
+        }
+        return response(messages);
+    });
+    await engine.flushOutbox('a');
+    expect(delivered).toEqual([...first, ...tail].map(message => message.localId));
+    expect(engine.pendingOutbox.has('a')).toBe(false);
 });
 
 describe('background history budget', () => {

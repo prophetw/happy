@@ -174,6 +174,7 @@ function oldestBoundary(items: readonly ListItem[]): string | null {
 export const ChatList = React.memo((props: {
     session: Session;
     active?: boolean;
+    pinnedInputErrorId?: string;
     topContentInset?: number;
     bottomContentInset?: number;
     /** Distance from the screen bottom to the composer. Independent of status-chrome fade. */
@@ -183,12 +184,14 @@ export const ChatList = React.memo((props: {
     onBottomDockVisibilityChange?: (visible: boolean) => void;
 }) => {
     const { messages, hasMoreOlder, isLoadingOlder } = useSessionMessages(props.session.id);
+    const history = React.useMemo(() => props.pinnedInputErrorId === undefined ? messages
+        : messages.filter(message => message.id !== props.pinnedInputErrorId), [messages, props.pinnedInputErrorId]);
     return (
         <ChatListInternal
             metadata={props.session.metadata}
             sessionId={props.session.id}
             active={props.active ?? true}
-            messages={messages}
+            messages={history}
             hasMoreOlder={hasMoreOlder}
             isLoadingOlder={isLoadingOlder}
             topContentInset={props.topContentInset}

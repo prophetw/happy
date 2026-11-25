@@ -514,7 +514,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         }
 
         // Try to parse message as event
-        const event = parseMessageAsEvent(msg);
+        const event = msg.role === 'event' && msg.content.type === 'input-error' ? msg.content : parseMessageAsEvent(msg);
         if (event) {
             if (ENABLE_LOGGING) {
                 console.log(`[REDUCER] Converting message ${msg.id} to event:`, event);

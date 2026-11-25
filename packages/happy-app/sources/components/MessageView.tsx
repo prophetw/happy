@@ -416,6 +416,13 @@ function AgentEventBlock(props: {
       </View>
     );
   }
+  if (props.event.type === 'input-error') {
+    return (
+      <View style={styles.agentEventContainer}>
+        <Text accessibilityRole="alert" style={[styles.agentEventText, styles.sendErrorText]}>{props.event.message}</Text>
+      </View>
+    );
+  }
   if (props.event.type === 'limit-reached') {
     const formatTime = (timestamp: number): string => {
       try {

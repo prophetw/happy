@@ -50,7 +50,7 @@ export class SessionEncryption {
                     content: null,
                     createdAt: message.createdAt,
                 };
-                this.cache.setCachedMessage(message.id, results[i]!);
+                this.cache.setCachedMessage(message.id, results[i]!, 0);
             }
         }
 
@@ -74,7 +74,7 @@ export class SessionEncryption {
                         content: decryptedData,
                         createdAt: message.createdAt,
                     };
-                    this.cache.setCachedMessage(message.id, result);
+                    this.cache.setCachedMessage(message.id, result, message.content.c.length);
                     results[index] = result;
                 } else {
                     const result: DecryptedMessage = {
@@ -84,7 +84,7 @@ export class SessionEncryption {
                         content: null,
                         createdAt: message.createdAt,
                     };
-                    this.cache.setCachedMessage(message.id, result);
+                    this.cache.setCachedMessage(message.id, result, 0);
                     results[index] = result;
                 }
             }

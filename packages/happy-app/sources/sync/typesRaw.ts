@@ -38,6 +38,10 @@ const agentEventSchema = z.discriminatedUnion('type', [z.object({
     type: z.literal('message'),
     message: z.string(),
 }), z.object({
+    type: z.literal('input-error'),
+    message: z.string(),
+    ref: z.string().optional(),
+}), z.object({
     type: z.literal('limit-reached'),
     endsAt: z.number(),
 }), z.object({
@@ -66,6 +70,8 @@ const sessionTextEventSchema = z.object({
 const sessionServiceMessageEventSchema = z.object({
     t: z.literal('service'),
     text: z.string(),
+    kind: z.literal('input-error').optional(),
+    ref: z.string().optional(),
 });
 
 const sessionToolCallStartEventSchema = z.object({
@@ -152,6 +158,11 @@ const sessionUserMessageRejectedEventSchema = z.object({
     reason: z.string(),
 });
 
+const sessionRelayMessageRejectedEventSchema = z.object({
+    t: z.literal('relay-message-too-large'),
+    limitBytes: z.number().int().positive().optional(),
+});
+
 const sessionEventSchema = z.discriminatedUnion('t', [
     sessionTextEventSchema,
     sessionServiceMessageEventSchema,
@@ -165,6 +176,7 @@ const sessionEventSchema = z.discriminatedUnion('t', [
     sessionStopEventSchema,
     sessionUserMessageAcceptedEventSchema,
     sessionUserMessageRejectedEventSchema,
+    sessionRelayMessageRejectedEventSchema,
 ]);
 
 // Who wrote a user-role envelope, when the producer knows. Travels inside the
@@ -199,6 +211,9 @@ const sessionEnvelopeSchema = z.object({
     usage: usageDataSchema.optional(),
     ev: sessionEventSchema,
 }).superRefine((envelope, ctx) => {
+    if (envelope.ev.t === 'relay-message-too-large' && envelope.role !== 'user') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Relay send errors must use role "user"', path: ['role'] });
+    }
     if (envelope.ev.t === 'service' && envelope.role !== 'agent') {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -641,12 +656,47 @@ export type NormalizedMessage = ({
     author?: SessionAuthor,
 };
 
+function readInputErrorNotice(envelope: SessionEnvelope): string | undefined {
+    if (envelope.role !== 'agent' || envelope.ev.t !== 'service' || envelope.subagent) return;
+    const { text, kind } = envelope.ev;
+    if (kind === 'input-error' && text.trim()) return text;
+    if (envelope.turn) return;
+    // Legacy Hosted Dot emitted these exact notices without a turn or message ref.
+    if (/^input-rejected:[1-9]\d*$/.test(envelope.id) && text === '这条消息超过12000字符，请拆分后发送。') {
+        return '这条消息超过发送时的限制（12,000 个 UTF-16 码元）。请缩短后重新发送。';
+    }
+    if (text === 'Codex 执行进程意外退出，正在核对原会话；不会自动重发未确认的输入。') {
+        return 'Dot 的执行进程意外退出。请在连接恢复后核对对话，再决定是否重发。';
+    }
+    if (text.startsWith('模型执行失败：') && text.endsWith('；没有切换模型或自动重试。')) {
+        return '上一次模型执行失败。请重试；如果再次失败，请缩短消息或开启新的对话。';
+    }
+}
+
 function normalizeSessionEnvelope(
     envelope: SessionEnvelope,
     localId: string | null,
     createdAt: number,
     meta: MessageMeta | undefined,
 ): NormalizedMessage | null {
+    const inputError = readInputErrorNotice(envelope);
+    if (inputError) {
+        const ref = envelope.ev.t === 'service' && envelope.ev.kind === 'input-error' ? envelope.ev.ref : undefined;
+        return {
+            id: envelope.id, localId, createdAt: envelope.time, role: 'event', isSidechain: false,
+            content: { type: 'input-error', message: inputError, ref }, meta,
+        };
+    }
+    if (envelope.ev.t === 'relay-message-too-large') {
+        const bytes = envelope.ev.limitBytes;
+        const message = bytes === undefined
+            ? 'Relay 拒收了这条消息，因为加密后的请求超过了服务器允许的大小。请缩短后重新发送。'
+            : `这条消息加密后的请求超过了 Relay 的 ${(bytes / (1024 * 1024)).toLocaleString()} MiB 请求体上限。请缩短后重新发送。`;
+        return {
+            id: envelope.id, localId, createdAt: envelope.time, role: 'event', isSidechain: false,
+            content: { type: 'input-error', message }, meta,
+        };
+    }
     const isUsageOnlyServiceEvent = envelope.role === 'agent'
         && envelope.ev.t === 'service'
         && envelope.ev.text.trim().length === 0

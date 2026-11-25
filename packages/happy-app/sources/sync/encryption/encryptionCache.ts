@@ -1,5 +1,6 @@
 import { AgentState, Metadata, MachineMetadata } from '../storageTypes';
 import { DecryptedMessage } from '../storageTypes';
+import { SESSION_MESSAGE_BATCH_BYTES } from '@slopus/happy-wire';
 
 interface CacheEntry<T> {
     data: T;
@@ -14,7 +15,8 @@ interface CacheEntry<T> {
 export class EncryptionCache {
     private agentStateCache = new Map<string, CacheEntry<AgentState>>();
     private metadataCache = new Map<string, CacheEntry<Metadata>>();
-    private messageCache = new Map<string, CacheEntry<DecryptedMessage>>();
+    private messageCache = new Map<string, { data: DecryptedMessage; bytes: number }>();
+    private messageCacheBytes = 0;
     private machineMetadataCache = new Map<string, CacheEntry<MachineMetadata>>();
     private daemonStateCache = new Map<string, CacheEntry<any>>();
     
@@ -85,7 +87,9 @@ export class EncryptionCache {
     getCachedMessage(messageId: string): DecryptedMessage | null {
         const entry = this.messageCache.get(messageId);
         if (entry) {
-            entry.accessTime = Date.now();
+            // Move the hit to the recent end of the message LRU.
+            this.messageCache.delete(messageId);
+            this.messageCache.set(messageId, entry);
             return entry.data;
         }
         return null;
@@ -94,14 +98,23 @@ export class EncryptionCache {
     /**
      * Cache decrypted message
      */
-    setCachedMessage(messageId: string, data: DecryptedMessage): void {
-        this.messageCache.set(messageId, {
-            data,
-            accessTime: Date.now()
-        });
-        
-        // Evict if over limit
-        this.evictOldest(this.messageCache, this.maxMessages);
+    setCachedMessage(messageId: string, data: DecryptedMessage, encryptedBytes: number): void {
+        // Keep roughly one page's worth of encrypted payload as cache weight.
+        // Larger rows remain available from the transcript and Relay.
+        if (encryptedBytes > SESSION_MESSAGE_BATCH_BYTES) return;
+        const before = this.messageCache.get(messageId);
+        if (before) {
+            this.messageCache.delete(messageId);
+            this.messageCacheBytes -= before.bytes;
+        }
+        while (this.messageCache.size >= this.maxMessages
+            || this.messageCacheBytes + encryptedBytes > SESSION_MESSAGE_BATCH_BYTES) {
+            const oldest = this.messageCache.keys().next().value!;
+            this.messageCacheBytes -= this.messageCache.get(oldest)!.bytes;
+            this.messageCache.delete(oldest);
+        }
+        this.messageCache.set(messageId, { data, bytes: encryptedBytes });
+        this.messageCacheBytes += encryptedBytes;
     }
 
     /**
@@ -203,6 +216,7 @@ export class EncryptionCache {
         this.agentStateCache.clear();
         this.metadataCache.clear();
         this.messageCache.clear();
+        this.messageCacheBytes = 0;
         this.machineMetadataCache.clear();
         this.daemonStateCache.clear();
     }
