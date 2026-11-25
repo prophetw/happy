@@ -14,5 +14,6 @@ CapabilityBoundingSet=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
 AmbientCapabilities=CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
 SystemCallFilter=~ptrace process_vm_readv process_vm_writev
 RestrictAddressFamilies=AF_UNIX
-ProtectSystem=strict
+# A read-only bind of /home would itself look like a workspace mount.
+ProtectSystem=full
 UMask=0077
