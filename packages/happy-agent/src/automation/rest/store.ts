@@ -5,6 +5,12 @@ import { hash } from '../journal';
 import { ApiError } from './schema';
 import { privateDirectory, privateRead } from './privateFs';
 
+/** Windows cannot fsync a directory handle (EPERM); POSIX needs it for rename durability. */
+function syncDirectory(path: string) {
+    if (process.platform === 'win32') return;
+    const dir = openSync(path, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
+}
+
 /** Non-secret metadata only. Corruption never becomes an empty/default grant store. */
 export class MetadataStore {
     constructor(private directory: string, private maxBytes = 1024 * 1024, create = true) { privateDirectory(directory, create); }
@@ -32,7 +38,7 @@ export class MetadataStore {
         privateDirectory(this.directory);
         try { unlinkSync(this.path(key)); }
         catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw new ApiError('STORE_UNAVAILABLE', 503); }
-        const dir = openSync(this.directory, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
+        syncDirectory(this.directory);
     }
     pruneExpired(now: number) {
         for (const record of this.list<{ expiresAt: number }>('proof:')) {
@@ -51,6 +57,6 @@ export class MetadataStore {
         const fd = openSync(target, 'wx', 0o600);
         try { writeFileSync(fd, JSON.stringify({ key, value })); fsyncSync(fd); } finally { closeSync(fd); }
         if (!exclusive) renameSync(target, path);
-        const dir = openSync(this.directory, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
+        syncDirectory(this.directory);
     }
 }
