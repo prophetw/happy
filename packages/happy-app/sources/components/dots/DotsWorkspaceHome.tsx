@@ -16,6 +16,7 @@ import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation
 import { useDotsWorkspace } from './useDotsWorkspace';
 import { useDotDispatchOptions } from './useDotDispatchOptions';
 import { DotDispatchDefaultsFields } from './DotDispatchDefaultsFields';
+import { DotRestartControl } from './DotRestartControl';
 import type { Session } from '@/sync/storageTypes';
 import { readTestloopDotsMetadata, testloopDotsLimitsText, testloopWorkStatus, type TestloopDot } from '@/sync/testloopDots';
 
@@ -260,6 +261,8 @@ export function DotsWorkspacePanel({ session, workspaceId, active, topInset = 0 
                     <Text style={s.muted}>{editing
                         ? '保存后从宿主同步完成的下一轮起使用新职责和模型设置。旧宿主调整长期职责时需停机维护。'
                         : '创建不消耗模型额度。新 Dot 默认未授权项目，创建后请在「连接与授权」中选择可执行项目。'}</Text>
+                    {editing?.settings && <DotRestartControl key={editing.sessionId} workspaceId={workspaceId} dot={editing}
+                        disabled={!data.ready || Boolean(formPending) || deleteConfirming} />}
                     {editing && <View style={{ gap: 10, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.divider }}>
                         <Text style={s.heading}>危险操作</Text>
                         <Text style={s.muted}>删除会逻辑停用 Dot 并解除本地 REST/MCP 绑定；不会删除 Happy 会话、旧聊天或历史审计。</Text>

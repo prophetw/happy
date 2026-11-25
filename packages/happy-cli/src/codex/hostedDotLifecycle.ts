@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, HOSTED_INSTRUCTION_FILE, HostedInstructionSettings, hash, HostedDotJournal, savePrivate } from './hostedDotState';
 import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend } from './hostedDotStorage';
 import { withLockedHostedAdmission } from './hostedDotAdmission';
+import { hostedThreadHasDispatchedInput, isHostedDotRestart } from './hostedDotState';
 
 export const HOSTED_DOT_LIFECYCLE_VERSION = 1 as const;
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -227,8 +228,10 @@ export function startHostedDot(raw: { config: HostedDotConfig; entrypoint: strin
         // projects the ledger's latest instruction separately, as it does model settings.
         const config = old ?? desired;
         let status = statusHostedDot(b);
-        const pendingControl = join(b.directory, 'control.json');
-        if (present(pendingControl) && !status.controls.includes(read(pendingControl).id)) throw Error('hosted_lifecycle_control_pending');
+        const controlFile = join(b.directory, 'control.json');
+        const control = present(controlFile) ? read(controlFile) : undefined;
+        const pending = control && !status.controls.includes(control.id);
+        if (pending && !isHostedDotRestart(control)) throw Error('hosted_lifecycle_control_pending');
         if (status.status === 'blocked' && !recoverLocked(b).recovered) throw Error('hosted_lifecycle_recovery_blocked');
         const instructionFile = join(b.directory, HOSTED_INSTRUCTION_FILE);
         if (present(instructionFile) || config.instruction !== desired.instruction) {
@@ -244,6 +247,15 @@ export function startHostedDot(raw: { config: HostedDotConfig; entrypoint: strin
         if (journalFor(b, configFor(b))?.bootstrap?.stage === 'injecting') throw Error('hosted_bootstrap_unconfirmed');
         const runtimeRelease = lock(join(b.directory, 'runtime.lock'), 0);
         try {
+            if (pending) {
+                // A producer can exit before acknowledging the request. Under the
+                // runtime lock, acknowledge that exit and resume the same thread.
+                const state = journalFor(b, old);
+                if (!state?.threadId || !hostedThreadHasDispatchedInput(state)) throw Error('hosted_restart_thread_unavailable');
+                state.controls.push(control.id);
+                state.status = 'stopped';
+                saveHostedStorage(join(b.directory, 'state.json'), state);
+            }
             safePath(config.codexHome); mkdirSync(config.codexHome, { recursive: true, mode: 0o700 });
             if (raw.authFile && !present(join(config.codexHome, 'auth.json'))) write(join(config.codexHome, 'auth.json'), read(raw.authFile, 1024 * 1024));
             write(join(b.directory, 'settings.json'), settingsSchema.parse(raw.settings ?? { model: config.model, effort: config.effort }));
@@ -262,6 +274,33 @@ export function startHostedDot(raw: { config: HostedDotConfig; entrypoint: strin
         return statusHostedDot(b);
     } finally { release(); }
 }
+/** Queue one graceful stop and report progress using the existing control receipt. */
+export function restartHostedDot(raw: HostedDotBinding & { requestId: string }) {
+    const b = binding({ directory: raw.directory, dotId: raw.dotId, sessionId: raw.sessionId });
+    const id = 'restart-' + z.uuid().parse(raw.requestId).toLowerCase();
+    const release = lock(join(b.directory, 'control.lock'), 500);
+    try {
+        const releaseLaunch = lock(join(b.directory, 'launch.lock'), 500);
+        try {
+            unfenced(b);
+            const status = statusHostedDot(b), file = join(b.directory, 'control.json');
+            if (status.status === 'blocked') throw Error('hosted_restart_runtime_blocked');
+            const ready = status.running && ['ready', 'running'].includes(status.status);
+            if (status.controls.includes(id)) return ready ? 'ready' as const : 'restarting' as const;
+            const current = present(file) ? read(file) : undefined;
+            if (current?.id === id) return status.status === 'running' ? 'waiting' as const : 'restarting' as const;
+            if (current && !status.controls.includes(current.id)) throw Error('hosted_lifecycle_control_pending');
+            if (!ready || !status.owner) throw Error('hosted_restart_runtime_unavailable');
+            const state = journalFor(b, configFor(b));
+            if (!state?.idleRestart || !state.authority || hash(state.authority.producer) !== hash(status.owner))
+                throw Error('hosted_restart_unsupported');
+            if (!state.threadId || !hostedThreadHasDispatchedInput(state)) throw Error('hosted_restart_thread_unavailable');
+            write(file, { id, action: 'stop' });
+            return status.status === 'running' ? 'waiting' as const : 'restarting' as const;
+        } finally { releaseLaunch(); }
+    } finally { release(); }
+}
+
 export async function stopHostedDot(raw: HostedDotBinding & { requestId: string; action?: 'stop' | 'delete'; timeoutMs?: number }) {
     const b = binding({ directory: raw.directory, dotId: raw.dotId, sessionId: raw.sessionId });
     const requestId = z.string().min(1).max(200).parse(raw.requestId), action = z.enum(['stop', 'delete']).parse(raw.action ?? 'stop');

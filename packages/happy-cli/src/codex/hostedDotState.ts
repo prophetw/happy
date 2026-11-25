@@ -35,6 +35,7 @@ export function hostedProducerIdentity(): z.infer<typeof HostedAuthorityMetadata
 }
 /** @internal Full journal validation shared by Happy-owned lifecycle operations. */
 export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.optional(), instructionSettings: z.literal(true).optional(),
+    idleRestart: z.literal(true).optional(),
     version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),
     threadId: z.string().nullable(), creating: z.boolean(), afterSeq: z.number().int().nonnegative(),
     retiredUserSeq: z.number().int().positive().optional(),
@@ -44,6 +45,14 @@ export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.op
     outputReceipts: z.array(z.string()).default([]),
     controls: z.array(z.string()).default([]) });
 export type HostedState = z.infer<typeof HostedDotJournal>;
+export function hostedThreadHasDispatchedInput(state: HostedState): boolean {
+    return state.inputs.some(row => row.epoch === state.epoch && row.beforeTurns !== undefined)
+        || (state.bootstrap?.stage === 'applied' && state.bootstrap.threadId === state.threadId);
+}
+// Keep restart requests in the existing stop control format.
+export function isHostedDotRestart(control: { id?: unknown; action?: unknown }): boolean {
+    return control.action === 'stop' && typeof control.id === 'string' && /^restart-[0-9a-f-]{36}$/.test(control.id);
+}
 /** Dispatch snapshots are recovery evidence only while an input is unresolved.
  * Keep an empty array for settled inputs: its presence is the v1-compatible
  * durable "was dispatched" marker used to avoid replacing a nonempty thread.

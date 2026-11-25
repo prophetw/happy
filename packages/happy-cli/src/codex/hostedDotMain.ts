@@ -1,6 +1,7 @@
 import { checkpointHostedUserInputs, hostedUnboundRecoveryTurns } from './hostedInputCheckpoint';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
 import { createHostedAdmission } from './hostedDotAdmission';
+import { hostedThreadHasDispatchedInput, isHostedDotRestart } from './hostedDotState';
 import { HostedOutputDelivery } from './hostedOutputDelivery';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -82,6 +83,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     try {
         state = loadHostedState(file, config); producer = hostedProducerIdentity();
         state.instructionSettings = true;
+        state.idleRestart = true;
         admission = createHostedAdmission({ directory: dir, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch }, producer);
     } catch (error) { closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop); throw error; }
     const publishAuthority = createHostedAuthorityPublisher(file, state, producer);
@@ -133,8 +135,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
         }
     };
     // A thread that never dispatched input has no rollout, so Codex cannot resume it.
-    const threadHasDispatchedInput = () => state.inputs.some(row => row.epoch === state.epoch && row.beforeTurns !== undefined)
-        || (state.bootstrap?.stage === 'applied' && state.bootstrap.threadId === state.threadId);
+    const threadHasDispatchedInput = () => hostedThreadHasDispatchedInput(state);
     const taskGateway = () => {
         const path = join(dir, 'task-gateway.json');
         if (!existsSync(path)) return {};
@@ -565,9 +566,13 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                 const control = readPrivate(controlFile);
                 if (!state.controls.includes(control.id)) {
                     if (!['stop', 'delete'].includes(control.action) || typeof control.id !== 'string') throw new Error('hosted_control_invalid');
-                    if (active) { await client.abortTurnWithFallback({ gracePeriodMs: 3000, forceRestartOnTimeout: true }); await active; }
-                    stop = true;
-                    state.controls.push(control.id); persist();
+                    const restart = isHostedDotRestart(control);
+                    if (!restart || !active && state.status === 'ready') {
+                        if (active) { await client.abortTurnWithFallback({ gracePeriodMs: 3000, forceRestartOnTimeout: true }); await active; }
+                        stop = true;
+                        if (restart) state.status = 'stopped';
+                        state.controls.push(control.id); persist();
+                    }
                 }
             }
             if (stop) break;
