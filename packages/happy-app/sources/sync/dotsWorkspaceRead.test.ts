@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('./apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
-import { readDotsWorkspace } from './dotsWorkspaceRead';
+import { readDotDispatchOptions, readDotsWorkspace } from './dotsWorkspaceRead';
 const workspaceId = '11111111-1111-4111-8111-111111111111', requestId = '22222222-2222-4222-8222-222222222222';
 const request = { schemaVersion: 1 as const, workspaceId, requestId, action: 'list' as const };
 const snapshot = { schemaVersion: 1, workspaceId, requestId, revision: 1, ok: true, dots: [] };
@@ -14,6 +14,21 @@ it('validates the encrypted read response and original request/workspace identit
     for (const patch of [{ workspaceId: requestId }, { requestId: workspaceId }, { ok: false }, { dots: 'bad' }]) {
         mocks.rpc.mockResolvedValue({ ...snapshot, ...patch });
         await expect(readDotsWorkspace('workspace-session', request)).rejects.toThrow('dots_read_unconfirmed');
+    }
+});
+
+it('accepts a dispatch catalog only for the requested Dot, connection and machine', async () => {
+    const dotId = '33333333-3333-4333-8333-333333333333';
+    const target = { connectionID: 'connection', machineID: 'machine' };
+    const response = { schemaVersion: 1, workspaceId, requestId, dotId, ok: true, target,
+        catalog: { defaultAgent: 'codex', agents: [] } };
+    const read = () => readDotDispatchOptions('workspace-session', workspaceId, requestId, dotId, target);
+    mocks.rpc.mockResolvedValue(response);
+    await expect(read()).resolves.toEqual(response);
+    for (const patch of [{ dotId: requestId }, { requestId: dotId }, { workspaceId: dotId },
+        { target: { ...target, connectionID: 'other' } }, { target: { ...target, machineID: 'other' } }]) {
+        mocks.rpc.mockResolvedValue({ ...response, ...patch });
+        await expect(read()).rejects.toThrow('dots_dispatch_read_unconfirmed');
     }
 });
 it('rejects inspect responses missing the requested detail', async () => {

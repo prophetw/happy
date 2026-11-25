@@ -29,6 +29,7 @@ export function NativeOptionsPicker({
         <View style={styles.container}>
             <View pointerEvents="none">{children}</View>
             <Picker
+                accessibilityLabel={title}
                 selectedValue={selectedKey ?? undefined}
                 onValueChange={(value) => {
                     if (typeof value === 'string' && value !== selectedKey) onSelect(value);

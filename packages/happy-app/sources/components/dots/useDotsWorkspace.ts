@@ -6,7 +6,7 @@ import { useSessionVisibility } from '@/hooks/useSessionVisibility';
 import { storage, useRealtimeStatus, useSessionMessages, useSocketStatus } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { sessionArchiveTestloopDot, sessionUpdateDotIdentity } from '@/sync/ops';
-import { readDotsWorkspace } from '@/sync/dotsWorkspaceRead';
+import { readDotDispatchOptions, readDotsWorkspace, type ReadDotDispatchOptions } from '@/sync/dotsWorkspaceRead';
 import { isTerminalDotsWorkspaceResult, loadDotsWorkspaceCommandStates, readDotsWorkspaceCommandReceipt, requestDotsWorkspaceCommand,
     saveDotsWorkspaceCommand, settleDotsWorkspaceCommand, subscribeDotsWorkspaceCommand, type DotsWorkspaceCommandState } from '@/sync/dotsWorkspaceCommand';
 import { getServerUrl } from '@/sync/serverConfig';
@@ -116,6 +116,12 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
     }, [scope, sessionId, active, sameAccount, validBinding, reload, restoreJournal]));
 
     const ready = readyScope === scope && validBinding();
+    const loadDispatchOptions = React.useCallback<ReadDotDispatchOptions>(async (dotId, target) => {
+        if (!ready || !active || !validBinding()) throw new Error('dots_dispatch_read_unconfirmed');
+        const result = await readDotDispatchOptions(sessionId, workspaceId, randomUUID(), dotId, target);
+        if (!validBinding()) throw new Error('dots_dispatch_read_unconfirmed');
+        return result;
+    }, [sessionId, workspaceId, active, ready, validBinding]);
     const realtime = useRealtimeStatus();
     const { status: socketStatus } = useSocketStatus();
     useSessionVisibility(sessionId, active && ready, Boolean(detailDotId), realtime);
@@ -406,6 +412,6 @@ export function useDotsWorkspace(sessionId: string, workspaceId: string, active:
         notice: feedback.findLast(result => result.notice)?.notice ?? null,
         archiveError: ready ? Object.values(archiveErrors)[0] ?? null : null,
         archivePending: ready && archivePendingIds.length > 0,
-        submit, refresh, checkReceipt, retryArchive,
+        submit, refresh, checkReceipt, retryArchive, loadDispatchOptions,
     };
 }

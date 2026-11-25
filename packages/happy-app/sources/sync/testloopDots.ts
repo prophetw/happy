@@ -20,6 +20,16 @@ export function readTestloopDotsMetadata(metadata: unknown): TestloopDotsMetadat
 const launchID = z.string().regex(/^[A-Za-z0-9_.:\[\]-]{1,128}$/);
 const launchModel = z.string().regex(/^[A-Za-z0-9_.:\[\]() -]{1,256}$/);
 export const dotDispatchDefaults = z.object({ agent: launchID, model: launchModel.optional(), effort: launchID.optional() }).strict();
+const dispatchTargetID = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+export const dotDispatchTarget = z.object({ connectionID: dispatchTargetID, machineID: dispatchTargetID }).strict();
+export type DotDispatchTarget = z.infer<typeof dotDispatchTarget>;
+export const dotDispatchCatalog = z.object({
+    defaultAgent: launchID,
+    agents: z.array(z.object({
+        agent: launchID, models: z.array(launchModel).max(256), efforts: z.array(launchID).max(32),
+        defaultModel: launchModel, defaultEffort: launchID.or(z.literal('')),
+    })).max(8),
+});
 const dispatchOptions = dotDispatchDefaults.partial().extend({ confirmed: z.boolean() });
 const modelSettings = z.object({ agent: z.literal('codex'), model: z.string().min(1), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) }).strict();
 export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
@@ -27,7 +37,8 @@ export const TestloopDotsRequestSchema = z.discriminatedUnion('action', [
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('create'),
         name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional() }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('update'), dotId: uuid,
-        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional(), dispatchDefaults: dotDispatchDefaults.nullable().optional() }).strict(),
+        name: z.string().trim().min(1).max(80), instruction: z.string().trim().min(1).max(2000), settings: modelSettings.optional(),
+        dispatchDefaults: dotDispatchDefaults.nullable().optional(), dispatchTarget: dotDispatchTarget.optional() }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('clear'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('delete'), dotId: uuid }).strict(),
     z.object({ schemaVersion: z.literal(1), requestId: uuid, action: z.literal('inspect'), dotId: uuid }).strict(),

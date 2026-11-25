@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ confirm: vi.fn(), submit: vi.fn(), navigate: vi.fn(), uuid: vi.fn(), data: null as any }));
+const mocks = vi.hoisted(() => ({ confirm: vi.fn(), submit: vi.fn(), navigate: vi.fn(), uuid: vi.fn(), loadDispatchOptions: vi.fn(), data: null as any }));
 const dot = { id: '55555555-5555-4555-8555-555555555555', name: '写作助理', instruction: '整理通知',
     sessionId: 'dot-session', status: 'active' as const };
 const deleteRequest = { schemaVersion: 1 as const, requestId: '33333333-3333-4333-8333-333333333333',
@@ -38,11 +38,15 @@ vi.mock('@/sync/testloopDotsNavigation', () => ({ createTestloopDotsNavigationGu
 }) }));
 vi.mock('./DotsConnectionsPanel', () => ({ DotsConnectionsPanel: () => null }));
 vi.mock('./DotsWorkspacesPanel', () => ({ DotsWorkspacesPanel: () => null }));
+vi.mock('@/components/NativeOptionsPicker', () => ({
+    NativeOptionsPicker: (props: any) => React.createElement('NativeOptionsPicker', props, props.children),
+}));
+vi.mock('@/components/PickerSheet', () => ({ PickerSheet: () => null, PickerSheetOption: () => null }));
 vi.mock('@/text', () => ({ t: (key:string) => key==='workspaces.title'?'工作区':key }));
 vi.mock('./useDotsWorkspace', () => ({ useDotsWorkspace: () => ({
     ready: true, pendingCommands: [], pendingFor: (dotId?: string) => mocks.data?.pending?.request.dotId === dotId ? mocks.data?.pending : undefined,
     error: null, errorFor: () => mocks.data?.error, notice: null, archiveError: null, archivePending: false,
-    submit: mocks.submit, refresh: vi.fn(), checkReceipt: vi.fn(), retryArchive: vi.fn(),
+    submit: mocks.submit, refresh: vi.fn(), checkReceipt: vi.fn(), retryArchive: vi.fn(), loadDispatchOptions: mocks.loadDispatchOptions,
     projection: {
         snapshot: { schemaVersion: 1, workspaceId: 'workspace-id', revision: 1, requestId: 'list-request', ok: true, dots: [dot] },
         receipts: {}, deletions: {}, details: {}, pendingRequests: [],
@@ -67,6 +71,7 @@ beforeEach(() => {
     mocks.submit.mockReset();
     mocks.navigate.mockReset();
     mocks.uuid.mockReset().mockReturnValue(deleteRequest.requestId);
+    mocks.loadDispatchOptions.mockReset().mockResolvedValue({ targets: [] });
 });
 
 const press = async (node: any) => act(async () => node.props.onPress());
@@ -261,22 +266,38 @@ it('edits and resets per-Dot dispatch defaults without requiring the chat model 
         dispatchDefaults: { agent: 'codex', model: 'dispatch-model', effort: 'high' } };
     const projection = { snapshot: { workspaceId: 'workspace-id', revision: 1, ok: true, dots: [configuredDot] },
         receipts: {}, deletions: {}, details: {}, pendingRequests: [] };
+    const target = { connectionID: 'connection-a', machineID: 'machine-a' };
+    mocks.loadDispatchOptions.mockImplementation(async (_dotId, selection) => selection
+        ? { catalog: { defaultAgent: 'codex', agents: [
+            { agent: 'codex', models: ['dispatch-model'], efforts: ['high', 'max'], defaultModel: 'dispatch-model', defaultEffort: 'high' },
+            { agent: 'claude', models: ['other-model'], efforts: [], defaultModel: 'other-model', defaultEffort: '' },
+        ] } }
+        : { targets: [{ ...target, name: 'Fixture' }] });
     mocks.data = { projection };
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(React.createElement(DotsWorkspacePanel, {
         session: { id: 'workspace-session' } as any, workspaceId: 'workspace-id', active: true,
     })); });
     await press(button(renderer, '管理 写作助理'));
-    const input = (label: string) => renderer.root.findAllByType('TextInput').find((n: any) => n.props.accessibilityLabel === label)!;
-    expect(input('派活模型').props.value).toBe('dispatch-model');
-    await act(async () => input('派活推理强度').props.onChangeText('max'));
+    const pick = async (title: string, key: string) => act(async () => renderer.root.findAllByType('NativeOptionsPicker')
+        .find((node: any) => node.props.title === title)!.props.onSelect(key));
+    expect(button(renderer, '派活模型').props.accessibilityValue.text).toBe('dispatch-model');
+    await pick('派活推理强度', 'foreign');
+    await press(button(renderer, '保存 Dot'));
+    expect(mocks.submit).not.toHaveBeenCalled();
+    await pick('派活执行器', 'claude');
+    expect(button(renderer, '派活模型').props.accessibilityValue.text).toBe('已失效 · dispatch-model');
+    await press(button(renderer, '保存 Dot'));
+    expect(mocks.submit).not.toHaveBeenCalled();
+    await pick('派活执行器', 'codex');
+    await pick('派活推理强度', 'max');
     expect(button(renderer, '保存 Dot').props.disabled).toBe(false);
     await press(button(renderer, '保存 Dot'));
     expect(mocks.submit).toHaveBeenLastCalledWith({ schemaVersion: 1, requestId: deleteRequest.requestId,
         action: 'update', dotId: dot.id, name: dot.name, instruction: dot.instruction,
-        dispatchDefaults: { agent: 'codex', model: 'dispatch-model', effort: 'max' } });
+        dispatchDefaults: { agent: 'codex', model: 'dispatch-model', effort: 'max' }, dispatchTarget: target });
     await press(button(renderer, '恢复派活默认值'));
-    expect(input('派活模型').props.value).toBe('');
+    expect(button(renderer, '派活模型').props.accessibilityValue.text).toBe('系统默认 · dispatch-model');
     await press(button(renderer, '保存 Dot'));
     expect(mocks.submit).toHaveBeenLastCalledWith({ schemaVersion: 1, requestId: deleteRequest.requestId,
         action: 'update', dotId: dot.id, name: dot.name, instruction: dot.instruction, dispatchDefaults: null });
