@@ -187,7 +187,7 @@ const created = await rest("POST", "/tasks", {
 // 超时先 GET /requests/job_demo_create；不能换新 ID 盲目重派。
 ```
 
-幂等命名空间仍为 client/grant/requestID，与 bearer 文本、请求或进程重连无关。取消依旧先返回 cancel_requested，必须查询 receipt/status 的实际 stopped；没有退出证据时为 unknown。撤销复用 `DELETE /connections/{id}`，会中断等待请求并保留 revoked 记录；永久清理由 `DELETE /connections/{id}/record` 完成，先建立持久撤销屏障，再清服务令牌摘要和连接。两者都由 worker 每次底层动作重新检查，不会自动停止已开始的 OS 任务。到期、身份变更、禁用、断连和元数据损坏均失败关闭。摘要记录损坏会使认证、readiness和启动失败，不作为“未发行”重新生成。审计只记固定路由/身份/状态，投影额外脱敏裸服务令牌。
+幂等命名空间仍为 client/grant/requestID，与 bearer 文本、请求或进程重连无关。取消依旧先返回 cancel_requested，必须查询 receipt/status 的实际 stopped；没有退出证据时为 unknown。撤销复用 `DELETE /connections/{id}`，会中断等待请求并保留 revoked 记录；永久清理由 `DELETE /connections/{id}/record` 完成，先建立持久撤销屏障，再清服务令牌摘要和连接。两者都由 worker 每次底层动作重新检查，不会自动停止已开始的 OS 任务。到期、身份变更、禁用、断连和元数据损坏均失败关闭。摘要记录损坏会使认证、readiness和启动失败，不作为“未发行”重新生成。审计使用固定路由、身份与状态，交办的关联信息见下文；投影额外脱敏裸服务令牌。
 
 ### 本地验证和兼容性
 
@@ -264,6 +264,10 @@ Worker 重启后，旧 daemon 会话的 CLI `status.process` 仍可能是 `unkno
 
 网关确定 worker 离线时返回 503 WORKER_UNAVAILABLE、dispatch:not_sent，不排离线任务；可能已经派发而超时，变更返回 202 + UNAVAILABLE_OR_UNKNOWN，必须用原 requestID 查询。OS spawn 与最终回执之间崩溃留下 unknown，不承诺跨 OS/磁盘恰好一次。查无 receiver 回执为 unavailable，绝不以新 requestID 隐藏不确定窗口。
 
+创建及回查可返回 `ok: true` 和 `data.errorCode`。`data.requestID` 与 `data.taskID` 都是原创建 ID，`safeToRetrySameRequestID` 为 `false`。`failed` 表示 daemon 确定本次没有启动 (`SPAWN_NOT_STARTED`)，或已从自身拉起的子进程收到退出前未进入 Relay 会话请求的证明 (`SPAWN_EXITED_BEFORE_SESSION_REQUEST`)。这只结束原创建，保留原 claim 和去重记录。
+
+`unknown` 的原因包括等待会话回调 `SPAWN_REGISTRATION_PENDING`、子进程已退出但 Relay 仍可能已接受请求 `SPAWN_EXITED_UNVERIFIED`，以及 daemon 重启或其他原因缺少证据 `SPAWN_EVIDENCE_UNAVAILABLE`。旧 `SPAWN_NOT_CONFIRMED` 也保持 `unknown`。守护进程按原创建的绑定和实际启动 PID 接受迟到的已加密会话回调，将原回执持久化为 `confirmed` 后才向子进程回显该绑定。使用共享离线重连的后端在恢复真实会话时也会发出回调。混版时旧 daemon 的普通 200 响应缺少匹配绑定，子进程会在既有时限内重试回调。混版、收到停止信号、回调超时或 Relay 请求回包丢失属于需要继续按原 ID 核对的情况。
+
 结果为 `attribution:session_turn_only`，不会把其他 UI 插入的 turn 误归属于某个 send requestID。result 是分页证据，ready 仅表示该页观察到指定 turn 的终止事件；完整文本要累计分页。文本每条最多 16000 字符并标记 truncated；工具参数/结果、reasoning、任意 metadata、key 不返回，被省略消息仍推进 seq。
 
 401 区分缺少/无效 proof；403 区分 scope、到期、撤销和绑定变更；409 区分 payload 冲突、批准或签名重放；426 表示旧协议；429 限流；413 过大请求；503 是服务不可用/读取结果不确定。无底层 HTTP/socket 错误对象回传。
@@ -315,7 +319,7 @@ MCP 固定工具：happy_machines、happy_projects、happy_sessions、happy_crea
 - 服务端只保存非秘密 grant/intent/指纹与过期 nonce；目录 0700、文件 0600，fsync 和原子替换。任务文本/结果不持久明文。锁目录只允许一个网关进程；崩溃留下的 owner lock 不自动抢占，需先核验旧进程再由操作方处理。
 - nonce 清理与限流惰性进行，没有后台维护进程。grant/receipt 不自动清空，保留幂等历史。注册表公钥轮换不允许继续使用旧 grant。
 - 同站点 owner 请求需要正确 Origin 或 same-origin Fetch Metadata。默认仍只接受固定主 origin；确需本地 Web 开发时，可在 host 配置 `additionalBrowserOrigins` 显式加入最多16个规范化 HTTPS 或 loopback HTTP Origin（例如 `http://localhost:8989`），不接受通配符、路径、凭据、query/hash、重复项或非 loopback HTTP。额外 Origin 的 `/happy-control/v1/` 预检返回空204，固定允许 GET/POST/DELETE 与 Authorization/Content-Type，响应只回显该精确 Origin 并带 `Vary: Origin`；不启用 credentialed CORS。预检不执行 owner 鉴权或变更，所有实际 owner 请求仍逐个验证 Happy Bearer。automation API 必须独立 proof；不使用 cookie 认证。普通消息体限 256KiB；worker/result 单独限 32MiB，发送前先投影脱敏；日志请求 limit 最多 500，但每页实际最多 100 条以约束最坏 JSON 字节数，按 nextCursor/hasMore 继续。按 IP/身份/配对请求限流；部署前按实际并发配置，不能靠代理伪造身份。
-- audit sink 只接收路由模板、已验证的非秘密身份 ID 和状态，不接收 body/header/原始错误；worker 状态回调也只接收固定 code。文本脱敏不能识别任意自然语言中的秘密，批准范围内的内容本来就会交给获准助手。
+- audit sink 记录路由模板、已验证的非秘密身份 ID 和状态。创建、发送、取消和原回执查询使用 requestID 的 SHA-256 十六进制摘要 `requestDigest` 关联调用。`claimWaitMs` 记录从网关收到请求到 Worker 首次认领的耗时，`workerReportMs` 记录从首次认领到收到有效回报的耗时。同一交接重送保留首次认领时刻，迟到的有效回报也会记在 worker/result。未到达的阶段省略。审计排除正文、令牌和原始错误，worker 状态回调使用固定 code。文本脱敏不能识别任意自然语言中的秘密，批准范围内的内容本来就会交给获准助手。
 - 首版单进程网关、Unix/WSL、生产建议 Node >=22；不支持多副本文件共享。正式 worker 要求 dataKey 模式，只能访问 daemon 已知记录密钥的会话；未知/legacy 记录拒绝，不退回复制账号主密钥。
 - relay 继续使用已有 v2 sessions / v3 messages / 唯一 localId。新 core/worker/proof 都是协议 1；能力实时探测，不按未变的 npm 版本号猜测。旧 App 登录和普通 CLI/daemon 路径保留。
 - App 批准页有纯 adapter/模拟原生 UI 测试及类型检查；没有真实浏览器、手机扫码、推送或在线服务验收。

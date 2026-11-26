@@ -3,6 +3,7 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { join } from 'node:path';
 import { OptionsDenied, policyForCodeBuddyApproval, resolveTaskOptions, taskOptionsSchema, type Connection, type LaunchOptionsPolicy, type OptionCatalogEntry, type ResolvedTaskOptions } from 'happy-agent/automation';
 import { CODEX_AUTOMATION_DEFAULTS } from './automationOptions';
+import type { AutomationCreateBinding, AutomationCreateCode, AutomationCreateLaunch } from './automationCreate';
 
 type CreateAttempt = { id: string; digest: string; previous: string | null; titleDigest?: string };
 function createAttempt(value: unknown): CreateAttempt {
@@ -23,13 +24,16 @@ type Receipt = {
     state: 'withdrawn' | 'pending' | 'confirmed' | 'cancel_requested' | 'failed' | 'unknown';
     sessionID?: string;
     errorCode?: string;
+    launchID?: string;
+    launchPid?: number;
     /** Fully-resolved launch selection; IDs only, never prompts or keys. */
     options?: ResolvedTaskOptions;
 };
 
 type Dependencies = {
     directory: string;
-    spawn: (directory: string, options: ResolvedTaskOptions, environment?: Record<string, string>) => Promise<{ type: string; sessionId?: string }>;
+    spawn: (directory: string, options: ResolvedTaskOptions, environment: Record<string, string> | undefined,
+        automationCreate: AutomationCreateLaunch) => Promise<{ type: string; sessionId?: string }>;
     stop: (sessionID: string) => boolean;
     // A false value is not evidence of exit. Only the owner may attest stopped.
     observe: (sessionID: string) => 'running' | 'stopping' | 'stopped' | 'unknown';
@@ -88,6 +92,7 @@ function identifier(value: unknown): string {
 /** Additive encrypted machine RPC. Receipts contain IDs/hashes, never prompts or keys. */
 export function createAutomationControl(deps: Dependencies) {
     const inFlight = new Set<string>();
+    const awaitingRegistration = new Set<string>();
     const digest = (s: string) => createHash('sha256').update(s).digest('hex');
     const path = (id: string) => join(deps.directory, `${digest(id)}.json`);
     const read = (id: string): Receipt | null => {
@@ -107,14 +112,47 @@ export function createAutomationControl(deps: Dependencies) {
         const dir = openSync(deps.directory, 'r');
         try { fsyncSync(dir); } finally { closeSync(dir); }
     };
-    const view = (receipt: Receipt) => ({
-        ...receipt,
-        // A restart during dispatch leaves uncertainty, never a licence to retry.
-        state: receipt.state === 'pending' && !inFlight.has(receipt.requestID) ? 'unknown' : receipt.state,
-        ...(receipt.sessionID ? { process: deps.observe(receipt.sessionID) } : {}),
-    });
+    const view = ({ launchID, launchPid, ...receipt }: Receipt) => {
+        const interrupted = receipt.state === 'pending' && !inFlight.has(receipt.requestID);
+        const trackingLost = receipt.errorCode === 'SPAWN_REGISTRATION_PENDING' && !awaitingRegistration.has(receipt.requestID);
+        return { ...receipt,
+            // A restart during dispatch leaves uncertainty, never a licence to retry.
+            state: interrupted ? 'unknown' : receipt.state,
+            ...(receipt.operation === 'create' && (interrupted || trackingLost) ? { errorCode: 'SPAWN_EVIDENCE_UNAVAILABLE' } : {}),
+            ...(receipt.sessionID ? { process: deps.observe(receipt.sessionID) } : {}),
+        };
+    };
+    const currentCreate = ({ requestID, launchID }: AutomationCreateBinding) => {
+        const receipt = read(requestID);
+        return receipt?.operation === 'create' && receipt.requestID === requestID && receipt.launchID === launchID ? receipt : undefined;
+    };
+    const updateCreate = (binding: AutomationCreateBinding, update: (receipt: Receipt) => boolean) => {
+        const receipt = currentCreate(binding);
+        if (receipt && (receipt.state === 'pending' || receipt.state === 'unknown') && update(receipt)) persist(receipt, false);
+        return receipt;
+    };
+    const reportCreate = (binding: AutomationCreateBinding, code: AutomationCreateCode) => {
+        if (code === 'SPAWN_REGISTRATION_PENDING') awaitingRegistration.add(binding.requestID);
+        else awaitingRegistration.delete(binding.requestID);
+        return updateCreate(binding, receipt => {
+            if (receipt.errorCode === code) return false;
+            receipt.state = code === 'SPAWN_NOT_STARTED' || code === 'SPAWN_EXITED_BEFORE_SESSION_REQUEST' ? 'failed' : 'unknown';
+            receipt.errorCode = code;
+            return true;
+        });
+    };
+    const confirmCreate = (binding: AutomationCreateBinding, sessionID: string) => {
+        sessionID = identifier(sessionID);
+        awaitingRegistration.delete(binding.requestID);
+        return updateCreate(binding, receipt => {
+            receipt.state = 'confirmed';
+            receipt.sessionID = sessionID;
+            delete receipt.errorCode;
+            return true;
+        });
+    };
 
-    return async (input: unknown, grant?: Pick<Connection, 'options' | 'codebuddyLaunch'>): Promise<unknown> => {
+    const handle = async (input: unknown, grant?: Pick<Connection, 'options' | 'codebuddyLaunch'>): Promise<unknown> => {
         try {
             const req = object(input);
             if (req.version !== 1) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
@@ -187,24 +225,39 @@ export function createAutomationControl(deps: Dependencies) {
                     ? view(previous) : { version: 1, errorCode: 'REQUEST_ID_CONFLICT' };
             } else if (attempt?.previous) return {version: 1, errorCode: 'REQUEST_ID_CONFLICT'};
             const receipt: Receipt = { version: 1, requestID, fingerprint, operation, state: 'pending', sessionID, createAttempt: attempt,
-                ...(operation === 'create' ? { options: launch } : {}) };
+                ...(operation === 'create' ? { options: launch, launchID: randomUUID() } : {}) };
             // Only an exactly matched withdrawal may be replaced by a fresh pending receipt.
             persist(receipt, !previous);
             inFlight.add(requestID);
-            try {
-                if (operation === 'create') {
-                    const result = environment ? await deps.spawn(directory!, launch, environment as Record<string, string>) : await deps.spawn(directory!, launch);
-                    if (result.type === 'success' && result.sessionId) {
-                        receipt.sessionID = result.sessionId;
-                        receipt.state = 'confirmed';
-                    } else {
-                        // An error can follow a successful OS spawn. Do not assert no process exists.
-                        receipt.state = 'unknown';
-                        receipt.errorCode = 'SPAWN_NOT_CONFIRMED';
+            if (receipt.launchID) {
+                const binding = { requestID, launchID: receipt.launchID };
+                try {
+                    const result = await deps.spawn(directory!, launch, environment as Record<string, string> | undefined,
+                        { binding, bindPid: pid => updateCreate(binding, current => {
+                            if (current.launchPid === pid) return false;
+                            if (current.launchPid !== undefined) throw new Error('CREATE_PID_CONFLICT');
+                            current.launchPid = pid;
+                            return true;
+                        }), report: code => reportCreate(binding, code) }).catch(() => undefined);
+                    let settled: Receipt | undefined;
+                    if (result?.type === 'success' && result.sessionId) settled = confirmCreate(binding, result.sessionId);
+                    else if (result?.type === 'requestToApproveDirectoryCreation') settled = reportCreate(binding, 'SPAWN_NOT_STARTED');
+                    else {
+                        settled = updateCreate(binding, current => {
+                            if (current.state !== 'pending') return false;
+                            current.state = 'unknown';
+                            current.errorCode = 'SPAWN_EVIDENCE_UNAVAILABLE';
+                            return true;
+                        });
                     }
-                } else {
-                    receipt.state = deps.stop(sessionID!) ? 'cancel_requested' : 'unknown';
+                    if (!settled) throw new Error('CREATE_RECEIPT_UNAVAILABLE');
+                    return view(settled);
+                } finally {
+                    inFlight.delete(requestID);
                 }
+            }
+            try {
+                receipt.state = deps.stop(sessionID!) ? 'cancel_requested' : 'unknown';
             } catch {
                 receipt.state = 'unknown';
                 receipt.errorCode = 'DISPATCH_NOT_CONFIRMED';
@@ -216,4 +269,9 @@ export function createAutomationControl(deps: Dependencies) {
             return { version: 1, errorCode: 'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE' };
         }
     };
+    return Object.assign(handle, { confirmCreate, matchesCreate: (binding: AutomationCreateBinding, pid: number, sessionID: string) => {
+        const receipt = currentCreate(binding);
+        return /^[a-zA-Z0-9_-]{1,128}$/.test(sessionID) && !!receipt && receipt.launchPid === pid && receipt.state !== 'failed'
+            && (!receipt.sessionID || receipt.sessionID === sessionID);
+    } });
 }

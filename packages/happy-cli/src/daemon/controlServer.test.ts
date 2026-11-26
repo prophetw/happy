@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Metadata } from '@/api/types';
 
-const mocks = vi.hoisted(() => ({ port: 0, startupFailed: vi.fn(), started: vi.fn() }));
+const mocks = vi.hoisted(() => ({ port: 0, startupFailed: vi.fn(), started: vi.fn(), binding: vi.fn() }));
 vi.mock('@/ui/logger', () => ({ logger: { debug: vi.fn() } }));
+vi.mock('./automationCreate', () => ({ readAutomationCreateBinding: mocks.binding }));
 vi.mock('@/persistence', () => ({
     readDaemonState: async () => ({ pid: process.pid, httpPort: mocks.port }),
     clearDaemonState: vi.fn(),
@@ -17,6 +18,8 @@ describe('daemon startup notifications over HTTP', () => {
 
     beforeEach(async () => {
         vi.clearAllMocks();
+        mocks.binding.mockReset();
+        mocks.started.mockReset();
         machineVerified = true;
         server = await startDaemonControlServer({
             isMachineVerified: () => machineVerified,
@@ -69,5 +72,26 @@ describe('daemon startup notifications over HTTP', () => {
         expect(await notifyDaemonSessionStarted('happy-resumed', metadata)).toEqual({ status: 'ok' });
         expect(mocks.started).toHaveBeenCalledWith('happy-resumed', metadata, undefined);
         expect(mocks.startupFailed).not.toHaveBeenCalled();
+    });
+
+    it('accepts a bound registration only when the daemon acknowledges the exact launch', async () => {
+        const binding = { requestID: 'request-a', launchID: 'ad78efc0-ec23-49e8-b78c-a458771ea7f6' };
+        const metadata = { hostPid: 12345 } as Metadata;
+        mocks.binding.mockReturnValue(binding);
+        mocks.started.mockReturnValue(true);
+        expect(await notifyDaemonSessionStarted('session-a', metadata)).toEqual({ status: 'ok', automationCreate: binding });
+        expect(mocks.started).toHaveBeenCalledExactlyOnceWith('session-a', metadata, undefined, binding);
+
+        vi.useFakeTimers();
+        const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ status: 'ok' }));
+        try {
+            const oldOwner = notifyDaemonSessionStarted('session-a', metadata);
+            await vi.advanceTimersByTimeAsync(3100);
+            expect(await oldOwner).toEqual({ error: 'Automation create registration was not acknowledged' });
+            expect(fetch.mock.calls.length).toBeGreaterThan(1);
+        } finally {
+            fetch.mockRestore();
+            vi.useRealTimers();
+        }
     });
 });

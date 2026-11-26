@@ -1,4 +1,4 @@
-import Fastify, { type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { createPublicKey, randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import { hash, type CreateAttempt } from '../journal';
@@ -14,8 +14,9 @@ import { ApiError, cancelSchema, approvalSchema, connectionEditSchema, connectio
 
 export type Intent = { requestID: string; method: string; grantID: string; fingerprint: string; projectID?: string; sessionID?: string; state: string; claimID?: string | null; closedCreateAttempt?: string; createTitleDigest?: string };
 export type Job = { id: string; workerID: string; grantID: string; command: Record<string, unknown>; createAttempt?: CreateAttempt; deadline: number };
+type DispatchTiming = { requestDigest: string; receivedAt: number; claimedAt?: number; reportedAt?: number };
 type PendingJob = Job & { intent?: Intent; resolve: (value: any) => void; timer?: ReturnType<typeof setTimeout>; delivered: boolean;
-    offeredAt?: number; acked?: boolean; reoffered?: boolean };
+    offeredAt?: number; acked?: boolean; reoffered?: boolean; timing?: DispatchTiming };
 export type GatewayOptions = {
     directory: string; origin: string; additionalBrowserOrigins?: string[]; clients: Registration[]; workers: WorkerRegistration[];
     verifyOwner: (authorization: string | undefined) => Promise<string>;
@@ -26,7 +27,8 @@ export type GatewayOptions = {
     // Mandatory sink. Only a fixed, non-content projection is passed.
     ipRateLimit?: number; httpMcp?: boolean;
     serviceTokens?: ServiceTokensConfig;
-    audit: (event: { method: string; principalID?: string; status: number }) => void;
+    audit: (event: { method: string; principalID?: string; status: number;
+        requestDigest?: string; claimWaitMs?: number; workerReportMs?: number }) => void;
 };
 const base = '/happy-control/v1';
 const failure = (code: string) => ({ version: 1, ok: false, error: { code, retryable: false } });
@@ -70,6 +72,7 @@ export function createGateway(options: GatewayOptions) {
     }
     const directories = new DirectorySelections(proofs, now);
     const principals = new WeakMap<FastifyRequest, string>();
+    const timings = new WeakMap<FastifyRequest, DispatchTiming>();
     const counters = new Map<string, { count: number; until: number }>();
     let prunedAt = 0, auditHealthy = true;
     function limit(key: string, max: number) {
@@ -91,7 +94,16 @@ export function createGateway(options: GatewayOptions) {
         }
         // Exact additional origins only. No wildcard CORS or cookies.
     });
-    app.addHook('onResponse', async (req, reply) => { try { options.audit({ method: req.routeOptions.url ?? '<unmatched>', principalID: principals.get(req), status: reply.statusCode }); } catch { auditHealthy = false; } });
+    app.addHook('onResponse', async (req, reply) => {
+        const timing = timings.get(req);
+        try {
+            options.audit({ method: req.routeOptions.url ?? '<unmatched>', principalID: principals.get(req), status: reply.statusCode,
+                ...(timing && { requestDigest: timing.requestDigest }),
+                ...(timing?.claimedAt !== undefined && { claimWaitMs: Math.round(timing.claimedAt - timing.receivedAt) }),
+                ...(timing?.reportedAt !== undefined && timing.claimedAt !== undefined
+                    && { workerReportMs: Math.round(timing.reportedAt - timing.claimedAt) }) });
+        } catch { auditHealthy = false; }
+    });
     app.setErrorHandler((error, _req, reply) => {
         const status = error instanceof ApiError ? error.status : error instanceof ZodError ? 400 : (error as { statusCode?: number })?.statusCode === 413 ? 413 : (error as { statusCode?: number })?.statusCode === 400 ? 400 : 503;
         const code = error instanceof ApiError ? error.code : status === 413 ? 'PAYLOAD_TOO_LARGE' : status === 400 ? 'INVALID_REQUEST' : 'INTERNAL_ERROR';
@@ -149,7 +161,7 @@ export function createGateway(options: GatewayOptions) {
         data: pendingReceipt(intent), error: { code: 'WORKER_UNAVAILABLE', retryable: true } });
     const unknown = () => failure('UNAVAILABLE_OR_UNKNOWN');
     const verifiedWithdrawal = Symbol('verified create withdrawal');
-    async function dispatch(c: Connection, command: Record<string, unknown>, intent?: Intent, lookupIntent?: Intent): Promise<any> {
+    async function dispatch(c: Connection, command: Record<string, unknown>, intent?: Intent, lookupIntent?: Intent, timing?: DispatchTiming): Promise<any> {
         grants.active(c.id, c.clientID);
         if (!workerOnline(c.workerID)) {
             if (intent) return unsent(intent);
@@ -167,7 +179,7 @@ export function createGateway(options: GatewayOptions) {
             ? { id, digest: bound.fingerprint.slice('claim-v1:'.length), previous: bound.closedCreateAttempt ?? null, ...(bound.createTitleDigest ? {titleDigest:bound.createTitleDigest} : {}) } : undefined;
         return new Promise(resolve => {
             const timeout = Math.min(options.timeoutMs ?? 15000, Math.max(1, c.expiresAt - now()));
-            const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, createAttempt, deadline: now() + timeout, delivered: false,
+            const job: PendingJob = { id: jobID, workerID: c.workerID, grantID: c.id, command, intent, createAttempt, timing, deadline: now() + timeout, delivered: false,
                 resolve, timer: setTimeout(() => {
                     job.timer = undefined;
                     // Leave a bounded re-offer window for incomplete handoff.
@@ -178,8 +190,11 @@ export function createGateway(options: GatewayOptions) {
             jobs.set(jobID, job);
         });
     }
-    async function invoke(c: Connection, command: Record<string, unknown>, mutation = false) {
+    async function invoke(c: Connection, command: Record<string, unknown>, mutation = false, reply?: FastifyReply) {
         const requestID = command.requestID;
+        const timing = reply && typeof requestID === 'string'
+            ? { requestDigest: hash(requestID), receivedAt: performance.now() - reply.elapsedTime } : undefined;
+        if (reply && timing) timings.set(reply.request, timing);
         let intent: Intent | undefined, lookup = command.method === 'requests.get';
         if (mutation || lookup) {
             const key = intentKey(c, identifier.parse(requestID));
@@ -216,7 +231,7 @@ export function createGateway(options: GatewayOptions) {
             }
         }
         let result;
-        try { result = await dispatch(c, { version: 1, ...command }, lookup ? undefined : intent, lookup ? intent : undefined); }
+        try { result = await dispatch(c, { version: 1, ...command }, lookup ? undefined : intent, lookup ? intent : undefined, timing); }
         catch (error) {
             if (mutation && lookup && error instanceof ApiError && error.code === 'WORKER_UNAVAILABLE') return unknown();
             throw error;
@@ -426,14 +441,14 @@ export function createGateway(options: GatewayOptions) {
         const c = active(req, 'tasks.create'), body = createTaskSchema.parse(req.body);
         if (body.machineID !== c.machineID || !scopeProjectIDs(c).includes(body.projectID)) throw new ApiError('SCOPE_DENIED', 403);
         const result = await invoke(c, { method: 'tasks.create', requestID: body.requestID, machineID: c.machineID, projectID: body.projectID,
-            ...(body.title ? { title: body.title } : {}), ...(body.options ? { options: body.options } : {}), ...(body.execution ? { execution: body.execution } : {}) }, true);
+            ...(body.title ? { title: body.title } : {}), ...(body.options ? { options: body.options } : {}), ...(body.execution ? { execution: body.execution } : {}) }, true, reply);
         return reply.code(result?.ok ? 200 : result?.dispatch === 'not_sent' ? 503 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
     });
     for (const [suffix, methodName] of [['messages', 'sessions.send'], ['cancel', 'sessions.cancel']] as const) {
         app.post<{ Params: { id: string } }>(`${base}/sessions/:id/${suffix}`, async (req, reply) => {
             const c = active(req, methodName), sessionID = identifier.parse(req.params.id); target(c, sessionID);
             const body = methodName === 'sessions.send' ? sendSchema.parse(req.body) : cancelSchema.parse(req.body);
-            const result = await invoke(c, { method: methodName, sessionID, ...body }, true);
+            const result = await invoke(c, { method: methodName, sessionID, ...body }, true, reply);
             return reply.code(result?.ok ? 200 : result?.dispatch === 'not_sent' ? 503 : result?.error?.code === 'UNAVAILABLE_OR_UNKNOWN' ? 202 : 400).send(result);
         });
     }
@@ -449,9 +464,9 @@ export function createGateway(options: GatewayOptions) {
         if (!intent || intent.method !== 'tasks.create') throw new ApiError('NOT_FOUND', 404);
         return invoke(c, { method: 'sessions.status', taskID, ...querySchema.parse(req.query) });
     });
-    app.get<{ Params: { id: string } }>(`${base}/requests/:id`, async req => {
+    app.get<{ Params: { id: string } }>(`${base}/requests/:id`, async (req, reply) => {
         const c = active(req, 'requests.get'), requestID = identifier.parse(req.params.id);
-        return invoke(c, { method: 'requests.get', requestID });
+        return invoke(c, { method: 'requests.get', requestID }, false, reply);
     });
     app.post(`${base}/worker/poll`, async req => {
         const p = proof(req, 'worker'), registration = p.registration as WorkerRegistration;
@@ -496,6 +511,10 @@ export function createGateway(options: GatewayOptions) {
                 throw error;
             }
             job.intent.claimID = job.id;
+        }
+        if (job.timing) {
+            job.timing.claimedAt ??= performance.now();
+            timings.set(req, job.timing);
         }
         if (job.delivered) job.reoffered = true;
         job.delivered = true;
@@ -542,6 +561,10 @@ export function createGateway(options: GatewayOptions) {
         const closed = (body.result as { closedCreate?: unknown }).closedCreate;
         if (job.command.method === 'requests.get' && attempt && closed
             && canonicalBody(closed) === canonicalBody(attempt)) Object.defineProperty(result, verifiedWithdrawal, { value: attempt.id });
+        if (job.timing) {
+            job.timing.reportedAt = performance.now();
+            timings.set(req, job.timing);
+        }
         clearTimeout(job.timer); jobs.delete(job.id); job.resolve(result); return ok({ accepted: true });
     });
     app.addHook('onClose', async () => { for (const job of jobs.values()) { clearTimeout(job.timer); job.resolve(failure('UNAVAILABLE_OR_UNKNOWN')); } jobs.clear(); directories.close(); directoryScopeWorkers.clear(); lastSeen.clear(); projectScopeWorkers.clear(); unlock(); });

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createAutomationControl, observeOwnedProcess, observePersistedProcess } from './automationControl';
+import type { AutomationCreateLaunch } from './automationCreate';
 import { buildAutomationCatalog, AUTOMATION_DEFAULT_AGENT } from './automationOptions';
 import type { LaunchOptionsPolicy } from 'happy-agent/automation';
 
@@ -12,7 +13,7 @@ const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(p => rmSync(p, { recursive: true, force: true })));
 function setup() {
     const directory = mkdtempSync(join(tmpdir(), 'happy-control-test-')); dirs.push(directory);
-    const spawn = vi.fn(async (_path: string) => ({ type: 'success', sessionId: 's1' }));
+    const spawn = vi.fn<Parameters<typeof createAutomationControl>[0]['spawn']>(async () => ({ type: 'success', sessionId: 's1' }));
     const stop = vi.fn(() => true);
     const observe = vi.fn((): 'running' | 'stopping' | 'stopped' | 'unknown' => 'running');
     const deps = { directory, spawn, stop, observe };
@@ -87,10 +88,35 @@ describe('durable encrypted automation RPC contract', () => {
         const path = join(s.directory, readdirSync(s.directory)[0]);
         const receipt = JSON.parse(readFileSync(path, 'utf8')); receipt.state = 'pending'; delete receipt.sessionID;
         writeFileSync(path, JSON.stringify(receipt));
-        expect(await createAutomationControl(s)(create)).toMatchObject({ state: 'unknown' });
+        expect(await createAutomationControl(s)(create)).toMatchObject({ state: 'unknown', errorCode: 'SPAWN_EVIDENCE_UNAVAILABLE' });
+        delete receipt.launchID;
+        writeFileSync(path, JSON.stringify({ ...receipt, state: 'unknown', errorCode: 'SPAWN_NOT_CONFIRMED' }));
+        expect(await createAutomationControl(s)(create)).toMatchObject({ state: 'unknown', errorCode: 'SPAWN_NOT_CONFIRMED' });
         writeFileSync(path, '{broken');
         expect(await createAutomationControl(s)(create)).toMatchObject({ errorCode: 'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE' });
         expect(s.spawn).toHaveBeenCalledTimes(1);
+    });
+    it('uses the persisted launch binding for a late registration after daemon restart', async () => {
+        const s = setup();
+        let child!: AutomationCreateLaunch;
+        s.spawn.mockImplementation(async (_directory, _options, _environment, launch) => {
+            child = launch;
+            child.bindPid(12345);
+            child.report('SPAWN_REGISTRATION_PENDING');
+            return { type: 'error' };
+        });
+        expect(await s.control(create)).toMatchObject({ state: 'unknown', errorCode: 'SPAWN_REGISTRATION_PENDING' });
+        const restart = createAutomationControl(s);
+        const query = { version: 1, operation: 'request', requestID: 'r1' };
+        expect(await restart(query)).toMatchObject({ state: 'unknown', errorCode: 'SPAWN_EVIDENCE_UNAVAILABLE' });
+        expect(restart.matchesCreate({ ...child.binding, launchID: 'wrong' }, 12345, 's1')).toBe(false);
+        expect(restart.matchesCreate(child.binding, 12346, 's1')).toBe(false);
+        expect(restart.matchesCreate(child.binding, 12345, 's1')).toBe(true);
+        restart.confirmCreate(child.binding, 's1');
+        child.report('SPAWN_EXITED_UNVERIFIED');
+        expect(await restart(query)).toMatchObject({ state: 'confirmed', sessionID: 's1' });
+        expect(restart.matchesCreate(child.binding, 12345, 'different-session')).toBe(false);
+        expect(s.spawn).toHaveBeenCalledOnce();
     });
     it('separates cancel receipt from actual process exit', async () => {
         const s = setup();
@@ -108,7 +134,7 @@ describe('durable encrypted automation RPC contract', () => {
         expect(await s.control({ ...create, requestID: '../escape' })).toMatchObject({ errorCode: 'INVALID_REQUEST_OR_JOURNAL_UNAVAILABLE' });
         s.spawn.mockRejectedValue(new Error('sensitive-token'));
         const reply = await s.control(create);
-        expect(reply).toMatchObject({ state: 'unknown', errorCode: 'DISPATCH_NOT_CONFIRMED' });
+        expect(reply).toMatchObject({ state: 'unknown', errorCode: 'SPAWN_EVIDENCE_UNAVAILABLE' });
         expect(JSON.stringify(reply)).not.toContain('sensitive-token');
     });
 });
@@ -162,7 +188,8 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
         const s = optionSetup(policy);
         const reply = await s.control({ ...create, options: { model: 'gpt-6-sol', permissionMode: 'yolo', effort: 'low' } });
         expect(reply).toMatchObject({ state: 'confirmed', options: { agent: 'codex', model: 'gpt-6-sol', permissionMode: 'yolo', effort: 'low' } });
-        expect(s.spawn).toHaveBeenCalledWith('/fixture', { agent: 'codex', model: 'gpt-6-sol', permissionMode: 'yolo', effort: 'low' });
+        expect(s.spawn).toHaveBeenCalledWith('/fixture', { agent: 'codex', model: 'gpt-6-sol', permissionMode: 'yolo', effort: 'low' },
+            undefined, { binding: { requestID: 'r1', launchID: expect.any(String) }, bindPid: expect.any(Function), report: expect.any(Function) });
         expect(await s.control({ ...create, options: { agent: 'claude', permissionMode: 'acceptEdits' } })).toMatchObject({ errorCode: 'REQUEST_ID_CONFLICT' });
         expect(s.spawn).toHaveBeenCalledTimes(1);
     });
@@ -182,7 +209,7 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
 it('passes only fixed task-local environment keys without changing launch permissions', async()=>{
     const s=setup(),environment={TMPDIR:'/fixture/task-temp',HAPPY_TASK_ID:'task-a',HAPPY_TASK_PORT:'20001',HAPPY_TASK_ROOT:'/fixture',HAPPY_TASK_TITLE:'可读任务'};
     expect(await s.control({...create,taskEnvironment:environment})).toMatchObject({state:'confirmed'});
-    expect(s.spawn.mock.calls[0]).toEqual(['/fixture',{agent:'codex',model:'gpt-6.2-sol',permissionMode:'default',effort:'max'},environment]);
+    expect(s.spawn.mock.calls[0].slice(0, 3)).toEqual(['/fixture',{agent:'codex',model:'gpt-6.2-sol',permissionMode:'default',effort:'max'},environment]);
     expect(await s.control({...create,taskEnvironment:{...environment,HAPPY_TASK_TITLE:'另一标题'}})).toMatchObject({errorCode:'REQUEST_ID_CONFLICT'});
     expect(s.spawn).toHaveBeenCalledTimes(1);
     for(const file of readdirSync(s.directory))expect(readFileSync(join(s.directory,file),'utf8')).not.toContain('可读任务');

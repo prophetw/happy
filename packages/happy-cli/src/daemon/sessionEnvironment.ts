@@ -1,3 +1,5 @@
+import { AUTOMATION_CREATE_ENV } from './automationCreate';
+
 /**
  * Environment variables that identify one particular Happy or provider
  * session. A daemon can live much longer than the session that created it, so
@@ -18,6 +20,7 @@ export const SESSION_SCOPED_ENV_KEYS = [
     'HAPPY_TASK_ID',
     'HAPPY_TASK_ROOT',
     'HAPPY_TASK_TITLE',
+    AUTOMATION_CREATE_ENV,
     'CODEX_THREAD_ID',
 ] as const;
 

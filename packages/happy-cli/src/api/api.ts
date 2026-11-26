@@ -10,6 +10,7 @@ import { configuration } from '@/configuration';
 import chalk from 'chalk';
 import { Credentials } from '@/persistence';
 import { connectionState, isNetworkError } from '@/utils/serverConnectionErrors';
+import { markRelaySessionRequest } from '@/daemon/automationCreate';
 
 export class ApiClient {
 
@@ -50,6 +51,7 @@ export class ApiClient {
     if (!current) throw new Error('session_attach_missing');
     const metadata = decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(current.metadata));
     opts.validateMetadata(metadata);
+    markRelaySessionRequest();
     const resumed = await axios.post(`${this.serverUrl}/v1/sessions`, {
       tag: typeof opts.tag === 'function' ? opts.tag(metadata) : opts.tag, metadata: current.metadata, agentState: current.agentState, dataEncryptionKey: current.dataEncryptionKey,
     }, config);
@@ -97,6 +99,7 @@ export class ApiClient {
     }
 
     // Create session
+    markRelaySessionRequest();
     try {
       const response = await axios.post<CreateSessionResponse>(
         `${this.serverUrl}/v1/sessions`,

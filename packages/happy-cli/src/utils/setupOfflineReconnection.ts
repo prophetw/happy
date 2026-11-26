@@ -10,7 +10,10 @@
 import type { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentState, Metadata, Session } from '@/api/types';
+import { encodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';
+import { readAutomationCreateBinding } from '@/daemon/automationCreate';
+import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { createOfflineSessionStub, transferOfflineRegistrations } from '@/utils/offlineSessionStub';
 import { startOfflineReconnection } from '@/utils/serverConnectionErrors';
 
@@ -95,6 +98,16 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
                 transferOfflineRegistrations(session, realSession);
                 // Notify caller to swap the session reference
                 onSessionSwap(realSession);
+                if (readAutomationCreateBinding()) {
+                    // A lost local webhook must not retry Relay creation after reconnection succeeded.
+                    await notifyDaemonSessionStarted(resp.id, metadata, {
+                        encryptionKey: encodeBase64(resp.encryptionKey),
+                        encryptionVariant: resp.encryptionVariant,
+                        seq: resp.seq,
+                        metadataVersion: resp.metadataVersion,
+                        agentStateVersion: resp.agentStateVersion,
+                    }).catch(() => undefined);
+                }
                 return realSession;
             },
             onNotify: (msg) => {

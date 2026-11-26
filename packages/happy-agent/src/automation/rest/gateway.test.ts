@@ -162,13 +162,27 @@ describe('independent approval/authentication', () => {
 
 describe('loopback REST → worker → existing core/daemon', () => {
     it('reconciles timeout by stable requestID and deduplicates after restart', async () => {
-        const r = await setup({ timeoutMs: 500 }), grant = await r.connect(); await r.startWorker(); r.delaySpawn(1000);
-        expect((await create(r, grant)).error.code).toBe('UNAVAILABLE_OR_UNKNOWN');
-        await new Promise(resolve => setTimeout(resolve, 1300)); r.delaySpawn(0); r.gatewayOptions.timeoutMs = 5000;
-        const receipt = await r.client.request('GET', '/requests/create1', undefined, grant);
-        expect(receipt.data.state).toBe('confirmed'); expect(r.spawnCount).toBe(1);
-        await r.restartGateway(); await r.startWorker();
-        expect((await create(r, grant)).data.sessionID).toBe(receipt.data.sessionID); expect(r.spawnCount).toBe(1);
+        const r = await setup({ timeoutMs: 500 }), grant = await r.connect(); await r.startWorker();
+        const release = r.pauseSpawn();
+        try {
+            const creating = create(r, grant);
+            await expect.poll(() => r.spawnCount, { interval: 10 }).toBe(1);
+            const spawnObservedAt = performance.now();
+            expect((await creating).error.code).toBe('UNAVAILABLE_OR_UNKNOWN');
+            const waited = Math.floor(performance.now() - spawnObservedAt);
+            release();
+            r.gatewayOptions.timeoutMs = 5000;
+            const lateResult = () => r.audit.find((event: any) => event.method === base + '/worker/result' && event.requestDigest === hash('create1'));
+            await expect.poll(lateResult, { interval: 10, timeout: 2000 }).toBeDefined();
+            const late = lateResult();
+            expect(late.claimWaitMs).toBeGreaterThanOrEqual(0);
+            expect(late.workerReportMs).toBeGreaterThan(0);
+            expect(late.workerReportMs).toBeGreaterThanOrEqual(waited - 1);
+            const receipt = await r.client.request('GET', '/requests/create1', undefined, grant);
+            expect(receipt.data.state).toBe('confirmed'); expect(r.spawnCount).toBe(1);
+            await r.restartGateway(); await r.startWorker();
+            expect((await create(r, grant)).data.sessionID).toBe(receipt.data.sessionID); expect(r.spawnCount).toBe(1);
+        } finally { release(); }
     });
     it('recovers durable message ack and rejects changed payload', async () => {
         const r = await setup(), grant = await r.connect(); await r.startWorker(); const sid = (await create(r, grant)).data.sessionID;
@@ -516,7 +530,8 @@ describe('durable dispatch evidence', () => {
         expect(r.sendAttempts).toBe(0);
     });
     it('accepts an already-submitted legacy send receipt without creating a queue item', async () => {
-        const r = await setup({ offerRetryMs: 100 }), grant = await r.connect();
+        const now = Date.now();
+        const r = await setup({ offerRetryMs: 100, clock: () => now }), grant = await r.connect();
         await r.startWorker();
         const { sessionID } = (await create(r, grant)).data;
         const requestID = 'legacy-send', text = 'legacy fixture instruction', method = 'sessions.send';

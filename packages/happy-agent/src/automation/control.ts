@@ -12,6 +12,17 @@ export type Policy = {
 const obj = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const processState = (v: unknown) => ['running', 'stopping', 'stopped'].includes(String(v)) ? String(v) : 'unknown';
 const receiptState = (v: unknown) => ['pending', 'confirmed', 'cancel_requested', 'failed', 'unavailable'].includes(String(v)) ? String(v) : 'unknown';
+export function createReceiptErrorCode(state: unknown, code: unknown): string | undefined {
+    if (typeof code !== 'string') return undefined;
+    if (state === 'failed' && ['SPAWN_NOT_STARTED', 'SPAWN_EXITED_BEFORE_SESSION_REQUEST'].includes(code)
+        || state === 'unknown' && ['SPAWN_NOT_CONFIRMED', 'SPAWN_REGISTRATION_PENDING', 'SPAWN_EXITED_UNVERIFIED', 'SPAWN_EVIDENCE_UNAVAILABLE'].includes(code)) return code;
+    return undefined;
+}
+function createReceiptError(entry: RecordEntry, reply: Record<string, unknown>) {
+    if (entry.method !== 'tasks.create' || reply.operation !== 'create' || reply.sessionID !== undefined
+        || reply.safeToRetrySameRequestID === true) return;
+    return createReceiptErrorCode(reply.state, reply.errorCode);
+}
 function id(v: unknown): string {
     if (typeof v !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(v)) throw new ControlError('INVALID_REQUEST');
     return v;
@@ -142,7 +153,7 @@ export class AutomationControl {
             ...(entry.options ? { options: entry.options } : {}),
         });
         if (reply.errorCode === 'NOT_FOUND' && operation === 'request') return { state: 'unavailable', safeToRetrySameRequestID: true };
-        if (reply.errorCode) throw new ControlError(String(reply.errorCode));
+        if (reply.errorCode && !createReceiptError(entry, reply)) throw new ControlError(String(reply.errorCode));
         return reply;
     }
     private receipt(entry: RecordEntry) {
@@ -169,7 +180,9 @@ export class AutomationControl {
         entry.state = receiptState(reply.state);
         // A delayed response must not undo a later attempt's durable registration.
         if (!entry.createAttempt || this.journal.get(entry.requestID)?.createAttempt?.id === entry.createAttempt.id) this.journal.save(entry);
+        const errorCode = createReceiptError(entry, reply);
         return { ...this.receipt(entry), process: processState(reply.process), safeToRetrySameRequestID: reply.safeToRetrySameRequestID === true,
+            ...(errorCode ? { errorCode } : {}),
             ...(entry.method === 'tasks.create' && reply.options && typeof reply.options === 'object' ? {options:reply.options} : {}) };
     }
     async handle(input: unknown): Promise<unknown> {
@@ -303,7 +316,9 @@ export class AutomationControl {
         // A delayed response must not undo a later attempt's durable registration.
         if (!entry.createAttempt || this.journal.get(entry.requestID)?.createAttempt?.id === entry.createAttempt.id) this.journal.save(entry);
         // The daemon echoes the fully-resolved launch selection on create.
+        const errorCode = createReceiptError(entry, reply);
         return { ...this.receipt(entry), process: processState(reply.process),
+            ...(errorCode ? { errorCode, safeToRetrySameRequestID: false } : {}),
             ...(method === 'tasks.create' && reply.options && typeof reply.options === 'object' ? { options: reply.options } : {}) };
     }
 }

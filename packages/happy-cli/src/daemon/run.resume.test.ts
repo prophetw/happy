@@ -6,12 +6,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AUTOMATION_CREATE_ENV } from './automationCreate';
 
 const mocks = vi.hoisted(() => ({
   handlers: null as any,
   webhook: null as any,
   startupFailed: null as any,
   children: null as any,
+  controlServer: undefined as { port: number; stop: () => Promise<void> } | undefined,
+  useRealControl: false,
+  createTimeout: undefined as number | undefined,
   happyHomeDir: '/test-only',
   tmuxAvailable: false,
   tmuxSpawn: vi.fn(),
@@ -57,12 +61,21 @@ vi.mock('./controlClient', () => ({
   isDaemonRunningCurrentlyInstalledHappyVersion: async () => false,
   stopDaemon: vi.fn(), cleanupDaemonState: vi.fn(),
 }));
-vi.mock('./controlServer', () => ({ startDaemonControlServer: async (options: any) => {
+vi.mock('./controlServer', async (importOriginal) => ({ startDaemonControlServer: async (options: any) => {
   mocks.webhook = options.onHappySessionWebhook;
   mocks.startupFailed = options.onHappySessionStartupFailed;
   mocks.children = options.getChildren;
+  if (mocks.useRealControl) {
+    const original = await importOriginal<typeof import('./controlServer')>();
+    mocks.controlServer = await original.startDaemonControlServer(options);
+    return mocks.controlServer;
+  }
   return { port: 0, stop: vi.fn() };
 } }));
+vi.mock('./spawnModeArgs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./spawnModeArgs')>();
+  return { ...original, spawnWebhookTimeoutMs: (agent: string, resuming: boolean) => mocks.createTimeout ?? original.spawnWebhookTimeoutMs(agent, resuming) };
+});
 vi.mock('@/api/api', () => ({ ApiClient: { create: async () => ({
   deactivateSession: mocks.deactivateSession,
   getOrCreateMachine: async () => ({ id: 'machine-1' }),
@@ -94,6 +107,8 @@ describe('daemon resume fallback', () => {
     mocks.persisted = {};
     mocks.children = null;
     mocks.handlers = null;
+    mocks.useRealControl = false;
+    mocks.createTimeout = undefined;
     mocks.deactivateSession.mockReset().mockResolvedValue(true);
     mocks.tmuxAvailable = false;
     mocks.tmuxSpawn.mockResolvedValue({ success: true, pid: 12345, sessionId: 'test-window' });
@@ -110,7 +125,9 @@ describe('daemon resume fallback', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await mocks.controlServer?.stop();
+    mocks.controlServer = undefined;
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -131,6 +148,12 @@ describe('daemon resume fallback', () => {
     const home = mkdtempSync(join(tmpdir(), 'happy-automation-spawn-'));
     mocks.happyHomeDir = home;
     try {
+      mocks.spawn.mockImplementation((_args, options) => {
+        const [requestID, launchID] = options.env[AUTOMATION_CREATE_ENV].split(':');
+        queueMicrotask(() => mocks.webhook('new-session', { ...metadata, hostPid: 12345 },
+          { ...fallback, encryptionKey: dataKey }, { requestID, launchID }));
+        return { pid: 12345, on: vi.fn() };
+      });
       await boot({ automation: {
         endpoint: 'https://fixture.invalid/happy-control/v1', report: vi.fn(),
         identity: { id: 'worker', sign: async () => Buffer.alloc(0) },
@@ -160,6 +183,83 @@ describe('daemon resume fallback', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it.each(['pre-request-exit', 'unverified-exit', 'late-registration'])(
+    'reconciles a claimed REST create with a real child and %s', async (scenario) => {
+      const fixturePath = new URL('../../../happy-agent/examples/rest-fixture.ts', import.meta.url).pathname;
+      const { fixtureRig } = await import(fixturePath);
+      const rig = await fixtureRig({ timeoutMs: 3000, workerIntervalMs: 10 });
+      mocks.happyHomeDir = rig.dir;
+      mocks.useRealControl = true;
+      mocks.createTimeout = 180;
+      const children: ChildProcess[] = [];
+      try {
+        await boot();
+        rig.transport.rpc = async (_machine: unknown, input: unknown) => await mocks.handlers.automationControl(input);
+        const fixture = new URL('./automationCreate.ts', import.meta.url).href;
+        const childScript = `
+          import { installAutomationCreateExitProof, markRelaySessionRequest, readAutomationCreateBinding } from ${JSON.stringify(fixture)};
+          installAutomationCreateExitProof();
+          if (process.env.HAPPY_AUTOMATION_CREATE !== undefined) process.exit(4);
+          const [scenario, port, project, key] = process.argv.slice(1);
+          if (scenario !== 'pre-request-exit') markRelaySessionRequest();
+          process.stdin.once('data', async () => {
+            if (scenario !== 'late-registration') process.exit(1);
+            const bind = readAutomationCreateBinding();
+            const report = (automationCreate, hostPid = process.pid) => fetch('http://127.0.0.1:' + port + '/session-started', {
+              method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sessionId:'late-session', automationCreate,
+                metadata:{hostPid, machineId:'machine-1', path:project, flavor:'codex'},
+                encryption:{encryptionKey:key,encryptionVariant:'dataKey',seq:0,metadataVersion:1,agentStateVersion:0}}) });
+            if ((await report({...bind, launchID:'ad78efc0-ec23-49e8-b78c-a458771ea7f6'})).status !== 409) process.exit(3);
+            if ((await report(bind, process.pid + 1)).status !== 409) process.exit(5);
+            const result = await report(bind);
+            const ack = (await result.json()).automationCreate;
+            process.exit(result.ok && ack?.requestID === bind.requestID && ack?.launchID === bind.launchID ? 0 : 2);
+          });`;
+        mocks.spawn.mockImplementation((_args, options) => {
+          const stdio = ['pipe', ...options.stdio.slice(1)] as ('pipe' | 'ignore')[];
+          const child = spawn(process.execPath, ['--input-type=module', '-e', childScript, scenario,
+            String(mocks.controlServer!.port), rig.project, fallback.encryptionKey], {
+            cwd: rig.project, detached: options.detached, stdio,
+            env: { [AUTOMATION_CREATE_ENV]: options.env[AUTOMATION_CREATE_ENV] },
+          });
+          children.push(child);
+          return child;
+        });
+        const grant = await rig.connect();
+        await rig.startWorker();
+        const requestID = 'original-create';
+        const body = { requestID, machineID: 'machineA', projectID: 'projectA' };
+        const create = () => rig.client.request('POST', '/tasks', body, grant);
+        const lookup = () => rig.client.request('GET', `/requests/${requestID}`, undefined, grant);
+        const started = await create();
+        const pending = { requestID, taskID: requestID, state: 'unknown', errorCode: 'SPAWN_REGISTRATION_PENDING', safeToRetrySameRequestID: false };
+        expect(started).toMatchObject({ ok: true, data: pending });
+        for (const response of await Promise.all([lookup(), create(), lookup()])) expect(response).toMatchObject({ ok: true, data: pending });
+        expect(children).toHaveLength(1);
+        const closed = once(children[0], 'close');
+        children[0].stdin!.end('continue');
+        await expect(closed).resolves.toEqual([scenario === 'late-registration' ? 0 : 1, null]);
+        const settled = scenario === 'late-registration' ? { state: 'confirmed', sessionID: 'late-session' }
+          : { requestID, taskID: requestID, safeToRetrySameRequestID: false,
+              ...(scenario === 'pre-request-exit' ? { state: 'failed', errorCode: 'SPAWN_EXITED_BEFORE_SESSION_REQUEST' }
+                : { state: 'unknown', errorCode: 'SPAWN_EXITED_UNVERIFIED' }) };
+        for (const response of await Promise.all([lookup(), lookup(), create()])) {
+          expect(response).toMatchObject({ ok: true, data: settled });
+          if (scenario !== 'late-registration') expect(response.data.sessionID).toBeUndefined();
+        }
+        expect(children).toHaveLength(1);
+      } finally {
+        await Promise.all(children.map(async child => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          const closed = once(child, 'close');
+          realKill(child.pid!, 'SIGKILL');
+          await closed;
+        }));
+        await rig.close();
+        mocks.happyHomeDir = '/test-only';
+      }
+    }, 10_000);
 
   it.each(['regular', 'tmux'])('returns a native Codex startup failure to the caller in %s mode', async (mode) => {
     await boot();

@@ -11,6 +11,12 @@ import { Metadata } from '@/api/types';
 import { decodeBase64 } from '@/api/encryption';
 import { TrackedSession, SessionEncryptionData } from './types';
 import { spawnAgents, type SpawnSessionOptions, type SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
+import type { AutomationCreateBinding } from './automationCreate';
+
+const automationCreateBindingSchema = z.object({
+  requestID: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  launchID: z.uuid(),
+});
 
 export function startDaemonControlServer({
   getChildren,
@@ -26,7 +32,7 @@ export function startDaemonControlServer({
   stopSession: (sessionId: string) => boolean;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
-  onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
+  onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData, automationCreate?: AutomationCreateBinding) => void | boolean;
   onHappySessionStartupFailed?: (pid: number, errorMessage: string) => void;
   getConnectionStatus?: () => { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
   isMachineVerified?: () => boolean;
@@ -77,16 +83,19 @@ export function startDaemonControlServer({
             seq: z.number(),
             metadataVersion: z.number(),
             agentStateVersion: z.number(),
-          }).optional()
+          }).optional(),
+          automationCreate: automationCreateBindingSchema.optional(),
         }),
         response: {
           200: z.object({
-            status: z.literal('ok')
-          })
+            status: z.literal('ok'),
+            automationCreate: automationCreateBindingSchema.optional(),
+          }),
+          409: z.object({ error: z.literal('SESSION_REGISTRATION_MISMATCH') }),
         }
       }
-    }, async (request) => {
-      const { sessionId, metadata, encryption } = request.body;
+    }, async (request, reply) => {
+      const { sessionId, metadata, encryption, automationCreate } = request.body;
 
       logger.debug(`[CONTROL SERVER] Session started: ${sessionId}`);
 
@@ -101,9 +110,11 @@ export function startDaemonControlServer({
         };
       }
 
-      onHappySessionWebhook(sessionId, metadata, encryptionData);
+      const accepted = automationCreate ? onHappySessionWebhook(sessionId, metadata, encryptionData, automationCreate)
+        : onHappySessionWebhook(sessionId, metadata, encryptionData);
+      if (automationCreate && accepted !== true) return reply.code(409).send({ error: 'SESSION_REGISTRATION_MISMATCH' });
 
-      return { status: 'ok' as const };
+      return { status: 'ok' as const, ...(automationCreate ? { automationCreate } : {}) };
     });
 
     // List all tracked sessions

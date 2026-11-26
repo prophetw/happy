@@ -7,6 +7,7 @@ import { logger } from '@/ui/logger';
 import { clearDaemonState, readDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
+import { readAutomationCreateBinding } from './automationCreate';
 
 async function daemonPost(path: string, body?: any, timeoutMs?: number): Promise<{ error?: string } | any> {
   const state = await readDaemonState();
@@ -74,14 +75,17 @@ export async function notifyDaemonSessionStarted(
   // race a daemon that is mid-restart (version upgrade, crash recovery). Without
   // this, the session's encryption data never reaches the daemon and the mobile
   // app's resume-happy-session RPC fails with "not tracked by this daemon".
-  const payload = { sessionId, metadata, encryption };
+  const automationCreate = readAutomationCreateBinding();
+  const payload = { sessionId, metadata, encryption, ...(automationCreate ? { automationCreate } : {}) };
   const deadline = Date.now() + SESSION_STARTED_RETRY_TIMEOUT_MS;
   let result: { error?: string } | any;
 
   while (true) {
     result = await daemonPost('/session-started', payload);
     if (!result?.error) {
-      return result;
+      if (!automationCreate || (result?.status === 'ok' && result.automationCreate?.requestID === automationCreate.requestID
+          && result.automationCreate?.launchID === automationCreate.launchID)) return result;
+      result = { error: 'Automation create registration was not acknowledged' };
     }
     if (Date.now() >= deadline) {
       return result;

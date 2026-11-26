@@ -1,4 +1,4 @@
-import { redact } from '../control';
+import { createReceiptErrorCode, redact } from '../control';
 import { ApiError } from './schema';
 import { codeBuddyOptionsDetailsSchema, launchModelValue } from './options';
 
@@ -27,6 +27,11 @@ export function projectResponse(input: unknown): Record<string, unknown> {
             && projected.agents.some(agent => agent?.agent === 'codebuddy')) {
             const details = codeBuddyOptionsDetailsSchema.safeParse((value as Record<string, unknown>).codebuddy);
             if (details.success) projected.codebuddy = details.data;
+        }
+        if (depth === 1 && key === 'data' && typeof projected.requestID === 'string' && projected.taskID === projected.requestID
+            && projected.sessionID === undefined && projected.safeToRetrySameRequestID === false) {
+            const errorCode = createReceiptErrorCode(projected.state, (value as Record<string, unknown>).errorCode);
+            if (errorCode) projected.errorCode = errorCode;
         }
         return projected;
     };

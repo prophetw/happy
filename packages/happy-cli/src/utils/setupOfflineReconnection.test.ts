@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 let capturedOnReconnected: (() => Promise<unknown>) | null = null;
+const mocks = vi.hoisted(() => ({ binding: vi.fn(), report: vi.fn() }));
 
 vi.mock('@/configuration', () => ({
     configuration: { serverUrl: 'http://server.test' },
@@ -12,6 +13,8 @@ vi.mock('@/utils/serverConnectionErrors', () => ({
         return { cancel: () => {}, getSession: () => null, isReconnected: () => false };
     },
 }));
+vi.mock('@/daemon/automationCreate', () => ({ readAutomationCreateBinding: mocks.binding }));
+vi.mock('@/daemon/controlClient', () => ({ notifyDaemonSessionStarted: mocks.report }));
 
 import { setupOfflineReconnection } from './setupOfflineReconnection';
 
@@ -25,7 +28,8 @@ function makeRealSession() {
 
 function setupOffline(realSession: ReturnType<typeof makeRealSession>, onSessionSwap = vi.fn()) {
     const api = {
-        getOrCreateSession: vi.fn().mockResolvedValue({ id: 'real-session' }),
+        getOrCreateSession: vi.fn().mockResolvedValue({ id: 'real-session', encryptionKey: Uint8Array.of(1, 2, 3),
+            encryptionVariant: 'dataKey', seq: 2, metadataVersion: 3, agentStateVersion: 4 }),
         sessionSyncClient: vi.fn().mockReturnValue(realSession),
     };
     const result = setupOfflineReconnection({
@@ -36,12 +40,14 @@ function setupOffline(realSession: ReturnType<typeof makeRealSession>, onSession
         response: null,
         onSessionSwap,
     });
-    return { result, onSessionSwap };
+    return { result, onSessionSwap, api };
 }
 
 describe('setupOfflineReconnection', () => {
     beforeEach(() => {
         capturedOnReconnected = null;
+        mocks.binding.mockReset();
+        mocks.report.mockReset().mockResolvedValue({});
     });
 
     it('re-attaches the user message handler registered while offline', async () => {
@@ -79,6 +85,20 @@ describe('setupOfflineReconnection', () => {
         await capturedOnReconnected!();
 
         expect(order).toEqual(['attach', 'swap']);
+        expect(mocks.report).not.toHaveBeenCalled();
+    });
+
+    it('reports the real automation session after a successful swap even if the initial launch returned offline', async () => {
+        mocks.binding.mockReturnValue({ requestID: 'receipt', launchID: 'automation-launch' });
+        mocks.report.mockRejectedValue(new Error('lost daemon acknowledgement'));
+        const realSession = makeRealSession();
+        const { api, onSessionSwap } = setupOffline(realSession);
+
+        await expect(capturedOnReconnected!()).resolves.toBe(realSession);
+        expect(onSessionSwap).toHaveBeenCalledWith(realSession);
+        expect(mocks.report).toHaveBeenCalledWith('real-session', {}, { encryptionKey: 'AQID', encryptionVariant: 'dataKey',
+            seq: 2, metadataVersion: 3, agentStateVersion: 4 });
+        expect(api.getOrCreateSession).toHaveBeenCalledOnce();
     });
 
     it('re-attaches only the latest user message handler', async () => {

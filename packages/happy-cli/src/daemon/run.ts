@@ -42,6 +42,7 @@ import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode, spawnWebhookTimeoutMs } from './spawnModeArgs';
 import { AUTOMATION_DEFAULT_AGENT, buildAutomationCatalog } from './automationOptions';
 import { hasPersistedProcessConflict, isPersistedSessionStopped, isPidAlive, machineBootTimeMs } from './sessionLiveness';
+import { AUTOMATION_CREATE_ENV, AUTOMATION_CREATE_PROOF_FD, NO_SESSION_REQUEST, type AutomationCreateBinding, type AutomationCreateCode, type AutomationCreateLaunch } from './automationCreate';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -241,29 +242,36 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     // Session spawning awaiter system
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
     const pidToSpawnFailure = new Map<number, (message: string) => void>();
+    const automationCreateByPid = new Map<number, AutomationCreateBinding>();
+    let automationControl: ReturnType<typeof createAutomationControl> | undefined;
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
 
     // Handle webhook from happy session reporting itself
-    const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata, encryption?: SessionEncryptionData) => {
+    const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata, encryption?: SessionEncryptionData, automationCreate?: AutomationCreateBinding): void | boolean => {
       logger.debugLargeJson(`[DAEMON RUN] Session reported`, sessionMetadata);
 
       const pid = sessionMetadata.hostPid;
       if (!pid) {
         logger.debug(`[DAEMON RUN] Session webhook missing hostPid for sessionId: ${sessionId}`);
-        return;
+        return automationCreate ? false : undefined;
       }
 
       logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${sessionMetadata.startedBy || 'unknown'}, hasEncryption: ${!!encryption}`);
       logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
 
       const existingSession = pidToTrackedSession.get(pid);
+      const expectedCreate = automationCreateByPid.get(pid);
+      if (expectedCreate && (!automationCreate || expectedCreate.requestID !== automationCreate.requestID
+          || expectedCreate.launchID !== automationCreate.launchID)) return false;
+      if (automationCreate && (!encryption || sessionMetadata.machineId !== machineId
+          || !automationControl?.matchesCreate(automationCreate, pid, sessionId))) return false;
       // A reconnect child is reserved for one identity before it reports in.
       // Reject mismatches before persisting any metadata or key material.
       if (existingSession?.startedBy === 'daemon' && existingSession.happySessionId && existingSession.happySessionId !== sessionId) {
         logger.debug(`[DAEMON RUN] Ignoring webhook for unexpected session ${sessionId} from reconnect PID ${pid}`);
-        return;
+        return automationCreate ? false : undefined;
       }
 
       // Persist encryption data to disk so it survives daemon restarts
@@ -279,6 +287,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
           lastAliveAt: Date.now(),
         });
       }
+      if (automationCreate && automationControl?.confirmCreate(automationCreate, sessionId)?.state !== 'confirmed') return false;
 
       // Check if we already have this PID (daemon-spawned)
       if (existingSession && existingSession.startedBy === 'daemon') {
@@ -308,10 +317,11 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         pidToTrackedSession.set(pid, trackedSession);
         logger.debug(`[DAEMON RUN] Registered externally-started session ${sessionId}`);
       }
+      return automationCreate ? true : undefined;
     };
 
     // Spawn a new session (sessionId reserved for future --resume functionality)
-    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+    const spawnSession = async (options: SpawnSessionOptions, automationCreate?: AutomationCreateLaunch): Promise<SpawnSessionResult> => {
       logger.debugLargeJson('[DAEMON RUN] Spawning session', options);
 
       const { directory, sessionId, machineId, approvedNewDirectoryCreation = true } = options;
@@ -615,6 +625,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
             args,
             cwd: directory,
             env: buildSessionChildEnvironment(ambientEnvironment, extraEnv),
+            automationCreate,
             directoryCreated,
             message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
           });
@@ -642,6 +653,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       directoryCreated = false,
       message,
       reconnect,
+      automationCreate,
     }: {
       args: string[];
       cwd: string;
@@ -649,12 +661,17 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       directoryCreated?: boolean;
       message?: string;
       reconnect?: Pick<TrackedSession, 'happySessionId' | 'happySessionMetadataFromLocalWebhook' | 'encryption'>;
+      automationCreate?: AutomationCreateLaunch;
     }): Promise<SpawnSessionResult> => {
+      const report = (code: AutomationCreateCode) => {
+        try { automationCreate?.report(code); }
+        catch { logger.warn(`[DAEMON RUN] Could not persist automation create evidence: ${code}`); }
+      };
       const happyProcess = spawnHappyCLI(args, {
         cwd,
         detached: true,
-        stdio: 'ignore',
-        env,
+        stdio: automationCreate ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
+        env: automationCreate ? { ...env, [AUTOMATION_CREATE_ENV]: `${automationCreate.binding.requestID}:${automationCreate.binding.launchID}` } : env,
       });
 
       // A failed spawn can emit error even when no PID was assigned.
@@ -665,6 +682,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
 
       if (!happyProcess.pid) {
         logger.debug('[DAEMON RUN] Failed to spawn process - no PID returned');
+        report('SPAWN_NOT_STARTED');
         return Promise.resolve({
           type: 'error',
           errorMessage: 'Failed to spawn Happy process - no PID returned'
@@ -683,6 +701,12 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       };
 
       pidToTrackedSession.set(happyProcess.pid, trackedSession);
+      if (automationCreate) {
+        automationCreateByPid.set(happyProcess.pid, automationCreate.binding);
+        // Bind the callback to the actual OS spawn even if the daemon restarts.
+        try { automationCreate.bindPid(happyProcess.pid); }
+        catch { logger.warn('[DAEMON RUN] Could not persist automation create child PID'); }
+      }
       if (reconnect) registeringPids.add(happyProcess.pid);
       if (reconnect?.happySessionId && reconnect.encryption && reconnect.happySessionMetadataFromLocalWebhook) {
         // A daemon restart before the webhook must still see this detached
@@ -698,10 +722,25 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
 
       happyProcess.on('exit', (code, signal) => {
         logger.debug(`[DAEMON RUN] Child PID ${happyProcess.pid} exited with code ${code}, signal ${signal}`);
-        if (happyProcess.pid) {
+        if (happyProcess.pid && !automationCreate) {
           onChildExited(happyProcess.pid);
         }
       });
+      if (automationCreate) {
+        let proof = '';
+        const proofStream = happyProcess.stdio?.[AUTOMATION_CREATE_PROOF_FD];
+        proofStream?.on('data', (chunk: Buffer) => {
+          proof = proof.length + chunk.length <= NO_SESSION_REQUEST.length ? proof + chunk.toString('utf8') : '\0';
+        });
+        proofStream?.on('error', () => { proof = '\0'; });
+        // close follows exit and the proof pipe has drained. A missed webhook
+        // alone cannot exclude a Relay session create, even after OS exit.
+        happyProcess.on('close', (code, signal) => {
+          const noRequest = typeof code === 'number' && signal === null && proof === NO_SESSION_REQUEST;
+          report(noRequest ? 'SPAWN_EXITED_BEFORE_SESSION_REQUEST' : 'SPAWN_EXITED_UNVERIFIED');
+          if (pidToTrackedSession.get(trackedSession.pid) === trackedSession) onChildExited(trackedSession.pid);
+        });
+      }
 
       logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${happyProcess.pid}`);
 
@@ -711,6 +750,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
           pidToAwaiter.delete(happyProcess.pid!);
           pidToSpawnFailure.delete(happyProcess.pid!);
           logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${happyProcess.pid}`);
+          report('SPAWN_REGISTRATION_PENDING');
           resolve({
             type: 'error',
             errorMessage: `Session webhook timeout for PID ${happyProcess.pid}`
@@ -990,6 +1030,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
       pidToSpawnFailure.get(pid)?.(`Session process ${pid} exited before connecting.`);
       stoppingPids.delete(pid);
       registeringPids.delete(pid);
+      automationCreateByPid.delete(pid);
       const session = pidToTrackedSession.get(pid);
       if (session?.happySessionId && session.encryption) {
         sessionIdToFinishedSession.set(session.happySessionId, session);
@@ -1087,12 +1128,12 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
     };
 
     // Set RPC handlers
-    const automationControl = createAutomationControl({
+    const localAutomationControl = createAutomationControl({
         directory: join(configuration.happyHomeDir, 'automation-receipts', machineId),
         // Forward the resolved automation launch options to the child CLI.
-        spawn: (directory, launch, environmentVariables) => spawnSession({ directory, environmentVariables, agent: launch.agent as SpawnSessionOptions['agent'],
+        spawn: (directory, launch, environmentVariables, automationCreate) => spawnSession({ directory, environmentVariables, agent: launch.agent as SpawnSessionOptions['agent'],
           approvedNewDirectoryCreation: false, permissionMode: launch.permissionMode,
-          modelMode: launch.model, effortLevel: launch.effort || undefined }),
+          modelMode: launch.model, effortLevel: launch.effort || undefined }, automationCreate),
         options: () => {
             const catalog = buildAutomationCatalog(apiMachine.machineMetadata).map(entry => ({
                 agent: entry.agent, models: entry.models.map(m => m.key), permissionModes: entry.permissionModes.map(m => m.key),
@@ -1105,8 +1146,9 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         stop: stopSession,
         observe: observeAutomationSession,
       });
+    automationControl = localAutomationControl;
     apiMachine.setRPCHandlers({
-      automationControl: input => automationControl(input),
+      automationControl: input => localAutomationControl(input),
       spawnSession,
       resumeSession,
       stopSession,
@@ -1122,7 +1164,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         return [...current, ...[...sessionIdToFinishedSession.values()].filter(session => !trackedIDs.has(session.happySessionId))];
       },
       localSessionStopped: sessionID => observeAutomationSession(sessionID) === 'stopped',
-      control: automationControl,
+      control: localAutomationControl,
       startupSignal: options.existingOnly ? startupAbort.signal : undefined,
     })) : null;
     machineVerified = true;

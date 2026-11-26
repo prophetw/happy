@@ -35,9 +35,11 @@ import { handleResumeCommand } from '@/resume/handleResumeCommand'
 import { ensureDaemonRunning } from './daemon/ensureDaemonRunning'
 import { handleCodexCommand } from './commands/codexCommand'
 import { sanitizeSessionEnvironment } from './daemon/sessionEnvironment'
+import { installAutomationCreateExitProof } from './daemon/automationCreate'
 
 
 (async () => {
+  installAutomationCreateExitProof()
   const args = process.argv.slice(2)
 
   // If --version is passed - do not log, its likely daemon inquiring about our version
