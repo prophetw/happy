@@ -1,5 +1,12 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Worker 队列恢复与异常退出修复（2026-11-26 晚）
+
+19:53:24（UTC+8），系统级 `happy-automation-worker.service` 报出 `QUEUE_CORRUPT`。运行中的发送任务回写队列时产生未处理的 Promise 拒绝，受管 daemon 清理后以 0 退出，systemd 的 `Restart=on-failure` 因此未触发。Control 的 Worker 在线窗口随后到期，原请求及结果查询返回 503。现场日志使用 `journalctl -u happy-automation-worker.service` 查询。
+
+- 已保全原密文与密钥。在隔离副本定位到一位差异并以原 AES-GCM 标签认证，再用 15:42 冷备核对唯一未通过任务指纹的旧终态记录，仅恢复其正文。恢复后的 1,213 条任务、201 个工作区通过新旧两版 Worker 的全量校验。20:57:11 原服务重新连接，A、B 由原队列继续执行，C 由原回执收齐结果。差异产生在哪一层仍未确定。
+- 已发布 Worker `06974a134`。调度器从异步工作启动时起处理拒绝，受管 daemon 遇到未处理异常时清理并以失败码退出。生产切换后 26 个会话进程身份通过核对，1,214 条原回执均可读，Control 连续收到签名轮询。独立维护目录为 `/var/lib/happy-automation-maintenance/queue-exit-06974a134/`，运行证据在 `~/.local/state/happy-worker-queue-exit-06974a134.5D8wGfPv/`，故障脱敏日志及恢复比对在 `~/.local/state/dot-worker-incident-20261126-cKQGeK/`。
+
 ## Dot 创建回执与 Worker 交接（2026-11-26）
 
 Control 镜像和 WSL Worker 专用 CLI 均已发布个人 main 的 `c1cd16351`，配套 TestLoop 宿主为 `e8aa300`。本次升级增加转交耗时审计、子进程启动证明与迟到注册回执。手机沿用现有协议，iOS 无需 OTA。已从 Expo 回读 Preview 的 runtime `21`，更新组为 `e6dce192-767b-4fe2-949d-f673dfe4bc46`。真机加载未验证。
