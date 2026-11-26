@@ -7,6 +7,7 @@ const messages: Record<string, string> = {
     dot_recovery_binding_changed: 'Dot 的会话或归属已变化，请返回工作台刷新。',
     dot_recovery_runtime_blocked: 'Dot 存在待核对的运行状态，无法自动恢复。请在活动页查看原因。',
     dot_recovery_pending_delivery_queue_full: '待投递队列已满，请先排空',
+    dot_recovery_relay_sequence_regressed: '消息服务的会话编号发生回退，Dot 已暂停。请先核对原会话的消息记录。',
     dot_recovery_relay_unavailable: '无法连接消息服务，请稍后重试。',
     dot_recovery_host_not_running: 'Dot 宿主尚未运行，请先恢复宿主。',
     hosted_restart_unsupported: '这台宿主的 Dot 运行时尚未支持单独重启。',

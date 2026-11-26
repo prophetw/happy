@@ -58,4 +58,4 @@ EXPOSE 3005
 
 WORKDIR /repo/packages/happy-server
 
-CMD ["sh", "-c", "../../node_modules/.bin/tsx sources/standalone.ts migrate && exec ../../node_modules/.bin/tsx sources/standalone.ts serve"]
+CMD ["sh", "-c", "if [ \"${DB_PROVIDER:-pglite}\" = postgres ]; then ../../node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; else ../../node_modules/.bin/tsx sources/standalone.ts migrate; fi && exec ../../node_modules/.bin/tsx sources/standalone.ts serve"]

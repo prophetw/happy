@@ -209,7 +209,8 @@ Usage:
 Environment variables:
   DATA_DIR          Base data directory (default: ./data)
   PGLITE_DIR        PGlite database directory (default: DATA_DIR/pglite)
-  DATABASE_URL      PostgreSQL URL (if set, uses external Postgres instead of PGlite)
+  DB_PROVIDER       Database provider for serve (default: pglite)
+  DATABASE_URL      PostgreSQL URL when DB_PROVIDER=postgres
   REDIS_URL         Redis URL (optional, not required for standalone)
   PORT              Server port (default: 3005)
   HANDY_MASTER_SECRET  Required: master secret for auth/encryption

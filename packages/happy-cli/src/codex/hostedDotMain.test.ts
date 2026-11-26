@@ -21,7 +21,7 @@ vi.mock('./codexAppServerClient', async importOriginal => ({ CodexRpcError: (awa
     sendTurnAndWait = h.send; steerTurn = h.steer;
     abortTurnWithFallback = async () => { h.event({ type: 'turn_aborted' }); return { forcedRestart: true, resumedThread: true }; };
 } }));
-vi.mock('../api/api', () => ({ ApiClient: { create: async () => ({ attachSession: async (options: unknown) => { h.attach(options); return {}; } }) } }));
+vi.mock('../api/api', () => ({ ApiClient: { create: async () => ({ attachSession: async (options: unknown) => h.attach(options) ?? {} }) } }));
 vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
     timer: ReturnType<typeof setInterval>;
     constructor(_token: string, _session: unknown, _credential: unknown, options: any) {
@@ -633,6 +633,7 @@ it('rejects unsupported effort without dispatching a fallback turn', async () =>
 });
 
 it('uses the rotated sealed conversation tag after restart instead of recreating the original session', async () => {
+    h.attach.mockReturnValueOnce({ seq: 0 });
     const f = fixture();
     try {
         await vi.waitFor(() => expect(h.attach).toHaveBeenCalled());
@@ -642,6 +643,22 @@ it('uses the rotated sealed conversation tag after restart instead of recreating
         expect(tag({ testloopDots: { workspaceId: 'workspace', conversationId } })).toBe(`testloop-dot-clear:${f.config.dotId}:${conversationId}`);
         expect(() => tag({ testloopDots: { conversationId: 'forged tag' } })).toThrow();
     } finally { await f.stop(); }
+});
+it('keeps the journal intact and blocks startup when the Relay sequence has regressed', async () => {
+    h.attach.mockReturnValueOnce({ seq: 10623 });
+    const original = { epoch: 0, delivery: 'queue', seq: 10146, id: 'original', text: 'Original input',
+        status: 'completed', turnId: 'original-turn' };
+    const f = fixture(false, false, state => {
+        state.afterSeq = 11392;
+        state.threadId = 'native-thread';
+        state.inputs = [original];
+    }, true);
+    try {
+        await expect(f.running).rejects.toThrow('hosted_relay_sequence_regressed');
+        expect(f.state()).toMatchObject({ status: 'blocked', error: 'hosted_relay_sequence_regressed',
+            afterSeq: 11392, threadId: 'native-thread', inputs: [original] });
+        expect(h.send).not.toHaveBeenCalled();
+    } finally { await f.stop().catch(() => {}); }
 });
 it('keeps an active turn on its original settings and applies a busy edit only after it settles', async () => {
     let finish!: () => void;

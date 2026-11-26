@@ -68,7 +68,8 @@ To use external Postgres or Redis instead of the embedded defaults, set:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection URL (bypasses PGlite) |
+| `DB_PROVIDER` | Set to `postgres` to use external PostgreSQL in the standalone server |
+| `DATABASE_URL` | Connection URL for the external PostgreSQL database |
 | `REDIS_URL` | Redis connection URL |
 | `S3_HOST` | S3/MinIO host (bypasses local file storage) |
 

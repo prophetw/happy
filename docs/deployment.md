@@ -313,6 +313,22 @@ Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.
 
+### Relay 持久化与异常重启
+
+自建 Relay 可沿用 `docker-compose.relay-only.yml`，在私有环境文件中将
+`RELAY_DB_PROVIDER` 设为 `postgres`，将 `RELAY_DATABASE_URL` 绑定到专用 PostgreSQL 数据库。
+容器先执行该库的 Prisma 迁移，再启动 Relay。PostgreSQL 的数据目录应放在持久卷上，
+并核对 `fsync=on`、`synchronous_commit=on` 和 `full_page_writes=on`。
+
+从现有 PGlite 切换时，先在隔离数据库演练迁移。正式切换需要停写并保存可验证的冷备。
+用 PostgreSQL 的 Prisma 迁移初始化库，再从 PGlite 停写副本逻辑导入应用表。
+核对账号、会话、消息 ID、去重 ID 和序号，沿用附件数据与原 `HANDY_MASTER_SECRET`。
+验收时确认原账号可读取原会话，再验证新写入收到回执后经异常重启可按原 ID 读回。
+切换后若已在新库产生写入，回退前需要先对账。
+
+若从旧备份恢复导致 Relay 会话序号小于 Dot 的已保存读取位置，Dot 启动会阻塞并报告
+`hosted_relay_sequence_regressed`。在原会话核对 Relay 与 Dot 账本中的消息 ID 和处理回执，再校准读取位置。
+
 ## 自建 Relay：Docker Compose 测试部署
 
 ### 192.168.99.55 定向推送最小补丁（2026-11-04）

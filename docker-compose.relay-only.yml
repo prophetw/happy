@@ -11,7 +11,8 @@ services:
     stop_grace_period: 30s
     environment:
       NODE_ENV: production
-      DB_PROVIDER: pglite
+      DB_PROVIDER: ${RELAY_DB_PROVIDER:-pglite}
+      DATABASE_URL: ${RELAY_DATABASE_URL:-}
       DATA_DIR: /data
       PGLITE_DIR: /data/pglite
       HOST: 0.0.0.0

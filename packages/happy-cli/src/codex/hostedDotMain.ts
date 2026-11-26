@@ -460,6 +460,7 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
                 return dot.conversationId ? `testloop-dot-clear:${config.dotId}:${z.string().uuid().parse(dot.conversationId)}` : `testloop-dot:${dot.workspaceId}:${config.dotId}`;
             },
         });
+        if (attached.seq < state.afterSeq) throw new Error('hosted_relay_sequence_regressed');
         session = new ApiSessionClient(credentials.token, attached, undefined, {
             serverUrl: config.serverUrl, commonHandlers: false, receive: { afterSeq: state.afterSeq, onMessage: receive },
         });
