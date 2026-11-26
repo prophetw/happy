@@ -1,5 +1,14 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Dot 创建回执与 Worker 交接（2026-11-26）
+
+Control 镜像和 WSL Worker 专用 CLI 均已发布个人 main 的 `c1cd16351`，配套 TestLoop 宿主为 `e8aa300`。本次升级增加转交耗时审计、子进程启动证明与迟到注册回执。手机沿用现有协议，iOS 无需 OTA。已从 Expo 回读 Preview 的 runtime `21`，更新组为 `e6dce192-767b-4fe2-949d-f673dfe4bc46`。真机加载未验证。
+
+- Control 实际镜像为 `sha256:973a3e1b8dee8271aac4232705e6acb7a7b9964523bd9957f72880af462f9388`。冷备核对 776 个文件。回环 readyz 与代理兼容性入口均返回 200，匿名 MCP 返回 401。切换后收到签名 Worker 轮询。Nginx 和 Relay 的容器身份及启动时间保持一致。
+- Worker 固定包为 `~/.local/share/happy-automation/releases/bound-create-c1cd16351`，新主进程 `3821320`、进程启动标识 `1856088`。在保留 20 个会话进程的维护模式下切换，独立维护单元退出 0，Worker 连接到新 Control。原两项作业的请求、会话与已发送证据一致，其中一项在切换前已完成。核查了 2,050 个冷备文件及原版读取器的兼容性。
+- Control 切换证明和回退入口在 `~/.local/state/happy-control-release-c1cd16351.idYMsr/`。Worker 验证记录在 `~/.local/state/happy-worker-evidence-c1cd16351.d8lGgx7N/`，系统维护和回退脚本在 `/var/lib/happy-automation-maintenance/bound-create-c1cd16351/`。业务验收与宿主记录见 [TestLoop 发布说明](https://github.com/prophetw/testLoop/blob/main/DEPLOY.md)。
+- 实际测试 Dot 在已授权项目上完成一次创建、发送和结果回收。按原 ID 查询到 confirmed 创建和同会话的 completed 执行，执行会话有一条匹配输入和一个结束轮次，仓库状态指纹一致。Worker 接单和有效回报的阶段耗时可在生产 Control 审计中查到。
+
 ## Codex 模型与推理强度同步（2026-11-19，Preview prophet iOS 热更）
 
 19:38（UTC+8）将个人 `@prophetwayen/happy` 的 `preview` channel 切到独立分支 `preview-prophet`，分支 ID 为 `01a1f396-f844-7e92-a6d4-5820de520bd9`。`Happy (preview)` 的 iOS bundle ID 为 `com.prophetwayen.happy.preview`，已核验内部构建为 `1.8.0 (4)` 和 `1.7.0 (1、3)`，使用 runtime `21`。`production` 保持指向原 `preview` 分支，分支 ID 为 `01a032d2-3992-7a93-8b29-055bacb97671`。
