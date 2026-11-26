@@ -1291,7 +1291,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
           releaseLock: () => releaseOwnedAutomationLock(configuration.daemonStateFile, configuration.daemonLockFile, daemonLockHandle),
           stopCaffeinate,
         }, (phase, outcome) => logger.debug(`[DAEMON RUN] Managed shutdown ${phase}: ${outcome}`));
-        process.exit(result.localOwnershipReleased ? managedReplacementExitCode : 1);
+        process.exit(result.localOwnershipReleased && source !== 'exception' ? managedReplacementExitCode : 1);
       }
 
       await automationWorker?.stop();

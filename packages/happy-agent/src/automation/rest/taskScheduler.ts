@@ -23,6 +23,10 @@ export class TaskScheduler {
     constructor(readonly queue: TaskQueue, private executor: QueueExecutor, private workerID?: string) {}
     private start(task: QueueTask, action: () => Promise<void>) {
         const work = action().finally(() => { this.work.delete(task.id); });
+        // A later synchronous queue failure can prevent dispatch/reconcile from
+        // returning this promise. Keep its rejection observable by callers that
+        // receive it without letting an abandoned flight escape the scheduler.
+        void work.catch(() => {});
         this.work.set(task.id, work);
         return work;
     }

@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => ({
   persistSession: vi.fn(),
   lookupSession: vi.fn(),
   deactivateSession: vi.fn(),
+  connect: vi.fn(),
+  clearManagedState: vi.fn(),
+  releaseManagedLock: vi.fn(),
+  startAutomation: vi.fn(),
   logger: { debug: vi.fn(), debugLargeJson: vi.fn(), warn: vi.fn() },
 }));
 
@@ -48,8 +52,16 @@ vi.mock('@/utils/tmux', () => ({
 }));
 vi.mock('@/resume/localHappyAgentAuth', () => ({ detectResumeSupport: () => ({}), hasLocalHappyAgentAuth: () => false }));
 vi.mock('./happyTerminalBoot', () => ({ startHappyTerminalDaemon: vi.fn() }));
-vi.mock('./automationWorker', () => ({ startDaemonAutomation: vi.fn() }));
+vi.mock('./automationWorker', () => ({ startDaemonAutomation: mocks.startAutomation }));
+vi.mock('./automationBootstrap', async importOriginal => ({
+  ...await importOriginal<typeof import('./automationBootstrap')>(),
+  acquireAutomationDaemonLock: async () => ({}),
+  clearOwnedAutomationState: mocks.clearManagedState,
+  releaseOwnedAutomationLock: mocks.releaseManagedLock,
+}));
 vi.mock('@/persistence', () => ({
+  readCredentials: async () => ({ token: 'fixture-token', encryption: { type: 'dataKey' } }),
+  readSettings: async () => ({ machineId: 'machine-1' }),
   readPersistedSessions: () => mocks.persisted,
   readPersistedSession: (id: string) => { mocks.lookupSession(id); return mocks.persisted[id]; },
   readPersistedSessionProcess: (id: string) => { mocks.lookupSession(id); return mocks.persisted[id]; },
@@ -79,10 +91,12 @@ vi.mock('./spawnModeArgs', async (importOriginal) => {
 vi.mock('@/api/api', () => ({ ApiClient: { create: async () => ({
   deactivateSession: mocks.deactivateSession,
   getOrCreateMachine: async () => ({ id: 'machine-1' }),
+  getExistingAutomationMachine: async () => ({ id: 'machine-1' }),
   machineSyncClient: () => ({
     setRPCHandlers: (handlers: any) => { mocks.handlers = handlers; },
-    // Stop boot after capturing the real resume closure, before heartbeat timers.
-    connect: () => { throw new Error('test boot complete'); },
+    connect: mocks.connect,
+    updateDaemonState: async () => {},
+    shutdown: () => {},
   }),
 }) } }));
 
@@ -109,6 +123,8 @@ describe('daemon resume fallback', () => {
     mocks.handlers = null;
     mocks.useRealControl = false;
     mocks.createTimeout = undefined;
+    // Most fixtures boot only until RPC setup, before heartbeat timers.
+    mocks.connect.mockReset().mockImplementation(() => { throw new Error('test boot complete'); });
     mocks.deactivateSession.mockReset().mockResolvedValue(true);
     mocks.tmuxAvailable = false;
     mocks.tmuxSpawn.mockResolvedValue({ success: true, pid: 12345, sessionId: 'test-window' });
@@ -124,6 +140,29 @@ describe('daemon resume fallback', () => {
       return { pid: 12345, on: vi.fn() };
     });
   });
+
+  it.each([['unhandledRejection', 1], ['uncaughtException', 1], ['SIGTERM', 0]] as const)(
+    'releases the managed owner after %s and exits with code %s', async (event, expectedExit) => {
+      vi.useFakeTimers();
+      mocks.connect.mockImplementationOnce(() => {});
+      const stop = vi.fn(async () => {});
+      mocks.startAutomation.mockResolvedValueOnce({ stop });
+      const done = expect(startDaemon({ existingOnly: true, automation: {
+        endpoint: 'https://fixture.invalid/happy-control/v1', report: vi.fn(),
+        identity: { id: 'worker', sign: async () => Buffer.alloc(0) },
+        registration: { id: 'worker', userID: 'owner', name: 'Fixture Worker', publicKey: 'fixture',
+          machineID: 'machine-1', projects: [], methods: [], protocol: 1 },
+      } })).rejects.toThrow('test exit');
+      await vi.waitFor(() => expect(mocks.connect).toHaveBeenCalledOnce());
+
+      vi.mocked(process.on).mock.calls.find(([name]) => name === event)![1](new Error('QUEUE_CORRUPT'));
+
+      await done;
+      expect(vi.mocked(process.exit).mock.calls[0]).toEqual([expectedExit]);
+      expect(stop).toHaveBeenCalledOnce();
+      expect(mocks.clearManagedState).toHaveBeenCalledOnce();
+      expect(mocks.releaseManagedLock).toHaveBeenCalledOnce();
+    });
 
   afterEach(async () => {
     await mocks.controlServer?.stop();

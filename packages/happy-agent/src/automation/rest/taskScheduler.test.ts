@@ -1,9 +1,10 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskQueue } from './taskQueue';
 import { TaskScheduler, type Observation } from './taskScheduler';
+import { ApiError } from './schema';
 
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
@@ -46,5 +47,22 @@ it('preserves process-exit confirmation for an explicit failed turn', async () =
     f.observe({ process: 'running', cursor: 2, outcome: 'failed', externalRunning: false });
     await f.scheduler.tick();
     expect(f.queue.tasks()[0]).toMatchObject({ state: 'blocked', reason: 'turn_ended_process_unconfirmed' });
+    expect(f.counts()).toEqual({ sends: 1, stops: 0 });
+});
+
+it('does not abandon a send when a later claim and the send receipt update both fail', async () => {
+    const f = fixture();
+    const unavailable = new ApiError('QUEUE_CORRUPT', 503);
+    const claim = f.queue.claim.bind(f.queue);
+    vi.spyOn(f.queue, 'claim').mockImplementationOnce(claim).mockImplementationOnce(() => { throw unavailable; });
+    vi.spyOn(f.queue, 'update').mockImplementation(() => { throw unavailable; });
+
+    expect(() => f.scheduler.dispatch()).toThrow(unavailable);
+    // The failed dispatch never returns the launched promise to its caller.
+    // Allow the event loop to observe an unhandled rejection before draining it.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await f.scheduler.drain();
+
+    expect(f.queue.tasks()[0]).toMatchObject({ state: 'preparing', dispatched: true });
     expect(f.counts()).toEqual({ sends: 1, stops: 0 });
 });
