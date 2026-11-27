@@ -1,3 +1,4 @@
+import { DotTaskTiming } from './DotTaskTiming';
 import * as React from 'react';
 import { ActivityIndicator, AppState, Pressable, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -374,6 +375,7 @@ export function DotObservationPanel({ sessionId, workspaceId, dotId, dotSessionI
             {result.work.businessVerification === 'independent_agent_report' && <Text style={muted}>已有独立执行会话提供验收报告</Text>}
             {result.work.reason && <Text style={muted}>原因：{testloopWorkQueueReason(result.work.reason)}</Text>}
             {result.work.queueReason && <Text style={muted}>等待原因：{testloopWorkQueueReason(result.work.queueReason)}</Text>}
+            <DotTaskTiming timing={result.work.timing} waitingSince={result.work.waitingSince} style={muted} />
             {result.work.recovery && <Text style={muted}>{result.work.recovery}</Text>}
             <Text style={muted}>{date(result.work.startedAt)} → {date(result.work.finishedAt)}</Text>
             {result.work.steps.map(step => <Text key={step.id} style={body}>{step.title} · {states[step.status] ?? step.status}</Text>)}

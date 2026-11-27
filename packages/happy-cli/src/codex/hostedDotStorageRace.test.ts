@@ -81,14 +81,22 @@ it('holds the old descriptor while opening its replacement so its inode cannot b
     expect(hooks.paths.size).toBe(0);
 });
 
-it('repeated inode replacement fails after one complete reopen', () => {
+it('reads the current descriptor after two consecutive publications', () => {
+    const f = fixture(); let generation = 0;
+    hooks.onOpen = path => {
+        if (path === f.file && generation < 2) replace(f.file, { ...after, generation: ++generation });
+    };
+    expect(readHostedStorageImportSource(f.file).state).toEqual({ ...after, generation: 2 });
+});
+
+it('repeated inode replacement fails after bounded reopens', () => {
     const f = fixture(); let opens = 0, generation = 0;
     hooks.onOpen = path => {
         if (path !== f.file) return;
         opens++; replace(f.file, { ...after, generation: generation++ });
     };
     expect(() => readHostedStorageImportSource(f.file)).toThrow('hosted_storage_file_changed');
-    expect(opens).toBe(2);
+    expect(opens).toBe(4);
 });
 
 it('same-inode modification never retries or returns the earlier descriptor bytes', () => {

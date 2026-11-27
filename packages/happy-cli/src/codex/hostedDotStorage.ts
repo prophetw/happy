@@ -41,7 +41,10 @@ function bytes(file: string, limit = HOSTED_STORAGE_LIMIT): Buffer {
     let detached: BigIntStats | undefined;
     const descriptors: number[] = [];
     try {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        // A burst can publish an input, its native receipt and output ACK in
+        // succession. Reopen only after proven atomic replacement, and keep a
+        // small fixed bound so a changing file cannot authorize a stale input.
+        for (let attempt = 0; attempt < 4; attempt++) {
             safePath(file);
             const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
             // Keep the old descriptor open so the filesystem cannot reuse its inode

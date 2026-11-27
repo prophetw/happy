@@ -89,5 +89,6 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
     if (request.action === 'adopt') return lifecycle.adopt(request.workspaceID, request.operationID, request.revision, request.head);
     if (request.action === 'resolve') return lifecycle.resolve(request.workspaceID, { operationID: request.operationID,
         expectedRevision: request.revision, head: request.head, kind: request.kind, source: `owner-ui:${request.operationID}` });
+    if (request.action === 'finalize-integrated') return lifecycle.finalizeIntegrated(request.workspaceID, request.operationID, request.head, request.evidence, ownerID);
     return lifecycle.apply(plan as Parameters<typeof lifecycle.apply>[0], request.operationID);
 }

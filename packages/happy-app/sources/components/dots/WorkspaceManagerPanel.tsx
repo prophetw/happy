@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { randomUUID } from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -38,6 +38,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose }: 
     const [detail,setDetail] = React.useState<WorkspaceDetail|null>(null), [ticket,setTicket] = React.useState<WorkspaceTicket|null>(null);
     const [agreed,setAgreed] = React.useState(false), [pending,setPending] = React.useState<Pending|null>(null);
     const [pendingRestored,setPendingRestored] = React.useState(false);
+    const [acceptance,setAcceptance] = React.useState<{workspaceID: string; text: string} | null>(null);
     const [review,setReview] = React.useState<'adopt'|'integrated'|'no-change'|'archived'|null>(null), [clock,setClock] = React.useState(Date.now());
     const epoch = React.useRef(0), catalogAttempt = React.useRef(0), mounted = React.useRef(true), locked = React.useRef(false), pendingRef = React.useRef<Pending|null>(null);
     const scope = catalog && projectID ? { machineID:catalog.machineID,projectID } : null;
@@ -49,7 +50,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose }: 
     React.useEffect(() => {
         epoch.current++;const attempt=++catalogAttempt.current;const validCatalog=()=>mounted.current&&catalogAttempt.current===attempt&&current();
         locked.current=false;setBusy(false);setCatalogLoading(true);setError(null);setCatalog(null);setProjectID('');setDetail(null);setTicket(null);setItems([]);setPending(null);pendingRef.current=null;
-        setRenderScope({client,contextKey});
+        setRenderScope({client,contextKey});setAcceptance(null);
         void client.catalog().then(value=>{if(validCatalog()){setCatalog(value);setProjectID(value.projects[0]?.id??'');}})
             .catch(e=>{if(validCatalog())setError(e instanceof Error?e.message:'WORKSPACE_MANAGER_UNAVAILABLE');})
             .finally(()=>{if(validCatalog())setCatalogLoading(false);});
@@ -98,7 +99,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose }: 
     const write = async (request:Mutation, retry=false) => {
         if(!scope||!pendingRestored||locked.current||!current()||(!retry&&pendingRef.current&&pendingRef.current.result?.status!=='settled'))return;
         const version=epoch.current,key=cacheKey;locked.current=true;setBusy(true);setError(null);
-        const state:Pending={request};pendingRef.current=state;setPending(state);setReview(null);setTicket(null);setAgreed(false);
+        const state:Pending={request};pendingRef.current=state;setPending(state);setReview(null);setAcceptance(null);setTicket(null);setAgreed(false);
         let known:WorkspaceMutationResult|undefined;
         try {
             await AsyncStorage.setItem(key,JSON.stringify(state)); // Persist identity before any write request.
@@ -152,7 +153,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose }: 
             {pending&&<View style={card}><Text style={{...text,fontWeight:'600'}}>{t('workspaces.receipt')}</Text><Text selectable style={muted}>{t('workspaces.operation')} · {pending.request.operationID}</Text>
                 <Text accessibilityLiveRegion="polite" style={text}>{pending.result?.status==='settled'?(receipt?.state==='removed'?t('workspaces.removed'):receipt?.state==='resolved'?t('workspaces.resolved'):receipt?.state==='adopted'?t('workspaces.adopted'):t('workspaces.failed'))
                     :pending.result?.status==='unknown'?t('workspaces.unknownRequest'):t('workspaces.pendingRequest')}</Text>
-                {receipt?.reason&&<Text style={muted}>{reason(receipt.reason)}</Text>}
+                {receipt?.reason&&reasons(receipt.reason.split(','))}
                 {receipt?.retainedRef&&<Text selectable style={muted}>{t('workspaces.retained')} · {receipt.retainedRef}</Text>}
                 <View style={row}>{button(t('workspaces.query'),query,busy)}{unsettled&&button(t('workspaces.retry'),()=>{void write(pending.request,true);},busy)}</View>
             </View>}
@@ -168,6 +169,18 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose }: 
                         {detail.item.managed&&<>{button(t('workspaces.integrated'),()=>setReview('integrated'),busy||unsettled||!detail.inspectedHead)}{button(t('workspaces.noChange'),()=>setReview('no-change'),busy||unsettled||!detail.inspectedHead)}
                             {project?.allowArchive&&button(t('workspaces.archive'),()=>setReview('archived'),busy||unsettled||!detail.inspectedHead)}</>}</View>}
                     {!project?.allowArchive&&<Text style={muted}>{t('workspaces.archiveDisabled')}</Text>}
+                    {detail.item.state!=='retired'&&detail.item.canFinalizeIntegrated&&button(t('workspaces.finalize'),()=>setAcceptance({workspaceID:detail.item.id,text:''}),busy||unsettled||!detail.inspectedHead)}
+                    {acceptance?.workspaceID===detail.item.id&&<View style={{gap:8}}>
+                        <Text style={muted}>{t('workspaces.finalizeHelp')}</Text>
+                        <TextInput accessibilityLabel={t('workspaces.acceptanceEvidence')} value={acceptance.text} maxLength={16000} multiline
+                            style={{...text,borderWidth:1,borderColor:theme.colors.divider,padding:8}} onChangeText={value=>setAcceptance({...acceptance,text:value})}/>
+                        <View style={row}>
+                            {button(t('workspaces.finalizeSubmit'),()=>{if(scope&&detail.inspectedHead)void write({action:'finalize-integrated',...scope,
+                                workspaceID:detail.item.id,operationID:randomUUID(),head:detail.inspectedHead,evidence:acceptance.text.trim()});},
+                                busy||unsettled||!acceptance.text.trim()||!detail.inspectedHead,true)}
+                            {button(t('workspaces.cancel'),()=>setAcceptance(null),busy)}
+                        </View>
+                    </View>}
                 </View>
                 {review&&<View style={card}><Text style={text}>{review==='adopt'?t('workspaces.adoptHelp'):t('workspaces.reviewHelp')}</Text><View style={row}>{button(t('workspaces.confirmReview'),reviewResult,busy||unsettled)}{button(t('workspaces.cancel'),()=>setReview(null),busy)}</View></View>}
                 {detail.result.operations?.map(op=><View key={op.id} style={card}><Text selectable style={muted}>{op.id} · {op.state}{op.head?`\n${op.head}`:''}</Text>{op.reason&&<Text style={muted}>{reason(op.reason)}</Text>}</View>)}

@@ -63,10 +63,15 @@ const workSummary = z.object({ id: uuid, title: z.string().max(200), kind: z.str
     statusLabel: z.string().min(1).max(80).optional(), needsReview: z.boolean(), projectID: z.string().max(200).nullable(), goalPhase: z.string().max(80).nullable() });
 const gitObjectID = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const testResult = z.object({ command: z.string().min(1).max(300), exitCode: z.number().int() });
-const executionLocation = z.object({ mode: z.string(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional(),
+export const workTiming = z.object({
+    admittedAt: z.number().optional(), resourceAt: z.number().optional(), startedAt: z.number().optional(),
+    endedAt: z.number().optional(), deliveredAt: z.number().optional(),
+});
+const executionLocation = z.object({ mode: z.string(), source: z.enum(['baseline','checkout']).optional(),
+    workspaceState: z.enum(['active','retiring','retired']).optional(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional(),
     checkoutDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(), candidateCommit: gitObjectID.optional(),
     testResult: testResult.optional(), testCleanup: z.enum(['removed', 'retained']).optional() });
-const workDetail = workSummary.extend({ execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
+const workDetail = workSummary.extend({ timing: workTiming.optional(), waitingSince: z.number().optional(), execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
     dispatchOptions: dispatchOptions.optional(), nextWakeAt: z.string().nullable(), finishedAt: z.string().nullable(), executionSessionId: sessionId.nullable(),
     executionOutcome: z.string().max(80).nullable(), businessVerification: z.string().max(80),
     steps: z.array(z.object({ id: z.string().max(100), title: z.string().max(500), status: z.string().max(80) })).max(10),
@@ -211,7 +216,7 @@ export function testloopWorkQueueReason(reason: string): string {
         ? '执行端协议版本不匹配；交办已保留，版本匹配后自动继续。'
         : `执行条件暂未满足（${reason.slice('execution_unavailable:'.length)}），系统会自动重新核对。`;
     const labels: Record<string, string> = {
-        'scheduler-ready': '等待调度', 'project-limit': '等待本项目执行名额', 'machine-limit': '等待机器硬上限名额',
+        'scheduler-ready': '等待调度', 'text-limit': '等待纯文本执行名额', 'project-limit': '等待本项目执行名额', 'machine-limit': '等待机器硬上限名额',
         'resource-wait': '等待共享排他资源', execution_slot: '等待机器执行槽',
         legacy_observation: '正在核对占用资源的旧会话', candidate_review: '等待原目录的候选验收结束',
         CANDIDATE_REQUIRED: '请选择要审查的提交或执行候选。', CANDIDATE_UNAVAILABLE: '指定候选已无法读取。',
@@ -224,6 +229,9 @@ export function testloopWorkQueueReason(reason: string): string {
         external_turn_running: '执行会话还有其他轮次在运行，正在核对其结果。',
         observation_unavailable: '暂时无法读取执行状态，系统正在自动重试；原任务没有被停止。',
         hosted_task_unavailable: '最新执行状态暂时无法读取，系统正在自动核对原请求。',
+        QUEUE_CAPACITY_EXCEEDED: '执行机的持久队列已满，本次未获入队回执。',
+        worker_not_reached: 'Worker 尚未领取交办，正在核对原请求。',
+        INSPECTION_SOURCE_UNAVAILABLE: '只读来源无法安全取得。',
         WORKER_UNAVAILABLE: '执行端暂时不可用，系统正在自动重试状态查询。',
         CONTROL_TIMEOUT: '状态查询超时，系统正在自动重试。',
         CONTROL_READ_UNAVAILABLE: '状态查询暂时失败，系统正在自动重试。',

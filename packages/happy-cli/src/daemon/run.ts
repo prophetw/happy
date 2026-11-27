@@ -409,6 +409,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         let extraEnv: Record<string, string> = {
           ...authEnv,
           ...sanitizeSessionEnvironment(taskEnvironment),
+          ...(taskEnvironment.HAPPY_TASK_RESTRICTION ? { HAPPY_TASK_RESTRICTION: taskEnvironment.HAPPY_TASK_RESTRICTION } : {}),
           ...(taskEnvironment.HAPPY_TASK_ID ? { HAPPY_TASK_ID: taskEnvironment.HAPPY_TASK_ID } : {}),
           ...(taskEnvironment.HAPPY_TASK_ROOT ? { HAPPY_TASK_ROOT: taskEnvironment.HAPPY_TASK_ROOT } : {}),
           ...(taskEnvironment.HAPPY_TASK_TITLE ? { HAPPY_TASK_TITLE: taskEnvironment.HAPPY_TASK_TITLE } : {}),
@@ -939,6 +940,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
             HAPPY_RECONNECT_SEQ: String(encryption.seq),
             HAPPY_RECONNECT_METADATA_VERSION: String(encryption.metadataVersion),
             HAPPY_RECONNECT_AGENT_STATE_VERSION: String(encryption.agentStateVersion),
+            ...(metadata.happyTaskRestriction ? { HAPPY_TASK_RESTRICTION: metadata.happyTaskRestriction } : {}),
             ...(metadata.happyTask ? {
               HAPPY_TASK_ID: metadata.happyTask.taskId,
               HAPPY_TASK_ROOT: metadata.happyTask.origin.path,

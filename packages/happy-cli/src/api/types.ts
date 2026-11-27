@@ -373,6 +373,7 @@ export type Metadata = {
     updatedAt: number
   },
   /** Trusted Happy Control task display and origin metadata. */
+  happyTaskRestriction?: 'text' | 'inspect',
   happyTask?: {
     schemaVersion: 1,
     taskId: string,

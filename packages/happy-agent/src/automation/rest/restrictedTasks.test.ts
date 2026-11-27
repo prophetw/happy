@@ -1,0 +1,42 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
+import { TaskQueue } from './taskQueue';
+import { prepareInspection, prepareWorkspace, workspaceResources } from './taskWorkspaces';
+
+const roots: string[] = [];
+const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding:'utf8', stdio:['ignore','pipe','pipe'] }).trim();
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true}); });
+
+it('isolates text without Git and captures committed and checkout sources without a worktree', async () => {
+    const root = mkdtempSync(join(tmpdir(),'happy-restricted-')); roots.push(root);
+    const repo = join(root,'repo'); mkdirSync(repo);
+    const queue = new TaskQueue(join(root,'machine'),{}, { machineID:'machine' });
+    const create = (requestID: string, execution: unknown) => prepareWorkspace(queue,{requestID,grantID:'grant',projectID:'project',root:repo,execution});
+    const text = await create('text', {mode:'text'});
+    expect(workspaceResources(text,'text')).toEqual([{key:'machine',mode:'shared'},{key:'session:text',mode:'exclusive'}]);
+    git(repo,'init','-q','-b','main'); git(repo,'config','user.name','fixture');git(repo,'config','user.email','test@example.invalid');
+    writeFileSync(join(repo,'file.txt'),'committed');writeFileSync(join(repo,'.gitignore'),'ignored\n');
+    git(repo,'add','.');git(repo,'commit','-qm','baseline');
+    const baseline = await create('baseline',{mode:'inspect',source:'baseline'});
+    writeFileSync(join(repo,'file.txt'),'new commit');git(repo,'commit','-qam','next');
+    writeFileSync(join(repo,'file.txt'),'unstaged');
+    writeFileSync(join(repo,'untracked'),'new');
+    writeFileSync(join(repo,'ignored'),'ignored');
+    writeFileSync(join(repo,'.env'),'private');
+    symlinkSync('/etc/passwd',join(repo,'link'));
+    const checkout = await create('checkout',{mode:'inspect',source:'checkout'});
+    expect(workspaceResources(baseline,'baseline').some(r=>r.key.startsWith('checkout:'))).toBe(false);
+    expect(workspaceResources(checkout,'checkout').find(r=>r.key.startsWith('checkout:'))?.mode).toBe('shared');
+    await Promise.all([prepareInspection(baseline),prepareInspection(checkout)]);
+    expect(readFileSync(join(baseline.cwd,'source','file.txt'),'utf8')).toBe('committed');
+    expect(readFileSync(join(checkout.cwd,'source','file.txt'),'utf8')).toBe('unstaged');
+    expect(readFileSync(join(checkout.cwd,'source','untracked'),'utf8')).toBe('new');
+    for (const name of ['.env','ignored','link','.git']) expect(existsSync(join(checkout.cwd,'source',name))).toBe(false);
+    writeFileSync(join(repo,'file.txt'),'further edits');
+    await prepareInspection(checkout);
+    expect(readFileSync(join(checkout.cwd,'source','file.txt'),'utf8')).toBe('unstaged');
+    expect(git(repo,'worktree','list','--porcelain').split('\n').filter(line=>line.startsWith('worktree '))).toHaveLength(1);
+});

@@ -5,6 +5,8 @@ type ResumeThreadClient = {
         threadId: string;
         cwd: string;
         mcpServers: Record<string, unknown>;
+        approvalPolicy?: 'never';
+        sandbox?: 'read-only';
     }) => Promise<{ threadId: string; model: string }>;
 };
 
@@ -30,12 +32,14 @@ export async function resumeExistingThread(opts: {
      * internal resume detail out of the conversation. Defaults to `true`.
      */
     announce?: boolean;
+    restricted?: boolean;
 }): Promise<{ threadId: string; model: string }> {
     try {
         const resumedThread = await opts.client.resumeThread({
             threadId: opts.threadId,
             cwd: opts.cwd,
             mcpServers: opts.mcpServers,
+            ...(opts.restricted ? { approvalPolicy: 'never', sandbox: 'read-only' } as const : {}),
         });
 
         opts.session.updateMetadata((currentMetadata) => ({

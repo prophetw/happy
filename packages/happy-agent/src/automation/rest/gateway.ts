@@ -34,7 +34,7 @@ const base = '/happy-control/v1';
 const failure = (code: string) => ({ version: 1, ok: false, error: { code, retryable: false } });
 // These refusals occur before enqueue (or inside its transaction before insertion).
 // Authorization, storage, and transport errors may also occur after the queue commit.
-const sendPreAdmissionRefusals = new Set(['INVALID_REQUEST', 'REQUEST_ID_CONFLICT', 'WORKSPACE_RETIRED', 'TEST_CHECKOUT_SETTLED']);
+const sendPreAdmissionRefusals = new Set(['INVALID_REQUEST', 'REQUEST_ID_CONFLICT', 'WORKSPACE_RETIRED', 'TEST_CHECKOUT_SETTLED', 'QUEUE_CAPACITY_EXCEEDED']);
 function boundSendReceipt(job: Job, result: Record<string, unknown>) {
     if (result.ok !== true || !result.data || typeof result.data !== 'object') return false;
     const data = result.data as Record<string, unknown>;
@@ -556,6 +556,7 @@ export function createGateway(options: GatewayOptions) {
             const code = (result.error as { code?: string } | undefined)?.code;
             if (result.ok !== false || job.reoffered || !code || !sendPreAdmissionRefusals.has(code))
                 return ok({ accepted: true });
+            if (code === 'QUEUE_CAPACITY_EXCEEDED') result.dispatch = 'not_sent';
         }
         const attempt = job.createAttempt;
         const closed = (body.result as { closedCreate?: unknown }).closedCreate;

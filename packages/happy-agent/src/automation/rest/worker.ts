@@ -2,9 +2,9 @@ import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { TaskQueue, occupiesSlot, pendingConflict, terminalTask, type LegacyCheck, type QueueTask, type Workspace } from './taskQueue';
 import { TaskScheduler, candidateError, type Observation } from './taskScheduler';
-import { prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository, withWorkspaceAccess,
+import { prepareInspection, prepareWorkspace, verifyWorkspace, workspaceResources, workspaceResult, canonicalRepository, withWorkspaceAccess,
     verifyReviewCandidate, checkoutVersion, candidateInstruction, finishTestCheckout } from './taskWorkspaces';
-import type { TestEvidence } from './execution';
+import { restrictedExecution, type TestEvidence } from './execution';
 import { realpathSync, statSync } from 'node:fs';
 import { AutomationControl, projectMessage, type Policy } from '../control';
 import { Journal, hash } from '../journal';
@@ -75,7 +75,13 @@ export class ScopedWorker {
                 if (!machine) return false;
                 return (await this.transport.rpc(machine, { version: 1, operation: 'status', sessionID: t.sessionID })).process === 'stopped';
             },
-            authorize: async t => { const result = await run(t, { version: 1, method: 'sessions.status', sessionID: t.sessionID, cursor: 0, limit: 1 }, true); if(!result.ok)throw new ApiError(result.error?.code??'EXECUTION_UNAVAILABLE',503); },
+            authorize: async t => {
+                const result = await run(t, { version: 1, method: 'sessions.status', sessionID: t.sessionID, cursor: 0, limit: 1 }, true);
+                if (!result.ok) throw new ApiError(result.error?.code ?? 'EXECUTION_UNAVAILABLE', 503);
+                const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID);
+                if (workspace?.execution.mode === 'inspect')
+                    await withWorkspaceAccess(this.queue, workspace.id, () => prepareInspection(workspace));
+            },
             observe: async t => {
                 if (!t.legacy) return this.observeTask(t, run);
                 const session = this.transport.localSessions?.().find(s => s.id === t.sessionID);
@@ -168,7 +174,7 @@ export class ScopedWorker {
                 verifyWorkspace(workspace);
                 return workspaceResources(workspace, session.id);
             }
-            return workspaceResources({ repository: canonicalRepository(directory), cwd: directory, execution: { mode: 'legacy', resources: [] } }, session.id);
+            return workspaceResources({ repository: canonicalRepository(directory), root: directory, cwd: directory, execution: { mode: 'legacy', resources: [] } }, session.id);
         } catch {
             // Unknown or changed paths retain the conservative machine lease.
             return workspaceResources();
@@ -183,7 +189,7 @@ export class ScopedWorker {
                 const grant = await this.currentGrant(task), session = await this.localSession(task.sessionID);
                 const project = checkBoundProjects(grant, this.registration, this.now()).find(p => p.directory === (session.metadata as any)?.path);
                 if (!project || task.processID && task.processID !== (session.metadata as any)?.hostPid) return;
-                const binding = { repository: canonicalRepository(project.directory), cwd: project.directory, execution: { mode: 'legacy' as const, resources: [] } };
+                const binding = { repository: canonicalRepository(project.directory), root: project.directory, cwd: project.directory, execution: { mode: 'legacy' as const, resources: [] } };
                 this.queue.refineWorkspaceResources(task, workspaceResources(binding, task.sessionID), binding);
             }
         } catch { /* A changed binding retains its original lease. */ }
@@ -342,6 +348,7 @@ export class ScopedWorker {
     }
     private async observeTask(t: QueueTask, run: (t: QueueTask, command: Record<string, unknown>) => Promise<any>): Promise<Observation> {
         let cursor = 0, sentSeq = t.seq, messageID = t.messageID, turnID = t.turnID;
+        let startedAt = t.startedAt, endedAt = t.endedAt;
         let outcome: Observation['outcome'], latest: Observation['outcome'], latestTurn: string | undefined, process = 'unknown';
         // Reduce the complete current stream. A turn-end beyond page one is authoritative;
         // a historical running event is not a live lease.
@@ -360,14 +367,18 @@ export class ScopedWorker {
                 latest = message.state; latestTurn = message.turnID;
                 if (sentSeq !== undefined && message.seq > sentSeq) {
                     turnID ??= message.turnID;
-                    if (message.turnID === turnID) outcome = message.state;
+                    if (turnID && message.turnID === turnID) {
+                        outcome = message.state;
+                        if (message.state === 'running') startedAt ??= message.time;
+                        else if (['completed','partial','failed','cancelled'].includes(message.state)) endedAt ??= message.time;
+                    }
                 }
             }
             if (!data.hasMore) {
                 const local = await this.localSession(t.sessionID), processID = (local.metadata as any)?.hostPid;
                 if (t.processID !== processID) this.queue.update(t.id, current => { current.processID = processID; });
                 const workspace = this.queue.workspaces(t.grantID).find(w => w.id === t.workspaceID);
-                const result: Observation = { process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome,
+                const result: Observation = { process, cursor: data.nextCursor, seq: sentSeq, messageID, turnID, outcome, startedAt, endedAt,
                     externalRunning: latest === 'running' && (!t.dispatched || latestTurn !== turnID), ...this.schedulingProof(local, process) };
                 if (!workspace) return result;
                 if (!t.dispatched && workspace.execution.candidate) await verifyReviewCandidate(workspace);
@@ -487,6 +498,7 @@ export class ScopedWorker {
                 await check(['create','withdraw-create','cancel'].includes(String(input.operation))); if (m.id !== live.machineID || (input.directory !== undefined && !permittedDirectory(input.directory))) throw new ApiError('SCOPE_DENIED', 403);
                 const workspace = ['create','withdraw-create'].includes(String(input.operation)) ? workspaces.find(w => w.id === hash(`${live.id}\n${input.requestID}`) && w.cwd === input.directory) : undefined;
                 const call = () => this.transport.rpc(m, { ...input, ...(workspace ? { taskEnvironment: { TMPDIR: workspace.temporaryDirectory, TMP: workspace.temporaryDirectory, TEMP: workspace.temporaryDirectory, HAPPY_TASK_ID: workspace.id, HAPPY_TASK_PORT: String(workspace.port),
+                    ...(restrictedExecution(workspace.execution.mode) ? { HAPPY_TASK_RESTRICTION: workspace.execution.mode } : {}),
                     ...(taskTitle ? { HAPPY_TASK_TITLE: taskTitle, HAPPY_TASK_ROOT: workspace.root } : {}) } } : {}), ...(typeof input.requestID === 'string' ? { requestID: remoteID(input.requestID) } : {}) },
                     live.codebuddyLaunch ? { codebuddyLaunch: live.codebuddyLaunch, options: live.options } : undefined);
                 const used = workspace ?? (typeof input.sessionID==='string'?workspaces.find(w => w.sessionID === input.sessionID):undefined);
@@ -538,7 +550,13 @@ export class ScopedWorker {
         if (command.method === 'tasks.create') {
             if (typeof command.requestID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(command.requestID)) throw new ApiError('INVALID_REQUEST');
             const execution = command.execution as { mode?: string } | undefined;
-            if (execution?.mode === 'read-only' && (command.options as any)?.permissionMode !== 'read-only') throw new ApiError('OPTION_DENIED', 403);
+            const options = taskOptionsSchema.parse(command.options ?? {});
+            if ((execution?.mode === 'read-only' || restrictedExecution(execution?.mode)) && options.permissionMode !== 'read-only')
+                throw new ApiError('OPTION_DENIED', 403);
+            if (restrictedExecution(execution?.mode)) {
+                if (options.agent !== 'codex') throw new ApiError('OPTION_DENIED',403);
+                if (!(capabilities.operations as unknown[]).includes('restricted-task-v1')) throw new ApiError('UNSUPPORTED_VERSION',426);
+            }
             const project = projects.find(p => p.directory === command.directory)!;
             taskTitle = taskTitleSchema.optional().parse(command.title);
             workspace = await prepareWorkspace(this.queue, { requestID: String(command.requestID), grantID: live.id, projectID: project.id,
@@ -625,7 +643,7 @@ export class ScopedWorker {
             // Importing its already-live old turn still retains global exclusion in tick().
             const session = !w && !accepted ? await this.localSession(String(command.sessionID)) : undefined;
             const project = session ? projects.find(p=>p.directory===(session.metadata as any)?.path) : undefined;
-            const binding = w ?? (project ? {repository:canonicalRepository(project.directory),cwd:project.directory,execution:{mode:'legacy' as const,resources:[]}} : undefined);
+            const binding = w ?? (project ? {repository:canonicalRepository(project.directory),root:project.directory,cwd:project.directory,execution:{mode:'legacy' as const,resources:[]}} : undefined);
             const task = this.queue.enqueue({ requestID: command.requestID, grantID: live.id, workerID: this.registration.id, sessionID: String(command.sessionID),
                 workspaceID: w?.id, authorization: leaseFingerprint(live), text: command.text, resources: accepted?.resources ?? workspaceResources(binding, String(command.sessionID)) });
             await check(true); return reply(this.queue.receipt(task, this.checking()));
@@ -659,7 +677,7 @@ export class ScopedWorker {
                 // A corroboration cache failure cannot replace a confirmed create receipt.
                 try { this.processProofs.recordRunning(await this.localSession((result as any).data.sessionID), 'running'); } catch { /* Missing proof keeps later recovery conservative. */ }
             }
-            return { ...(result as any), data: { ...(result as any).data, execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch, baseCommit: workspace.baseCommit, projectID: workspace.projectID, port: workspace.port,
+            return { ...(result as any), data: { ...(result as any).data, execution: { mode: workspace.execution.mode, source: workspace.execution.source, directory: workspace.cwd, branch: workspace.branch, baseCommit: workspace.baseCommit, projectID: workspace.projectID, port: workspace.port,
                 workspaceState:workspace.retirement?.phase??'active',retainedRef:workspace.retirement?.retainedRef,retainedCommit:workspace.retirement?.retainedCommit,
                 checkoutDigest: workspace.execution.candidate?.kind === 'checkout' ? workspace.execution.candidate.digest : undefined,
                 candidateCommit: workspace.execution.candidate && workspace.execution.candidate.kind !== 'checkout' ? workspace.execution.candidate.commit : undefined,

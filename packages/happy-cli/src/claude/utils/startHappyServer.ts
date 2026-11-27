@@ -74,8 +74,14 @@ export async function startHappyServer(client: ApiSessionClient) {
         }
     };
 
+    const local = await startSessionMcp(() => createMcpServer(handler));
+    return { ...local, toolNames: ['change_title'] };
+}
+
+export async function startSessionMcp(create: () => McpServer, path = '/') {
     const server = createServer(async (req, res) => {
-        const mcp = createMcpServer(handler);
+        if (req.url?.split('?',1)[0] !== path) { res.writeHead(404).end(); return; }
+        const mcp = create();
         try {
             const transport = new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined
@@ -98,18 +104,9 @@ export async function startHappyServer(client: ApiSessionClient) {
     const baseUrl = await new Promise<URL>((resolve) => {
         server.listen(0, "127.0.0.1", () => {
             const addr = server.address() as AddressInfo;
-            resolve(new URL(`http://127.0.0.1:${addr.port}`));
+            resolve(new URL(`http://127.0.0.1:${addr.port}${path}`));
         });
     });
 
-    logger.debug(`[happyMCP] server:ready sessionId=${client.sessionId} url=${baseUrl.toString()}`);
-
-    return {
-        url: baseUrl.toString(),
-        toolNames: ['change_title'],
-        stop: () => {
-            logger.debug(`[happyMCP] server:stop sessionId=${client.sessionId}`);
-            server.close();
-        }
-    }
+    return { url: baseUrl.toString(), stop: () => { server.close(); } };
 }

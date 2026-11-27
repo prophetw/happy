@@ -16,7 +16,7 @@ export const fixtureGit=(cwd:string,...args:string[])=>execFileSync('git',['-C',
 /** No live config, account, credentials, messages or databases. Every Git path
  * is created beneath this single mkdtemp root. With a probe socket, real Linux
  * session processes exercise the same occupancy checks as the production API. */
-export async function workspaceOwnerFixture(processProbe?: { root: string; socket: string }) {
+export async function workspaceOwnerFixture(processProbe?: { root: string; socket: string }, autoRetire = false) {
     const root=processProbe?.root??mkdtempSync('/tmp/happy-owner-ui-'),repo=join(root,'repo'),home=join(root,'home');mkdirSync(repo);mkdirSync(home);
     fixtureGit(repo,'init','-qb','main');fixtureGit(repo,'config','user.name','Fixture');fixtureGit(repo,'config','user.email','fixture@invalid');
     writeFileSync(join(repo,'base.txt'),'synthetic code\n');fixtureGit(repo,'add','base.txt');fixtureGit(repo,'commit','-qm','base');
@@ -24,7 +24,7 @@ export async function workspaceOwnerFixture(processProbe?: { root: string; socke
     const queue=new TaskQueue(join(home,'.local/state/happy-control/machines',hash(machineID)),{}, {machineID});
     const workspaces:Record<string,Awaited<ReturnType<typeof prepareWorkspace>>>={};
     for(const name of ['ready','unknown-reply','dirty','live','legacy','unconfirmed']) {
-        const w=await prepareWorkspace(queue,{requestID:`create-${name}`,grantID:'fixture-grant',projectID,root:repo,execution:{mode:'worktree'}});
+        const w=await prepareWorkspace(queue,{requestID:`create-${name}`,grantID:'fixture-grant',projectID,root:repo,execution:{mode:'worktree',...(autoRetire && ['ready','dirty','live'].includes(name) ? {retireAfterIntegration:true} : {})}});
         queue.transaction(s=>{s.workspaces.find(x=>x.id===w.id)!.sessionID=`session-${name}`;});
         const task=queue.enqueue({requestID:`send-${name}`,grantID:'fixture-grant',workerID:'fixture-worker',sessionID:`session-${name}`,workspaceID:w.id,authorization:'',text:'synthetic fixture input',resources:workspaceResources(w,`session-${name}`)});
         const scheduler=new TaskScheduler(queue,{authorize:async()=>{},send:async()=>({seq:1,id:'fixture-sent'}),stop:async()=>{},
@@ -35,7 +35,9 @@ export async function workspaceOwnerFixture(processProbe?: { root: string; socke
         if(name==='unconfirmed')queue.update(task.id,t=>{delete t.resultCommit;});
         workspaces[name]=w;
     }
-    const policy={version:1,id:'fixture-policy',machineID,grantID:'fixture-grant',projectID,root:repo,mainRef:'refs/heads/main',allowApply:true,allowArchive:false,allowDiscard:false};
+    const archive=join(root,'business-archive');
+    if(autoRetire)mkdirSync(archive,{mode:0o700});
+    const policy={...(autoRetire ? {automaticRetirementArchive:archive} : {}),version:1,id:'fixture-policy',machineID,grantID:'fixture-grant',projectID,root:repo,mainRef:'refs/heads/main',allowApply:true,allowArchive:false,allowDiscard:false};
     const policyFile=join(root,'policy.json'),workerFile=join(root,'worker.json'),configFile=join(root,'owner.json');
     const save=(file:string,value:unknown)=>writeFileSync(file,JSON.stringify(value),{mode:0o600});save(policyFile,policy);
     save(workerFile,{version:1,role:'worker',endpoint:'https://fixture.invalid/happy-control/v1',relayURL:'https://fixture.invalid',happyHomeDirectory:home,identityRef:'unused',

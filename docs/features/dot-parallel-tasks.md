@@ -162,3 +162,11 @@ Worker 在队列锁内写入并同步临时文件，随后回读并验证密文�
 2026-11-10 的本机发布已完成真实 MCP 独立只读任务派发、完成和测试进程停止验证；原验收任务按用户最后指示保持 failed/session_stopped、未发送，未恢复或重派。3 个 Dot 的原 session/thread、权限、输入历史与规范记忆保持，10 个既存 Happy 会话根进程的内核身份保持。源回归 201 项、固定 Worker 产物 6 项及隔离浏览器 7 组通过；生产 Web HTML/三入口 JS 与最终导出逐字节匹配，匿名浏览器通过。证据、冷备与本次边界见 [发布入口](../../DEPLOY.md#dot-自主推进派发修复2026-11-10)。既有实现验证另见 [实现验证记录](dot-parallel-tasks-validation.md)；真机、整机重启、长期稳定性与任意外部 shell 的资源遵守仍未验证。
 
 旧 goal/delegation 入口继续采用原项目级保守 guard 和预算，本轮没有改写其 DAG 规划器；它已能持久识别 queued、按原ID恢复回执。新 queue-blocked 的只读恢复有专门 scanner 条件，绝不放开历史 blocked/not_sent。queued_canceled 与旧 not_dispatched 分开：前者有真实空闲 session、明确 executionDispatched=false，不能宣称进程已停止。
+
+## 受限执行和候选收尾
+
+`text` 和 `inspect` 由 Worker、daemon 和执行 CLI 共同约束。两种模式使用同一持久队列和现有并发配置，不创建 Git worktree。Codex 启动为只读、禁止审批，使用独立配置目录；调查只挂载固定的封存来源读取工具。纯文本不挂文件、命令或外部 MCP。当前 checkout 调查从原目录捕获工作文件快照；已提交调查固定创建时的 HEAD。快照只包含普通文件，最多 50,000 个文件与 128 MiB，超限时拒绝执行。独立写入、固定提交测试及 main checkout 单独使用已有工作区与调度资源。每个共享服务、端口、数据库需使用与其它作业一致的资源名。
+
+新创建的 worktree 可声明 `retireAfterIntegration: true`。Owner 项目策略同时配置 `allowApply: true` 与存在且权限为 0700 的 `automaticRetirementArchive`，归档目录应在仓库、Git 对象目录和受管理 worktree 目录之外。在 Workspace Owner 详情提交业务验收证据后，由同一个操作核对 Git 集成、工作副本、结果绑定、活动进程及保护目录，保存并回读归档，最后通过原计划与退出围栏自动释放。启用远端核验时仍须满足本地与远端 main 的既有一致性规则。失败回执与工作区核验显示具体保留原因；相同操作 ID 可查询现有回执。需要重新核验已过期计划时，从 Owner 发起新操作。
+
+更新 Worker 队列写入后，旧版严格读取器不能识别新增模式和计时字段。正式升级及回退仍需另行验收兼容产物。没有计划的旧工作区继续使用原 Owner 流程。

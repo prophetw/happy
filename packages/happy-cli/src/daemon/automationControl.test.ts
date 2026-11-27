@@ -172,10 +172,10 @@ describe('launch options: catalog discovery and owner allowlist enforcement', ()
     }
     it('advertises the options capability only with a catalog and serves keys-only entries', async () => {
         const legacy = setup();
-        expect(await legacy.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'withdraw-create', 'request', 'status', 'cancel'] });
+        expect(await legacy.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', 'restricted-task-v1'] });
         expect(await legacy.control({ version: 1, operation: 'options' })).toMatchObject({ errorCode: 'UNSUPPORTED_VERSION' });
         const s = optionSetup(policy);
-        expect(await s.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', 'options'] });
+        expect(await s.control({ version: 1, operation: 'capabilities' })).toMatchObject({ operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', 'restricted-task-v1', 'options'] });
         const reply = await s.control({ version: 1, operation: 'options' }) as any;
         expect(reply.defaultAgent).toBe('codex');
         const codex = reply.agents.find((a: any) => a.agent === 'codex');

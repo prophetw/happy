@@ -5,7 +5,7 @@ import type { TestEvidence } from './execution';
 export type Observation = { resultCommit?: string; worktreeDirty?: boolean; pendingInput?: boolean; process: string; cursor: number; seq?: number; messageID?: string; turnID?: string;
     sessionOwnerVerified?: boolean; dispatchable?: boolean;
     outcome?: 'running' | 'completed' | 'partial' | 'failed' | 'cancelled'; externalRunning?: boolean;
-    checkoutDigest?: string; testResult?: TestEvidence; candidateError?: string };
+    startedAt?: number; endedAt?: number; checkoutDigest?: string; testResult?: TestEvidence; candidateError?: string };
 export type QueueExecutor = {
     authorize: (task: QueueTask) => Promise<void>;
     observe: (task: QueueTask) => Promise<Observation>;
@@ -15,7 +15,7 @@ export type QueueExecutor = {
 };
 const alive = (pid?: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code !== 'ESRCH'; } };
 const revoked = (e: unknown) => e instanceof ApiError && ['GRANT_REVOKED', 'GRANT_EXPIRED', 'GRANT_NOT_APPROVED', 'SCOPE_DENIED', 'PROJECT_BINDING_CHANGED', 'PROJECT_PATH_CHANGED', 'OPTION_DENIED', 'WORKTREE_BINDING_CHANGED'].includes(e.code);
-export const candidateError = (e: unknown) => e instanceof ApiError && ['CANDIDATE_CHANGED', 'CANDIDATE_UNAVAILABLE'].includes(e.code) ? e.code : undefined;
+export const candidateError = (e: unknown) => e instanceof ApiError && ['CANDIDATE_CHANGED', 'CANDIDATE_UNAVAILABLE', 'INSPECTION_SOURCE_UNAVAILABLE'].includes(e.code) ? e.code : undefined;
 
 /** Scheduler death never makes an uncertain mutation eligible for replay. */
 export class TaskScheduler {
@@ -53,6 +53,7 @@ export class TaskScheduler {
                 current.resultCommit = observation.resultCommit; current.worktreeDirty = observation.worktreeDirty;
                 current.cursor = observation.cursor;
                 current.seq ??= observation.seq; current.messageID ??= observation.messageID; current.turnID ??= observation.turnID;
+                current.startedAt ??= observation.startedAt; current.endedAt ??= observation.endedAt;
                 // Cancellation requires exit evidence, not an old turn-end event.
                 if (current.state === 'canceling') {
                     if (observation.process === 'stopped') { current.state = 'cancelled'; current.finishedAt = Date.now(); }

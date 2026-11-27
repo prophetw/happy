@@ -28,7 +28,7 @@ export type QueueTask = { id: string; requestID: string; grantID: string; worker
     state: 'queued' | 'waiting-resource' | 'preparing' | 'running' | 'canceling' | 'completed' | 'failed' | 'cancelled' | 'blocked';
     reason?: string; dispatched: boolean; seq?: number; messageID?: string; turnID?: string; cursor: number;
     notBefore?: number; resultCommit?: string; worktreeDirty?: boolean; ownerPID?: number; processID?: number; legacy?: boolean; createdAt: number; finishedAt?: number;
-    checkoutDigest?: string; reviewReleased?: boolean; testResult?: TestEvidence };
+    checkoutDigest?: string; reviewReleased?: boolean; testResult?: TestEvidence; resourceAt?: number; startedAt?: number; endedAt?: number };
 type Cancellation = { requestID: string; grantID: string; sessionID: string; sendRequestID?: string; fingerprint: string; taskIDs: string[] };
 type State = { schedulers: Record<string,{lastSeen:number}>; cancellations: Cancellation[]; version: 2; policy: ConcurrencyPolicy; nextOrder: number; workspaces: Workspace[]; tasks: QueueTask[] };
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -38,7 +38,8 @@ const taskSchema = z.object({ id: digest, requestID: identifier, grantID: identi
     state: z.enum(['queued','waiting-resource','preparing','running','canceling','completed','failed','cancelled','blocked']), reason: z.string().max(256).optional(), dispatched: z.boolean(),
     seq: z.number().int().nonnegative().optional(), messageID: z.string().optional(), turnID: z.string().optional(), cursor: z.number().int().nonnegative(),
     notBefore: z.number().nonnegative().optional(), resultCommit: z.string().regex(/^[a-f0-9]{40,64}$/).optional(), worktreeDirty: z.boolean().optional(), ownerPID: z.number().int().positive().optional(), processID: z.number().int().positive().optional(), legacy: z.boolean().optional(), createdAt: z.number().nonnegative(), finishedAt: z.number().nonnegative().optional(),
-    checkoutDigest: checkoutDigest.optional(), reviewReleased: z.boolean().optional(), testResult: testEvidenceSchema.optional() }).strict();
+    checkoutDigest: checkoutDigest.optional(), reviewReleased: z.boolean().optional(), testResult: testEvidenceSchema.optional(),
+    resourceAt: z.number().int().positive().optional(), startedAt: z.number().int().positive().optional(), endedAt: z.number().int().positive().optional() }).strict();
 const workspaceSchema = z.object({ id: digest, grantID: identifier, projectID: identifier, root: z.string().startsWith('/'), cwd: z.string().startsWith('/'), repository: z.string().startsWith('/'),
     managedBy: z.object({ machineID: identifier, uid: z.number().int().nonnegative() }).strict().optional(),
     retirement: z.object({ operationID: identifier, phase: z.enum(['retiring','retired']), retainedRef: z.string().max(256), retainedCommit: z.string().regex(/^[a-f0-9]{40,64}$/) }).strict().optional(),
@@ -352,6 +353,7 @@ export class TaskQueue {
             const active = s.tasks.filter(occupiesSlot);
             const project = (t: QueueTask) => {
                 const workspace=s.workspaces.find(w=>w.id===t.workspaceID);
+                if (workspace?.execution.mode === 'text') return 'machine-text';
                 return workspace ? `repo:${hash(workspace.repository)}`
                     : t.resources.find(r=>r.key.startsWith('repo:'))?.key ?? 'unknown-project';
             };
@@ -379,13 +381,13 @@ export class TaskQueue {
                     task.state='queued';task.reason='machine-limit';continue;
                 }
                 if (active.filter(t=>project(t)===key).length+(reservedProjects.get(key)??0) >= projectLimit(key)) {
-                    task.state='queued';task.reason='project-limit';continue;
+                    task.state='queued';task.reason=key==='machine-text'?'text-limit':'project-limit';continue;
                 }
                 if (active.some(t=>conflicts(task.resources,t.resources))||conflicts(task.resources,reserved)) {
                     task.state='waiting-resource';task.reason='resource-wait';reserved.push(...task.resources);continue;
                 }
                 if(workerID && task.workerID!==workerID){reserved.push(...task.resources);reservedSlots++;reservedProjects.set(key,(reservedProjects.get(key)??0)+1);continue;}
-                task.state = 'preparing'; task.reason = undefined; delete task.notBefore; task.ownerPID = process.pid;
+                task.state = 'preparing'; task.reason = undefined; delete task.notBefore; task.ownerPID = process.pid; task.resourceAt = Date.now();
                 return task;
             }
             return null;
@@ -434,7 +436,8 @@ export class TaskQueue {
             const names = t.resources.filter(r => r.key.startsWith('declared:') && pending.some(other => conflicts([r], other.resources))).map(r => r.key.slice('declared:'.length));
             recovery = `正在核对${directory ? `工作目录 ${directory} 的` : ''}${names.length ? `共享资源 ${names.join('、')} 的` : ''}旧执行会话；确认后自动继续。`;
             if (pending.some(other => other.sessionID === t.sessionID)) recovery += ` 占用会话：/session/${t.sessionID}`;
-        } else if (t.reason === 'project-limit') recovery = `本项目 ${workspace ? s.policy.projectOverrides[workspace.repository] ?? s.policy.projectConcurrency : s.policy.projectConcurrency} 个执行名额正在被占用或预留，前序任务推进后自动继续。`;
+        } else if (t.reason === 'text-limit') recovery = '机器上的纯文本任务名额已用满，较早任务结束后自动继续。';
+        else if (t.reason === 'project-limit') recovery = `本项目 ${workspace ? s.policy.projectOverrides[workspace.repository] ?? s.policy.projectConcurrency : s.policy.projectConcurrency} 个执行名额正在被占用或预留，前序任务推进后自动继续。`;
         else if (t.reason === 'machine-limit') recovery = '机器配置的执行名额已用满，任务结束后自动继续。';
         else if (t.reason === 'session_turn') recovery = `等待同一执行会话的前一轮结束，随后自动交办。 占用会话：/session/${t.sessionID}`;
         else if (t.reason === 'session_process_unknown' || t.state === 'blocked') recovery = '正在核对原执行会话与原请求回执；不会重复派发，确认后自动继续。';
@@ -445,9 +448,10 @@ export class TaskQueue {
         return { requestID: t.requestID, taskID: t.id, queueID: t.id, sessionID: t.sessionID,
             state: t.state === 'cancelled' ? 'cancelled' : t.seq !== undefined ? 'submitted' : t.state,
             executionState: t.state, executionDispatched: t.dispatched, queueReason: t.reason,
+            ...(!t.legacy ? { timing: { admittedAt: t.createdAt, resourceAt: t.dispatched ? t.resourceAt : undefined, startedAt: t.startedAt, endedAt: t.endedAt } } : {}),
             ...(t.dispatched && ['failed','cancelled'].includes(t.state) && !t.reason?.startsWith('CANDIDATE_') ? {process:'stopped'}:{}),
             seq: t.seq, messageID: t.messageID, turnID: t.turnID,
-            ...(workspace ? { execution: { mode: workspace.execution.mode, directory: workspace.cwd, branch: workspace.branch,
+            ...(workspace ? { execution: { mode: workspace.execution.mode, source: workspace.execution.source, directory: workspace.cwd, branch: workspace.branch,
                 baseCommit: workspace.baseCommit, resultCommit: t.resultCommit, dirty: t.worktreeDirty, projectID: workspace.projectID, port: workspace.port,
                 checkoutDigest: t.checkoutDigest ?? (workspace.execution.candidate?.kind === 'checkout' ? workspace.execution.candidate.digest : undefined),
                 reviewPending: t.checkoutDigest ? holdsReviewCheckout(t) : undefined,

@@ -17,12 +17,12 @@ import { WorkspaceLifecycle, type WorkspacePolicy, type Activity, linuxWorkspace
 const roots:string[]=[];
 const git=(cwd:string,...args:string[])=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
-async function fixture() {
+async function fixture(retireAfterIntegration = false) {
     const root=mkdtempSync(join(tmpdir(),'happy-lifecycle-'));roots.push(root);
     const repo=join(root,'repo');mkdirSync(repo);git(repo,'init','-q','-b','main');git(repo,'config','user.name','fixture');git(repo,'config','user.email','fixture@invalid');
     writeFileSync(join(repo,'base.txt'),'base\n');writeFileSync(join(repo,'.gitignore'),'private-note\n');git(repo,'add','base.txt','.gitignore');git(repo,'commit','-qm','base');
     const directory=join(root,'machine'),queue=new TaskQueue(directory,{}, {machineID:'machine'});
-    const w=await prepareWorkspace(queue,{requestID:'create',grantID:'grant',projectID:'project',root:repo,execution:{mode:'worktree'}});
+    const w=await prepareWorkspace(queue,{requestID:'create',grantID:'grant',projectID:'project',root:repo,execution:{mode:'worktree',...(retireAfterIntegration ? {retireAfterIntegration:true} : {})}});
     queue.transaction(s=>{s.workspaces.find(x=>x.id===w.id)!.sessionID='session';});
     const task=queue.enqueue({requestID:'send',grantID:'grant',workerID:'worker',sessionID:'session',workspaceID:w.id,authorization:'',text:'fixture',resources:workspaceResources(w,'session')});
     let activity:Activity={confirmed:true,blockers:[],fingerprint:'clear'},clock=1000;
@@ -358,4 +358,39 @@ it('never adopts or removes an independent clone replacing a historical registry
     const f=await fixture();await f.complete();git(f.repo,'worktree','remove',f.w.cwd);git(f.repo,'clone','--no-hardlinks','-q',f.repo,f.w.cwd);
     await expect(f.manager().adopt(f.w.id,'adopt',0,f.w.baseCommit!)).rejects.toThrow('WORKSPACE_PATH_CHANGED');
     expect((await f.manager().plan(f.w.id)).eligible).toBe(false);expect(readFileSync(join(f.w.cwd,'base.txt'),'utf8')).toBe('base\n');
+});
+
+
+it('archives an explicitly accepted integrated result and safely repeats owner finalization',async()=>{
+    const f=await fixture(true);await f.complete();f.save();f.integrate();
+    const archive=join(f.root,'owner-archive');mkdirSync(archive,{mode:0o700});
+    const m=f.manager({automaticRetirementArchive:archive}),head=git(f.w.cwd,'rev-parse','HEAD');
+    const evidence='Isolated build and task behavior accepted';
+    const finalize=()=>m.finalizeIntegrated(f.w.id,'owner-finalize',head,evidence,'owner');
+    const first=await finalize();expect(first.state).toBe('removed');expect(await finalize()).toEqual(first);
+    expect(existsSync(f.w.cwd)).toBe(false);
+    const retained=new MetadataStore(archive).get<any>(`finalize:${f.w.id}:owner-finalize`);
+    expect(retained.evidence).toMatchObject({acceptance:{evidence,acceptedBy:'owner'},tasks:[{id:f.task.id,resultCommit:head}]});
+    expect(git(f.repo,'show',`${m.result(f.w.id).disposition!.retainedRef}:feature.txt`)).toBe('feature');
+});
+
+it('retains an opted-in workspace for dirty content, live sessions and unmerged commits',async()=>{
+    const f=await fixture(true);await f.complete();f.save();
+    const archive=join(f.root,'owner-archive');mkdirSync(archive,{mode:0o700});
+    const m=f.manager({automaticRetirementArchive:archive}),head=git(f.w.cwd,'rev-parse','HEAD');
+    const finalize=()=>m.finalizeIntegrated(f.w.id,'owner-finalize',head,'Business fixture accepted','owner');
+    expect((await finalize()).reason).toBe('WORKSPACE_NOT_IN_MAIN');
+    f.integrate();writeFileSync(join(f.w.cwd,'private-note'),'protected');
+    f.activity({confirmed:true,blockers:['live_session_or_process'],fingerprint:'live'});
+    const result=await finalize();expect(result.state).toBe('failed');
+    expect(result.reason).toContain('ignored_artifacts');expect(result.reason).toContain('live_session_or_process');
+    expect(readFileSync(join(f.w.cwd,'private-note'),'utf8')).toBe('protected');
+});
+
+it('leaves pre-existing managed workspaces out of owner finalization',async()=>{
+    const f=await fixture();await f.complete();
+    const archive=join(f.root,'owner-archive');mkdirSync(archive,{mode:0o700});
+    await expect(f.manager({automaticRetirementArchive:archive}).finalizeIntegrated(f.w.id,'finalize',f.w.baseCommit!,'acceptance','owner'))
+        .rejects.toThrow('WORKSPACE_AUTOMATIC_RETIREMENT_DISABLED');
+    expect(existsSync(f.w.cwd)).toBe(true);
 });

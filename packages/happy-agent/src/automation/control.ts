@@ -69,11 +69,12 @@ export function redactValue(value: unknown): unknown {
 export function projectMessage(message: { id: string; seq: number; content: unknown }, includeServiceErrors = false) {
     const c = obj(message.content), body = obj(c.content), ev = obj(body.ev);
     const base = { messageID: message.id, seq: message.seq };
+    const time = Number.isSafeInteger(body.time) && Number(body.time) > 0 ? Number(body.time) : undefined;
     const turnID = typeof body.turn === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(body.turn) ? body.turn : undefined;
     // Compatibility adapter for the current Happy stream. No frozen schema imports.
     if (c.role === 'session' && body.role === 'agent' && !body.subagent) {
-        if (ev.t === 'turn-start') return { ...base, kind: 'turn', turnID, state: 'running' };
-        if (ev.t === 'turn-end' && ['completed', 'partial', 'failed', 'cancelled'].includes(String(ev.status))) return { ...base, kind: 'turn', turnID, state: ev.status };
+        if (ev.t === 'turn-start') return { ...base, kind: 'turn', turnID, time, state: 'running' };
+        if (ev.t === 'turn-end' && ['completed', 'partial', 'failed', 'cancelled'].includes(String(ev.status))) return { ...base, kind: 'turn', turnID, time, state: ev.status };
         if (ev.t === 'text' && typeof ev.text === 'string' && ev.thinking !== true) return { ...base, kind: 'text', turnID, text: redact(ev.text).slice(0, 16000), truncated: ev.text.length > 16000 };
         if (includeServiceErrors && ev.t === 'service' && typeof ev.text === 'string' && ev.text.startsWith('Error: ')) {
             return { ...base, kind: 'text', turnID, text: redact(ev.text).slice(0, 16000), truncated: ev.text.length > 16000 };

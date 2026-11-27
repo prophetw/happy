@@ -107,3 +107,23 @@ it('accepts genuine directory-selection scope using the same Control/Worker rule
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({version:1,ok:true,data:{workers:[{id:'fixture-worker',machineID:'fixture-machine',projects:[{id:'other',directory:join(f.root,'other')}],directorySelection:{roots:[f.root]},directoryScopes:1}]}})}));
     expect(await workspaceOwnerControlProjects(f.configFile,'Bearer fixture-owner','fixture-owner')).toEqual([projectID]);
 });
+
+
+it('automatically settles opted-in work through owner-authorized business acceptance and retains occupied work',async()=>{
+    const f=await workspaceOwnerFixture(undefined,true);fixtures.push(f);
+    const finalize=(name:string)=>f.request(name,'finalize-integrated',{
+        operationID:'finalize-'+name,head:f.workspaces[name].baseCommit,evidence:'Fixture acceptance confirmed independently',
+    });
+    expect((await f.api('/write',finalize('ready'),{authorization:'Bearer other-owner'})).status).toBe(403);
+    expect((await f.api('/read',f.request('ready','detail'))).body.data.item.canFinalizeIntegrated).toBe(true);
+    const ready=await f.api('/write',finalize('ready'));
+    expect(ready.body.data.receipt.state).toBe('removed');
+    expect(existsSync(f.workspaces.ready.cwd)).toBe(false);
+    expect((await f.api('/write',finalize('ready'))).body.data.receipt).toEqual(ready.body.data.receipt);
+    expect((await f.api('/read',f.request('ready','result',{operationID:'finalize-ready'}))).body.data.receipt.state).toBe('removed');
+    for(const [name,reason] of [['dirty','staged_unstaged_or_untracked'],['live','live_session_or_process']]){
+        const blocked=await f.api('/write',finalize(name));
+        expect(blocked.body.data.receipt).toMatchObject({state:'failed',reason});
+        expect(existsSync(f.workspaces[name].cwd)).toBe(true);
+    }
+});

@@ -141,6 +141,7 @@ function buildReconnectEnv(session: ReconnectableHappySession): NodeJS.ProcessEn
         HAPPY_RECONNECT_SEQ: String(session.seq),
         HAPPY_RECONNECT_METADATA_VERSION: String(session.metadataVersion),
         HAPPY_RECONNECT_AGENT_STATE_VERSION: String(session.agentStateVersion),
+        ...(session.metadata.happyTaskRestriction ? { HAPPY_TASK_RESTRICTION: session.metadata.happyTaskRestriction } : {}),
         ...(happyTask ? {
             HAPPY_TASK_ID: happyTask.taskId,
             HAPPY_TASK_ROOT: happyTask.origin.path,

@@ -1,3 +1,4 @@
+import { createRestrictedTaskClient, startInspectionServer } from './restrictedTask';
 import { CodexSessionTextStream } from './utils/sessionTextStream';
 import { render } from "ink";
 import React from "react";
@@ -147,7 +148,11 @@ export async function runCodex(opts: {
 
     const settings = await readSettings();
     let machineId = settings?.machineId;
-    const sandboxConfig = opts.noSandbox ? undefined : settings?.sandboxConfig;
+    const rawRestriction = process.env.HAPPY_TASK_RESTRICTION;
+    if (rawRestriction !== undefined && rawRestriction !== 'text' && rawRestriction !== 'inspect')
+        throw Error('INVALID_TASK_RESTRICTION');
+    const restriction = rawRestriction;
+    const sandboxConfig = restriction || opts.noSandbox ? undefined : settings?.sandboxConfig;
     if (!machineId) {
         console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/slopus/happy-cli/issues`);
         process.exit(1);
@@ -162,7 +167,7 @@ export async function runCodex(opts: {
     // Create session
     //
 
-    const initialPermissionMode = opts.permissionMode ?? DEFAULT_CODEX_PERMISSION_MODE;
+    const initialPermissionMode = restriction ? 'read-only' : opts.permissionMode ?? DEFAULT_CODEX_PERMISSION_MODE;
     const launchMode = {
         permissionMode: initialPermissionMode,
         model: opts.model ?? (opts.resumeThreadId ? undefined : DEFAULT_CODEX_MODEL),
@@ -183,9 +188,10 @@ export async function runCodex(opts: {
         ...(forkedFromMessageId ? { forkedFromMessageId } : {}),
         ...(isSideChat ? { isSideChat: true } : {}),
     });
+    if (restriction) metadata.happyTaskRestriction = restriction;
 
-    const skillCommands = await discoverCodexSkillCommands();
-    metadata.codexCapabilities = { steering: true, asyncUserInput: true };
+    const skillCommands = restriction ? [] : await discoverCodexSkillCommands();
+    metadata.codexCapabilities = { steering: true, asyncUserInput: !restriction };
     if (skillCommands.length > 0) {
         metadata.skills = skillCommands;
         metadata.slashCommands = Array.from(new Set([...(metadata.slashCommands ?? []), ...skillCommands]));
@@ -286,6 +292,7 @@ export async function runCodex(opts: {
     const messageQueue = new MessageQueue2<EnhancedMode>(hashCodexEnhancedMode);
 
     session.onFileEvent((fileEvent) => {
+        if (restriction) return;
         const ev = fileEvent.content.data.ev;
         logger.debug('[Codex] File event received', {
             size: ev.size,
@@ -313,7 +320,7 @@ export async function runCodex(opts: {
     };
 
     const handleUserMessage = createSerialAsyncHandler<UserMessage>(async (message) => {
-        const attachmentsForThisMessage = await session.drainAttachmentsForUserMessage();
+        const attachmentsForThisMessage = restriction ? [] : await session.drainAttachmentsForUserMessage();
 
         const modeResolution = remoteModeState.resolve(message.meta);
         if (modeResolution.permission.kind === 'updated') {
@@ -348,7 +355,7 @@ export async function runCodex(opts: {
         }
 
         const enhancedMode: EnhancedMode = {
-            permissionMode: modeResolution.permissionMode,
+            permissionMode: restriction ? 'read-only' : modeResolution.permissionMode,
             model: modeResolution.model,
             appendSystemPrompt: messageAppendSystemPrompt,
             effort: modeResolution.effort,
@@ -532,7 +539,7 @@ export async function runCodex(opts: {
             }
 
             // Stop Happy MCP server
-            happyServer.stop();
+            happyServer?.stop();
 
             logger.debug('[Codex] Session termination complete, exiting');
             process.exit(0);
@@ -584,7 +591,7 @@ export async function runCodex(opts: {
     // Start Context 
     //
 
-    client = new CodexAppServerClient(sandboxConfig);
+    client = restriction ? createRestrictedTaskClient() : new CodexAppServerClient(sandboxConfig);
     async function trySteer(text: string, attachments?: PendingAttachment[]): Promise<boolean> {
         if (!client.turnId) return false;
         const images = await prepareCodexImageInputItems(attachments, { sessionId: session.sessionId });
@@ -602,7 +609,7 @@ export async function runCodex(opts: {
             queue: messageQueue, immediately: true, trySteer,
         });
     }, api.push());
-    client.setUserInputHandler(
+    if (!restriction) client.setUserInputHandler(
         (id, params) => {
             if (params.threadId === client.threadId) {
                 tokenSpeedTracker.observe({ type: 'request_user_input' });
@@ -680,6 +687,7 @@ export async function runCodex(opts: {
         }
     };
     session.rpcHandlerManager.registerHandler('goal-action', async (params: Record<string, unknown>) => {
+        if (restriction) throw Error('TASK_GOAL_DISABLED');
         const command = parseCodexGoalActionParams(params);
         if (!command) {
             throw new Error('Unsupported Codex goal action');
@@ -893,18 +901,19 @@ export async function runCodex(opts: {
     });
 
     // Start Happy MCP server (HTTP) and prepare STDIO bridge config for Codex
-    const happyServer = await startHappyServer(session);
+    const happyServer = restriction === 'inspect' ? await startInspectionServer() : restriction ? undefined : await startHappyServer(session);
     // Launch the bridge via `node <path>` (rather than relying on the .mjs shebang)
     // so it works on Windows, where Windows can't execute shebang scripts directly.
     // codex would otherwise fail to start the MCP server, the change_title tool would
     // not be visible to the model, and the model would improvise with shell echoes.
     const bridgeEntrypoint = join(projectPath(), 'bin', 'happy-mcp.mjs');
-    const mcpServers = {
-        happy: {
+    const mcpServers: Record<string, unknown> = restriction
+        ? (happyServer ? { task_source: { url: happyServer.url } } : {})
+        : { happy: {
             command: process.execPath,
-            args: ['--no-warnings', '--no-deprecation', bridgeEntrypoint, '--url', happyServer.url]
+            args: ['--no-warnings', '--no-deprecation', bridgeEntrypoint, '--url', happyServer!.url]
         }
-    } as const;
+    };
     let first = true;
     let appendSystemPromptInjected = false;
     let resumeReady = false;
@@ -929,6 +938,7 @@ export async function runCodex(opts: {
                 mcpServers,
                 // Side chats start empty — keep the resume notice out of the UI.
                 announce: !isSideChat,
+                restricted: !!restriction,
             });
             resumeReady = true;
             await reportSessionStarted({ ...metadata, codexThreadId: resumed.threadId });
@@ -1064,7 +1074,7 @@ export async function runCodex(opts: {
                     }));
                 }
 
-                const goalCommand = parseCodexGoalCommand(message.message);
+                const goalCommand = restriction ? undefined : parseCodexGoalCommand(message.message);
                 if (goalCommand && await handleCodexGoalCommand(goalCommand, activeThreadId)) {
                     continue;
                 }
@@ -1093,7 +1103,7 @@ export async function runCodex(opts: {
                     message: message.message,
                     mode: message.mode,
                     includeAppendSystemPrompt,
-                    includeTitleInstruction: first,
+                    includeTitleInstruction: first && !restriction,
                 });
 
                 const result = await client.sendTurnAndWait(turnPrompt, {
@@ -1193,7 +1203,7 @@ export async function runCodex(opts: {
         logger.debug('[codex]: client.disconnect done');
         // Stop Happy MCP server
         logger.debug('[codex]: happyServer.stop');
-        happyServer.stop();
+        happyServer?.stop();
 
         // Clean up ink UI
         if (process.stdin.isTTY) {

@@ -22,6 +22,9 @@ const virtual={
     '@/sync/storage':`export const storage={getState:()=>({sessions:{}})};export const useSession=()=>({presence:'online',thinking:false});`,
     '@/sync/sync':`export const sync={ensureSessionReady:async()=>{}};`,
     './DotsConnectionsPanel':`export const DotsConnectionsPanel=()=>null;`,
+    './DotDispatchDefaultsFields':`export const DotDispatchDefaultsFields=()=>null;`,
+    './useDotDispatchOptions':`export const useDotDispatchOptions=()=>({});`,
+    './DotRestartControl':`export const DotRestartControl=()=>null;`,
     './useDotsWorkspace':`export const useDotsWorkspace=()=>({ready:true,pendingCommands:[],pendingFor:()=>false,errorFor:()=>null,refreshing:false,error:null,projection:{snapshot:{dots:[{id:'fixture-dot',name:'验证助理',instruction:'隔离验收环境，无真实消息和记忆',sessionId:'fixture-session',status:'active'}],receipts:{}}},refresh:()=>{},retryArchive:()=>{}});`,
     './DotsWorkspacesPanel':`import React from 'react';import {WorkspaceManagerPanel} from ${JSON.stringify(path('components/dots/WorkspaceManagerPanel.tsx'))};import {workspaceManagerClient} from ${JSON.stringify(path('sync/workspaceManagement.ts'))};const current=()=>true;const client=workspaceManagerClient('fixture-owner',current);export const DotsWorkspacesPanel=({onClose})=>React.createElement(WorkspaceManagerPanel,{client,current,contextKey:'fixture-workspace',onClose});`,
     '@react-native-async-storage/async-storage':`export default {getItem:async key=>localStorage.getItem(key),setItem:async(key,value)=>localStorage.setItem(key,value),removeItem:async key=>localStorage.removeItem(key)};`,
@@ -47,9 +50,37 @@ let phase='normal';page.on('console',msg=>{if(msg.type()==='error'&&!(phase==='u
 page.on('request',r=>{if(r.url().endsWith('/write'))evidence.payloads.push(JSON.parse(r.postData()??'{}'));});
 const button=name=>page.getByRole('button',{name,exact:true});
 const open=async()=>{await page.goto('http://127.0.0.1:20082/');await button('工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});};
-const find=async name=>{const id=ready.workspaces[name].id,card=page.getByTestId(`workspace-${id}`);if(!await card.count()){await button('加载更多').click();await card.waitFor();}await card.getByRole('button',{name:'详情与证据',exact:true}).click();await page.getByText(ready.workspaces[name].cwd,{exact:true}).first().waitFor();await page.getByText('正在检查目录、成果与占用…',{exact:true}).waitFor({state:'hidden'});};
+const find=async name=>{const id=ready.workspaces[name].id,card=page.getByTestId(`workspace-${id}`);if(!await card.count()){await button('加载更多').click();await card.waitFor();}await card.getByRole('button',{name:'详情与证据',exact:true}).click();await button('返回列表').waitFor();await page.getByText(ready.workspaces[name].cwd,{exact:true}).first().waitFor();await page.getByText('正在检查目录、成果与占用…',{exact:true}).waitFor({state:'hidden'});};
 const resolveNoChange=async()=>{await button('核验无代码改动').click();await button('确认核验并记录证据').click();await page.getByText('成果证据已记录',{exact:true}).waitFor();await button('生成回收计划').waitFor();};
+const finalize = process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE === '1';
 try {
+    if (finalize) {
+        const accept = async () => {
+            await button('收尾已集成工作').click();
+            await page.getByRole('textbox',{name:'业务验收证据'}).fill('Isolated business acceptance evidence');
+            await button('归档证据并在核验通过后释放').click();
+        };
+        await open(); await find('ready');
+        await page.getByText('等待 Workspace Owner 确认业务验收。',{exact:false}).first().waitFor();
+        await accept(); await page.getByText('目录已回收',{exact:true}).first().waitFor();
+        assert.equal(existsSync(ready.workspaces.ready.cwd),false);
+        const request=evidence.payloads.find(v=>v.action==='finalize-integrated');
+        await button('核对原请求回执').click();
+        await page.getByText('重建与恢复资料',{exact:true}).waitFor();
+        assert.equal(evidence.payloads.filter(p=>p.operationID===request.operationID).length,1);
+        await page.screenshot({path:join(out,'finalize-ready.png'),fullPage:true});
+        evidence.scenarios.push('authenticated acceptance -> archive -> real worktree removal -> original receipt');
+        await button('返回列表').click(); await find('dirty'); await accept();
+        await page.getByText('操作被拒绝或失败',{exact:true}).waitFor();
+        assert.equal(readFileSync(join(ready.workspaces.dirty.cwd,'keep.txt'),'utf8'),'must retain\n');
+        await page.screenshot({path:join(out,'finalize-retained.png'),fullPage:true});
+        await button('返回列表').click(); await find('live'); await accept();
+        await page.getByText('操作被拒绝或失败',{exact:true}).waitFor();
+        await page.getByText('活跃或空闲会话、进程仍占用目录。',{exact:false}).first().waitFor();
+        assert.ok(existsSync(ready.workspaces.live.cwd));
+        evidence.scenarios.push('dirty and occupied worktrees retained with reason');
+        evidence.actualFixtureRemoved=1;evidence.realUserDirectoriesRemoved=0;
+    } else {
     await page.goto('http://127.0.0.1:20082/');await page.screenshot({path:join(out,'entry-desktop.png'),fullPage:true});
     await button('工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});
     await page.screenshot({path:join(out,'list-desktop.png'),fullPage:true});
@@ -84,8 +115,10 @@ try {
     await button('确认并回收').click();await page.getByText('目录已回收',{exact:true}).first().waitFor();assert.equal(existsSync(ready.workspaces.legacy.cwd),false);
     await page.getByText('重建与恢复资料',{exact:true}).waitFor();await page.screenshot({path:join(out,'receipt-mobile.png'),fullPage:true});
     evidence.scenarios.push('mobile explicit adoption -> server result verification -> plan/confirm -> real removal and receipt/recovery data');
-    evidence.actualFixtureRemoved=3;evidence.realUserDirectoriesRemoved=0;assert.deepEqual(evidence.consoleErrors,[]);assert.deepEqual(evidence.pageErrors,[]);assert.deepEqual(evidence.httpErrors,[]);
+    evidence.actualFixtureRemoved=3;evidence.realUserDirectoriesRemoved=0;
+    }
+    assert.deepEqual(evidence.consoleErrors,[]);assert.deepEqual(evidence.pageErrors,[]);assert.deepEqual(evidence.httpErrors,[]);
     evidence.passed=true;
 } catch(error) {evidence.failure=String(error);await page.screenshot({path:join(out,'failure.png'),fullPage:true}).catch(()=>{});throw error;
 } finally {await browser.close();child.send('stop');await new Promise(r=>child.once('exit',r));writeFileSync(join(out,'browser.json'),JSON.stringify(evidence,null,2),{mode:0o600});writeFileSync(join(out,'harness.log'),log,{mode:0o600});}
-console.log(JSON.stringify({passed:evidence.passed,scenarios:evidence.scenarios,screenshots:10,actualFixtureRemoved:evidence.actualFixtureRemoved}));
+console.log(JSON.stringify({passed:evidence.passed,scenarios:evidence.scenarios,screenshots:finalize?2:10,actualFixtureRemoved:evidence.actualFixtureRemoved}));

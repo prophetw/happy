@@ -23,7 +23,7 @@ export const workspaceDispositionSchema = z.object({ kind: z.enum(['integrated',
     sourceTaskID: digest, sourceRequestID: id,
 }).strict();
 export const workspaceItemSchema = z.object({ id: digest, projectID: id, directory: z.string(), branch: z.string().optional(),
-    baseCommit: commit.optional(), revision: z.number().int().nonnegative(), state: z.string(), managed: z.boolean(),
+    baseCommit: commit.optional(), revision: z.number().int().nonnegative(), state: z.string(), managed: z.boolean(), canFinalizeIntegrated: z.boolean().optional(),
     reasons: z.array(z.string()), taskCount: z.number().int().nonnegative(), tasks: z.array(z.object({ id: digest, sessionID: id, state: z.string(), resultCommit: commit.optional() })).max(20),
     disposition: workspaceDispositionSchema.optional(), lastVerification: z.number().optional(), lastOperation: workspaceOperationSchema.optional(),
     plan: workspacePlanSchema.optional(),
@@ -50,6 +50,7 @@ export const workspaceWriteSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('adopt'), ...scope, workspaceID: digest, operationID: id, revision: z.number().int().nonnegative(), head: commit }).strict(),
     z.object({ action: z.literal('resolve'), ...scope, workspaceID: digest, operationID: id, revision: z.number().int().nonnegative(), head: commit,
         kind: z.enum(['integrated','no-change','archived']) }).strict(),
+    z.object({ action: z.literal('finalize-integrated'), ...scope, workspaceID: digest, operationID: id, head: commit, evidence: z.string().trim().min(1).max(16000) }).strict(),
     z.object({ action: z.literal('apply'), ...scope, workspaceID: digest, operationID: id, ticket: id, confirmedPlanID: digest }).strict(),
 ]);
 export const workspaceTicketSchema = z.object({ ticket: id, plan: workspacePlanSchema }).strict();

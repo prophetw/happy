@@ -1,3 +1,5 @@
+import Fastify from 'fastify';
+import { mountHttpMcp } from '../src/automation/production/httpMcp';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +26,7 @@ import type { DecryptedSession, DecryptedMachine } from '../src/api';
 /** Isolated real loopback HTTP + real receipts + synthetic encrypted relay. Never reads Happy home. */
 export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: number; clock?: () => number; externalIdentity?: import('../src/automation/rest/schema').ExternalIdentity;
     origin?: string; additionalBrowserOrigins?: string[]; workerIntervalMs?: number; multipleProjects?: boolean; directorySelection?: boolean; serviceTokens?: import('../src/automation/rest/schema').ServiceTokensConfig;
-    launchOptions?: LaunchOptionsPolicy; catalog?: () => OptionCatalogEntry[] } = {}) {
+    projectConcurrency?: number; executeText?: (text: string, directory: string) => string; launchOptions?: LaunchOptionsPolicy; catalog?: () => OptionCatalogEntry[] } = {}) {
     const dir = mkdtempSync(join(tmpdir(), 'happy-rest-fixture-')), project = join(dir, 'project'); mkdirSync(project);
     const projectB = join(dir, 'project-b'), projectC = join(dir, 'project-c'); mkdirSync(projectB); mkdirSync(projectC);
     const now = options.clock ?? Date.now;
@@ -35,7 +37,7 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
         projects: [{ id: 'projectA', directory: project, sessionIDs: ['existing'] }, ...(options.multipleProjects ? [
             { id: 'projectB', directory: projectB, sessionIDs: ['existingB'] }, { id: 'projectC', directory: projectC, sessionIDs: ['existingC'] },
         ] : [])], ...(options.directorySelection ? { directorySelection: { roots: [dir] } } : {}), methods: [...methods], protocol: 1 as const,
-        ...(options.launchOptions ? { launchOptions: options.launchOptions } : {}) };
+        ...(options.launchOptions ? { launchOptions: options.launchOptions } : {}), projectConcurrency: options.projectConcurrency };
     const audit: unknown[] = [];
     const gatewayOptions = { directory: join(dir, 'gateway'), origin: options.origin ?? 'http://127.0.0.1', additionalBrowserOrigins: options.additionalBrowserOrigins, clients: [clientRegistration,
         { id: otherIdentity.id, userID: 'userB', name: 'Other user', publicKey: otherIdentity.publicKey }], workers: [registration],
@@ -82,6 +84,17 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
             const previous = ciphertext.get(s.id)!.find(m => m.localId === `automation:${requestID}`);
             const message = previous ?? append(s.id, { role: 'user', content: { type: 'text', text } }, `automation:${requestID}`);
             if (!previous) sendCount++;
+            if (!previous && options.executeText) {
+                const turn = 'turn_' + message.seq;
+                setTimeout(() => {
+                    append(s.id, { role: 'session', content: { role: 'agent', turn, time: Date.now(), ev: {t:'turn-start'} } });
+                    setTimeout(() => {
+                        const text = options.executeText!(String((decrypt(key,'dataKey',decodeBase64(message.c)) as any).content.text), String(s.metadata?.path));
+                        append(s.id, { role: 'session', content: { role: 'agent', turn, ev: {t:'text',text} } });
+                        append(s.id, { role: 'session', content: { role: 'agent', turn, time: Date.now(), ev: {t:'turn-end',status:'completed'} } });
+                    }, 120);
+                }, 10);
+            }
             if (loseAck) { loseAck = false; throw new Error('fixture relay ack lost'); }
             return { id: message.id, seq: message.seq };
         },
@@ -125,6 +138,13 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
         const approved = await ownerRequest(`/connections/${pending.data.id}/approve`, 'POST', { digest: consent.body.data.digest, challenge: consent.body.data.challenge });
         if (!approved.body.ok) throw new Error('fixture approval failed'); return pending.data.id as string;
     }
+    let mcp: ReturnType<typeof Fastify> | undefined;
+    async function startMcp() {
+        mcp = Fastify({ logger: false });
+        mountHttpMcp(mcp, { mode: 'service-token-v1', resource: 'http://127.0.0.1/happy-control/mcp',
+            controlURL: address + '/happy-control/v1', authenticateService: gateway.authenticateService!, allowLoopback: true });
+        return (await mcp.listen({ port: 0, host: '127.0.0.1' })) + '/happy-control/mcp';
+    }
     return {
         dir, project, projectB, projectC, registration, gatewayOptions, clientIdentity, workerIdentity, otherIdentity, clientRegistration, transport, ciphertext, audit, statuses, addSession,
         get gateway() { return gateway; }, get client() { return client; }, get workerClient() { return workerClient; }, get address() { return address; },
@@ -139,7 +159,7 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
             append(sessionID, { role: 'session', content: { role: 'agent', turn: turnID, ev: { t: 'text', text } } });
             append(sessionID, { role: 'session', content: { role: 'agent', turn: turnID, ev: { t: 'turn-end', status: outcome } } });
         },
-        startWorker, stopWorker, connect, ownerRequest,
+        startWorker, stopWorker, startMcp, connect, ownerRequest,
         async pump() { await runner?.worker.tick(); },
         async waitForSubmitted(grant: string, requestID: string, read?: () => Promise<any>) {
             const end = Date.now() + 3000;
@@ -152,7 +172,7 @@ export async function fixtureRig(options: { timeoutMs?: number; offerRetryMs?: n
             }
         },
         async restartGateway() { await stopWorker(); await gateway.app.close(); gateway = createGateway(gatewayOptions); address = await gateway.app.listen({ port: 0, host: '127.0.0.1' }); client = makeClient(clientIdentity); workerClient = makeClient(workerIdentity, 'worker'); },
-        async close() { releaseSpawn?.(); await stopWorker(); await gateway.app.close(); rmSync(dir, { recursive: true, force: true }); },
+        async close() { releaseSpawn?.(); await stopWorker(); await mcp?.close(); await gateway.app.close(); rmSync(dir, { recursive: true, force: true }); },
     };
 }
 

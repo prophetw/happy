@@ -284,7 +284,7 @@ export class CodexAppServerClient {
         for (const id of ids) this.userInputResolvedHandler?.(String(id));
     }
 
-    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; excludeResumeTurns?: boolean; onNotification?: (method: string, params: any) => void; onExit?: () => void; notificationTransaction?: (dispatch: () => void) => void }) {
+    constructor(sandboxConfig?: SandboxConfig, private readonly host?: { executable?: string; args?: string[]; env?: Record<string, string>; cwd?: string; config?: Record<string, unknown>; instructions?: string; excludeResumeTurns?: boolean; disableApplyPatch?: boolean; onNotification?: (method: string, params: any) => void; onExit?: () => void; notificationTransaction?: (dispatch: () => void) => void }) {
         this.sandboxConfig = sandboxConfig;
     }
 
@@ -949,7 +949,7 @@ export class CodexAppServerClient {
             baseInstructions: null,
             developerInstructions: this.host?.instructions ?? null,
             compactPrompt: null,
-            includeApplyPatchTool: null,
+            includeApplyPatchTool: this.host?.disableApplyPatch ? false : null,
             experimentalRawEvents: false,
             persistExtendedHistory: true,
         };

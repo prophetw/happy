@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { existsSync, realpathSync, constants, openSync, closeSync, fstatSync } from 'node:fs';
+import { existsSync, realpathSync, constants, openSync, closeSync, fstatSync, lstatSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { hash } from '../journal';
@@ -7,7 +7,7 @@ import { canonicalBody } from './auth';
 import { ApiError } from './schema';
 import { privateDirectory } from './privateFs';
 import { TaskQueue, executionSchema, type Workspace, type Resource } from './taskQueue';
-import { checkoutDigest, objectID } from './execution';
+import { checkoutDigest, objectID, restrictedExecution } from './execution';
 
 const gitEnvironment = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
     GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1' });
@@ -81,12 +81,13 @@ function commitTree(root: string, commit: string) {
 const candidateScript = String.raw`
 import hashlib,json,os,stat,subprocess
 root=os.fsencode(os.getcwd())
-if subprocess.check_output(['git','rev-parse','--show-toplevel']).rstrip(b'\n')!=root: raise RuntimeError('checkout_root_changed')
-head=subprocess.check_output(['git','rev-parse','HEAD']).strip().decode('ascii')
-names=sorted(set(subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z']).split(b'\0'))-{b''})
+git=['git','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null']
+if subprocess.check_output(git+['rev-parse','--show-toplevel']).rstrip(b'\n')!=root: raise RuntimeError('checkout_root_changed')
+head=subprocess.check_output(git+['rev-parse','HEAD']).strip().decode('ascii')
+names=sorted(set(subprocess.check_output(git+['ls-files','--cached','--others','--exclude-standard','-z']).split(b'\0'))-{b''})
 rows=[]
 for name in names:
- if any(p==b'.env' or p.startswith(b'.env.') for p in name.split(b'/')): continue
+ if any(p in (b'.git',b'.env') or p.startswith(b'.env.') for p in name.split(b'/')): continue
  parent=os.path.dirname(os.path.join(root,name))
  if os.path.realpath(parent)!=parent: raise RuntimeError('checkout_path_changed')
  try: info=os.lstat(name)
@@ -172,16 +173,16 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
         if (realpathSync(input.root) !== input.root) throw new ApiError('PROJECT_PATH_CHANGED',403);
         const candidate = execution.candidate;
         if (execution.mode === 'read-only' && !candidate) throw new ApiError('CANDIDATE_REQUIRED', 409);
-        let repository: string, baseCommit: string | undefined, candidateTree: string | undefined;
-        try { repository = realpathSync(resolve(input.root,await gitAsync(input.root,['rev-parse','--git-common-dir']))); }
+        let repository: string = input.root, baseCommit: string | undefined, candidateTree: string | undefined;
+        if (execution.mode !== 'text') try { repository = realpathSync(resolve(input.root,await gitAsync(input.root,['rev-parse','--git-common-dir']))); }
         catch { if (!['legacy','integration'].includes(execution.mode)) throw new ApiError('WORKTREE_REQUIRES_GIT'); repository = input.root; }
-        if (['worktree','read-only'].includes(execution.mode)) {
+        if (['worktree','read-only','inspect'].includes(execution.mode)) {
             if (realpathSync(await gitAsync(input.root,['rev-parse','--show-toplevel'])) !== input.root) throw new ApiError('WORKTREE_REQUIRES_REPOSITORY_ROOT',403);
             if (candidate && candidate.kind !== 'checkout') {
                 candidateTree = commitTree(input.root, candidate.commit);
                 if (candidate.kind === 'commit' && candidate.baseCommit) commitTree(input.root, candidate.baseCommit);
                 baseCommit = candidate.commit;
-            } else if (execution.mode === 'worktree') baseCommit = await gitAsync(input.root,['rev-parse','--verify','HEAD^{commit}']);
+            } else if (execution.mode === 'worktree' || execution.source === 'baseline') baseCommit = await gitAsync(input.root,['rev-parse','--verify','HEAD^{commit}']);
         }
         workspace = queue.transaction(s=>{
             if (s.tasks.some(t=>t.id===id)||s.cancellations.some(c=>c.grantID===input.grantID&&c.requestID===input.requestID)) throw new ApiError('REQUEST_ID_CONFLICT',409);
@@ -191,7 +192,7 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
             const temporaryDirectory = join(queue.directory, 'temporary', id);
             let cwd = input.root;
             if (execution.mode === 'worktree' || candidate?.kind === 'test') cwd = join(queue.directory, 'worktrees', id);
-            if (candidate?.kind === 'commit') cwd = temporaryDirectory;
+            if (candidate?.kind === 'commit' || restrictedExecution(execution.mode)) cwd = temporaryDirectory;
             if (candidate?.kind === 'checkout') {
                 const source = s.tasks.find(t => t.grantID === input.grantID && t.requestID === candidate.requestID && t.state === 'completed');
                 const w = s.workspaces.find(w => w.id === source?.workspaceID);
@@ -244,6 +245,7 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
 export function verifyWorkspace(w: Workspace): { branch: string } | null {
     if (w.retirement) throw new ApiError(w.retirement.phase === 'retired' ? 'WORKSPACE_RETIRED' : 'WORKSPACE_RETIRING',409);
     if (realpathSync(w.root) !== w.root || realpathSync(w.cwd) !== w.cwd) throw new ApiError('PROJECT_PATH_CHANGED', 403);
+    if (w.execution.mode === 'text') return null;
     if (canonicalRepository(w.root) !== w.repository) throw new ApiError('WORKTREE_BINDING_CHANGED',403);
     const candidate = w.execution.candidate;
     if (candidate && candidate.kind !== 'checkout' && (commitTree(w.root, candidate.commit) !== w.candidateTree
@@ -260,15 +262,19 @@ export function verifyWorkspace(w: Workspace): { branch: string } | null {
         throw new ApiError('WORKTREE_BINDING_CHANGED', 403);
     return { branch };
 }
-export function workspaceResources(w?: Pick<Workspace,'repository'|'cwd'|'execution'>, sessionID?: string): Resource[] {
+export function workspaceResources(w?: Pick<Workspace,'repository'|'root'|'cwd'|'execution'>, sessionID?: string): Resource[] {
     // Unknown pre-queue execution remains conservative. Known executions count
     // project slots by repository and serialize writes only to the actual checkout.
     const result: Resource[] = [{ key: 'machine', mode: !w ? 'exclusive' : 'shared' }];
-    if (w) {
+    if (w && w.execution.mode !== 'text') {
         // Repository identity counts project slots. Only writers sharing an actual
         // checkout exclude each other; independent worktrees can keep progressing.
         result.push({ key: `repo:${hash(w.repository)}`, mode: 'shared' });
-        if (w.execution.candidate?.kind !== 'commit') result.push({ key: `checkout:${hash(w.cwd)}`, mode: w.execution.mode === 'read-only' ? 'shared' : 'exclusive' });
+        if (w.execution.mode === 'inspect') {
+            if (w.execution.source === 'checkout') result.push({ key: `checkout:${hash(w.root)}`, mode: 'shared' });
+        } else if (w.execution.candidate?.kind !== 'commit') {
+            result.push({ key: `checkout:${hash(w.cwd)}`, mode: w.execution.mode === 'read-only' ? 'shared' : 'exclusive' });
+        }
         result.push(...w.execution.resources.map(key => ({ key: `declared:${key}`, mode: 'exclusive' as const })));
     }
     if (sessionID) result.push({ key: `session:${sessionID}`, mode: 'exclusive' });
@@ -289,6 +295,105 @@ export function workspaceBranch(w: Workspace) {
 
 export function workspaceResult(w: Workspace) {
     verifyWorkspace(w);
-    if (w.repository === w.root || w.execution.candidate?.kind === 'commit') return {};
+    if (restrictedExecution(w.execution.mode) || w.repository === w.root || w.execution.candidate?.kind === 'commit') return {};
     return { resultCommit: git(w.cwd,['rev-parse','--verify','HEAD^{commit}']), worktreeDirty: Boolean(git(w.cwd,['status','--porcelain=v1','--untracked-files=all'])) };
+}
+
+// A snapshot is captured after the scheduler reserves the checkout and before
+// dispatch. The session only gets a read tool for this sealed directory.
+const snapshotScript = String.raw`
+import hashlib, json, os, stat, subprocess, sys
+dest, commit = sys.argv[1:]
+def git(*args):
+ return subprocess.check_output(['git','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',*args])
+def allowed(name):
+ return not any(p in (b'',b'.',b'..',b'.git',b'.env') or p.startswith(b'.env.') for p in name.split(b'/'))
+def source_file(name):
+ parts=name.split(b'/')
+ fd=os.open('.',os.O_RDONLY|os.O_DIRECTORY)
+ try:
+  for part in parts[:-1]:
+   child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+   os.close(fd)
+   fd=child
+  return os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+ finally:
+  os.close(fd)
+def save(name, f, size):
+ global budget
+ budget-=size
+ if budget<0: raise RuntimeError('snapshot_limit')
+ if not allowed(name): raise RuntimeError('snapshot_path_invalid')
+ target=os.path.join(os.fsencode(dest),name)
+ os.makedirs(os.path.dirname(target),exist_ok=True)
+ digest=hashlib.sha256()
+ with open(target,'xb') as out:
+  remaining=size
+  while remaining:
+   data=f.read(min(remaining,1048576))
+   if not data: raise RuntimeError('snapshot_short_read')
+   remaining-=len(data)
+   digest.update(data)
+   out.write(data)
+ return digest.hexdigest()
+budget=128*1024*1024
+if commit:
+ names=git('ls-tree','-rz','--full-tree',commit).split(b'\0')
+ if len(names)>50001: raise RuntimeError('snapshot_limit')
+ with subprocess.Popen(['git','cat-file','--batch'],stdin=subprocess.PIPE,stdout=subprocess.PIPE) as child:
+  for record in filter(None,names):
+   meta,name=record.split(b'\t',1)
+   mode,kind,oid=meta.split()
+   if mode not in (b'100644',b'100755') or kind!=b'blob' or not allowed(name): continue
+   child.stdin.write(oid+b'\n')
+   child.stdin.flush()
+   obj,typ,size=child.stdout.readline().split()
+   if obj!=oid or typ!=b'blob': raise RuntimeError('snapshot_object_invalid')
+   save(name,child.stdout,int(size))
+   if child.stdout.read(1)!=b'\n': raise RuntimeError('snapshot_object_invalid')
+  child.stdin.close()
+  if child.wait()!=0: raise RuntimeError('snapshot_git_failed')
+else:
+ names=sorted(set(git('ls-files','--cached','--others','--exclude-standard','-z').split(b'\0'))-{b''})
+ if len(names)>50000: raise RuntimeError('snapshot_limit')
+ rows=[]
+ for name in names:
+  if not allowed(name): continue
+  try: info=os.lstat(name)
+  except FileNotFoundError: rows.append([name.hex(),'missing']);continue
+  if stat.S_ISLNK(info.st_mode):
+   rows.append([name.hex(),'symlink',bool(info.st_mode&0o111),hashlib.sha256(os.readlink(name)).hexdigest()])
+   continue
+  with os.fdopen(source_file(name),'rb') as f:
+   info=os.fstat(f.fileno())
+   if not stat.S_ISREG(info.st_mode): raise RuntimeError('snapshot_special_file')
+   rows.append([name.hex(),'file',bool(info.st_mode&0o111),save(name,f,info.st_size)])
+ head=git('rev-parse','HEAD').strip().decode('ascii')
+ value=json.dumps({'head':head,'files':rows},ensure_ascii=True,separators=(',',':')).encode('ascii')
+ print('sha256:'+hashlib.sha256(value).hexdigest())
+`;
+
+export async function prepareInspection(workspace: Workspace) {
+    if (workspace.execution.mode !== 'inspect') return;
+    const destination = join(workspace.cwd, 'source');
+    if (existsSync(destination)) {
+        if (!lstatSync(destination).isDirectory()) throw new ApiError('INSPECTION_SOURCE_UNAVAILABLE',409);
+        return;
+    }
+    const staging = mkdtempSync(join(workspace.cwd, 'source-'));
+    try {
+        const baseline = workspace.execution.source === 'baseline';
+        const before = baseline ? undefined : await checkoutVersion(workspace.root);
+        const { stdout } = await exec('python3', ['-c', snapshotScript, staging, baseline ? workspace.baseCommit! : ''], {
+            cwd: workspace.root, env: gitEnvironment(), timeout: 60000, maxBuffer: 4096,
+        });
+        if (!baseline && (stdout.trim() !== before || await checkoutVersion(workspace.root) !== before))
+            throw new ApiError('CANDIDATE_CHANGED',409);
+        renameSync(staging, destination);
+    } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError('INSPECTION_SOURCE_UNAVAILABLE',409);
+    } finally {
+        rmSync(staging,{recursive:true,force:true});
+    }
 }

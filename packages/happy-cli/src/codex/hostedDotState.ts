@@ -20,7 +20,7 @@ export const HostedInstructionSettings = z.strictObject({
 export const HOSTED_INSTRUCTION_FILE = 'instruction.json';
 const Input = z.object({ epoch: z.number().int().nonnegative().default(0), delivery: z.enum(['queue', 'steer']).default('queue'), origin: z.enum(['user','task-result']).optional(), seq: z.number().int().positive().optional(), id: z.string(), text: z.string(), permissionMode: z.string().optional(),
     status: z.enum(['queued', 'dispatching', 'accepted', 'completed', 'interrupted', 'failed', 'unknown', 'rejected']),
-    turnId: z.string().optional(), beforeTurns: z.array(z.string()).optional(), error: z.string().optional() }).refine(row => row.origin === 'task-result' || row.seq !== undefined, 'hosted_user_receipt_required');
+    turnId: z.string().optional(), acceptedAt: z.number().int().positive().optional(), beforeTurns: z.array(z.string()).optional(), error: z.string().optional() }).refine(row => row.origin === 'task-result' || row.seq !== undefined, 'hosted_user_receipt_required');
 export const HostedAuthorityMetadata = z.strictObject({ version: z.literal(1),
     producer: z.strictObject({ pid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
         start: z.string().regex(/^[0-9]+$/), boot: z.string().uuid() }),
@@ -253,7 +253,7 @@ export const HostedTaskGateway = z.strictObject({ version: z.literal(1), dotId: 
 export const HostedTaskEvent = z.strictObject({ version: z.literal(1), id: z.string().regex(/^task-[a-f0-9]{64}$/), dotId: z.string().uuid(), sessionId: z.string(), epoch: z.number().int().nonnegative(), createdAt: z.string().datetime(), text: z.string().min(1).max(18000) });
 
 const legacyStatusNotices = new Set(['creating', 'created', 'preparing', 'queued', 'waiting-resource', 'running', 'observing', 'awaiting_user', 'canceling', 'blocked']);
-const legacyBusinessReasons = new Set(['resource-wait', 'resource_lock', 'candidate_review', 'project-limit', 'machine-limit',
+const legacyBusinessReasons = new Set(['resource-wait', 'resource_lock', 'candidate_review', 'project-limit', 'machine-limit', 'text-limit',
     'session_turn', 'external_turn_running', 'execution_unavailable:UNSUPPORTED_VERSION', 'CONTROL_CONNECTION_REJECTED', 'SERVICE_CREDENTIAL_UNAVAILABLE']);
 const legacyAutomaticReasons = new Set(['legacy_observation', 'session_process_unknown', 'turn_ended_process_unconfirmed', 'dispatch_receipt_unknown',
     'dispatcher_recovered', 'execution_unconfirmed', 'hosted_task_runtime_not_running', 'hosted_task_receipt_unavailable',

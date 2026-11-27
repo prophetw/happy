@@ -529,6 +529,26 @@ describe('durable dispatch evidence', () => {
         expect(r.queueTasks().some((row: QueueTask) => row.requestID === requestID)).toBe(false);
         expect(r.sendAttempts).toBe(0);
     });
+    it('reports a confirmed pre-admission queue capacity refusal without a queue receipt', async () => {
+        const r = await setup(), grant = await r.connect();
+        await r.startWorker();
+        const { sessionID } = (await create(r, grant)).data;
+        await r.stopWorker();
+        const requestID = 'capacity-refusal';
+        const sent = r.client.request('POST', `/sessions/${sessionID}/messages`, {requestID,text:'fixture'}, grant);
+        let job;
+        for (let tries = 0; tries < 50 && !job; tries++) {
+            job = (await r.workerClient.request('POST','/worker/poll',{protocol:1})).data;
+            if (!job) await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        expect(job?.command).toMatchObject({method:'sessions.send',requestID});
+        const result = await r.workerClient.request('POST','/worker/result',{jobID:job.id,result:{
+            version:1,ok:false,error:{code:'QUEUE_CAPACITY_EXCEEDED',retryable:false},
+        }});
+        expect(result.ok).toBe(true);
+        expect(await sent).toEqual({version:1,ok:false,dispatch:'not_sent',error:{code:'QUEUE_CAPACITY_EXCEEDED',retryable:false}});
+        expect(r.queueTasks()).toHaveLength(0);
+    });
     it('accepts an already-submitted legacy send receipt without creating a queue item', async () => {
         const now = Date.now();
         const r = await setup({ offerRetryMs: 100, clock: () => now }), grant = await r.connect();

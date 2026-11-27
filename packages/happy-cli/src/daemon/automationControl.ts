@@ -156,7 +156,7 @@ export function createAutomationControl(deps: Dependencies) {
         try {
             const req = object(input);
             if (req.version !== 1) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
-            if (req.operation === 'capabilities') return { version: 1, operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', ...(deps.options ? ['options'] : [])] };
+            if (req.operation === 'capabilities') return { version: 1, operations: ['create', 'withdraw-create', 'request', 'status', 'cancel', 'restricted-task-v1', ...(deps.options ? ['options'] : [])] };
             if (req.operation === 'options') {
                 if (!deps.options) return { version: 1, errorCode: 'UNSUPPORTED_VERSION' };
                 const { defaultAgent, catalog } = deps.options();
@@ -192,12 +192,16 @@ export function createAutomationControl(deps: Dependencies) {
             // Fixed key order: idempotency is stable regardless of caller JSON order.
             const requested = { agent: parsed.data.agent, model: parsed.data.model, permissionMode: parsed.data.permissionMode, effort: parsed.data.effort };
             const environment = req.taskEnvironment as Record<string, unknown> | undefined;
-            if (environment && (typeof environment !== 'object' || Array.isArray(environment) || Object.entries(environment).some(([k,v]) => !['TMPDIR','TMP','TEMP','HAPPY_TASK_ID','HAPPY_TASK_PORT','HAPPY_TASK_ROOT','HAPPY_TASK_TITLE'].includes(k) || typeof v !== 'string' || v.length > 4096))) throw new Error('INVALID_REQUEST');
+            if (environment && (typeof environment !== 'object' || Array.isArray(environment) || Object.entries(environment).some(([k,v]) => !['TMPDIR','TMP','TEMP','HAPPY_TASK_ID','HAPPY_TASK_PORT','HAPPY_TASK_ROOT','HAPPY_TASK_TITLE','HAPPY_TASK_RESTRICTION'].includes(k) || typeof v !== 'string' || v.length > 4096))) throw new Error('INVALID_REQUEST');
             const taskTitle = environment?.HAPPY_TASK_TITLE as string | undefined, taskRoot = environment?.HAPPY_TASK_ROOT as string | undefined;
             if ((taskTitle !== undefined || taskRoot !== undefined)
                 && (!taskTitle || taskTitle.trim() !== taskTitle || taskTitle.length > 200 || !taskRoot?.startsWith('/') || !environment?.HAPPY_TASK_ID)) throw new Error('INVALID_REQUEST');
+            const restriction = environment?.HAPPY_TASK_RESTRICTION;
+            if (restriction !== undefined && ((restriction !== 'text' && restriction !== 'inspect')
+                || operation !== 'create' || launch.agent !== 'codex' || launch.permissionMode !== 'read-only'))
+                throw new Error('INVALID_REQUEST');
             const fingerprint = digest(JSON.stringify({ operation, directory, sessionID, options: requested,
-                ...(taskTitle ? { task: { title: taskTitle, root: taskRoot } } : {}) }));
+                ...(taskTitle ? { task: { title: taskTitle, root: taskRoot } } : {}), restriction }));
             const previous = read(requestID);
             // Bind a fence to the real process launch arguments as well as the logical gateway command.
             const titleDigest = withdrawing ? attempt?.titleDigest : taskTitle && digest(taskTitle);
@@ -205,7 +209,7 @@ export function createAutomationControl(deps: Dependencies) {
             if (attempt && (titleDigest !== attempt.titleDigest || (!!titleDigest !== !!root)
                 || root !== undefined && (typeof root !== 'string' || !root.startsWith('/')))) return {version:1,errorCode:'REQUEST_ID_CONFLICT'};
             const launchBinding = 'withdrawn:'+digest(JSON.stringify([directory, requested, titleDigest, root,
-                environment?.HAPPY_TASK_ID, environment?.HAPPY_TASK_PORT, environment?.TMPDIR, environment?.TMP, environment?.TEMP]));
+                environment?.HAPPY_TASK_ID, environment?.HAPPY_TASK_PORT, environment?.TMPDIR, environment?.TMP, environment?.TEMP, ...(restriction === undefined ? [] : [restriction])]));
             if (withdrawing) {
                 if (!attempt) throw new Error('INVALID_REQUEST');
                 // No await separates reading and fsyncing the fence or the competing create's pending receipt.

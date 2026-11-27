@@ -8,7 +8,7 @@ const fields = new Set(['version','ok','requestID','data','error','code','retrya
     // Launch-option discovery and the resolved tasks.create selection. Keys only.
     'options','agents','agent','models','permissionModes','efforts','defaultAgent','defaultModel','defaultPermissionMode','defaultEffort',
     'model','permissionMode','effort','execution','executionState','executionDispatched','queueID','queueReason','canCancel','recovery','mode','directory','branch','baseCommit','projectID','port','resources','resultCommit','dirty','workspaceState','retainedRef','retainedCommit',
-    'checkoutDigest','reviewPending','candidateCommit','candidateTree','testResult','testCleanup','command','exitCode']);
+    'source','time','timing','admittedAt','resourceAt','startedAt','endedAt','checkoutDigest','reviewPending','candidateCommit','candidateTree','testResult','testCleanup','command','exitCode']);
 /** Last boundary: never serialize arbitrary worker objects or transport errors to a cloud caller. */
 export function projectResponse(input: unknown): Record<string, unknown> {
     const project = (value: unknown, depth: number, key = ''): unknown => {

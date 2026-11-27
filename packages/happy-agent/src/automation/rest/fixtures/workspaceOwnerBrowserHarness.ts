@@ -4,7 +4,7 @@ import { workspaceOwnerFixture } from './workspaceOwnerFixture';
 import { projectResponse } from '../projection';
 const socket=process.env.HAPPY_WORKSPACE_FIXTURE_SOCKET,root=process.env.HAPPY_WORKSPACE_FIXTURE_ROOT;
 if ((socket || root) && (!socket || !root || !/^\/tmp\/happy-owner-ui-[A-Za-z0-9_]+$/.test(root))) throw new Error('Invalid process probe fixture');
-const f=await workspaceOwnerFixture(socket&&root?{socket,root}:undefined),assets=process.argv[2];
+const f=await workspaceOwnerFixture(socket&&root?{socket,root}:undefined,process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE==='1'),assets=process.argv[2];
 f.app.get('/',async(_req,reply)=>reply.type('text/html').send('<!doctype html><html lang="zh"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dots workspaces · isolated fixture</title><style>html,body,#root{margin:0;min-height:100%;font-family:system-ui}body{background:#fff}</style><div id="root"></div><script src="/fixture.js"></script></html>'));
 f.app.get('/fixture.js',async(_req,reply)=>reply.type('application/javascript').send(readFileSync(join(assets,'fixture.js'))));
 await f.app.listen({host:'127.0.0.1',port:20082});

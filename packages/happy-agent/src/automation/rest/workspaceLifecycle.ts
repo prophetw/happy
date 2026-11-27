@@ -18,7 +18,7 @@ const absolute = z.string().max(4096).refine(s => isAbsolute(s) && resolve(s) ==
 export const workspacePolicySchema = z.object({ version: z.literal(1), id, machineID: id, grantID: id, projectID: id,
     root: absolute, mainRef: z.literal('refs/heads/main'), remote: id.optional(),
     protectedDirectories: z.array(absolute).max(100).default([]), allowApply: z.boolean().default(false),
-    allowArchive: z.boolean().default(false), allowDiscard: z.boolean().default(false),
+    automaticRetirementArchive: absolute.optional(), allowArchive: z.boolean().default(false), allowDiscard: z.boolean().default(false),
 }).strict();
 export type WorkspacePolicy = z.input<typeof workspacePolicySchema>;
 export type { Activity } from './workspaceProcessScan';
@@ -217,7 +217,8 @@ export class WorkspaceLifecycle {
             revision: r.revision, managed: !!w.managedBy, state: w.retirement?.phase ?? (!w.managedBy ? 'legacy_unconfirmed' : r.disposition ? 'resolved' : 'pending_disposition'),
             reasons: [...this.runtimeReasons(s), ...(!w.managedBy ? ['WORKSPACE_OWNER_UNCONFIRMED'] : [])],
             taskCount: s.tasks.length, tasks: s.tasks.slice(-20).map(t => ({ id: t.id, sessionID: t.sessionID, state: t.state, resultCommit: t.resultCommit })),
-            disposition: r.disposition, lastVerification: r.checkedAt, lastOperation: r.operations.at(-1) };
+            disposition: r.disposition, lastVerification: r.checkedAt, lastOperation: r.operations.at(-1),
+            ...(w.execution.retireAfterIntegration && w.managedBy && this.policy.allowApply && this.policy.automaticRetirementArchive ? { canFinalizeIntegrated:true } : {}) };
     }
     async detail(workspaceID: string) {
         const item = this.overview(workspaceID), plan = await this.plan(workspaceID);
@@ -228,7 +229,7 @@ export class WorkspaceLifecycle {
         }
         return { item: { ...item, reasons: plan.reasons }, plan, inspectedHead, adoptionVerified, result: this.result(workspaceID, undefined, true) };
     }
-    async plan(workspaceID: string): Promise<WorkspacePlan> {
+    async plan(workspaceID: string, acceptedForFinalize = false): Promise<WorkspacePlan> {
         const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w);
         const retired = w.retirement?.phase === 'retired';
         const reasons = retired ? ['already_retired'] : this.runtimeReasons(s);
@@ -250,6 +251,7 @@ export class WorkspaceLifecycle {
             } catch(e) {reasons.push(e instanceof ApiError?e.code:'git_or_path_unconfirmed');}
             if (w.retirement) reasons.push('retirement_in_progress');
             if (!this.policy.allowApply) reasons.push('policy_apply_disabled');
+            if (w.execution.retireAfterIntegration && !acceptedForFinalize) reasons.push('business_acceptance_required');
         }
         const checkedAt=this.now();
         const body:Omit<WorkspacePlan,'id'>={version:1 as const,policy:this.policyHash,workspaceID,revision:r.revision,checkedAt,expiresAt:checkedAt+60000,
@@ -324,7 +326,81 @@ export class WorkspaceLifecycle {
             r.revision++;const receipt={id:input.operationID,fingerprint:fp,state:'resolved' as const,revision:r.revision,head:state.head,retainedRef};this.add(r,receipt);this.write(w,r);return receipt;
         });
     }
-    async apply(raw:WorkspacePlan,operationID:string) {
+    /** The authenticated Workspace Owner supplies explicit business acceptance.
+     * Evidence, disposition and apply each use the existing durable owner store. */
+    async finalizeIntegrated(workspaceID: string, operationID: string, head: string, evidence: string, acceptedBy: string) {
+        id.parse(operationID); commit.parse(head);
+        const acceptance = z.object({ evidence: z.string().trim().min(1).max(16000), acceptedBy: id }).parse({evidence,acceptedBy});
+        await this.authorize();
+        const initial = this.snapshot(workspaceID), w = initial.workspace;
+        if (!w.execution.retireAfterIntegration || !this.policy.allowApply || !this.policy.automaticRetirementArchive)
+            error('WORKSPACE_AUTOMATIC_RETIREMENT_DISABLED');
+        this.ownership(w);
+        const archive = this.policy.automaticRetirementArchive;
+        if ([w.cwd, w.root, w.repository].some(path => overlaps(path, archive))
+            || inside(archive, join(this.queue.directory, 'worktrees'))) error('WORKSPACE_ARCHIVE_NOT_INDEPENDENT');
+        const store = new MetadataStore(archive, 128 * 1024, false), key = `finalize:${w.id}:${operationID}`;
+        const binding = { workspaceID, operationID, head, acceptance, policy: this.policyHash };
+        const archiveSchema = z.object({ binding: digest, tasks: digest, workspace: digest, evidence: z.json() }).strict();
+        const archiveEvidence = (tasks: QueueTask[]) => JSON.parse(JSON.stringify({ acceptance, tasks: tasks.map(t => ({ id:t.id, requestID:t.requestID,
+            sessionID:t.sessionID, turnID:t.turnID, seq:t.seq, resultCommit:t.resultCommit, test:t.testResult })) }));
+        const planKey = key + ':plan';
+        const loadPlan = () => {
+            const saved = store.get(planKey);
+            return saved ? planSchema.parse(saved) : undefined;
+        };
+        const load = () => {
+            const raw = store.get<unknown>(key);
+            if (!raw) return;
+            const record = archiveSchema.parse(raw);
+            const current = this.snapshot(workspaceID);
+            if (record.binding !== fingerprint(binding) || record.workspace !== this.binding(w)
+                || record.tasks !== this.taskDigest(current)
+                || fingerprint(record.evidence) !== fingerprint(archiveEvidence(current.tasks)))
+                error('WORKSPACE_ARCHIVE_CHANGED');
+            return record;
+        };
+        const prior = load();
+        let archivedPlan = loadPlan();
+        const verifyArchive = () => {
+            if (!load() || loadPlan()?.id !== archivedPlan?.id) error('WORKSPACE_ARCHIVE_CHANGED');
+        };
+        const previous = this.result(workspaceID,operationID).operation;
+        if (prior && archivedPlan && previous) return this.apply(archivedPlan, operationID, verifyArchive);
+        const plan = await this.plan(workspaceID);
+        const retained = (reasons: string[]) => ({ id: operationID, fingerprint: fingerprint(binding), state: 'failed' as const,
+            revision: this.read(w).revision, reason: [...new Set(reasons)].join(',').slice(0,2048) });
+        if (plan.head !== head) return retained(['WORKSPACE_HEAD_CHANGED', ...plan.reasons]);
+        const blockers = plan.reasons.filter(reason => !['result_needs_disposition','no_change_needs_resolution','business_acceptance_required'].includes(reason));
+        if (initial.tasks.some(t => t.state !== 'completed' || !t.dispatched || t.worktreeDirty !== false || !t.resultCommit))
+            blockers.push('WORKSPACE_ACCEPTED_RESULT_UNCONFIRMED');
+        if (blockers.length) return retained(blockers);
+        if (!prior) store.claim(key, { binding:fingerprint(binding), workspace:this.binding(w),
+            tasks:this.taskDigest(initial), evidence:archiveEvidence(initial.tasks) });
+        if (!load()) error('WORKSPACE_ARCHIVE_CHANGED');
+        const kind = head === w.baseCommit ? 'no-change' : 'integrated';
+        let disposition = this.read(w).disposition;
+        if (!disposition || disposition.kind !== kind) {
+            try {
+                await this.resolve(workspaceID,{ operationID:hash('finalize-disposition:' + w.id + ':' + operationID), expectedRevision:plan.revision,
+                    head, kind, source:'owner-business-acceptance:' + operationID });
+            } catch (e) { if (e instanceof ApiError) return retained([e.code]); throw e; }
+            disposition=this.read(w).disposition;
+        }
+        if (!disposition || disposition.head !== head || disposition.kind !== kind || disposition.proof === 'retained-ref')
+            return retained(['WORKSPACE_NOT_IN_MAIN']);
+        if (!archivedPlan) {
+            const latest = await this.plan(workspaceID, true);
+            if (!latest.eligible) return retained(latest.reasons);
+            // Atomic claim gives concurrent retries one exact plan. A subsequent
+            // attempt gets a new operation ID after its previous plan expires.
+            store.claim(planKey,latest);
+            archivedPlan = loadPlan();
+        }
+        if (!archivedPlan) error('WORKSPACE_ARCHIVE_CHANGED');
+        return this.apply(archivedPlan,operationID,verifyArchive);
+    }
+    async apply(raw:WorkspacePlan,operationID:string, verifyArchive?: () => void) {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(operationID);const parsed=planSchema.safeParse(raw);if(!parsed.success)error('WORKSPACE_PLAN_INVALID');
         const plan=parsed.data!,{id:planID,...body}=plan;
@@ -338,6 +414,8 @@ export class WorkspaceLifecycle {
                 return op;
             }
             if(!this.policy.allowApply)error('WORKSPACE_APPLY_DISABLED');
+            if (w.execution.retireAfterIntegration && !verifyArchive) error('WORKSPACE_BUSINESS_ACCEPTANCE_REQUIRED');
+            verifyArchive?.();
             this.ownership(w);
             if(op&&w.retirement?.operationID===operationID&&!existsSync(w.cwd)&&!this.entry(await this.registry(w),w.cwd)) {
                 if(!r.disposition||await this.git(w.root,['rev-parse','--verify',r.disposition.retainedRef])!==op.head)error('WORKSPACE_RECOVERY_UNCONFIRMED');
@@ -347,7 +425,7 @@ export class WorkspaceLifecycle {
                 if(op)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
                 error('WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
             }
-            const check=await this.plan(plan.workspaceID);
+            const check=await this.plan(plan.workspaceID, !!verifyArchive);
             if(op) {
                 // Only our own persisted fence/revision may differ while recovering an interrupted command.
                 check.revision=plan.revision;check.reasons=check.reasons.filter(x=>x!=='retirement_in_progress');check.eligible=check.reasons.length===0;
@@ -373,8 +451,9 @@ export class WorkspaceLifecycle {
             // It must not open an extra async gap after that safety snapshot.
             try { await this.authorize(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
             // Recheck after the durable fence; heavy work is outside the queue transaction.
-            const latest=await this.plan(w.id);
+            const latest=await this.plan(w.id, !!verifyArchive);
             if(latest.git!==plan.git||latest.tasks!==plan.tasks||latest.reasons.some(reason=>reason!=='retirement_in_progress'))return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED');
+            try { verifyArchive?.(); } catch { return this.fail(w,r,op,'WORKSPACE_ARCHIVE_CHANGED'); }
             try { this.authorizationCurrent(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
             if(this.now()>plan.expiresAt||this.now()<plan.checkedAt)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
             try {

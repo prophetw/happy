@@ -1,4 +1,6 @@
 export const workspacesEn = {
+    finalize:'Finalize integrated work', acceptanceEvidence:'Business acceptance evidence', finalizeSubmit:'Archive evidence and reclaim when eligible',
+    finalizeHelp:'Enter the verified acceptance result. Workspace Owner checks integration, contents and active references before releasing this worktree.',
     title:'Workspaces', subtitle:'Review results and safely reclaim managed workspaces.', close:'Close workspaces',
     refresh:'Refresh checks', loading:'Checking permissions and workspaces…', loadingDetail:'Checking workspace and active references…',
     loadMore:'Load more', machine:'Machine', projects:'Projects', total:'Registered directories', noItems:'No managed workspaces in this project.', noProjects:'No authorized projects are currently available for this account.',
@@ -22,6 +24,7 @@ export const workspacesEn = {
     back:'Back to list', expired:'The plan expired. Create a new plan.', unavailable:'The workspace manager is unavailable. Check the connection and retry.',
     taskLimit:'Showing up to 20 linked task identifiers; task messages are not exposed.',
     reasons: {
+        business_acceptance_required:'Workspace Owner still needs verified business acceptance.',
         WORKTREE_NOT_MANAGED:'This registration is not a verified managed Git worktree. It cannot be reclaimed.',
         WORKSPACE_OWNER_MISMATCH:'Workspace ownership does not match this machine or user.',
         WORKSPACE_PATH_CHANGED:'The workspace path or filesystem identity changed. Check its registration.',
@@ -83,6 +86,8 @@ export const workspacesEn = {
     },
 };
 export const workspacesZh = {
+    finalize:'收尾已集成工作', acceptanceEvidence:'业务验收证据', finalizeSubmit:'归档证据并在核验通过后释放',
+    finalizeHelp:'填写已核验的业务验收结果。Workspace Owner 检查集成、目录内容和活动引用，再释放该工作树。',
     title:'工作区', subtitle:'核对成果，再安全回收托管开发目录。', close:'关闭工作区',
     refresh:'刷新检查', loading:'正在核对权限与工作区…', loadingDetail:'正在检查目录、成果与占用…', loadMore:'加载更多',
     machine:'机器', projects:'项目', total:'已登记目录', noItems:'此项目没有托管工作区。', noProjects:'当前账号暂时没有可管理的授权项目。',
@@ -105,6 +110,7 @@ export const workspacesZh = {
     back:'返回列表', expired:'计划已过期，请重新生成。', unavailable:'暂时无法连接工作区管理服务，请检查连接后重试。',
     taskLimit:'最多显示20个关联任务标识，不展示任务正文。',
     reasons: {
+        business_acceptance_required:'等待 Workspace Owner 确认业务验收。',
         WORKTREE_NOT_MANAGED:'此登记尚不符合托管 Git 工作区条件，不能回收。',
         WORKSPACE_OWNER_MISMATCH:'工作区的机器或用户归属不匹配。',
         WORKSPACE_PATH_CHANGED:'目录路径或文件身份发生变化，需要核对登记。',
