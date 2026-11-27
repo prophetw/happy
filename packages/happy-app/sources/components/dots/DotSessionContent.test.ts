@@ -574,7 +574,7 @@ it('dismisses the iOS task sheet before opening its original workspaces', async 
         node.props.accessibilityLabel === label || (node.props.accessibilityRole === 'tab' && node.findByType('Text').props.children === label))!;
     await act(async () => press('工作').props.onPress());
     await act(async () => press('查看工作项：任务').props.onPress());
-    await act(async () => press('workspaces.title').props.onPress());
+    await act(async () => press('workspaces.guidance.open').props.onPress());
     expect(renderer.root.findByType('Modal').props.visible).toBe(false);
     expect(mocks.push).not.toHaveBeenCalled();
     await act(async () => renderer.root.findByType('Modal').props.onDismiss());

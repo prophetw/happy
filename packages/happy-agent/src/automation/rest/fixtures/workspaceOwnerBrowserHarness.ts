@@ -11,6 +11,7 @@ import { openWorkspaceLifecycle } from '../../production/workspaces';
 const socket=process.env.HAPPY_WORKSPACE_FIXTURE_SOCKET,root=process.env.HAPPY_WORKSPACE_FIXTURE_ROOT;
 const isFixtureRoot=(path:string)=>/^\/tmp\/happy-owner-ui-[A-Za-z0-9_]+$/.test(path);
 const restarting=process.env.HAPPY_WORKSPACE_RESTART_ROOT;
+const guidanceTest=process.env.HAPPY_WORKSPACE_GUIDANCE_FIXTURE==='1';
 const backgroundTest=process.env.HAPPY_WORKSPACE_RECLAIM_FIXTURE==='1';
 const restartTest=process.env.HAPPY_WORKSPACE_RESTART_FIXTURE==='1'||backgroundTest;
 if ((socket || root) && (!socket || !root || !isFixtureRoot(root))) throw new Error('Invalid process probe fixture');
@@ -22,7 +23,14 @@ const manifest=join(base,'browser-fixture.json');
 const fixtureData=f?{ root:f.root,repo:f.repo,configFile:f.configFile,
     workspaces:Object.fromEntries(Object.entries(f.workspaces).map(([key,w])=>[key,{id:w.id,cwd:w.cwd}])) }:JSON.parse(readFileSync(manifest,'utf8'));
 
-if (f&&!backgroundTest) for (const w of Object.values(f.workspaces)) reclaimRecords(f.queue.directory)?.delete(w.id);
+if (f&&!backgroundTest) for (const w of Object.values(f.workspaces)) {
+    if (!guidanceTest || w.id!==f.workspaces.ready.id) reclaimRecords(f.queue.directory)?.delete(w.id);
+}
+const temporaryFixture = f && join(f.workspaces.live.temporaryDirectory,'keep-report.txt');
+if (f && guidanceTest) {
+    writeFileSync(temporaryFixture!,'synthetic unknown material');
+    f.blockers.set(f.workspaces.ready.id,['live_session_or_process']);
+}
 if (f&&restartTest&&!backgroundTest) {
     const remote=join(base,'remote.git'), old=join(f.repo,'older-worktree');
     fixtureGit(f.repo,'init','--bare',remote);
@@ -87,6 +95,11 @@ process.on('message',async message=>{
         const task=lifecycle.queue.tasks().find(t=>t.workspaceID===id)!;
         process.send?.({kind:'background-result',requestID:task.requestID,absent:!existsSync(fixtureData.workspaces.ready.cwd),
             result:lifecycle.result(id,undefined,true),receipt:projectResponse({version:1,ok:true,data:lifecycle.queue.receipt(task)})});
+    }
+    if (message==='clear-fixture-blockers' && guidanceTest && f && temporaryFixture) {
+        f.blockers.delete(f.workspaces.live.id);
+        rmSync(temporaryFixture);
+        process.send?.({kind:'cleared'});
     }
     if(message==='stop'){await app.close();await f?.stopProcesses();rmSync(base,{recursive:true,force:true});process.disconnect?.();}
 });

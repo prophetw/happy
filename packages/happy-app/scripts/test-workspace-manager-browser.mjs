@@ -12,7 +12,7 @@ const out=resolve(process.argv[2]);mkdirSync(out,{recursive:true,mode:0o700});
 if(!existsSync(join(out,'node_modules')))symlinkSync(join(repo,'node_modules'),join(out,'node_modules'));
 const path=relative=>join(src,relative);
 const virtual={
-    'react-native-unistyles':`export const useUnistyles=()=>({theme:{colors:{text:'#20222b',textSecondary:'#626977',textLink:'#6650b7',surface:'#fff',surfaceHigh:'#f2f3f7',divider:'#dfe1e7'}}});`,
+    'react-native-unistyles':`export const useUnistyles=()=>({rt:{themeName:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'},theme:{colors:{text:'#20222b',textSecondary:'#626977',textLink:'#6650b7',surface:'#fff',surfaceHigh:'#f2f3f7',divider:'#dfe1e7'}}});`,
     'expo-crypto':`export const randomUUID=()=>crypto.randomUUID();`,
     '@expo/vector-icons':`import React from 'react';export const Ionicons=()=>React.createElement('span',{'aria-hidden':true},'›');`,
     '@react-navigation/native':`import React from 'react';export const useFocusEffect=fn=>React.useEffect(fn,[fn]);`,
@@ -21,7 +21,10 @@ const virtual={
     '@/modal':`export const Modal={confirm:async()=>false};`,
     '@/hooks/useNavigateToSession':`export const useNavigateToSession=()=>()=>{};`,
     '@/sync/storage':`export const storage={getState:()=>({sessions:{}})};export const useSession=()=>({presence:'online',thinking:false});`,
-    '@/sync/sync':`export const sync={ensureSessionReady:async()=>{}};`,
+    '@/sync/sync':`export const sync={ensureSessionReady:async()=>{},getCredentials:()=>({token:'fixture-owner',secret:'fixture-secret'})};`,
+    '@/auth/AuthContext':`export const useAuth=()=>({credentials:{token:'fixture-owner',secret:'fixture-secret'},isAuthenticated:true});`,
+    '@/sync/serverConfig':`export const getServerUrl=()=>window.location.origin;`,
+    '@/sync/apiSocket':`export const apiSocket={machineRPC:()=>{throw Error('Web fixture uses same-origin transport')}};`,
     './DotsConnectionsPanel':`export const DotsConnectionsPanel=()=>null;`,
     './DotDispatchDefaultsFields':`export const DotDispatchDefaultsFields=()=>null;`,
     './useDotDispatchOptions':`export const useDotDispatchOptions=()=>({});`,
@@ -66,7 +69,62 @@ const find=async name=>{const id=ready.workspaces[name].id,card=page.getByTestId
 const resolveNoChange=async()=>{await button('核验无代码改动').click();await button('确认核验并记录证据').click();await page.getByText('成果证据已记录',{exact:true}).waitFor();await button('生成回收计划').waitFor();};
 const finalize = process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE === '1';
 try {
-    if (process.env.HAPPY_WORKSPACE_RECLAIM_FIXTURE === '1') {
+    if (process.env.HAPPY_WORKSPACE_GUIDANCE_FIXTURE === '1') {
+        const notice=page.getByTestId('workspace-reclaim-notice');
+        const scoped=name=>page.getByTestId('workspace-'+ready.workspaces[name].id).getByTestId('workspace-reclaim-notice');
+        const alert=box=>box.getByRole('alert').filter({hasText:'暂时不能回收'});
+        await page.setViewportSize({width:440,height:956});
+        await page.emulateMedia({colorScheme:'light'});
+        await open();
+        const live=page.getByTestId('workspace-'+ready.workspaces.live.id);
+        if(!await live.count())await button('加载更多').click();
+        const waiting=page.getByTestId('workspace-'+ready.workspaces.ready.id);
+        if(!await waiting.count())await button('加载更多').click();
+        await alert(scoped('live')).waitFor();
+        assert.match(await scoped('live').innerText(),/临时目录.*1/);
+        assert.match(await scoped('live').innerText(),/检测到工作区仍被占用/);
+        assert.match(await scoped('live').innerText(),/手动回收/);
+        assert.match(await scoped('ready').innerText(),/条件满足后，宿主会自动重新检查并继续/);
+        assert.doesNotMatch(await scoped('ready').innerText(),/需要你处理/);
+        await scoped('live').screenshot({path:join(out,'list-light-440.png')});
+
+        await page.goto('http://127.0.0.1:20082/?task='+encodeURIComponent(ready.workspaces.live.cwd));
+        await alert(notice).waitFor();
+        assert.match(await notice.innerText(),/临时目录.*1/);
+        await notice.screenshot({path:join(out,'original-task-card.png')});
+        await button('查看回收条件').click();
+        await page.emulateMedia({colorScheme:'dark'});
+        await open();
+        await find('live');
+        await alert(notice.first()).waitFor();
+        const rect=await alert(notice.first()).boundingBox();
+        assert.ok(rect&&rect.y>=0&&rect.y+rect.height<956);
+        await button('重新检查').first().click({trial:true});
+        const color=await notice.first().evaluate(el=>getComputedStyle(el).backgroundColor);
+        assert.equal(color,'rgb(70, 24, 32)');
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+        await page.screenshot({path:join(out,'detail-dark-440-first-screen.png')});
+        await page.getByText(/keep-report\.txt/).waitFor();
+        const beforeRecheck=evidence.payloads.length;
+        await button('生成回收计划').click();
+        await page.getByText(/保护条件阻挡/).waitFor();
+        assert.ok(await button('确认并回收').isDisabled());
+        const cleared=once(child,'message');child.send('clear-fixture-blockers');assert.equal((await cleared)[0].kind,'cleared');
+        await button('重新检查').first().click();
+        await notice.first().getByText(/临时目录中有来源未核实的资料/).waitFor({state:'hidden'});
+        await page.getByText(/历史工作区，需要手动回收/).first().waitFor();
+        assert.doesNotMatch(await notice.first().innerText(),/检测到工作区仍被占用|临时目录中有来源未核实的资料/);
+        assert.equal(evidence.payloads.length,beforeRecheck+1,'recheck does not make another plan or mutation');
+        await page.screenshot({path:join(out,'rechecked-dark-440.png')});
+        await resolveNoChange();
+        await button('生成回收计划').click();
+        await page.getByRole('checkbox',{name:'我确认回收上方列出的这个目录'}).click();
+        await button('确认并回收').click();
+        await notice.first().getByText('已回收',{exact:true}).waitFor();
+        assert.doesNotMatch(await notice.first().innerText(),/暂时不能回收|继续检查/);
+        evidence.scenarios.push('two simultaneous blockers on list, original task card and detail; older workspace manual and active automatic wait; 440px theme and first-screen action; read-only refresh; final receipt wins');
+        evidence.actualFixtureRemoved=1;evidence.realUserDirectoriesRemoved=0;
+    } else if (process.env.HAPPY_WORKSPACE_RECLAIM_FIXTURE === '1') {
         const git=(cwd,...args)=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:'pipe'}).trim();
         await open();
         console.log('opened workspace list');
@@ -120,8 +178,7 @@ try {
         await browser.close();
         const stopped=once(child,'exit');child.send('stop');await stopped;
         process.exit(0);
-    }
-    if (process.env.HAPPY_WORKSPACE_RESTART_FIXTURE === '1') {
+    } else if (process.env.HAPPY_WORKSPACE_RESTART_FIXTURE === '1') {
         const git=(cwd,...args)=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:'pipe'}).trim();
         evidence.servicePIDs=[ready.pid];
         const restart = async () => {
@@ -230,7 +287,7 @@ try {
         await page.screenshot({path:join(out,'finalize-retained.png'),fullPage:true});
         await button('返回列表').click(); await find('live'); await accept();
         await page.getByText('操作被拒绝或失败',{exact:true}).waitFor();
-        await page.getByText('活跃或空闲会话、进程仍占用目录。',{exact:false}).first().waitFor();
+        await page.getByText('检测到工作区仍被占用，具体会话或程序待核实。',{exact:false}).first().waitFor();
         assert.ok(existsSync(ready.workspaces.live.cwd));
         evidence.scenarios.push('dirty and occupied worktrees retained with reason');
         evidence.actualFixtureRemoved=1;evidence.realUserDirectoriesRemoved=0;
@@ -238,9 +295,9 @@ try {
     await page.goto('http://127.0.0.1:20082/');await page.screenshot({path:join(out,'entry-desktop.png'),fullPage:true});
     await button('项目工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});
     await page.screenshot({path:join(out,'list-desktop.png'),fullPage:true});
-    await find('dirty');await page.getByText('存在暂存、未暂存或未跟踪内容，需要先保全。',{exact:false}).first().waitFor();
+    await find('dirty');await page.getByText('存在未保存的改动或未跟踪文件。',{exact:false}).first().waitFor();
     await button('生成回收计划').click();await page.getByText('此计划仍被保护条件阻挡，确认不能跳过这些检查。',{exact:true}).waitFor();assert.ok(await button('确认并回收').isDisabled());await page.screenshot({path:join(out,'dirty-protected.png'),fullPage:true});
-    await button('返回列表').click();await find('live');await page.getByText('活跃或空闲会话、进程仍占用目录。',{exact:false}).first().waitFor();assert.ok(existsSync(ready.workspaces.live.cwd));
+    await button('返回列表').click();await find('live');await page.getByText('检测到工作区仍被占用，具体会话或程序待核实。',{exact:false}).first().waitFor();assert.ok(existsSync(ready.workspaces.live.cwd));
     evidence.scenarios.push('dirty and live-session protected');
     await button('返回列表').click();await find('ready');await resolveNoChange();await button('生成回收计划').click();await page.getByText('确认本次具体回收计划',{exact:true}).waitFor();
     assert.ok(await button('确认并回收').isDisabled());await page.screenshot({path:join(out,'plan-desktop.png'),fullPage:true});

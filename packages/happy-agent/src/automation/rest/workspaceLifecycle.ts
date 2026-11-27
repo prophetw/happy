@@ -1,8 +1,8 @@
-import { closeSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, opendirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { workspacePlanSchema, workspaceDispositionSchema, workspaceOperationSchema, workspaceDeliveryReceiptSchema, type WorkspaceItem, type WorkspaceDelivery, type WorkspaceDeliveryRequest, type WorkspaceDeliveryReceipt } from '@slopus/happy-wire';
+import { workspacePlanSchema, workspaceDispositionSchema, workspaceOperationSchema, workspaceDeliveryReceiptSchema, type WorkspaceItem, type WorkspaceDelivery, type WorkspaceDeliveryRequest, type WorkspaceDeliveryReceipt, type WorkspaceReclaimGuidance } from '@slopus/happy-wire';
 import { hash } from '../journal';
 import { canonicalBody } from './auth';
 import { ApiError } from './schema';
@@ -129,7 +129,7 @@ export class WorkspaceLifecycle {
         if (record.operations.length>=16) error('WORKSPACE_OPERATION_LIMIT');
         record.operations.push(operation); record.checkedAt=this.now();
     }
-    private ownership(w: Workspace, legacy = false) {
+    private ownership(w: Workspace, legacy = false, checkTemporary = true) {
         absolute.parse(this.queue.directory);
         privateDirectory(this.queue.directory);
         if (realpathSync(this.queue.directory)!==this.queue.directory || w.cwd!==join(this.queue.directory,'worktrees',w.id)
@@ -142,7 +142,7 @@ export class WorkspaceLifecycle {
         if (w.temporaryDirectory!==join(this.queue.directory,'temporary',w.id)) error('WORKSPACE_TEMP_BINDING_CHANGED');
         if (existsSync(w.temporaryDirectory)) {
             privateDirectory(w.temporaryDirectory);
-            if (readdirSync(w.temporaryDirectory).length) error('WORKSPACE_TEMPORARY_ARTIFACTS');
+            if (checkTemporary && readdirSync(w.temporaryDirectory).length) error('WORKSPACE_TEMPORARY_ARTIFACTS');
         }
     }
     private async registry(w: Workspace) {
@@ -239,7 +239,7 @@ export class WorkspaceLifecycle {
         return {total:rows.length,returned:items.length,pageCounts,items,next:rows.filter(w=>w.id>after).length>limit?page.at(-1)!.id:null};
     }
     /** Read-only reconciliation. Only the returned page gets checkout and remote probes. */
-    async deliveryInventory(limit: number, after = '', view: 'pending'|'released' = 'pending', requestID?:string) {
+    async deliveryInventory(limit: number, after = '', view: 'pending'|'released' = 'pending', requestID?:string, guidance = false) {
         const ledger = this.queue.transaction(s => {
             const claimed = new Set<string>(), knownIDs=new Set<string>(), owned: Workspace[] = [], tasks = new Map<string, QueueTask[]>();
             for (const w of s.workspaces) {
@@ -304,7 +304,8 @@ export class WorkspaceLifecycle {
                 const receipt=intent&&{...intent.receipt,...(intent.policy!==this.policyHash?{blocker:'WORKSPACE_DELIVERY_AUTHORIZATION_CHANGED'}:{})};
                 const delivery=await this.deliveryObservation(item,workspace.repository,entry,registry!==undefined,remote,
                     test&&{commit:test.commit,status:test.status},intent?.policy===this.policyHash?receipt?.pullRequestMerge:undefined);
-                return {...item,branch:entry?.branch??item.branch,delivery:{...delivery,receipt,
+                const reclaimGuidance = guidance ? await this.reclaimGuidance(workspace.id,delivery) : undefined;
+                return {...item,reclaimGuidance,branch:entry?.branch??item.branch,delivery:{...delivery,receipt,
                     canStart:!!(this.policy.delivery && workspace.managedBy && item.state!=='retired' && (!intent || this.canReplaceDelivery(intent,entry?.head)))}};
             }
             if(identity) {
@@ -582,14 +583,58 @@ export class WorkspaceLifecycle {
             disposition: r.disposition, lastVerification: r.checkedAt, lastOperation: r.operations.at(-1),
             ...(w.execution.retireAfterIntegration && w.managedBy && this.policy.allowApply && this.policy.automaticRetirementArchive ? { canFinalizeIntegrated:true } : {}) };
     }
-    async detail(workspaceID: string) {
+    /** Scoped diagnostics can show simultaneous blockers without changing
+     * the deletion plan or relying on a cached previous attempt. */
+    private async reclaimGuidance(workspaceID: string, checkout?: Pick<WorkspaceDelivery,'dirty'|'directory'>, includeNames = false): Promise<WorkspaceReclaimGuidance | undefined> {
+        const snapshot = this.snapshot(workspaceID), w = snapshot.workspace;
+        if (w.retirement?.phase === 'retired') return;
+        const reasons = this.runtimeReasons(snapshot);
+        let temporary: WorkspaceReclaimGuidance['temporary'];
+        try {
+            this.ownership(w,false,false);
+            if (existsSync(w.temporaryDirectory)) {
+                const names: string[] = [];
+                let count = 0;
+                const directory = opendirSync(w.temporaryDirectory);
+                try {
+                    for (let entry; count < 1000 && (entry=directory.readSync()); count++) {
+                        if (includeNames && names.length < 8) names.push(entry.name.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g,'�').slice(0,160));
+                    }
+                } finally { directory.closeSync(); }
+                if (count) {
+                    temporary = {directory:w.temporaryDirectory,count,bounded:count===1000,...(includeNames?{names}:{})};
+                    reasons.push('WORKSPACE_TEMPORARY_ARTIFACTS');
+                }
+            }
+            // Occupancy and saved content are separate observations. Scope
+            // them to the still-registered, real checkout before probing.
+            const metadata=lstatSync(w.cwd,{throwIfNoEntry:false});
+            if (metadata?.isDirectory() && realpathSync(w.cwd)===w.cwd && metadata.uid===process.getuid?.()) {
+                const current=checkout ?? await checkoutEvidence(w.cwd,w.repository);
+                if (current.dirty) reasons.push('staged_unstaged_or_untracked');
+                if (current.directory==='present' && typeof current.dirty==='boolean') {
+                    try {
+                        const activity=await this.activity(w,snapshot.tasks);
+                        if (!activity.confirmed) reasons.push('activity_unconfirmed');
+                        reasons.push(...activity.blockers);
+                    } catch { reasons.push('activity_unconfirmed'); }
+                }
+            }
+        } catch(error) { reasons.push(error instanceof ApiError?error.code:'git_or_path_unconfirmed'); }
+        if (!this.policy.allowApply) reasons.push('policy_apply_disabled');
+        if (w.retirement) reasons.push('retirement_in_progress');
+        return {checkedAt:this.now(),reasons:[...new Set(reasons)].slice(0,32),temporary};
+    }
+
+    async detail(workspaceID: string, guidance = false) {
         const item = this.overview(workspaceID), plan = await this.plan(workspaceID);
         let inspectedHead = plan.head, adoptionVerified = false;
         if (!item.managed && plan.workspaceState === 'active') {
             try { inspectedHead = (await this.inspectGit(this.snapshot(workspaceID).workspace, true)).head; adoptionVerified = true; }
             catch { /* Missing/unsafe legacy ownership remains unconfirmed, never auto-adopted. */ }
         }
-        return { item: { ...item, reasons: [...plan.reasons,...item.reasons.filter(code=>code.startsWith('automatic_reclaim:'))] },
+        const reclaimGuidance = guidance ? await this.reclaimGuidance(workspaceID,undefined,true) : undefined;
+        return { item: { ...item, reclaimGuidance, reasons: [...plan.reasons,...item.reasons.filter(code=>code.startsWith('automatic_reclaim:'))] },
             plan, inspectedHead, adoptionVerified, result: this.result(workspaceID, undefined, true) };
     }
     async plan(workspaceID: string, acceptedForFinalize = false, automatic?: ReclaimTarget): Promise<WorkspacePlan> {

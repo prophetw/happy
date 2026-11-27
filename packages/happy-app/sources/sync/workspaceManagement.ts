@@ -68,6 +68,15 @@ function workspaceClient(send: OwnerTransport, current: () => boolean, machineID
         }
         return result.data;
     };
+    const guidedRead = async (body: WorkspaceRead) => {
+        try { return await request('read',workspaceReadSchema.parse(body)); }
+        catch (error) {
+            // Only retry an older endpoint's explicit schema rejection.
+            if (!('guidance' in body) || !body.guidance || !(error instanceof WorkspaceManagerError) || error.message!=='INVALID_REQUEST') throw error;
+            const {guidance: _, ...legacy}=body;
+            return request('read',workspaceReadSchema.parse(legacy));
+        }
+    };
     return {
         catalog: async () => {
             const catalog = decoded(workspaceCatalogSchema, await request('catalog', {}));
@@ -77,7 +86,7 @@ function workspaceClient(send: OwnerTransport, current: () => boolean, machineID
         inventory: async (input: Extract<WorkspaceRead,{action:'inventory'|'delivery-inventory'}>) => {
             let data;
             try {
-                data=decoded(workspaceListSchema,await request('read',workspaceReadSchema.parse(input)));
+                data=decoded(workspaceListSchema,await guidedRead(input));
             } catch(error) {
                 if(input.action!=='delivery-inventory'||!(error instanceof WorkspaceManagerError)||error.message!=='INVALID_REQUEST')throw error;
                 const {machineID,projectID,limit,after,requestID}=input;
@@ -88,7 +97,7 @@ function workspaceClient(send: OwnerTransport, current: () => boolean, machineID
             return data;
         },
         detail: async (input: Extract<WorkspaceRead,{action:'detail'}>) => {
-            const data=decoded(workspaceDetailSchema,await request('read',workspaceReadSchema.parse(input)));
+            const data=decoded(workspaceDetailSchema,await guidedRead(input));
             if(data.item.id!==input.workspaceID||data.item.projectID!==input.projectID||data.plan.workspaceID!==input.workspaceID)throw Error('WORKSPACE_SCOPE_CHANGED');return data;
         },
         result: async (input: Extract<WorkspaceRead,{action:'result'}>) => {

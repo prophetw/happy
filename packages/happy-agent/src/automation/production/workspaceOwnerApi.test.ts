@@ -27,6 +27,27 @@ it('projects bounded identifiers without task text, policy secrets or duplicate 
     expect(new Set([...a.body.data.items,...b.body.data.items].map((x:any)=>x.directory)).size).toBe(6);
     expect(JSON.stringify(a.body)).not.toContain('synthetic fixture input');expect(JSON.stringify(a.body)).not.toContain('publicKey');
 });
+it('returns simultaneous scoped blockers and a bounded temporary listing only to opted-in reads',async()=>{
+    const f=await fixture(), w=f.workspaces.live;
+    const temporary=join(w.temporaryDirectory,'known-name-unverified-content');
+    writeFileSync(temporary,'retained workspace material');
+    const request=f.request('live','detail');
+    const older=await f.api('/read',request);
+    expect(older.body.data.item).not.toHaveProperty('reclaimGuidance');
+    const scoped=await f.api('/read',{action:'delivery-inventory',...f.scope,requestID:'send-live',guidance:true});
+    const summary=scoped.body.data.items[0].reclaimGuidance;
+    expect(summary.reasons).toEqual(expect.arrayContaining(['WORKSPACE_TEMPORARY_ARTIFACTS','live_session_or_process']));
+    expect(summary.temporary).toEqual({directory:w.temporaryDirectory,count:1,bounded:false});
+    const details=await f.api('/read',{...request,guidance:true});
+    expect(details.body.data.item.reclaimGuidance.temporary.names).toEqual(['known-name-unverified-content']);
+    expect(details.body.data.plan.eligible).toBe(false);
+    expect(readFileSync(temporary,'utf8')).toBe('retained workspace material');
+    expect((await f.api('/read',{...request,guidance:true,projectID:'foreign'})).status).toBe(403);
+    rmSync(temporary);f.blockers.delete(w.id);
+    const fresh=await f.api('/read',{...request,guidance:true});
+    expect(fresh.body.data.item.reclaimGuidance.reasons).toEqual([]);
+    expect(existsSync(w.cwd)).toBe(true);
+});
 it('requires server proof for resolution; plans/explicit apply retain task query, refs and reconstruction data',async()=>{
     const f=await fixture(),w=f.workspaces.ready,main=fixtureGit(f.repo,'rev-parse','main');
     const before=await f.api('/write',f.request('ready','plan'));expect(before.body.data.plan.eligible).toBe(false);

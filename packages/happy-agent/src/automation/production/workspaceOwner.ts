@@ -85,8 +85,8 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
         }
         return { total: page.total, returned: items.length, next: page.next, items };
     }
-    if (request.action === 'delivery-inventory') return lifecycle.deliveryInventory(request.limit,request.after,request.view,request.requestID);
-    if (request.action === 'detail') return lifecycle.detail(request.workspaceID);
+    if (request.action === 'delivery-inventory') return lifecycle.deliveryInventory(request.limit,request.after,request.view,request.requestID,request.guidance);
+    if (request.action === 'detail') return lifecycle.detail(request.workspaceID,request.guidance);
     if (request.action === 'result') return lifecycle.result(request.workspaceID, request.operationID, true);
     if (request.action === 'plan') return lifecycle.plan(request.workspaceID);
     if (request.action === 'adopt') return lifecycle.adopt(request.workspaceID, request.operationID, request.revision, request.head);

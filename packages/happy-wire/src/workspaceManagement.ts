@@ -44,11 +44,22 @@ export const workspaceDeliverySchema = z.object({
     canStart: z.boolean().optional(), receipt: workspaceDeliveryReceiptSchema.optional(),
     next: z.enum(['inspect','restore','claim','preserve','test','integrate','finalize','none']),
 }).strict();
+const workspaceReclaimGuidanceSchema = z.strictObject({
+    checkedAt: z.number().int().nonnegative(),
+    reasons: z.array(z.string().max(128)).max(32),
+    temporary: z.strictObject({
+        directory: z.string().max(4096),
+        count: z.number().int().nonnegative().max(1000),
+        bounded: z.boolean(),
+        names: z.array(z.string().max(160)).max(8).optional(),
+    }).optional(),
+});
+export type WorkspaceReclaimGuidance = z.infer<typeof workspaceReclaimGuidanceSchema>;
 export const workspaceItemSchema = z.object({ id: digest, projectID: id, directory: z.string(), branch: z.string().optional(),
     baseCommit: commit.optional(), revision: z.number().int().nonnegative(), state: z.string(), managed: z.boolean(), canFinalizeIntegrated: z.boolean().optional(),
     reasons: z.array(z.string()), taskCount: z.number().int().nonnegative(), tasks: z.array(z.object({ id: digest, requestID: id.optional(), sessionID: id, state: z.string(), resultCommit: commit.optional() })).max(20),
     disposition: workspaceDispositionSchema.optional(), lastVerification: z.number().optional(), lastOperation: workspaceOperationSchema.optional(),
-    plan: workspacePlanSchema.optional(), delivery: workspaceDeliverySchema.optional(),
+    plan: workspacePlanSchema.optional(), delivery: workspaceDeliverySchema.optional(), reclaimGuidance: workspaceReclaimGuidanceSchema.optional(),
 }).strict();
 export const workspaceResultSchema = z.object({ workspaceID: digest, revision: z.number(), workspaceState: z.enum(['active','retiring','retired']),
     disposition: workspaceDispositionSchema.optional(), operation: workspaceOperationSchema.optional(), operations: z.array(workspaceOperationSchema).max(16).optional(),
@@ -65,8 +76,8 @@ const scope = { machineID: id, projectID: id };
 export const workspaceReadSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('inventory'), ...scope, after: digest.optional(), limit: z.number().int().min(1).max(5).default(5) }).strict(),
     z.object({ action: z.literal('delivery-inventory'), ...scope, after: digest.optional(), limit: z.number().int().min(1).max(5).default(5),
-        view: z.enum(['pending','released']).default('pending'), requestID:id.optional() }).strict(),
-    z.object({ action: z.literal('detail'), ...scope, workspaceID: digest }).strict(),
+        view: z.enum(['pending','released']).default('pending'), requestID:id.optional(), guidance:z.boolean().optional() }).strict(),
+    z.object({ action: z.literal('detail'), ...scope, workspaceID: digest, guidance:z.boolean().optional() }).strict(),
     z.object({ action: z.literal('result'), ...scope, workspaceID: digest, operationID: id.optional() }).strict(),
 ]);
 export const workspaceWriteSchema = z.discriminatedUnion('action', [

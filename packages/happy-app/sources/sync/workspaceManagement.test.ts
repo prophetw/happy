@@ -52,3 +52,14 @@ it('distinguishes an unavailable paired machine from a rejected owner request', 
     await expect(client.catalog()).rejects.toThrow('WORKSPACE_MACHINE_UNAVAILABLE');
     await expect(client.catalog()).rejects.toMatchObject({ message: 'WORKSPACE_SCOPE_DENIED', rejected: true });
 });
+
+it('retries opt-in guidance over an older paired Worker using only the same scoped read', async () => {
+    const call=vi.fn().mockResolvedValueOnce({status:400,body:{version:1,ok:false,error:{code:'INVALID_REQUEST'},dispatch:'not_started'}})
+        .mockResolvedValueOnce({status:200,body:{version:1,ok:true,data:{total:0,returned:0,items:[],next:null}}});
+    const client=workspaceManagerRpcClient('paired',()=>true,call);
+    await expect(client.inventory({action:'delivery-inventory',machineID:'paired',projectID:'project',requestID:'original',guidance:true})).resolves.toMatchObject({total:0});
+    const first=call.mock.calls[0][2],second=call.mock.calls[1][2];
+    expect(first.body.guidance).toBe(true);
+    expect(second.route).toBe('read');
+    expect(second.body).toEqual({action:'delivery-inventory',machineID:'paired',projectID:'project',requestID:'original',view:'pending',limit:5});
+});

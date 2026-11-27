@@ -16,8 +16,7 @@ import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation
 import { testloopWorkStatus, testloopWorkQueueReason, type TestloopDotsMetadata } from '@/sync/testloopDots';
 import { kindLabel } from '@/sync/dotMemoryKinds';
 import { t } from '@/text';
-import { workspacesEn } from '@/text/workspaces';
-import type { TranslationKey } from '@/text';
+import { DotTaskReclaimNotice } from './DotTaskReclaimNotice';
 import { useAuth } from '@/auth/AuthContext';
 import { getServerUrl } from '@/sync/serverConfig';
 import { dotMemoryEditError, dotMemoryEditRejected, dotMemoryValueBytes, DOT_MEMORY_VALUE_MAX_BYTES, readDotMemoryTombstone, requestDotMemoryEdit, type DotMemoryEditRequest } from '@/sync/dotMemoryEdit';
@@ -375,6 +374,11 @@ export function DotSessionContent({ session, metadata, active, children, topInse
         </>)}
         {selectedTask && (active || workspaceAfterDismiss) && sheet(selectedTask.title, () => { setTaskId(null); setWorkspaceAfterDismiss(null); }, <>
             <Text style={body}>{testloopWorkStatus(selectedTask)}</Text>
+            {active && !workspaceAfterDismiss && openSelectedWorkspace && selectedTask.execution?.mode==='worktree' && selectedTask.sendRequestID
+                && <DotTaskReclaimNotice projectID={selectedTask.execution.projectID} requestID={selectedTask.sendRequestID}
+                    directory={selectedTask.execution.directory} machineID={taskMachineID}
+                    released={selectedTask.execution.workspaceState==='retired' || selectedTask.execution.reclaimState==='released'}
+                    state={selectedTask.execution.reclaimState} reason={selectedTask.execution.reclaimReason} open={openSelectedWorkspace}/>}
             <Text style={body}>{selectedTask.instruction}</Text>
             {selectedTask.dispatchOptions && <Text style={muted}>{selectedTask.dispatchOptions.confirmed ? '执行回执' : '派活参数'}：{[
                 selectedTask.dispatchOptions.agent, selectedTask.dispatchOptions.model, selectedTask.dispatchOptions.effort,
@@ -384,13 +388,6 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {selectedTask.execution && <><Text selectable style={muted}>执行位置：{selectedTask.execution.directory}</Text>{selectedTask.execution.branch && <Text selectable style={muted}>分支：{selectedTask.execution.branch}</Text>}{selectedTask.execution.resultCommit && <Text selectable style={muted}>提交：{selectedTask.execution.resultCommit}</Text>}{selectedTask.execution.dirty && <Text style={muted}>存在未提交改动，现场已保留</Text>}</>}
             {selectedTask.execution?.testCleanup && <Text style={muted}>{selectedTask.execution.testCleanup === 'removed' ? '临时测试目录已清理' : '临时测试目录已保留'}</Text>}
             {selectedTask.execution?.source && <Text style={muted}>{selectedTask.execution.source === 'baseline' ? '固定的已提交基线' : '执行时取得的 checkout 快照'}</Text>}
-            {selectedTask.execution?.workspaceState === 'retired'
-                ? <Text style={muted}>{t('workspaces.reclaimReleased')}</Text>
-                : selectedTask.execution?.reclaimState && <Text style={muted}>
-                    {t(selectedTask.execution.reclaimState === 'attention' ? 'workspaces.reclaimAttention' : 'workspaces.reclaimWaiting')}
-                    {selectedTask.execution.reclaimReason && ' · ' + (Object.hasOwn(workspacesEn.reasons,selectedTask.execution.reclaimReason)
-                        ? t(`workspaces.reasons.${selectedTask.execution.reclaimReason}` as TranslationKey) : t('workspaces.unknown'))}
-                </Text>}
             <DotTaskTiming timing={selectedTask.timing} waitingSince={selectedTask.waitingSince} style={muted} />
             {selectedTask.recovery && <Text style={muted}>{selectedTask.recovery}</Text>}
             {selectedTask.canCancel && action('在对话中取消此工作', () => toConversation(`请取消当前 Dot 的工作项 ${selectedTask.id}，只取消这一交办，保留已有改动，并核对停止结果。`))}
@@ -400,7 +397,6 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {['delegate', 'goal'].includes(selectedTask.kind) && <Text style={muted}>{selectedTask.businessVerification === 'independent_agent_report' ? '已有独立执行会话提供的验收报告' : '业务验收尚未核验'}</Text>}
             {selectedTask.result && <><Text style={heading}>实际回报{selectedTask.resultTruncated ? '（已截断）' : ''}</Text><Text selectable style={body}>{selectedTask.result}</Text></>}
             {selectedTask.executionSessionId && action('查看执行会话', () => void openExecution(selectedTask.executionSessionId!))}
-            {openSelectedWorkspace&&action(t('workspaces.title'),openSelectedWorkspace)}
             {action('在对话中跟进此工作', () => toConversation(`请跟进当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），说明最新进展和仍需处理的事项。`))}
         </>, { visible: active && !workspaceAfterDismiss, onDismiss: () => {
             if (!workspaceAfterDismiss) return;
