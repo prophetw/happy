@@ -17,9 +17,9 @@ export function archiveTree(path:string,indexFence?:string,metadataOnly=false):s
     const hardlinks=new Map<bigint,LinkGroup>();
     // Bound each tree scan. Checkout and temporary data are moved atomically;
     // Git administrative metadata keeps its smaller, separate ceiling.
-    const limit=indexFence?{entries:80_000,bytes:2*1024**3,milliseconds:25_000}
-        :{entries:320_000,bytes:8*1024**3,milliseconds:75_000};
-    const deadline=performance.now()+limit.milliseconds;
+    const limit=indexFence?{entries:80_000,bytes:2*1024**3}:{entries:320_000,bytes:8*1024**3};
+    // A metadata walk remains short; full read-back also pays for cold file data.
+    const deadline=performance.now()+(indexFence||metadataOnly?25_000:150_000);
     const exceeded=()=>{throw new ApiError('WORKSPACE_ARCHIVE_LIMIT',409);};
     const changed=()=>{throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);};
     const add=(value:unknown)=>hash.update(JSON.stringify(value)+'\n');
