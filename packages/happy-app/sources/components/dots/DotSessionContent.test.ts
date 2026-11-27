@@ -2,11 +2,18 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ navigate: vi.fn(), visibility: vi.fn(), confirm: vi.fn(), submit: vi.fn(), ready: vi.fn(), rpc: vi.fn(), data: null as any,
+const mocks = vi.hoisted(() => ({ navigate: vi.fn(), push: vi.fn(), platform: 'web', visibility: vi.fn(), confirm: vi.fn(), submit: vi.fn(), ready: vi.fn(), rpc: vi.fn(), data: null as any,
     credentials: { token: 'account', secret: 'secret' }, server: 'https://relay.example', authenticated: true }));
 vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
-    return Object.fromEntries(['View', 'Text', 'Pressable', 'ActivityIndicator', 'ScrollView', 'Modal', 'TextInput'].map(name => [name, host(name)]));
+    return { ...Object.fromEntries(['View', 'Text', 'Pressable', 'ActivityIndicator', 'ScrollView', 'Modal', 'TextInput'].map(name => [name, host(name)])),
+        Platform: { get OS() { return mocks.platform; } } };
+});
+vi.mock('expo-router', () => ({ useRouter: () => ({ push: mocks.push }) }));
+vi.mock('react-native-safe-area-context', async () => {
+    const { createElement } = await import('react');
+    return { SafeAreaProvider: (props: any) => createElement('SafeAreaProvider', props, props.children),
+        SafeAreaView: (props: any) => createElement('SafeAreaView', props, props.children) };
 });
 vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { colors: { text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#eee', divider: '#ccc' } } }),
     StyleSheet: { create: (styles: any) => typeof styles === 'function'
@@ -16,7 +23,8 @@ vi.mock('@react-navigation/native', async () => {
 });
 vi.mock('@/hooks/useNavigateToSession', () => ({ useNavigateToSession: () => mocks.navigate }));
 vi.mock('@/hooks/useSessionVisibility', () => ({ useSessionVisibility: mocks.visibility }));
-vi.mock('@/sync/storage', () => ({ storage: { getState: () => ({ sessions: {} }) }, useRealtimeStatus: () => 'connected' }));
+vi.mock('@/sync/storage', () => ({ storage: { getState: () => ({ sessions: {} }) }, useRealtimeStatus: () => 'connected',
+    useSession: (id: string) => id === 'actual-session' ? { metadata: { machineId: 'paired-host' } } : null }));
 vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: mocks.ready, getCredentials: () => mocks.credentials } }));
 vi.mock('@/sync/apiSocket', () => ({ apiSocket: { sessionRPC: mocks.rpc } }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ credentials: mocks.credentials, isAuthenticated: mocks.authenticated }) }));
@@ -58,6 +66,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
     mocks.data = null;
+    mocks.platform = 'web';
+    mocks.push.mockReset();
     mocks.credentials = { token: 'account', secret: 'secret' }; mocks.server = 'https://relay.example'; mocks.authenticated = true;
     mocks.ready.mockReset(); mocks.ready.mockResolvedValue(undefined);
     mocks.rpc.mockReset(); mocks.rpc.mockImplementation(async (_session, _method, request) => {
@@ -545,4 +555,30 @@ it('shows queue/resource/location state and routes targeted cancellation through
     task.status='running';task.queueReason='';await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityRole==='tab'&&node.findByType('Text').props.children==='工作').props.onPress());await act(async()=>open().props.onPress());expect(text()).toContain('执行中');
     task.status='canceled';task.canCancel=false;await act(async()=>renderer.update(React.createElement(DotSessionContent,props)));expect(text()).toContain('已取消');expect(renderer.root.findAllByType('Pressable').some((node:any)=>node.props.accessibilityLabel==='在对话中取消此工作')).toBe(false);
     await act(async()=>renderer.unmount());
+});
+
+it('dismisses the iOS task sheet before opening its original workspaces', async () => {
+    mocks.platform = 'ios';
+    const task = { id: 'task', title: '任务', kind: 'delegate', status: 'completed', sendRequestID: 'original',
+        executionSessionId: 'actual-session', execution: { mode: 'worktree', projectID: 'project', directory: '/fixture' },
+        steps: [], businessVerification: 'unverified' };
+    const dotId = '22222222-2222-4222-8222-222222222222';
+    mocks.data = { projection: { snapshot: { dots: [{ id: dotId, sessionId: 'dot-session' }] },
+        details: { [dotId]: { data: { tasks: [task], taskTotal: 1, memory: null } } } } };
+    const props = { session: { id: 'dot-session', presence: 'online' } as any, active: true,
+        metadata: { schemaVersion: 1 as const, kind: 'dot' as const, workspaceId: '11111111-1111-4111-8111-111111111111',
+            workspaceSessionId: 'workspace-session', dotId }, children: () => null };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(React.createElement(DotSessionContent, props)); });
+    const press = (label: string) => renderer.root.findAllByType('Pressable').find((node: any) =>
+        node.props.accessibilityLabel === label || (node.props.accessibilityRole === 'tab' && node.findByType('Text').props.children === label))!;
+    await act(async () => press('工作').props.onPress());
+    await act(async () => press('查看工作项：任务').props.onPress());
+    await act(async () => press('workspaces.title').props.onPress());
+    expect(renderer.root.findByType('Modal').props.visible).toBe(false);
+    expect(mocks.push).not.toHaveBeenCalled();
+    await act(async () => renderer.root.findByType('Modal').props.onDismiss());
+    expect(renderer.root.findAllByType('Modal')).toHaveLength(0);
+    expect(mocks.push).toHaveBeenCalledExactlyOnceWith('/settings/project-workspaces?projectID=project&requestID=original&machineID=paired-host');
+    await act(async () => renderer.unmount());
 });

@@ -235,11 +235,11 @@ export const SettingsView = React.memo(function SettingsView({
                     icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
                     onPress={() => router.push('/server')}
                 />
-                {Platform.OS==='web'&&<Item
+                <Item
                     title={t('workspaces.title')}
                     icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
                     onPress={() => router.push('/settings/project-workspaces' as Href)}
-                />}
+                />
             </ItemGroup>
 
             {/* Connect Terminal - Only show on native platforms */}

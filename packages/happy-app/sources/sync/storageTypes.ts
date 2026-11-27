@@ -515,6 +515,7 @@ export interface DecryptedMessage {
 const codeBuddyOptionSchema = z.object({ code: z.string(), value: z.string(), description: z.string().nullish() });
 
 export const MachineMetadataSchema = z.object({
+    workspaceOwnerVersion: z.literal(1).optional(),
     host: z.string(),
     platform: z.string(),
     happyCliVersion: z.string(),

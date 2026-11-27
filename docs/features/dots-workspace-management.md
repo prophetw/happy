@@ -56,7 +56,9 @@ API明确返回dispatch=unknown，页面保留原编号。正常前置拒绝才�
 
 ## 本地服务接入
 
-仅本机8989开发入口启用同源 `/api/workspace-owner/v1/` 代理；其他Web/OTA不会因此发布或启用。
+本机8989 Web使用同源 `/api/workspace-owner/v1/` 代理。原生 Happy 使用已配对机器的加密 Relay RPC。设置和 Dots 工作台可选择启用 Workspace Owner 的电脑；从原任务进入时，若关联执行会话已确认机器，则使用该机器及原项目、请求编号。
+在同一台机器的 Happy daemon 服务配置 `HAPPY_WORKSPACE_OWNER_RPC_URL`（Owner 的 HTTP 回环监听地址）和 `HAPPY_WORKSPACE_OWNER_RPC_ORIGIN`（Owner 已允许的本机 Web origin）。仅在两者有效时登记 `workspace-owner-v1`。App 无需输入宿主地址。
+daemon 只接收既有 Owner 路径与协议，使用它当前 Relay 账号的凭据调用本地服务。Owner 继续核验账号、机器、项目、策略与每次操作。换账号或机器后重新读取清单；手机端的长操作超过 Relay 等待窗口时可能显示结果未知，可通过原工作区与回执续查。
 管理服务的私有配置包括已核验worker配置、批准的policy文件、机器项目显示名、精确Origin、loopback监听与独立协议元数据目录。
 policy每次请求重新读取；allowApply由原策略控制，不改allowArchive/allowDiscard，不启用定时GC。
 服务入口为 `happy-agent/bin/happy-workspace-owner.mjs --config <private config>`，它是运维入口，用户正常流程无需终端。

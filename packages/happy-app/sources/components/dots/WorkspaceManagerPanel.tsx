@@ -28,8 +28,9 @@ function status(item: WorkspaceItem) {
 
 /** Actual product view. Transport is injected so the same UI can exercise a
  * complete isolated Git-backed owner API without a live account or model. */
-export function WorkspaceManagerPanel({ client, current, contextKey, onClose, openSession, initialProjectID, originalRequestID }: {
+export function WorkspaceManagerPanel({ client, current, contextKey, onClose, openSession, initialProjectID, originalRequestID, machinePicker }: {
     client: WorkspaceManagerClient; current: () => boolean; contextKey: string; onClose: () => void; openSession?: (id:string) => void; initialProjectID?:string; originalRequestID?:string;
+    machinePicker?: React.ReactNode;
 }) {
     const { theme } = useUnistyles();
     const [catalog,setCatalog] = React.useState<WorkspaceCatalog|null>(null), [projectID,setProjectID] = React.useState('');
@@ -49,20 +50,28 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
     const epoch = React.useRef(0), catalogAttempt = React.useRef(0), mounted = React.useRef(true), locked = React.useRef(false), pendingRef = React.useRef<Pending|null>(null);
     const scope = catalog && projectID ? { machineID:catalog.machineID,projectID } : null;
     const [focused,setFocused]=React.useState(!!originalRequestID);
+    const scroll = React.useRef<ScrollView>(null);
     const project = catalog?.projects.find(p=>p.id===projectID);
     const cacheKey = catalog && projectID ? `workspace-owner:${catalog.ownerID}:${catalog.machineID}:${projectID}:${contextKey}` : '';
     const valid = (version: number) => mounted.current && epoch.current === version && current();
+    const displayCatalog = (catalog: WorkspaceCatalog) => {
+        setCatalog(catalog);
+        const next = initialProjectID ? catalog.projects.find(project => project.id === initialProjectID) : catalog.projects[0];
+        setProjectID(next?.id ?? '');
+        if (initialProjectID && !next) setError('WORKSPACE_PROJECT_UNAVAILABLE');
+    };
+    React.useEffect(() => { scroll.current?.scrollTo({ y: 0, animated: false }); }, [selected?.id]);
     React.useEffect(() => { mounted.current=true; return()=>{mounted.current=false;epoch.current++;}; },[]);
     React.useEffect(() => { const timer=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(timer); },[]);
     React.useEffect(() => {
         epoch.current++;const attempt=++catalogAttempt.current;const validCatalog=()=>mounted.current&&catalogAttempt.current===attempt&&current();
         locked.current=false;setBusy(false);setCatalogLoading(true);setError(null);setCatalog(null);setProjectID('');setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);setItems([]);setPending(null);pendingRef.current=null;
         setRenderScope({client,contextKey});setAcceptance(null);
-        void client.catalog().then(value=>{if(validCatalog()){setCatalog(value);setProjectID(initialProjectID?(value.projects.some(project=>project.id===initialProjectID)?initialProjectID:''):(value.projects[0]?.id??''));}})
+        void client.catalog().then(value=>{if(validCatalog())displayCatalog(value);})
             .catch(e=>{if(validCatalog())setError(e instanceof Error?e.message:'WORKSPACE_MANAGER_UNAVAILABLE');})
             .finally(()=>{if(validCatalog())setCatalogLoading(false);});
         return()=>{epoch.current++;catalogAttempt.current++;};
-    },[client,contextKey]);
+    },[client,contextKey,initialProjectID]);
     const load = async (after?: string, readRecords = records) => {
         if(!scope||locked.current||!current())return;
         const version=epoch.current;locked.current=true;setBusy(true);setError(null);setTicket(null);setAgreed(false);
@@ -71,7 +80,8 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
             if(!valid(version))return;
             setCatalog(authority);
             if(authority.ownerID!==catalog!.ownerID||authority.machineID!==scope.machineID||!authority.projects.some(p=>p.id===scope.projectID)){
-                setItems([]);setSelected(null);setDeliveryApproval(null);setDetail(null);setProjectID(authority.projects[0]?.id??'');return;
+                setItems([]);setSelected(null);setDeliveryApproval(null);setDetail(null);setProjectID('');
+                setError('WORKSPACE_PROJECT_UNAVAILABLE');return;
             }
             const page=await client.inventory({action:'delivery-inventory',...scope,view:readRecords?'released':'pending',requestID:focused&&projectID===initialProjectID?originalRequestID:undefined,limit:5,...(after?{after}:{})});
             if(valid(version)){setItems(old=>[...new Map([...(after?old:[]),...page.items].map(item=>[item.id,item])).values()]);setTotal(page.total);setNext(page.next);}}
@@ -204,18 +214,18 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
         &&(item.state==='retired'||['removed','failed','applying'].includes(item.lastOperation?.state??''))):items;
     if(renderScope.client!==client||renderScope.contextKey!==contextKey||!current())return <View style={{padding:18,gap:12}}><Text style={muted}>{t('workspaces.loading')}</Text>{button(t('workspaces.close'),onClose,false)}</View>;
     return <View style={{flex:1,backgroundColor:theme.colors.surface}}>
-        <ScrollView contentContainerStyle={{padding:18,gap:18,width:'100%',maxWidth:1080,alignSelf:'center',paddingBottom:40}} keyboardShouldPersistTaps="handled">
+        <ScrollView ref={scroll} contentInsetAdjustmentBehavior="never" contentContainerStyle={{padding:18,gap:18,width:'100%',maxWidth:1080,alignSelf:'center',paddingBottom:40}} keyboardShouldPersistTaps="handled">
             <View style={{...row,justifyContent:'space-between'}}><View style={{flex:1,minWidth:160}}><Text accessibilityRole="header" style={{...text,fontSize:26,fontWeight:'600'}}>{t('workspaces.title')}</Text><Text style={muted}>{t('workspaces.subtitle')}</Text></View>{button(t('workspaces.close'),onClose,false)}</View>
+            {machinePicker}
             {catalog&&<><Text style={muted}>{t('workspaces.machine')} · {catalog.machineName} · {catalog.machineID}</Text>
                 <View style={row}>{catalog.projects.map(p=><View key={p.id}>{button(p.name,()=>{if(p.id!==projectID){epoch.current++;setFocused(false);setPendingRestored(false);setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);setReview(null);setItems([]);setPending(null);pendingRef.current=null;setProjectID(p.id);}},busy)}</View>)}</View>
                 <Text style={muted}>{project?`${project.name} · ${project.allowApply?t('workspaces.explicit'):t('workspaces.disabled')} · ${t('workspaces.autoOff')}`:t('workspaces.noProjects')}</Text></>}
             <View style={row}>{button(t('workspaces.listing'),()=>{setRecords(false);setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);void load(undefined,false);},busy)}{button(t('workspaces.records'),()=>{setRecords(true);setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);void load(undefined,true);},busy)}
                 {focused&&button(t('workspaces.showAll'),()=>setFocused(false),busy)}
-                {button(t('workspaces.refresh'),()=>{setSelected(null);setDeliveryApproval(null);setDetail(null);if(scope)void load();else void action(()=>client.catalog(),v=>{setCatalog(v);setProjectID(v.projects[0]?.id??'');});},busy)}</View>
+                {button(t('workspaces.refresh'),()=>{setSelected(null);setDeliveryApproval(null);setDetail(null);if(scope)void load();else void action(()=>client.catalog(),displayCatalog);},busy)}</View>
             {busy&&<View accessibilityLiveRegion="polite" style={row}><ActivityIndicator/><Text style={muted}>{detail?t('workspaces.loadingDetail'):t('workspaces.loading')}</Text></View>}
             {delivering&&<Text accessibilityLiveRegion="polite" style={muted}>{t('workspaces.deliveryRunning')}</Text>}
             {error&&<Text accessibilityRole="alert" style={{...text,color:'#a34036'}}>{reason(error)}</Text>}
-            {!catalog&&!busy&&button(t('workspaces.refresh'),()=>{void action(()=>client.catalog(),v=>{setCatalog(v);setProjectID(v.projects[0]?.id??'');});},false)}
             {pending&&<View style={card}><Text style={{...text,fontWeight:'600'}}>{t('workspaces.receipt')}</Text><Text selectable style={muted}>{t('workspaces.operation')} · {pending.request.operationID}</Text>
                 <Text accessibilityLiveRegion="polite" style={text}>{pending.result?.status==='settled'?(receipt?.state==='removed'?t('workspaces.removed'):receipt?.state==='resolved'?t('workspaces.resolved'):receipt?.state==='adopted'?t('workspaces.adopted'):t('workspaces.failed'))
                     :pending.result?.status==='unknown'?t('workspaces.unknownRequest'):t('workspaces.pendingRequest')}</Text>

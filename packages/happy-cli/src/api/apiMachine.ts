@@ -5,6 +5,8 @@
 
 import { io, Socket } from 'socket.io-client';
 import { getServerSocketEndpoint } from '@slopus/happy-wire/serverUrl';
+import { WORKSPACE_OWNER_MACHINE_RPC } from '@slopus/happy-wire';
+import { createWorkspaceOwnerRpc } from './workspaceOwnerRpc';
 import { z } from 'zod';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
@@ -181,6 +183,7 @@ export class ApiMachineClient {
     private codeBuddyOptionsRefreshing = false;
     private codeBuddyOptionsNextRefresh = 0;
     private rpcHandlerManager: RpcHandlerManager;
+    private workspaceOwnerVersion: 1 | undefined;
     private resumeSessionHandler: ((sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
     private reconnectTimeout: NodeJS.Timeout | null = null;
@@ -206,6 +209,14 @@ export class ApiMachineClient {
         if (relayCredential) {
             this.relaySwitch = new RelaySwitchController(target => this.prepareRelaySwitch(target, relayCredential));
             this.rpcHandlerManager.registerHandler('relay-switch', input => this.relaySwitch!.handle(input));
+            const workspaceOwnerRpc = createWorkspaceOwnerRpc({
+                url: process.env.HAPPY_WORKSPACE_OWNER_RPC_URL,
+                origin: process.env.HAPPY_WORKSPACE_OWNER_RPC_ORIGIN,
+            }, machine.id, () => this.token);
+            if (workspaceOwnerRpc) {
+                this.workspaceOwnerVersion = 1;
+                this.rpcHandlerManager.registerHandler(WORKSPACE_OWNER_MACHINE_RPC, workspaceOwnerRpc);
+            }
         }
     }
 
@@ -606,6 +617,12 @@ export class ApiMachineClient {
             }));
 
             this.rpcHandlerManager.onSocketConnect(socket);
+            if (this.machine.metadata && this.machine.metadata.workspaceOwnerVersion !== this.workspaceOwnerVersion) {
+                void this.updateMachineMetadata(metadata => ({
+                    ...(metadata ?? this.machine.metadata),
+                    workspaceOwnerVersion: this.workspaceOwnerVersion,
+                })).catch(() => logger.debug('[API MACHINE] Workspace Owner capability update failed'));
+            }
             this.syncResumeSessionRpcRegistration();
             this.startKeepAlive();
         });

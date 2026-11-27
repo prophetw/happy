@@ -82,6 +82,14 @@ export const workspaceDeliveryRequestSchema = z.discriminatedUnion('action', [
         head:commit, requestID:id, evidence:z.string().trim().max(16000).optional()}).strict(),
     z.object({action:z.literal('resume-delivery'),...scope,workspaceID:digest,operationID:id}).strict(),
 ]);
+export const WORKSPACE_OWNER_MACHINE_RPC = 'workspace-owner-v1';
+export const workspaceOwnerRpcRequestSchema = z.discriminatedUnion('route', [
+    z.strictObject({ route: z.literal('catalog'), body: z.strictObject({}) }),
+    z.strictObject({ route: z.literal('read'), body: workspaceReadSchema }),
+    z.strictObject({ route: z.literal('write'), body: workspaceWriteSchema }),
+    z.strictObject({ route: z.literal('delivery'), body: workspaceDeliveryRequestSchema }),
+]);
+export type WorkspaceOwnerRpcRequest = z.infer<typeof workspaceOwnerRpcRequestSchema>;
 export type WorkspaceDeliveryRequest = z.infer<typeof workspaceDeliveryRequestSchema>;
 export const workspaceTicketSchema = z.object({ ticket: id, plan: workspacePlanSchema }).strict();
 export const workspaceMutationResultSchema = z.object({ operationID: id, status: z.enum(['pending','unknown','settled']),

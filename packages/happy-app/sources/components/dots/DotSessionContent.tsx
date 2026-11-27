@@ -1,6 +1,7 @@
 import { DotTaskTiming } from './DotTaskTiming';
 import * as React from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Modal as GlobalModal } from '@/modal';
 import { randomUUID } from 'expo-crypto';
 import { useRouter, type Href } from 'expo-router';
@@ -8,7 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { useSessionVisibility } from '@/hooks/useSessionVisibility';
-import { storage, useRealtimeStatus } from '@/sync/storage';
+import { storage, useRealtimeStatus, useSession } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import type { Session } from '@/sync/storageTypes';
 import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation';
@@ -56,6 +57,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const [sideTab, setSideTab] = React.useState<Exclude<Tab, 'chat'>>('work'), [expanded, setExpanded] = React.useState(true);
     const [diagnosticMode, setDiagnosticMode] = React.useState<'activity' | 'basis' | null>(null);
     const [taskId, setTaskId] = React.useState<string | null>(null), [error, setError] = React.useState<string | null>(null);
+    const [workspaceAfterDismiss, setWorkspaceAfterDismiss] = React.useState<Href | null>(null);
     const [memoryEdit, setMemoryEdit] = React.useState<MemoryDraft | null>(null);
     const [memoryBusy, setMemoryBusy] = React.useState(false), [memoryUnknown, setMemoryUnknown] = React.useState(false);
     const [memoryError, setMemoryError] = React.useState<string | null>(null), [memoryRefresh, setMemoryRefresh] = React.useState(0);
@@ -87,11 +89,22 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const own = data.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
     const view = own ? data.projection?.details[metadata.dotId] : undefined;
     const detail = view?.data;
-    const openProjectWorkspaces = (projectID:string, requestID?:string) => {
-        const query=new URLSearchParams({projectID,...(requestID?{requestID}:{})});
-        router.push((`/settings/project-workspaces?${query}`) as Href);
-    };
     const selectedTask = detail?.tasks.find(task => task.id === taskId);
+    const taskMachineID = useSession(selectedTask?.executionSessionId ?? '')?.metadata?.machineId;
+    React.useEffect(() => {
+        if (workspaceAfterDismiss && !selectedTask) setWorkspaceAfterDismiss(null);
+    }, [selectedTask, workspaceAfterDismiss]);
+    const openProjectWorkspaces = (projectID: string, requestID?: string) => {
+        const query = new URLSearchParams({ projectID, ...(requestID ? { requestID } : {}),
+            ...(requestID && taskMachineID ? { machineID: taskMachineID } : {}) });
+        const destination = `/settings/project-workspaces?${query}` as Href;
+        if (requestID && Platform.OS === 'ios') {
+            setWorkspaceAfterDismiss(destination);
+            return;
+        }
+        if (requestID) setTaskId(null);
+        router.push(destination);
+    };
     const openSelectedWorkspace = selectedTask?.execution?.mode==='worktree' && selectedTask.sendRequestID
         ? ()=>openProjectWorkspaces(selectedTask.execution!.projectID,selectedTask.sendRequestID) : undefined;
     type Delivery = NonNullable<NonNullable<typeof detail>['pendingIntegration']>['items'][number];
@@ -263,13 +276,17 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             navigate(sessionId);
         }); } catch { if (operation.isCurrent()) setError('当前账号或服务器无法打开这条执行会话，请在 Dot 对话中核对执行端。'); }
     };
-    const sheet = (title: string, onClose: () => void, content: React.ReactNode) => <Modal transparent animationType="fade" visible onRequestClose={onClose}>
-        <View style={{ flex: 1, backgroundColor: '#00000066', padding: 18, justifyContent: 'center', alignItems: 'center' }}>
-            <ScrollView keyboardShouldPersistTaps="handled" accessibilityViewIsModal style={{ maxHeight: '90%', width: '100%', maxWidth: 620, borderRadius: 18, backgroundColor: colors.surface }} contentContainerStyle={{ padding: 24, gap: 18 }}>
+    const sheet = (title: string, onClose: () => void, content: React.ReactNode, taskModal?: { visible: boolean; onDismiss: () => void }) => {
+        const Frame = taskModal ? SafeAreaView : View;
+        const body = <Frame style={{ flex: 1, backgroundColor: '#00000066', padding: 18, justifyContent: 'center', alignItems: 'center' }}>
+            <ScrollView contentInsetAdjustmentBehavior="never" keyboardShouldPersistTaps="handled" accessibilityViewIsModal style={{ maxHeight: '90%', width: '100%', maxWidth: 620, borderRadius: 18, backgroundColor: colors.surface }} contentContainerStyle={{ padding: 24, gap: 18 }}>
                 <Text accessibilityRole="header" style={heading}>{title}</Text>{content}{action('关闭', onClose)}
             </ScrollView>
-        </View>
-    </Modal>;
+        </Frame>;
+        return <Modal transparent animationType="fade" visible={taskModal?.visible ?? true} onRequestClose={onClose} onDismiss={taskModal?.onDismiss}>
+            {taskModal ? <SafeAreaProvider>{body}</SafeAreaProvider> : body}
+        </Modal>;
+    };
     const observationPanel = (mode: 'memory' | 'activity' | 'basis') => <>
         <DotObservationPanel key={`${metadata.dotId}:${mode}:${mode === 'memory' ? memoryTarget?.nonce ?? 0 : 0}`} sessionId={metadata.workspaceSessionId}
             workspaceId={metadata.workspaceId} dotId={metadata.dotId} dotSessionId={session.id} active={Boolean(active && own && (mode !== 'memory' || (wide ? expanded : tab === 'memory')))}
@@ -354,7 +371,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             </View>
             {observationPanel(diagnosticMode)}
         </>)}
-        {selectedTask && sheet(selectedTask.title, () => setTaskId(null), <>
+        {selectedTask && (active || workspaceAfterDismiss) && sheet(selectedTask.title, () => { setTaskId(null); setWorkspaceAfterDismiss(null); }, <>
             <Text style={body}>{testloopWorkStatus(selectedTask)}</Text>
             <Text style={body}>{selectedTask.instruction}</Text>
             {selectedTask.dispatchOptions && <Text style={muted}>{selectedTask.dispatchOptions.confirmed ? '执行回执' : '派活参数'}：{[
@@ -377,7 +394,12 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {selectedTask.executionSessionId && action('查看执行会话', () => void openExecution(selectedTask.executionSessionId!))}
             {openSelectedWorkspace&&action(t('workspaces.title'),openSelectedWorkspace)}
             {action('在对话中跟进此工作', () => toConversation(`请跟进当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），说明最新进展和仍需处理的事项。`))}
-        </>)}
+        </>, { visible: active && !workspaceAfterDismiss, onDismiss: () => {
+            if (!workspaceAfterDismiss) return;
+            setWorkspaceAfterDismiss(null);
+            setTaskId(null);
+            if (active) router.push(workspaceAfterDismiss);
+        } })}
         {!memoryOpen && memoryEdit?.binding === memoryBinding && memoryAttempt.current && <View style={{ padding: 12 }}>
             {action('恢复上次记忆操作', () => setMemoryOpen(true))}
         </View>}

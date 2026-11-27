@@ -87,6 +87,10 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="settings/project-workspaces"
+                options={{ headerShown: false }}
+            />
+            <Stack.Screen
                 name="session/[id]"
                 options={{
                     headerShown: false
