@@ -823,6 +823,11 @@ export class WorkspaceLifecycle {
                 const readPrepared=()=>{const raw=store.get('prepared');return raw?preparedSchema.parse(raw):undefined;};
                 let prepared=readPrepared();
                 if(prepared)recoveryLocation=directory;
+                const retainedHistory=store.get('retained-history');
+                if(retainedHistory){
+                    await this.verifyGitMaterial(w,directory,id,'history','HEAD-reflog',gitArchiveMaterialSchema.parse(retainedHistory));
+                    recoveryLocation=directory;
+                }
                 if(!prepared) {
                     const activity=await this.archiveActivity!(w,initial.tasks);
                     if(!activity.confirmed) error('activity_unconfirmed');
@@ -844,6 +849,20 @@ export class WorkspaceLifecycle {
                     catch(e) {
                         if(!(e instanceof ApiError)||e.code!=='WORKSPACE_NOT_IN_MAIN'||!this.policy.allowArchive) throw e;
                     }
+                    // A verified Git history can be retained independently of
+                    // a checkout that still contains unarchivable shared files.
+                    const reflog=await this.archiveGitMaterial(w,directory,id,'history','HEAD-reflog',git.reflog,fd);
+                    if(reflog){
+                        await this.verifyGitMaterial(w,directory,id,'history','HEAD-reflog',reflog);
+                        this.writeRecoveryFile(join(directory,'GIT-HISTORY.txt'),[
+                            'Each HEAD-reflog file is an exact copy of worktree-local Git metadata.',
+                            `Pinned commits are under refs/happy/workspace-history/${id}/.`,
+                            'This preserves Git history only. Follow the Owner receipt for the status of the workspace and its files.',
+                            '',
+                        ].join('\n'));
+                        store.set('retained-history',reflog);
+                        recoveryLocation=directory;
+                    }
                     const priorArchive=request.progress.state==='archiving';
                     if(['WORKSPACE_ARCHIVE_LIMIT','WORKSPACE_ARCHIVE_UNSUPPORTED_FILE'].includes(request.progress.reason??'')) {
                         // Reject external aliases on a retry without hashing gigabytes of shared files.
@@ -860,7 +879,6 @@ export class WorkspaceLifecycle {
                     await this.ensureReclaimRef(w,retainedRef,git.head,fd);
                     await this.ensureReclaimRef(w,indexRef,index,fd);
                     const fetched=await this.archiveGitMaterial(w,directory,id,'fetch','FETCH_HEAD',git.fetched,fd);
-                    const reflog=await this.archiveGitMaterial(w,directory,id,'history','HEAD-reflog',git.reflog,fd);
                     prepared=preparedSchema.parse({work,temporary,index,gitDirectory,admin,fetched,reflog,head:git.head,branch:git.branch,integrated:!!target,
                         proof:target?.proof??'retained-ref',mainCommit:target?.commit??git.mainCommit,retainedRef,indexRef,tasks:this.taskDigest(initial),thread:thread??undefined});
                     store.set('prepared',prepared);
@@ -946,13 +964,7 @@ export class WorkspaceLifecycle {
                     });
                 }
                 if(lstatSync(w.cwd,{throwIfNoEntry:false})||this.entry(await this.registry(w),w.cwd)) error('WORKSPACE_REMOVAL_UNCONFIRMED');
-                const guide=join(directory,'RECOVERY.txt');
-                const instructions=this.reclaimRecoveryGuide(w,original,checkout,id);
-                if(!lstatSync(guide,{throwIfNoEntry:false})) {
-                    const output=openSync(guide,constants.O_EXCL|constants.O_CREAT|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
-                    try{writeFileSync(output,instructions);fsyncSync(output);}finally{closeSync(output);}
-                }
-                if(privateRead(guide,32*1024).toString('utf8')!==instructions) error('WORKSPACE_ARCHIVE_CHANGED');
+                this.writeRecoveryFile(join(directory,'RECOVERY.txt'),this.reclaimRecoveryGuide(w,original,checkout,id));
                 if(operation.state!=='removed') this.finish(w,current,operation,registry?'git-confirmed':'absence-after-intent');
                 publish('released',undefined,{directory,checkout,temporary:original.temporary?temporaryPath:undefined,
                     commit:original.head,indexRef:original.indexRef,integrated:original.integrated});
@@ -963,6 +975,14 @@ export class WorkspaceLifecycle {
                     ?'waiting':'attention',reason);
             }
         });
+    }
+
+    private writeRecoveryFile(path:string,contents:string) {
+        if(!lstatSync(path,{throwIfNoEntry:false})){
+            const output=openSync(path,constants.O_EXCL|constants.O_CREAT|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
+            try{writeFileSync(output,contents);fsyncSync(output);}finally{closeSync(output);}
+        }
+        if(privateRead(path,32*1024).toString('utf8')!==contents)error('WORKSPACE_ARCHIVE_CHANGED');
     }
 
     private reclaimRecoveryGuide(w:Workspace,entry:{retainedRef:string;indexRef:string;fetched?:GitArchiveMaterial;reflog?:GitArchiveMaterial},checkout:string,operationID:string) {

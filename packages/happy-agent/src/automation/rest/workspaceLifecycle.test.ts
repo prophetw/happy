@@ -665,6 +665,29 @@ it('retires integrated work while independently retaining commits only in its HE
     expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
     expect(git(f.repo,'rev-parse','main')).toBe(base);
 });
+it('keeps unique Git history independently readable even when shared files block retirement',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    const base=git(f.w.cwd,'rev-parse','HEAD');
+    git(f.w.cwd,'commit','--allow-empty','-m','retain independent history');
+    const unique=git(f.w.cwd,'rev-parse','HEAD');
+    git(f.w.cwd,'reset','--hard',base);
+    await f.complete();
+    const original=readFileSync(join(git(f.w.cwd,'rev-parse','--absolute-git-dir'),'logs','HEAD'));
+    linkSync(join(f.w.cwd,'base.txt'),join(f.root,'referenced-outside'));
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    const first=await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(archive,'owner');
+    const progress=readReclaimRequest(f.queue.directory,f.w.id)?.progress;
+    expect(progress).toMatchObject({state:'attention',reason:'WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',operationID:first.operationID});
+    const location=progress!.recoveryLocation!;
+    expect(location).toBe(join(archive,first.operationID));
+    expect(readFileSync(join(location,readdirSync(location).find(x=>x.startsWith('HEAD-reflog-'))!))).toEqual(original);
+    expect(readFileSync(join(location,'GIT-HISTORY.txt'),'utf8')).toContain(first.operationID);
+    expect(git(f.repo,'rev-parse',`refs/happy/workspace-history/${first.operationID}/${unique}`)).toBe(unique);
+    expect(existsSync(f.w.cwd)).toBe(true);
+    expect(git(f.repo,'worktree','list','--porcelain')).toContain(f.w.cwd);
+});
 it('checks larger workspace structures without reading data and rejects out-of-scope aliases',()=>{
     const root=mkdtempSync(join(tmpdir(),'happy-archive-structure-'));roots.push(root);
     const checkout=join(root,'checkout'),large=join(checkout,'archive-data');
