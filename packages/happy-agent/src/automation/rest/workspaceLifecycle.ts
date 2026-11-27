@@ -14,7 +14,7 @@ import { workspaceGit, workspaceLock } from './taskWorkspaces';
 import { checkoutEvidence, gitWorkspaces, integrationProof, remoteDeliveryRefs, ensureTargetCommit, type GitWorkspace } from './workspaceDeliveryEvidence';
 import { githubDelivery, githubDeliveryPolicySchema, githubRemoteMatches } from './workspaceGithubDelivery';
 import { recoverWorkspaceIdentity } from './workspaceIdentity';
-import { retirementProcessProof } from './sessionProcessProofs';
+import { readLinuxProcess, retirementProcessProof } from './sessionProcessProofs';
 import { scanWorkspaceProcesses, type Activity, type ProcessScope } from './workspaceProcessScan';
 import { reclaimRecord, saveReclaimStatus, type ReclaimStatus } from './workspaceReclaimState';
 import { proveReclaimTarget, readReclaimTarget, type ReclaimTarget } from './workspaceReclaimGit';
@@ -51,12 +51,24 @@ export async function linuxWorkspaceActivity(workspace:Workspace,tasks:Pick<Queu
     scan: (cwd: string, scope: ProcessScope) => Promise<Activity> = scanWorkspaceProcesses):Promise<Activity> {
     if (process.platform !== 'linux') return { confirmed: false, blockers: ['activity_platform_unconfirmed'], fingerprint: '' };
     try {
-        const knownPids = new Set(tasks.flatMap(t=>t.processID ? [t.processID] : [])), groups = new Set<number>();
+        const knownPids=new Set<number>(), groups=new Set<number>();
+        const boot=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
         const sessions=new Set([...tasks.map(t=>t.sessionID),...(workspace.sessionID?[workspace.sessionID]:[])]);
         for(const sessionID of sessions) {
             const proof=queueDirectory&&machineID?retirementProcessProof(join(queueDirectory,'session-process-proofs'),machineID,sessionID,workspace):null;
             if(!proof)return {confirmed:false,blockers:['session_mapping_unconfirmed'],fingerprint:''};
-            knownPids.add(proof.pid);groups.add(proof.processGroup!);
+            // A ledger PID and a group number can both be reused. Workspace
+            // paths, file descriptors and session arguments are scanned independently.
+            if(proof.bootID!==boot)continue;
+            const live=readLinuxProcess(proof.pid);
+            if(live?.bootID===boot&&live.startTicks===proof.startTicks) {
+                knownPids.add(proof.pid);
+                if(live.processGroup)groups.add(live.processGroup);
+            }
+            // With a missing leader, members of its old group can still exist.
+            // A reused leader number can no longer name that old group.
+            if(!(live && live.startTicks!==proof.startTicks && proof.pid===proof.processGroup))
+                groups.add(proof.processGroup!);
         }
         if(!sessions.size)return {confirmed:false,blockers:['session_mapping_unconfirmed'],fingerprint:''};
         return await scan(workspace.cwd, { pids: [...knownPids], groups: [...groups], sessions: [...sessions] });
@@ -831,24 +843,25 @@ export class WorkspaceLifecycle {
                 if(!prepared) {
                     const activity=await this.archiveActivity!(w,initial.tasks);
                     if(!activity.confirmed) error('activity_unconfirmed');
-                    if(activity.blockers.length) {
-                        if(activity.blockers.includes('live_session_or_process') && latestTask.state==='completed'
-                            && initial.tasks.length===1 && requestWorkspaceIdleClose(this.queue.directory,this.policy.machineID,w,latestTask,this.now())) {
-                            // Recording a request does not establish that the running
-                            // executor can observe it. Older sessions can remain active.
-                            const acknowledged=workspaceIdleEvidence(this.queue.directory,w.id,latestTask);
-                            publish(acknowledged?'closing':'waiting','workspace_idle_close_pending');return;
-                        }
-                        error(activity.blockers[0]);
-                    }
-                    const thread=workspaceIdleEvidence(this.queue.directory,w.id,latestTask);
-                    if(thread===undefined) error('WORKSPACE_RECOVERY_UNCONFIRMED');
+                    const canAskToClose=activity.blockers.length===1&&activity.blockers[0]==='live_session_or_process'
+                        &&latestTask.state==='completed'&&initial.tasks.length===1;
+                    if(activity.blockers.length&&!canAskToClose)error(activity.blockers[0]);
                     const git=await this.inspectGit(w,false,undefined,true,true);
                     let target:ReclaimTarget|undefined;
                     try {target=await proveReclaimTarget(this.policy,w.repository,directory,{head:git.head,branch:git.branch,base:w.baseCommit!});}
                     catch(e) {
                         if(!(e instanceof ApiError)||e.code!=='WORKSPACE_NOT_IN_MAIN'||!this.policy.allowArchive) throw e;
                     }
+                    if(canAskToClose) {
+                        await this.authorize();
+                        if(target&&requestWorkspaceIdleClose(this.queue.directory,this.policy.machineID,w,latestTask,this.now())
+                            &&workspaceIdleEvidence(this.queue.directory,w.id,latestTask)) {
+                            publish('closing','workspace_idle_close_pending');return;
+                        }
+                        error('live_session_or_process');
+                    }
+                    const thread=workspaceIdleEvidence(this.queue.directory,w.id,latestTask,this.now());
+                    if(thread===undefined)error('WORKSPACE_RECOVERY_UNCONFIRMED');
                     // A verified Git history can be retained independently of
                     // a checkout that still contains unarchivable shared files.
                     const reflog=await this.archiveGitMaterial(w,directory,id,'history','HEAD-reflog',git.reflog,fd);
@@ -1143,11 +1156,11 @@ export class WorkspaceLifecycle {
                     await this.authorize();
                     if (this.queue.transaction(state => this.taskDigest(this.snapshotFor(state,w.id,true)) === this.taskDigest(s)
                         && requestWorkspaceIdleClose(this.queue.directory,this.policy.machineID,w,task,this.now()),true))
-                        return 'workspace_idle_close_pending';
+                        return workspaceIdleEvidence(this.queue.directory,w.id,task)?'workspace_idle_close_pending':'live_session_or_process';
                 }
                 return blockers[0];
             }
-            const closedThread = workspaceIdleEvidence(this.queue.directory,w.id,task);
+            const closedThread = workspaceIdleEvidence(this.queue.directory,w.id,task,preview.checkedAt);
             if (closedThread === undefined) return 'WORKSPACE_RECOVERY_UNCONFIRMED';
             const kind = target.head === w.baseCommit ? 'no-change' : 'integrated';
             const current = this.read(w);

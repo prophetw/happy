@@ -224,6 +224,58 @@ it('fails closed on missing authoritative session mapping even when no process h
     expect((await new WorkspaceLifecycle(f.queue,f.policy).plan(f.w.id)).eligible).toBe(false);
 });
 
+it('does not treat a reused launch PID or a prior boot process group as a workspace holder',async()=>{
+    const f=await fixture();await f.complete();
+    const identity=readLinuxProcess(process.pid)!;
+    const store=new MetadataStore(join(f.queue.directory,'session-process-proofs'));
+    f.queue.update(f.task.id,t=>{t.processID=identity.pid;});
+    for(const stale of [
+        {...identity,bootID:'00000000-0000-4000-8000-000000000000',processGroup:identity.pid},
+        {...identity,startTicks:String(Number(identity.startTicks)-1),processGroup:identity.pid},
+    ]) {
+        store.set('session:session',{version:1,machineID:'machine',sessionID:'session',directory:f.w.cwd,
+            repository:f.w.repository,source:'operator-verified',recordedAt:100,identity:stale});
+        const scan=vi.fn(async()=>({confirmed:true,blockers:['open_file_reference'],fingerprint:'foreign-fd'}));
+        const result=await linuxWorkspaceActivity(f.queue.workspaces('grant')[0],f.queue.tasks(),f.queue.directory,'machine',scan);
+        expect(scan).toHaveBeenCalledWith(f.w.cwd,{pids:[],groups:[],sessions:['session']});
+        expect(result.blockers).toContain('open_file_reference');
+    }
+});
+
+it('retires an integrated checkout only after the expired close request loses its active holder',async()=>{
+    const f=await fixture(),archive=join(f.root,'archive'),remote=join(f.root,'remote.git');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    f.queue.update(f.task.id,t=>{t.seq=1;t.turnID='turn';});
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    const initial=await m.requestReclaim(f.w.id,'owner');
+    const idle=new MetadataStore(join(f.queue.directory,'workspace-idle-proofs'));
+    idle.set(f.w.id,{workspaceID:f.w.id,sessionID:'session',sequence:1,turnID:'turn',
+        pid:12345,startTicks:'1',bootID:'00000000-0000-4000-8000-000000000000',expiresAt:50});
+    f.activity({confirmed:true,blockers:['live_session_or_process'],fingerprint:'actual holder'});
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({operationID:initial.operationID,state:'waiting'});
+    expect(existsSync(f.w.cwd)).toBe(true);
+    f.advance(40_000);
+    f.activity({confirmed:true,blockers:[],fingerprint:'confirmed no holders'});
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({operationID:initial.operationID,state:'released'});
+    expect(existsSync(f.w.cwd)).toBe(false);
+    expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
+});
+
+it('requires the pinned target to contain the candidate before asking an occupied session to close',async()=>{
+    const f=await fixture(),archive=join(f.root,'archive'),remote=join(f.root,'remote.git');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();f.save();
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    const initial=await m.requestReclaim(f.w.id,'owner');
+    f.activity({confirmed:true,blockers:['live_session_or_process'],fingerprint:'actual holder'});
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({operationID:initial.operationID,reason:'WORKSPACE_NOT_IN_MAIN'});
+    expect(existsSync(f.w.cwd)).toBe(true);
+});
+
 it('does not grant apply from policy defaults or a modified plan',async()=>{
     const f=await fixture();await f.complete();await f.resolve(f.manager(),'no-change');const disabled=f.manager({allowApply:undefined});
     expect((await disabled.plan(f.w.id)).reasons).toContain('policy_apply_disabled');

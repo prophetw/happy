@@ -57,7 +57,8 @@ export function acknowledgeWorkspaceIdleClose(close: {directory:string;request:I
         store.set('closed:' + close.request.workspaceID,idleReceipt.parse({request:close.request,threadID}));
 }
 
-export function workspaceIdleEvidence(directory: string, workspaceID: string, task: QueueTask) {
+/** Pass an unused observation only after a fresh, authoritative process and lease check. */
+export function workspaceIdleEvidence(directory: string, workspaceID: string, task: QueueTask, confirmedUnusedAt?:number) {
     const path = storePath(directory);
     if (!existsSync(path)) return null;
     const store = new MetadataStore(path,8192,false);
@@ -65,9 +66,11 @@ export function workspaceIdleEvidence(directory: string, workspaceID: string, ta
     if (!raw) return null;
     const request = requestSchema.parse(raw);
     const receipt = idleReceipt.safeParse(store.get('closed:' + workspaceID));
-    return receipt.success && JSON.stringify(receipt.data.request)===JSON.stringify(request)
-        && request.sessionID===task.sessionID && request.turnID===task.turnID && request.sequence===task.seq
-        ? receipt.data.threadID : undefined;
+    if(receipt.success && JSON.stringify(receipt.data.request)===JSON.stringify(request)
+        && request.sessionID===task.sessionID && request.turnID===task.turnID && request.sequence===task.seq)
+        return receipt.data.threadID;
+    if(confirmedUnusedAt!==undefined&&request.workspaceID===workspaceID&&request.expiresAt<confirmedUnusedAt)return null;
+    return undefined;
 }
 
 export function workspaceIdleCloseFenced(directory: string, workspaceID: string) {
