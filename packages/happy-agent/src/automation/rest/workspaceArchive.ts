@@ -3,17 +3,24 @@ import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readdi
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { ApiError } from './schema';
 import { privateRead } from './privateFs';
 
-export function archiveTree(path:string,indexFence?:string):string|undefined {
+export function archiveTree(path:string,indexFence?:string,metadataOnly=false):string|undefined {
     const initial=lstatSync(path,{bigint:true,throwIfNoEntry:false});
     if(!initial) return;
     const dev=initial.dev, uid=BigInt(process.getuid!());
     const hash=createHash('sha256'), buffer=Buffer.alloc(128*1024);
     let count=0, total=0;
-    const hardlinks=new Map<bigint,{first:string;expected:bigint;seen:bigint}>();
-    const start=Date.now();
+    type LinkGroup={first:string;expected:bigint;seen:bigint;content?:{stat:BigIntStats;digest:string}};
+    const hardlinks=new Map<bigint,LinkGroup>();
+    // Bound each tree scan. Checkout and temporary data are moved atomically;
+    // Git administrative metadata keeps its smaller, separate ceiling.
+    const limit=indexFence?{entries:80_000,bytes:2*1024**3,milliseconds:25_000}
+        :{entries:320_000,bytes:8*1024**3,milliseconds:75_000};
+    const deadline=performance.now()+limit.milliseconds;
+    const exceeded=()=>{throw new ApiError('WORKSPACE_ARCHIVE_LIMIT',409);};
     const changed=()=>{throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);};
     const add=(value:unknown)=>hash.update(JSON.stringify(value)+'\n');
     const verify=(a:BigIntStats,b:BigIntStats)=>{
@@ -21,8 +28,7 @@ export function archiveTree(path:string,indexFence?:string):string|undefined {
     };
     const walk=(physical:string,name:string,depth:number)=>{
         const before=lstatSync(physical,{bigint:true});
-        if(++count>80_000 || depth>80 || total>2_147_483_648 || Date.now()-start>25_000)
-            throw new ApiError('WORKSPACE_ARCHIVE_LIMIT',409);
+        if(++count>limit.entries||depth>80||performance.now()>deadline)exceeded();
         if(before.dev!==dev||before.uid!==uid) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
         add([name,Number(before.mode),name||!indexFence?before.mtimeNs.toString():'git-admin']);
         if(before.isSymbolicLink()) {
@@ -30,9 +36,10 @@ export function archiveTree(path:string,indexFence?:string):string|undefined {
             verify(before,lstatSync(physical,{bigint:true}));return;
         }
         if (!before.isDirectory()&&!before.isFile()) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
+        let group:LinkGroup|undefined;
         if(before.isFile()&&before.nlink!==1n){
             if(indexFence) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
-            const group=hardlinks.get(before.ino)??{first:name,expected:before.nlink,seen:0n};
+            group=hardlinks.get(before.ino)??{first:name,expected:before.nlink,seen:0n};
             if(group.expected!==before.nlink)changed();
             group.seen++;
             hardlinks.set(before.ino,group);
@@ -49,18 +56,26 @@ export function archiveTree(path:string,indexFence?:string):string|undefined {
                     if(indexFence && !name && text==='index.lock' && privateRead(join(path,text),256).toString()===indexFence)continue;
                     walk(join(handle,text),name+'/'+text,depth+1);
                 }
+            } else if(group?.content) {
+                verify(before,group.content.stat);
+                add(group.content.digest);
             } else {
-                total+=Number(before.size);
-                if(total>2_147_483_648) throw new ApiError('WORKSPACE_ARCHIVE_LIMIT',409);
-                const content=createHash('sha256');
-                let length=0, n:number;
-                while((n=readSync(fd,buffer))>0) {
-                    length+=n;
-                    if(BigInt(length)>before.size || Date.now()-start>25_000) changed();
-                    content.update(buffer.subarray(0,n));
+                if(!group||group.seen===1n)total+=Number(before.size);
+                if(total>limit.bytes)exceeded();
+                if(!metadataOnly) {
+                    const content=createHash('sha256');
+                    let length=0,n:number;
+                    while((n=readSync(fd,buffer))>0) {
+                        length+=n;
+                        if(performance.now()>deadline)exceeded();
+                        if(BigInt(length)>before.size)changed();
+                        content.update(buffer.subarray(0,n));
+                    }
+                    if(BigInt(length)!==before.size)changed();
+                    const digest=content.digest('hex');
+                    if(group)group.content={stat:before,digest};
+                    add(digest);
                 }
-                if(BigInt(length)!==before.size) changed();
-                add(content.digest('hex'));
             }
             verify(before,fstatSync(fd,{bigint:true}));
         } finally { closeSync(fd); }

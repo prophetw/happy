@@ -77,7 +77,10 @@ type DeliveryIntent=z.infer<typeof deliveryIntentSchema>;
 const planSchema = workspacePlanSchema;
 export type WorkspacePlan = z.infer<typeof planSchema>;
 type Snapshot = { workspace: Workspace; tasks: QueueTask[]; related: QueueTask[]; others: Workspace[] };
-type GitState = { fetched?: {commits:string[];digest:string;bytes:Buffer}; head: string; branch: string; mainCommit: string; remoteCommit?: string; dirty: boolean; ignored: boolean;
+const gitArchiveMaterialSchema=z.object({digest,commits:z.array(commit).max(64)}).strict();
+type GitArchiveMaterial=z.infer<typeof gitArchiveMaterialSchema>;
+type GitMaterial=GitArchiveMaterial&{bytes:Buffer};
+type GitState = { fetched?:GitMaterial; reflog?:GitMaterial; head: string; branch: string; mainCommit: string; remoteCommit?: string; dirty: boolean; ignored: boolean;
     registry: string; identity: string; digest: string; checkout:string };
 
 /** One owner-authoritative lifecycle record per workspace, with bounded operation receipts.
@@ -158,11 +161,10 @@ export class WorkspaceLifecycle {
         const entries=registry.split('\n\n').filter(block=>block.split('\n')[0]===`worktree ${cwd}`);
         if(entries.length>1)error('WORKSPACE_REGISTRY_CHANGED');return entries[0];
     }
-    private async fetchedHistory(cwd:string,gitdir:string) {
-        const path=join(gitdir,'FETCH_HEAD');
+    private readGitArchiveFile(path:string) {
         const before=lstatSync(path,{throwIfNoEntry:false,bigint:true});
         if(!before)return;
-        if(!before.isFile()||before.uid!==BigInt(process.getuid!())||before.nlink!==1n||before.size>65536n)
+        if(!before.isFile()||before.uid!==BigInt(process.getuid!())||before.nlink!==1n||before.size>65536n||realpathSync(path)!==path)
             error('WORKSPACE_GITDIR_ARTIFACTS');
         const fd=openSync(path,constants.O_NOFOLLOW|constants.O_NONBLOCK|constants.O_RDONLY);
         let bytes:Buffer;
@@ -174,8 +176,13 @@ export class WorkspaceLifecycle {
             while(total<bytes.length&&(n=readSync(fd,bytes,total,bytes.length-total,null))>0)total+=n;
             if(total!==Number(before.size)||!matches(fstatSync(fd,{bigint:true}))||!matches(lstatSync(path,{bigint:true})))
                 error('WORKSPACE_GITDIR_ARTIFACTS');
-            bytes=bytes.subarray(0,total);
+            return bytes.subarray(0,total);
         }finally{closeSync(fd);}
+    }
+
+    private async fetchedHistory(cwd:string,gitdir:string) {
+        const bytes=this.readGitArchiveFile(join(gitdir,'FETCH_HEAD'));
+        if(!bytes)return;
         const hashes=new Set<string>();
         for(const line of bytes.toString('latin1').split('\n')){
             if(!line)continue;
@@ -193,6 +200,19 @@ export class WorkspaceLifecycle {
         if(commits.length&&await this.git(cwd,['rev-list','--max-count=1',...commits,'--not','--branches','--tags','--remotes']))
             error('WORKSPACE_GITDIR_ONLY_RESULTS');
         return {commits,digest:hash(bytes.toString('base64')),bytes};
+    }
+
+    private reflogMaterial(gitdir:string) {
+        const bytes=this.readGitArchiveFile(join(gitdir,'logs','HEAD'));
+        if(!bytes)return;
+        const commits=new Set<string>();
+        for(const line of bytes.toString('latin1').split('\n')){
+            if(!line)continue;
+            const entry=/^([a-f0-9]{40}|[a-f0-9]{64}) ([a-f0-9]{40}|[a-f0-9]{64}) /.exec(line);
+            if(!entry||entry[1].length!==entry[2].length)error('WORKSPACE_REFLOG_UNCONFIRMED');
+            for(const oid of [entry[1],entry[2]]) if(!/^0+$/.test(oid))commits.add(oid);
+        }
+        return {bytes,digest:hash(bytes.toString('base64')),commits:[...commits]};
     }
 
     private async inspectGit(w: Workspace, legacy = false, automatic?: ReclaimTarget, localOnly = false, preserveContent = false): Promise<GitState> {
@@ -222,12 +242,22 @@ export class WorkspaceLifecycle {
         // dropped/rebased result that exists only there, even if today's HEAD is main.
         const reflog=(await this.git(w.cwd,['reflog','show','--format=%H','-n','1001','HEAD'])).split('\n').filter(Boolean);
         if(reflog.length>1000)error('WORKSPACE_REFLOG_UNCONFIRMED');
-        if(reflog.length&&await this.git(w.cwd,['rev-list','--max-count=1',...new Set(reflog),'--not','--single-worktree','--all']))error('WORKSPACE_REFLOG_ONLY_RESULTS');
+        const observedReflog=preserveContent?this.reflogMaterial(gitdir):undefined;
+        const historyHeads=[...new Set([...reflog,...(observedReflog?.commits??[])])];
+        const historyRefs=preserveContent?['--branches','--tags','--remotes']:['--single-worktree','--all'];
+        let retainedReflog:GitMaterial|undefined;
+        if(historyHeads.length&&await this.git(w.cwd,['rev-list','--max-count=1',...historyHeads,'--not',...historyRefs])) {
+            if(!observedReflog||observedReflog.commits.length>64||historyHeads.some(oid=>!observedReflog.commits.includes(oid)))
+                error('WORKSPACE_REFLOG_ONLY_RESULTS');
+            retainedReflog=observedReflog;
+        }
         const messageHeads=new Set([head,...reflog]);
         if(existsSync(join(gitdir,'ORIG_HEAD'))){
             const original=readFileSync(join(gitdir,'ORIG_HEAD'),'utf8');
             if(!/^[a-f0-9]{40,64}\n?$/.test(original))error('WORKSPACE_GITDIR_ARTIFACTS');
-            if(await this.git(w.cwd,['rev-list','--max-count=1',original.trim(),'--not','--single-worktree','--all']))error('WORKSPACE_GITDIR_ONLY_RESULTS');
+            if(!retainedReflog?.commits.includes(original.trim())
+                &&await this.git(w.cwd,['rev-list','--max-count=1',original.trim(),'--not','--single-worktree','--all']))
+                error('WORKSPACE_GITDIR_ONLY_RESULTS');
             messageHeads.add(original.trim());
         }
         if(existsSync(join(gitdir,'COMMIT_EDITMSG'))
@@ -256,7 +286,7 @@ export class WorkspaceLifecycle {
         const ignored=await this.git(w.cwd,['ls-files','--others','--ignored','--exclude-standard','--directory','--no-empty-directory']);
         const st=lstatSync(w.cwd), identity=`${st.dev}:${st.ino}:${lstatSync(join(w.cwd,'.git')).ino}`;
         const result={head,branch,mainCommit,remoteCommit,dirty:Boolean(status),ignored:Boolean(ignored),registry:entry!,identity};
-        return {...result,fetched,digest:fingerprint({...result,status,ignored}),checkout:fingerprint({head,branch,status,ignored,entry,identity})};
+        return {...result,fetched,reflog:retainedReflog,digest:fingerprint({...result,status,ignored}),checkout:fingerprint({head,branch,status,ignored,entry,identity})};
     }
     private taskDigest(s: Snapshot) {
         return fingerprint({tasks:s.tasks.map(t=>({id:t.id,state:t.state,dispatched:t.dispatched,session:t.sessionID,process:t.processID,
@@ -789,7 +819,7 @@ export class WorkspaceLifecycle {
                 const preparedSchema=z.strictObject({work:z.string(),temporary:z.string().optional(),index:commit,gitDirectory:absolute,admin:z.string(),
                     head:commit,branch:z.string(),integrated:z.boolean(),proof:dispositionSchema.shape.proof,
                     mainCommit:commit, retainedRef:z.string(),indexRef:z.string(),tasks:digest, thread:z.string().max(128).optional(),
-                    fetched:z.object({digest,commits:z.array(commit).max(32)}).strict().optional()});
+                    fetched:gitArchiveMaterialSchema.optional(),reflog:gitArchiveMaterialSchema.optional()});
                 const readPrepared=()=>{const raw=store.get('prepared');return raw?preparedSchema.parse(raw):undefined;};
                 let prepared=readPrepared();
                 if(prepared)recoveryLocation=directory;
@@ -815,6 +845,11 @@ export class WorkspaceLifecycle {
                         if(!(e instanceof ApiError)||e.code!=='WORKSPACE_NOT_IN_MAIN'||!this.policy.allowArchive) throw e;
                     }
                     const priorArchive=request.progress.state==='archiving';
+                    if(['WORKSPACE_ARCHIVE_LIMIT','WORKSPACE_ARCHIVE_UNSUPPORTED_FILE'].includes(request.progress.reason??'')) {
+                        // Reject external aliases on a retry without hashing gigabytes of shared files.
+                        archiveTree(w.cwd,undefined,true);
+                        archiveTree(w.temporaryDirectory,undefined,true);
+                    }
                     if(!priorArchive)publish('archiving');
                     const work=archiveTree(w.cwd), temporary=archiveTree(w.temporaryDirectory);
                     if(!work) error('WORKSPACE_ARCHIVE_CHANGED');
@@ -824,16 +859,9 @@ export class WorkspaceLifecycle {
                     const retainedRef=`refs/happy/workspaces/${w.id}/${git.head}`,indexRef=`refs/happy/workspace-index/${id}/${index}`;
                     await this.ensureReclaimRef(w,retainedRef,git.head,fd);
                     await this.ensureReclaimRef(w,indexRef,index,fd);
-                    const fetched=git.fetched && {digest:git.fetched.digest,commits:git.fetched.commits};
-                    if(git.fetched && fetched) {
-                        const fetchFile=join(directory,'FETCH_HEAD-'+fetched.digest);
-                        if(!lstatSync(fetchFile,{throwIfNoEntry:false})) {
-                            const fd=openSync(fetchFile,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
-                            try{writeFileSync(fd,git.fetched.bytes);fsyncSync(fd);}finally{closeSync(fd);}
-                        }
-                        for(const oid of fetched.commits) await this.ensureReclaimRef(w,`refs/happy/workspace-fetch/${id}/${oid}`,oid,fd);
-                    }
-                    prepared=preparedSchema.parse({work,temporary,index,gitDirectory,admin,fetched,head:git.head,branch:git.branch,integrated:!!target,
+                    const fetched=await this.archiveGitMaterial(w,directory,id,'fetch','FETCH_HEAD',git.fetched,fd);
+                    const reflog=await this.archiveGitMaterial(w,directory,id,'history','HEAD-reflog',git.reflog,fd);
+                    prepared=preparedSchema.parse({work,temporary,index,gitDirectory,admin,fetched,reflog,head:git.head,branch:git.branch,integrated:!!target,
                         proof:target?.proof??'retained-ref',mainCommit:target?.commit??git.mainCommit,retainedRef,indexRef,tasks:this.taskDigest(initial),thread:thread??undefined});
                     store.set('prepared',prepared);
                     recoveryLocation=directory;
@@ -842,14 +870,8 @@ export class WorkspaceLifecycle {
                 if(fingerprint(readPrepared())!==fingerprint(original)||original.tasks!==this.taskDigest(snapshot())) error('WORKSPACE_ARCHIVE_CHANGED');
                 if(await this.git(w.root,['rev-parse','--verify',original.retainedRef])!==original.head
                     || await this.git(w.root,['rev-parse','--verify',original.indexRef+'^{tree}'])!==original.index) error('WORKSPACE_ARCHIVE_CHANGED');
-                if(original.fetched) {
-                    const source=privateRead(join(directory,'FETCH_HEAD-'+original.fetched.digest),65536);
-                    if(hash(source.toString('base64'))!==original.fetched.digest)error('WORKSPACE_ARCHIVE_CHANGED');
-                    for(const oid of original.fetched.commits){
-                        if(await this.git(w.root,['rev-parse','--verify',`refs/happy/workspace-fetch/${id}/${oid}`])!==oid)
-                            error('WORKSPACE_ARCHIVE_CHANGED');
-                    }
-                }
+                await this.verifyGitMaterial(w,directory,id,'fetch','FETCH_HEAD',original.fetched);
+                await this.verifyGitMaterial(w,directory,id,'history','HEAD-reflog',original.reflog);
                 const checkout=join(directory,'checkout'),temporaryPath=join(directory,'temporary');
                 const wExists=!!lstatSync(w.cwd,{throwIfNoEntry:false}), tExists=!!lstatSync(w.temporaryDirectory,{throwIfNoEntry:false});
                 if(wExists || tExists) {
@@ -871,7 +893,8 @@ export class WorkspaceLifecycle {
                     && !lstatSync(checkout,{throwIfNoEntry:false})&&!lstatSync(temporaryPath,{throwIfNoEntry:false})
                     && (archiveTree(w.cwd)!==original.work||archiveTree(w.temporaryDirectory)!==original.temporary
                         ||archiveTree(original.gitDirectory,'happy-reclaim:'+id)!==original.admin
-                        ||(await this.fetchedHistory(w.cwd,original.gitDirectory))?.digest!==original.fetched?.digest)) {
+                        ||(await this.fetchedHistory(w.cwd,original.gitDirectory))?.digest!==original.fetched?.digest
+                        ||(original.reflog&&this.reflogMaterial(original.gitDirectory)?.digest!==original.reflog.digest))) {
                     // Nothing moved. A new snapshot may safely include the new
                     // file on a later tick while this intent stays stable.
                     store.delete('prepared');
@@ -942,7 +965,7 @@ export class WorkspaceLifecycle {
         });
     }
 
-    private reclaimRecoveryGuide(w:Workspace,entry:{retainedRef:string;indexRef:string;fetched?:{digest:string;commits:string[]}},checkout:string,operationID:string) {
+    private reclaimRecoveryGuide(w:Workspace,entry:{retainedRef:string;indexRef:string;fetched?:GitArchiveMaterial;reflog?:GitArchiveMaterial},checkout:string,operationID:string) {
         const q=(value:string)=>"'" + value.replaceAll("'", "'\\''") + "'";
         const path=join(this.queue.directory,'restored',w.id);
         return [
@@ -954,9 +977,35 @@ export class WorkspaceLifecycle {
             'Temporary files, if present, are in the sibling temporary directory.',
             ...entry.fetched?[`The preserved FETCH_HEAD metadata is in FETCH_HEAD-${entry.fetched.digest}.`,
                 `Fetched commits are retained under refs/happy/workspace-fetch/${operationID}/.`]:[],
+            ...entry.reflog?[`The preserved worktree HEAD reflog is in HEAD-reflog-${entry.reflog.digest}.`,
+                `Local history is retained under refs/happy/workspace-history/${operationID}/. These refs do not certify delivery.`]:[],
             'Only use the commands as a sequence after the preceding command succeeds. Review archived symlinks before following them.',
             '',
         ].join('\n');
+    }
+
+    private async archiveGitMaterial(w:Workspace,directory:string,id:string,kind:'fetch'|'history',
+        name:string,material:GitMaterial|undefined,lockFD:number) {
+        if(!material)return;
+        const {digest,commits,bytes}=material;
+        const path=join(directory,name+'-'+digest);
+        if(!lstatSync(path,{throwIfNoEntry:false})) {
+            const fd=openSync(path,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
+            try{writeFileSync(fd,bytes);fsyncSync(fd);}finally{closeSync(fd);}
+        }
+        for(const oid of commits)await this.ensureReclaimRef(w,`refs/happy/workspace-${kind}/${id}/${oid}`,oid,lockFD);
+        return {digest,commits};
+    }
+
+    private async verifyGitMaterial(w:Workspace,directory:string,id:string,kind:'fetch'|'history',
+        name:string,material?:GitArchiveMaterial) {
+        if(!material)return;
+        const bytes=privateRead(join(directory,name+'-'+material.digest),65536);
+        if(hash(bytes.toString('base64'))!==material.digest)error('WORKSPACE_ARCHIVE_CHANGED');
+        for(const oid of material.commits) {
+            if(await this.git(w.root,['rev-parse','--verify',`refs/happy/workspace-${kind}/${id}/${oid}`])!==oid)
+                error('WORKSPACE_ARCHIVE_CHANGED');
+        }
     }
 
     private async ensureReclaimRef(w:Workspace,ref:string,object:string,fd:number) {

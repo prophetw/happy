@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, symlinkSync, linkSync, renameSync, readlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, symlinkSync, linkSync, truncateSync, renameSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -13,6 +13,7 @@ import { prepareWorkspace, workspaceResult, workspaceResources, workspaceGit, ve
 import { SessionProcessProofs, readLinuxProcess } from './sessionProcessProofs';
 import { workspaceCommand, workspaceMain } from '../production/workspaces';
 import { WorkspaceLifecycle, type WorkspacePolicy, type Activity, linuxWorkspaceActivity } from './workspaceLifecycle';
+import { archiveTree } from './workspaceArchive';
 import { readReclaimTarget } from './workspaceReclaimGit';
 import { readReclaimRequest } from './workspaceReclaimRequests';
 import { reclaimRecord, reclaimRecords } from './workspaceReclaimState';
@@ -631,6 +632,48 @@ it('retains a checkout if FETCH_HEAD is the only reference to fetched work',asyn
     expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({state:'attention',reason:'WORKSPACE_GITDIR_ONLY_RESULTS'});
     expect(existsSync(f.w.cwd)).toBe(true);
     expect(git(f.repo,'worktree','list','--porcelain')).toContain(f.w.cwd);
+});
+it('retires integrated work while independently retaining commits only in its HEAD reflog',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    const base=git(f.w.cwd,'rev-parse','HEAD');
+    git(f.w.cwd,'commit','--allow-empty','-m','retained off-branch work');
+    const unique=git(f.w.cwd,'rev-parse','HEAD');
+    git(f.w.cwd,'reset','--hard',base);
+    await f.complete();
+    const admin=git(f.w.cwd,'rev-parse','--absolute-git-dir');
+    const log=readFileSync(join(admin,'logs','HEAD'));
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    const first=await m.requestReclaim(f.w.id,'owner');
+    const lostPin:typeof workspaceGit=async(cwd,args,lock,timeout,index)=>{
+        const result=await workspaceGit(cwd,args,lock,timeout,index);
+        if(args[0]==='update-ref'&&args[1].endsWith('/'+unique))throw Error('lost history pin acknowledgment');
+        return result;
+    };
+    await f.manager({remote:'origin',reclaimRemoteURL:remote},lostPin).requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({operationID:first.operationID,state:'attention'});
+    expect(existsSync(f.w.cwd)).toBe(true);
+    f.advance(60_000);
+    await m.requestedReclaimDue(archive,'owner');
+    const final=readReclaimRequest(f.queue.directory,f.w.id)?.progress;
+    expect(final).toMatchObject({operationID:first.operationID,state:'released',archive:{integrated:true,commit:base}});
+    const backup=final!.archive!.directory;
+    const keep=`refs/happy/workspace-history/${first.operationID}/${unique}`;
+    expect(git(f.repo,'rev-parse','--verify',keep)).toBe(unique);
+    expect(readFileSync(join(backup,readdirSync(backup).find(x=>x.startsWith('HEAD-reflog-'))!))).toEqual(log);
+    expect(existsSync(f.w.cwd)).toBe(false);
+    expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
+    expect(git(f.repo,'rev-parse','main')).toBe(base);
+});
+it('checks larger workspace structures without reading data and rejects out-of-scope aliases',()=>{
+    const root=mkdtempSync(join(tmpdir(),'happy-archive-structure-'));roots.push(root);
+    const checkout=join(root,'checkout'),large=join(checkout,'archive-data');
+    mkdirSync(checkout);
+    writeFileSync(large,'fixture');
+    truncateSync(large,2*1024**3+4096);
+    expect(archiveTree(checkout,undefined,true)).toBeDefined();
+    linkSync(large,join(root,'shared-alias'));
+    expect(()=>archiveTree(checkout,undefined,true)).toThrow('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE');
 });
 it('preserves hardlinks when every alias is inside the archived tree',async()=>{
     const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
