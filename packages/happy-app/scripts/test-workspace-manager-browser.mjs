@@ -104,10 +104,13 @@ try {
         assert.notEqual(ready.pid,resumed.pid);
         const cwd=ready.workspaces.live.cwd;
         writeFileSync(join(ready.root,'release-idle'),'allow cooperative close');
-        const started=Date.now();
-        while(existsSync(cwd)&&Date.now()-started<130_000) await new Promise(resolve=>setTimeout(resolve,250));
-        assert.ok(!existsSync(cwd));
-        assert.ok(!git(ready.repo,'worktree','list','--porcelain').includes(cwd));
+        const deadline=Date.now()+130_000;
+        const registered=()=>git(ready.repo,'worktree','list','--porcelain').includes(cwd);
+        while((existsSync(cwd)||registered())&&Date.now()<deadline) {
+            await new Promise(resolve=>setTimeout(resolve,250));
+        }
+        assert.ok(!existsSync(cwd),'the original checkout still exists');
+        assert.ok(!registered(),'the original checkout is still registered in Git');
         assert.equal(readFileSync(join(ready.root,'thread-history'),'utf8'),'fixture-thread saved');
         page=await context.newPage();observePage();
         await open();
