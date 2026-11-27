@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { checkoutDigest, executionSchema, objectID, testEvidenceSchema } from './execution';
-import { ApiError } from './schema';
+import { ApiError, QueueLedgerError } from './schema';
 import type { QueueTask, Workspace } from './taskQueue';
 
 type QueueRecords = { workspaces: Workspace[]; tasks: QueueTask[] };
@@ -35,7 +35,7 @@ export function decodeCandidates(state: QueueRecords) {
         if (!value.success || workspace.execution.handoff || workspace.execution.candidate
             || value.data.execution.mode !== workspace.execution.mode
             || JSON.stringify(value.data.execution.resources) !== JSON.stringify(workspace.execution.resources))
-            throw new ApiError('QUEUE_CORRUPT', 503);
+            throw new QueueLedgerError('compatibility');
         const { execution, candidateTree, testCleanup, hadOptions, defaultResolvedOptions, tasks } = value.data;
         Object.assign(workspace, { execution, candidateTree, testCleanup, options: hadOptions ? options : undefined });
         if (defaultResolvedOptions) workspace.resolvedOptions = undefined;
@@ -43,14 +43,14 @@ export function decodeCandidates(state: QueueRecords) {
         byID ??= new Map(state.tasks.map(t => [t.id, t]));
         for (const [id, { held, notBefore, ...evidence }] of Object.entries(tasks)) {
             const task = byID.get(id);
-            if (!task || task.workspaceID !== workspace.id) throw new ApiError('QUEUE_CORRUPT', 503);
+            if (!task || task.workspaceID !== workspace.id) throw new QueueLedgerError('compatibility');
             Object.assign(task, evidence);
             if (task.notBefore === deferred) task.notBefore = notBefore;
             if (held && task.state === 'blocked' && task.reason === reviewHold && !task.dispatched)
                 Object.assign(task, held, { state: 'completed', reason: held.reason, finishedAt: held.finishedAt });
             else if (held && task.state === 'cancelled' && !task.dispatched)
                 Object.assign(task, held, { state: 'completed', reason: held.reason, finishedAt: held.finishedAt, reviewReleased: true });
-            else if (held) throw new ApiError('QUEUE_CORRUPT', 503);
+            else if (held) throw new QueueLedgerError('compatibility');
         }
     }
 }

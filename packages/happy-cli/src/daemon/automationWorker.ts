@@ -1,12 +1,13 @@
 import { join } from 'node:path';
 import { verifyAutomationWorkerOwner } from '@/api/automationIdentity';
-import { createDaemonTransport, HTTPWorkerRunner, ProofClient, type DaemonTransportBindings, type ProofIdentity, type WorkerRegistration } from 'happy-agent/automation';
+import { createDaemonTransport, HTTPWorkerRunner, ProofClient, QueueLedgerError, type DaemonTransportBindings,
+    type ProofIdentity, type WorkerPresenceEvent, type WorkerRegistration } from 'happy-agent/automation';
 import type { Machine } from '@/api/types';
 import type { TrackedSession } from './types';
 
 export type DaemonAutomationOptions = {
     endpoint: string; identity: ProofIdentity; registration: WorkerRegistration;
-    report: (event: { state: string; code?: string }) => void;
+    report: (event: WorkerPresenceEvent) => void;
 };
 /** Explicit opt-in only: no key-file discovery, login, public listener, or automatic grant. */
 export async function startDaemonAutomation(options: DaemonAutomationOptions, bindings: {
@@ -30,7 +31,15 @@ export async function startDaemonAutomation(options: DaemonAutomationOptions, bi
     });
     const controller = new AbortController();
     const client = new ProofClient(options.endpoint, options.identity, 'worker', { signal: controller.signal });
-    const runner = new HTTPWorkerRunner(client, options.registration, transport, join(bindings.happyHomeDir, 'automation-worker'));
+    let runner: HTTPWorkerRunner;
+    try { runner = new HTTPWorkerRunner(client, options.registration, transport, join(bindings.happyHomeDir, 'automation-worker')); }
+    catch (error) {
+        if (error instanceof QueueLedgerError) {
+            try { options.report({ state: 'unavailable', code: error.code, queuePhase: error.queuePhase }); }
+            catch { /* Preserve the startup error if reporting fails. */ }
+        }
+        throw error;
+    }
     const running = runner.run(controller.signal, 250, options.report);
     return { stop: async () => { controller.abort(); await running; } };
 }

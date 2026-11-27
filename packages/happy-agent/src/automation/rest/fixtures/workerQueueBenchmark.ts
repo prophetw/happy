@@ -29,9 +29,10 @@ function measureQueue(queue: TaskQueue) {
         if (active && key === 'queue') active.read = now();
         return originalGet.call(this, key) as T | null;
     };
-    MetadataStore.prototype.set = function(key: string, value: unknown) {
+    MetadataStore.prototype.set = function(...args: Parameters<MetadataStore['set']>) {
+        const [key] = args;
         if (active && key === 'queue') active.set = now();
-        originalSet.call(this, key, value);
+        originalSet.call(this, ...args);
         if (active && key === 'queue') active.committed = now();
     };
     queue.transaction = (fn, readOnly) => {

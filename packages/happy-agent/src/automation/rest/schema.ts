@@ -109,6 +109,12 @@ export const querySchema = z.object({
 export class ApiError extends Error {
     constructor(readonly code: string, readonly status = 400) { super(code); }
 }
+export class QueueLedgerError extends ApiError {
+    constructor(readonly queuePhase: 'envelope' | 'key' | 'authentication' | 'utf8' | 'json' | 'schema'
+        | 'identity' | 'compatibility' | 'content', code = 'QUEUE_CORRUPT') {
+        super(code, 503);
+    }
+}
 const loopbackHttpOrigin = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 export function parseBrowserOrigin(value: string): string {
     try {

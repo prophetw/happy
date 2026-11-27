@@ -1,5 +1,11 @@
 # 个人 Fork 部署入口（prophetw/happy）
 
+## Worker 队列原地恢复（2026-11-27）
+
+13:00（UTC+8），队列密文通过 AES-GCM 认证，解密后的非法 UTF-8 导致 Worker 读取失败。两份历史副本对一条已完成任务正文中的 96 个受损字节给出一致内容。两版 Worker 校验了原地修复的 1,260 条任务与 227 个工作区，包含上午恢复后新增的 23 条任务。受损数据产生的环节尚未确认。
+
+14:30，在原队列的独占 flock 内逐字节核验损坏密文和密钥备份，并原子替换为已校验副本。原 Worker 进程随即恢复签名轮询，TestLoop 的派活与回传探针均通过。后续两版 Worker 回读到 1,262 条任务，核对了原有请求、指纹与派发状态。私有验证与冷备位于 `~/.local/state/dot-worker-queue-check-20261127-dwdg0i9p/`。
+
 ## Worker 队列恢复与异常退出修复（2026-11-26 晚）
 
 19:53:24（UTC+8），系统级 `happy-automation-worker.service` 报出 `QUEUE_CORRUPT`。运行中的发送任务回写队列时产生未处理的 Promise 拒绝，受管 daemon 清理后以 0 退出，systemd 的 `Restart=on-failure` 因此未触发。Control 的 Worker 在线窗口随后到期，原请求及结果查询返回 503。现场日志使用 `journalctl -u happy-automation-worker.service` 查询。

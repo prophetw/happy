@@ -1,5 +1,5 @@
 import { TaskQueue, occupiesSlot, terminalTask, type LegacyCheck, type QueueTask } from './taskQueue';
-import { ApiError } from './schema';
+import { ApiError, QueueLedgerError } from './schema';
 import type { TestEvidence } from './execution';
 
 export type Observation = { resultCommit?: string; worktreeDirty?: boolean; pendingInput?: boolean; process: string; cursor: number; seq?: number; messageID?: string; turnID?: string;
@@ -81,6 +81,7 @@ export class TaskScheduler {
             // does not disclose content or regain dispatch authority.
             let stopped = false; try { stopped = await this.executor.stopped?.(task) ?? false; } catch { /* Unknown keeps the lease. */ }
             this.queue.update(task.id, t => { if (terminalTask(t)) return; if (stopped) { t.state = t.state === 'canceling' ? 'cancelled' : 'failed'; t.finishedAt = Date.now(); t.reason = 'execution_stopped'; } else t.reason = revoked(e) ? 'authorization_revoked_execution_unconfirmed' : 'observation_unavailable'; });
+            if (e instanceof QueueLedgerError) throw e;
         }
     }
     dispatch(checking: () => readonly LegacyCheck[] = () => []) {
@@ -114,6 +115,7 @@ export class TaskScheduler {
                 else if (!t.dispatched) { t.state = 'queued'; t.reason = e instanceof ApiError && /^[A-Z][A-Z0-9_]{0,95}$/.test(e.code) ? `execution_unavailable:${e.code}` : 'execution_unavailable'; t.notBefore=Date.now()+3000; }
                 else { t.state = 'blocked'; t.reason = 'dispatch_receipt_unknown'; }
             });
+            if (e instanceof QueueLedgerError) throw e;
         }
     }
     async tick() {

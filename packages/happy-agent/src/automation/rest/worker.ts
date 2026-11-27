@@ -12,7 +12,7 @@ import { ControlError, type Transport, type TransportSession } from '../relay';
 import { canonicalBody } from './auth';
 import { ProofClient } from './client';
 import { projectResponse } from './projection';
-import { ApiError, cancelSchema, sendSchema, checkBoundProjects, taskTitleSchema, type Connection, type WorkerRegistration } from './schema';
+import { ApiError, QueueLedgerError, cancelSchema, sendSchema, checkBoundProjects, taskTitleSchema, type Connection, type WorkerRegistration } from './schema';
 import { filterCatalogForGrant, optionCatalogSchema, OptionsDenied, policyForCodeBuddyApproval, resolveTaskOptions, taskOptionsSchema, type OptionCatalog, type ResolvedTaskOptions } from './options';
 import { resolveWorkerDirectories, type DirectoryJob } from './directories';
 import type { Job } from './gateway';
@@ -669,6 +669,14 @@ export class ScopedWorker {
     }
 }
 
+type WorkerFailure = { code: string; queuePhase?: QueueLedgerError['queuePhase'] };
+export type WorkerPresenceEvent = { state: 'connected' } | ({ state: 'unavailable' } & WorkerFailure);
+
+function workerFailure(error: unknown): WorkerFailure {
+    if (error instanceof QueueLedgerError) return { code: error.code, queuePhase: error.queuePhase };
+    return { code: error instanceof ApiError ? error.code : 'WORKER_CHANNEL_UNAVAILABLE' };
+}
+
 /** Outbound pull channel. Nothing listens on the user's machine. No implicit reconnection grant. */
 export class HTTPWorkerRunner {
     readonly worker: ScopedWorker;
@@ -701,7 +709,7 @@ export class HTTPWorkerRunner {
         if (!response.ok) throw new ApiError(response.error?.code ?? 'WORKER_CHANNEL_UNAVAILABLE', 503);
         return response.data as Job | null;
     }
-    private async handleJob(job: Job) {
+    private async handleJob(job: Job, reportQueueError?: (error: QueueLedgerError) => void) {
         if (job.command.method === 'owner.resolve-directories') {
             const checked = await this.client.request('POST', '/worker/directory-check', { jobID: job.id });
             if (!checked.ok || canonicalBody(checked.data) !== canonicalBody(job)) throw new ApiError('JOB_UNAVAILABLE', 403);
@@ -714,7 +722,10 @@ export class HTTPWorkerRunner {
         }
         let result: unknown;
         try { result = await this.worker.execute(job); }
-        catch (error) { result = { version: 1, ok: false, error: { code: error instanceof ApiError || error instanceof ControlError ? error.code : 'UNAVAILABLE_OR_UNKNOWN', retryable: false } }; }
+        catch (error) {
+            if (error instanceof QueueLedgerError) reportQueueError?.(error);
+            result = { version: 1, ok: false, error: { code: error instanceof ApiError || error instanceof ControlError ? error.code : 'UNAVAILABLE_OR_UNKNOWN', retryable: false } };
+        }
         const projected = projectResponse(result);
         if (job.createAttempt && canonicalBody((result as {closedCreate?: unknown}).closedCreate) === canonicalBody(job.createAttempt))
             projected.closedCreate = job.createAttempt;
@@ -726,23 +737,23 @@ export class HTTPWorkerRunner {
         await this.handleJob(job); return true;
     }
 
-    async run(signal: AbortSignal, intervalMs: number, report: (event: { state: string; code?: string }) => void) {
+    async run(signal: AbortSignal, intervalMs: number, report: (event: WorkerPresenceEvent) => void) {
         const active = new Map<string, Promise<void>>();
         let schedulerWork: Promise<void> | undefined;
         let lastScheduled = -Infinity;
         let lastEvent: string | undefined, lastReportedAt = -Infinity;
-        let channelObserved = false, channelFailure: string | undefined, schedulerFailure: string | undefined;
-        const errorCode = (error: unknown) => error instanceof ApiError ? error.code : 'WORKER_CHANNEL_UNAVAILABLE';
+        let channelObserved = false, channelFailure: WorkerFailure | undefined, schedulerFailure: WorkerFailure | undefined;
         const notify = () => {
             if (!channelObserved || signal.aborted) return;
-            const code = channelFailure ?? schedulerFailure;
-            const event = code ? { state: 'unavailable', code } : { state: 'connected' };
+            const failure = channelFailure ?? schedulerFailure;
+            const event: WorkerPresenceEvent = failure ? { state: 'unavailable', ...failure } : { state: 'connected' };
             const key = JSON.stringify(event), now = this.now();
             // Keep a heartbeat within the existing 55s readiness window without logging every poll.
             if (key === lastEvent && now >= lastReportedAt && now - lastReportedAt < 30000) return;
             try { report(event); lastEvent = key; lastReportedAt = now; } catch { /* Observability must not break the worker supervisor. */ }
         };
-        const unavailable = (error: unknown) => { channelObserved = true; channelFailure = errorCode(error); notify(); };
+        const unavailable = (error: unknown) => { channelObserved = true; channelFailure = workerFailure(error); notify(); };
+        const schedulerUnavailable = (error: unknown) => { schedulerFailure = workerFailure(error); notify(); };
         try {
             while (!signal.aborted) {
                 try {
@@ -752,10 +763,12 @@ export class HTTPWorkerRunner {
                     // Observation/preparation must not starve gateway presence or receipt RPCs.
                     if (!schedulerWork && this.now() - lastScheduled >= 1000) {
                         lastScheduled = this.now();
-                        schedulerWork = this.worker.tick({ signal, onError: error => { schedulerFailure = errorCode(error); notify(); } }).then(() => { schedulerFailure = undefined; notify(); }, error => { schedulerFailure = errorCode(error); notify(); }).finally(() => { schedulerWork = undefined; });
+                        schedulerWork = this.worker.tick({ signal, onError: schedulerUnavailable })
+                            .then(() => { schedulerFailure = undefined; notify(); }, schedulerUnavailable)
+                            .finally(() => { schedulerWork = undefined; });
                     }
                     if (job && !signal.aborted && !active.has(job.id)) {
-                        const work = this.handleJob(job).catch(unavailable).finally(() => active.delete(job.id));
+                        const work = this.handleJob(job, schedulerUnavailable).catch(unavailable).finally(() => active.delete(job.id));
                         active.set(job.id, work);
                     }
                     notify();

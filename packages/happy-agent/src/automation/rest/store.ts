@@ -1,4 +1,4 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, openSync, renameSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hash } from '../journal';
@@ -17,8 +17,11 @@ export class MetadataStore {
     private path(key: string) { return join(this.directory, `${hash(key)}.json`); }
     get<T>(key: string): T | null {
         privateDirectory(this.directory);
+        return this.read<T>(this.path(key), key);
+    }
+    private read<T>(path: string, key: string): T | null {
         try {
-            const record=JSON.parse(privateRead(this.path(key), this.maxBytes).toString('utf8'));
+            const record=JSON.parse(privateRead(path, this.maxBytes).toString('utf8'));
             if(!record||record.key!==key||!Object.hasOwn(record,'value'))throw Error('invalid metadata envelope');
             return record.value as T;
         }
@@ -33,7 +36,9 @@ export class MetadataStore {
         try { this.write(key, value, true); return true; }
         catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e; }
     }
-    set(key: string, value: unknown) { this.write(key, value, false); }
+    set(key: string, value: unknown, verify?: (staged: unknown) => void) {
+        this.write(key, value, false, verify);
+    }
     delete(key: string) {
         privateDirectory(this.directory);
         try { unlinkSync(this.path(key)); }
@@ -51,12 +56,21 @@ export class MetadataStore {
             }
         } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new ApiError('STORE_UNAVAILABLE', 503); }
     }
-    private write(key: string, value: unknown, exclusive: boolean) {
+    private write(key: string, value: unknown, exclusive: boolean, verify?: (staged: unknown) => void) {
         privateDirectory(this.directory);
         const path = this.path(key), target = exclusive ? path : `${path}.${randomUUID()}.tmp`;
         const fd = openSync(target, 'wx', 0o600);
-        try { writeFileSync(fd, JSON.stringify({ key, value })); fsyncSync(fd); } finally { closeSync(fd); }
-        if (!exclusive) renameSync(target, path);
-        syncDirectory(this.directory);
+        let staged = !exclusive;
+        try {
+            try { writeFileSync(fd, JSON.stringify({ key, value })); fsyncSync(fd); } finally { closeSync(fd); }
+            if (staged) {
+                verify?.(this.read(target, key));
+                renameSync(target, path);
+                staged = false;
+            }
+            syncDirectory(this.directory);
+        } finally {
+            if (staged) rmSync(target, { force: true });
+        }
     }
 }

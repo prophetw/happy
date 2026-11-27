@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { MetadataStore } from './store';
 import { privateDirectory, privateRead } from './privateFs';
-import { ApiError } from './schema';
+import { ApiError, QueueLedgerError } from './schema';
 import { hash } from '../journal';
 import { canonicalBody } from './auth';
 import { z } from 'zod';
@@ -49,12 +49,45 @@ const cancellationSchema = z.object({ requestID: identifier, grantID: identifier
 const legacyStateSchema = z.object({ version: z.literal(1), maxConcurrency: z.number().int().min(1).max(4), nextOrder: z.number().int().nonnegative(),
     schedulers: z.record(z.string(),z.object({lastSeen:z.number().nonnegative()}).strict()), workspaces: z.array(workspaceSchema).max(40001), tasks: z.array(taskSchema).max(1000), cancellations: z.array(cancellationSchema).max(5000) }).strict();
 const activeTaskLimit = 1000;
+const schedulerRefreshMs = 5_000;
+const schedulerPresenceMs = 10_000;
 const stateSchema = legacyStateSchema.omit({version:true,maxConcurrency:true}).extend({
     version: z.literal(2), policy: concurrencyPolicySchema, tasks: z.array(taskSchema),
 }).strict();
 const taskFingerprint = (t: Pick<QueueTask,'requestID'|'grantID'|'workerID'|'sessionID'|'authorization'|'text'|'resources'|'workspaceID'|'legacy'>) => hash(canonicalBody({
     requestID: t.requestID, grantID: t.grantID, workerID: t.workerID, sessionID: t.sessionID, authorization: t.authorization, text: t.text, resources: t.resources, workspaceID: t.workspaceID, legacy: t.legacy }));
 export const terminalTask = (t: QueueTask) => ['completed', 'failed', 'cancelled'].includes(t.state);
+const queueDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+function openQueuePayload(stored: unknown, key: Buffer) {
+    if (stored === null || typeof stored !== 'object' || !('sealed' in stored) || typeof stored.sealed !== 'string')
+        throw new QueueLedgerError('envelope');
+    const bytes = Buffer.from(stored.sealed, 'base64');
+    if (bytes.length < 28) throw new QueueLedgerError('envelope');
+    let clear: Buffer;
+    try {
+        const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+        decipher.setAuthTag(bytes.subarray(12, 28));
+        clear = Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]);
+    } catch { throw new QueueLedgerError('authentication'); }
+    let json: string;
+    try { json = queueDecoder.decode(clear); }
+    catch { throw new QueueLedgerError('utf8'); }
+    finally { clear.fill(0); }
+    try { return { json, value: JSON.parse(json) as unknown }; }
+    catch { throw new QueueLedgerError('json'); }
+}
+
+function validateQueueState(state: unknown): asserts state is State {
+    if (!stateSchema.safeParse(state).success) throw new QueueLedgerError('schema');
+    const { tasks, workspaces, nextOrder } = state as State;
+    if (tasks.filter(t => !terminalTask(t)).length > activeTaskLimit) throw new QueueLedgerError('schema');
+    if (new Set(tasks.map(t => t.id)).size !== tasks.length || new Set(workspaces.map(w => w.id)).size !== workspaces.length
+        || new Set(tasks.map(t => t.order)).size !== tasks.length
+        || tasks.some(t => t.id !== hash(`${t.grantID}\n${t.requestID}`) || t.fingerprint !== taskFingerprint(t) || t.order >= nextOrder))
+        throw new QueueLedgerError('identity');
+}
+
 export const occupiesSlot = (t: QueueTask) => !terminalTask(t) && !['queued', 'waiting-resource'].includes(t.state);
 const conflicts = (a: Resource[], b: Resource[]) => a.some(x => b.some(y => x.key === y.key && (x.mode === 'exclusive' || y.mode === 'exclusive')));
 export const pendingConflict = (task: QueueTask, check: LegacyCheck) => check.sessionID !== task.sessionID && conflicts(task.resources, check.resources);
@@ -93,32 +126,32 @@ export class TaskQueue {
         readOnly ||= Boolean(this.access.readOnly);
         privateDirectory(this.directory);
         const fd = openSync(join(this.directory, '.queue-lock'), (readOnly ? constants.O_RDONLY : constants.O_CREAT | constants.O_RDWR) | constants.O_NOFOLLOW, 0o600);
+        let payloadKey: Buffer | undefined;
         try {
             const stat = fstatSync(fd);
             if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new ApiError('QUEUE_UNAVAILABLE', 503);
             // No async work in this critical section. Contention waits in the kernel, with a bound.
             if (spawnSync('flock', [readOnly ? '--shared' : '--exclusive', '--timeout', '5', '3'], { stdio: ['ignore', 'pipe', 'pipe', fd], timeout: 6000 }).status !== 0) throw new ApiError('QUEUE_UNAVAILABLE', 503);
-            const stored = this.store.get<{ sealed: string }>('queue');
-            if(!stored&&lstatSync(join(this.directory,hash('queue')+'.json'),{throwIfNoEntry:false}))throw new ApiError('QUEUE_CORRUPT',503);
+            let stored: unknown;
+            try { stored = this.store.get('queue'); }
+            catch (error) {
+                if (error instanceof ApiError && error.code === 'STORE_UNAVAILABLE')
+                    throw new QueueLedgerError('envelope', error.code);
+                throw error;
+            }
+            if (!stored && lstatSync(join(this.directory, hash('queue') + '.json'), { throwIfNoEntry: false }))
+                throw new QueueLedgerError('envelope');
             if (readOnly && !stored) throw new ApiError('QUEUE_NOT_INITIALIZED',503);
             if(!stored&&readdirSync(this.directory).some(name=>name!=='.queue-lock'))throw new ApiError('QUEUE_RECOVERY_REQUIRED',503);
-            const key = this.payloadKey(!stored);
-            let saved: unknown = null;
-            if (stored) {
-                try {
-                    if (typeof stored.sealed !== 'string') throw new Error();
-                    const bytes = Buffer.from(stored.sealed, 'base64'), decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0,12));
-                    decipher.setAuthTag(bytes.subarray(12,28));
-                    saved = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)),decipher.final()]).toString('utf8'));
-                } catch { throw new ApiError('QUEUE_CORRUPT', 503); }
-            }
-            if(stored&&(saved===null||typeof saved!=='object'))throw new ApiError('QUEUE_CORRUPT',503);
+            const key = payloadKey = this.payloadKey(!stored);
+            const saved = stored ? openQueuePayload(stored, key).value : null;
+            if (stored && (saved === null || typeof saved !== 'object')) throw new QueueLedgerError('schema');
             let migrated = false;
             let state: State;
             if (saved && (saved as {version?:number}).version === 1) {
                 const old = legacyStateSchema.safeParse(saved);
-                if (!old.success) throw new ApiError('QUEUE_CORRUPT',503);
-                if (old.data.tasks.some(t=>t.fingerprint!==taskFingerprint(t))) throw new ApiError('QUEUE_CORRUPT',503);
+                if (!old.success) throw new QueueLedgerError('schema');
+                if (old.data.tasks.some(t => t.fingerprint !== taskFingerprint(t))) throw new QueueLedgerError('identity');
                 // Historical implicit 2 is now the project default. Explicit legacy registration
                 // maxConcurrency is translated to machineConcurrency by the Worker. Never widen
                 // a non-default persisted ceiling without an explicit matching machine policy.
@@ -135,16 +168,13 @@ export class TaskQueue {
                 }
                 migrated=true;
             } else state = (saved ?? { version: 2, policy: this.policy, nextOrder: 0, schedulers: {}, cancellations: [], workspaces: [], tasks: [] }) as State;
-            if (!stateSchema.safeParse(state).success || state.tasks.filter(t => !terminalTask(t)).length > activeTaskLimit) throw new ApiError('QUEUE_CORRUPT',503);
+            validateQueueState(state);
             if (canonicalBody(state.policy) !== canonicalBody(this.policy)) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
-            if (new Set(state.tasks.map(t => t.id)).size !== state.tasks.length || new Set(state.workspaces.map(w => w.id)).size !== state.workspaces.length
-                || new Set(state.tasks.map(t => t.order)).size !== state.tasks.length || state.tasks.some(t => t.id !== hash(`${t.grantID}\n${t.requestID}`) || t.fingerprint !== taskFingerprint(t) || t.order >= state.nextOrder)) throw new ApiError('QUEUE_CORRUPT', 503);
             decodeCandidates(state);
             const before = readOnly ? '' : JSON.stringify(state);
             state.cancellations ??= [];
             const result = fn(state);
-            if (readOnly) { key.fill(0); return structuredClone(result); }
-            if (!saved || migrated || JSON.stringify(state) !== before) {
+            if (!readOnly && (!saved || migrated || JSON.stringify(state) !== before)) {
                 // Migration and cancellation also write through this boundary. Never persist
                 // a ledger which the next process would reject, even when an enqueue is bypassed.
                 if (!stateSchema.safeParse(state).success) throw new ApiError('QUEUE_STATE_INVALID',503);
@@ -154,18 +184,42 @@ export class TaskQueue {
                 if (Buffer.byteLength(payloadJSON) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
                 const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
                 const payload = Buffer.concat([cipher.update(payloadJSON,'utf8'),cipher.final()]);
-                this.store.set('queue', { sealed: Buffer.concat([iv,cipher.getAuthTag(),payload]).toString('base64') });
+                const sealed = Buffer.concat([iv, cipher.getAuthTag(), payload]).toString('base64');
+                try {
+                    this.store.set('queue', { sealed }, staged => {
+                        const { json, value } = openQueuePayload(staged, key);
+                        validateQueueState(value);
+                        decodeCandidates(value);
+                        if (json !== payloadJSON) throw new QueueLedgerError('content');
+                    });
+                } catch (error) {
+                    if (error instanceof QueueLedgerError)
+                        throw new QueueLedgerError(error.queuePhase, 'QUEUE_WRITE_REJECTED');
+                    if (error instanceof ApiError && error.code === 'STORE_UNAVAILABLE')
+                        throw new QueueLedgerError('envelope', 'QUEUE_WRITE_REJECTED');
+                    throw error;
+                }
             }
-            key.fill(0);
             return structuredClone(result);
-        } finally { closeSync(fd); }
+        } finally {
+            payloadKey?.fill(0);
+            closeSync(fd);
+        }
     }
     private payloadKey(create: boolean) {
         const path = join(this.directory, '.payload-key');
-        try { const key = privateRead(path,32); if (key.length !== 32) throw new ApiError('QUEUE_CORRUPT'); return key; }
+        try {
+            const key = privateRead(path, 32);
+            if (key.length !== 32) {
+                key.fill(0);
+                throw new QueueLedgerError('key');
+            }
+            return key;
+        }
         catch (e) {
+            if (e instanceof ApiError && e.code === 'PRIVATE_MATERIAL_UNAVAILABLE') throw new QueueLedgerError('key', e.code);
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-            if (!create) throw new ApiError('QUEUE_KEY_MISSING',503);
+            if (!create) throw new QueueLedgerError('key', 'QUEUE_KEY_MISSING');
             // Called under the machine flock. Key and authenticated ciphertext must be backed up together.
             const fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,0o600), key = randomBytes(32);
             try { writeFileSync(fd,key); fsyncSync(fd); } finally { closeSync(fd); }
@@ -178,7 +232,14 @@ export class TaskQueue {
         this.transaction(s => { if (s.tasks.some(t => !terminalTask(t))) throw new ApiError('QUEUE_IN_USE'); s.policy = policy; });
         // Call only with all workers stopped, then construct with the new configuration.
     }
-    noteScheduler(workerID: string) { this.transaction(s=>{s.schedulers[workerID]={lastSeen:Date.now()};}); }
+    noteScheduler(workerID: string) {
+        this.transaction(s => {
+            const now = Date.now();
+            const previous = s.schedulers[workerID]?.lastSeen;
+            if (previous === undefined || now < previous || now - previous >= schedulerRefreshMs)
+                s.schedulers[workerID] = { lastSeen: now };
+        });
+    }
     tasks() { return this.transaction(s => s.tasks,true); }
     workspaces(grantID: string) { return this.transaction(s => s.workspaces.filter(w => w.grantID === grantID),true); }
     releaseCandidate(workspace: Workspace) {
@@ -298,7 +359,10 @@ export class TaskQueue {
             const projectLimit = (key: string) => overrides.get(key) ?? s.policy.projectConcurrency;
             // Include only live owners in reservations. A worker never claims another owner's
             // task; its ready task still reserves resources and quotas to prevent starvation.
-            const waiting = s.tasks.filter(t => !t.legacy && (!workerID || t.workerID===workerID || (s.schedulers[t.workerID]?.lastSeen ?? 0)>Date.now()-10000) && ['queued', 'waiting-resource'].includes(t.state) && (!t.notBefore || t.notBefore<=Date.now())).sort((a,b) => a.order - b.order);
+            const now = Date.now();
+            const waiting = s.tasks.filter(t => !t.legacy
+                && (!workerID || t.workerID === workerID || (s.schedulers[t.workerID]?.lastSeen ?? 0) > now - schedulerPresenceMs)
+                && ['queued', 'waiting-resource'].includes(t.state) && (!t.notBefore || t.notBefore <= now)).sort((a, b) => a.order - b.order);
             const reserved: Resource[]=[]; const reservedProjects=new Map<string,number>(); let reservedSlots=0;
             for (const task of waiting) {
                 const sessionBusy = s.tasks.some(t => !terminalTask(t) && t.id !== task.id && t.sessionID === task.sessionID && (occupiesSlot(t) || t.order < task.order));
