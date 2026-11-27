@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate, loadHostedState, HostedDotConfig, type HostedState } from './hostedDotState';
-import { saveHostedStorage, readHostedStorage } from './hostedDotStorage';
+import { saveHostedStorage, readHostedStorage, prepareHostedStorage } from './hostedDotStorage';
 import * as sessionProtocolMapper from './utils/sessionProtocolMapper';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any,
@@ -37,7 +37,7 @@ vi.mock('../api/apiSession', () => ({ ApiSessionClient: class {
 import { runHostedDot } from './hostedDotMain';
 import { CodexRpcError } from './codexAppServerClient';
 import { readHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
-function fixture(gateway = false, imported = false, seed?: (state: any) => void, sqlite = false) {
+function fixture(gateway = false, imported = false, seed?: (state: any) => void, _sqlite = false) {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-loop-')), home = join(dir, 'happy'), data = join(dir, 'runtime');
     mkdirSync(home); mkdirSync(data, { mode: 0o700 });
     writeFileSync(join(home, 'credential-target.key'), JSON.stringify({ token: 'fixture-token', serverUrl: 'http://127.0.0.1:1234' }));
@@ -45,7 +45,7 @@ function fixture(gateway = false, imported = false, seed?: (state: any) => void,
     writeFileSync(join(home, 'sessions.json'), JSON.stringify({ sessions: { session: { encryptionVariant: 'dataKey', encryptionKey: Buffer.alloc(32).toString('base64') } } }));
     const config = { version: 1, dotId: randomUUID(), sessionId: 'session', happyHome: home, serverUrl: 'http://127.0.0.1:1234', directory: data,
         executable: 'codex', args: [], model: 'test', provider: 'openai', providerConfig: {}, instruction: 'chat only', codexHome: join(dir, 'codex'), environment: [] };
-    writeFileSync(join(data, 'config.json'), JSON.stringify(config), { mode: 0o600 });
+    prepareHostedStorage(data);
     if (imported) {
         const file = join(data, 'bootstrap.json'), body = JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, afterSeq: 5,
             items: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'old request, never dispatch again' }] },
@@ -57,13 +57,8 @@ function fixture(gateway = false, imported = false, seed?: (state: any) => void,
     const policy = (value: unknown) => writeFileSync(join(data, 'task-gateway.json'), JSON.stringify({ version: 1, dotId: config.dotId, sessionId: config.sessionId, servers: value }));
     if (gateway) policy(servers);
     if (seed) {
-        if (sqlite) {
-            writeFileSync(join(data, 'storage.json'), JSON.stringify({ version: 1, kind: 'happy-dot-state', directory: data, backend: 'sqlite', pending: true }), { mode: 0o600 });
-            writeFileSync(join(data, 'state.json'), JSON.stringify({ version: 0, storage: 'sqlite', error: 'hosted_sqlite_reader_required' }), { mode: 0o600 });
-        }
         const initial = loadHostedState(join(data, 'state.json'), HostedDotConfig.parse(config)); seed(initial);
-        if (sqlite) saveHostedStorage(join(data, 'state.json'), initial);
-        else writeFileSync(join(data, 'state.json'), JSON.stringify(initial));
+        saveHostedStorage(join(data, 'state.json'), initial);
     }
     let controller = new AbortController(), running = runHostedDot(config, controller.signal);
     const state = () => readHostedStorage(join(data, 'state.json'))!;
@@ -761,9 +756,11 @@ it('compacts a completed native text item after ACK and does not resend replayed
         const sends = h.sent.length;
         await f.restart();
         await vi.waitFor(() => expect(f.state().status).toBe('ready'));
-        expect(f.state().outputs).toHaveLength(3); expect(h.sent).toHaveLength(sends);
+        expect(f.state().outputs).toHaveLength(0);
+        expect(f.state().outputReceipts).toEqual([...compacted.outputReceipts, ...compacted.outputs.map((row: { localId: string }) => row.localId)]);
+        expect(h.sent).toHaveLength(sends);
         h.event({ type: 'agent_message_delta', thread_id: 'native-thread', turn_id: turn, item_id: 'item', delta: 'a' });
-        expect(f.state().outputs).toHaveLength(3); expect(h.sent).toHaveLength(sends);
+        expect(f.state().outputs).toHaveLength(0); expect(h.sent).toHaveLength(sends);
     } finally { await f.stop(); }
 });
 

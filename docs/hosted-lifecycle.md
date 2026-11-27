@@ -20,7 +20,7 @@
 
 ## 所有权和安全边界
 
-私有布局暂不改名、不迁移，以便旧版本兼容。正式消费者不应再解析或改写上述生命周期文件。start/recover/clear 使用 launch 与 runtime 锁；控制遵循 control→launch 顺序。写入使用限制大小的原子文件发布并同步父目录。所有读写拒绝符号链接，JSON 读取限制 128 MiB 并校验 inode/字节快照；PID 同时绑定启动时间和 boot ID。
+正式消费者通过本页接口访问私有账本。start/recover/clear 使用 launch 与 runtime 锁，控制遵循 control→launch 顺序。写入使用限制大小的原子文件发布并同步父目录。所有读写拒绝符号链接，冷迁旧 JSON 限制 128 MiB 并校验 inode 与字节快照。进程身份绑定 PID、启动时间和 boot ID。
 
 公开 authority 读取在快照前后检查 clear fence，不能用 clear 前的 active 输入恢复授权。clear 不把 task-result 变成用户输入，不改变已发送副作用或执行任务的回执。
 
@@ -81,3 +81,17 @@ v1 数据格式不变。回退到旧构建仍能识别空数组派发标记，�
 - 高水位冷启动延迟native resume/reconcile/importHistory，先完成Relay drain和回收。真正硬溢出仍保留最后可读journal并fail-stop。
 - v2写入后不能回退到v1-only hotfix。发布清单使用能读写v2、保留receipt去重的兼容构建A作为回退，完整自动回收构建为B；副本必须验证`v1→B→A`及未确认原ID补送。
 - 定向验收覆盖50,000条（49,783 sent+217 unsent）、事务回滚、重放去重、90,000条离线queue-full、恢复后不清空已确认历史，以及TestLoop/Web专用恢复原因。隔离fixture不等于线上账本、Relay或浏览器已验收。
+
+## 默认 SQLite v2 与旧账本导入
+
+新建 Dot 在 lifecycle 启动同一目录的 producer 前保留选库标记，并用 SQLite v2 写第一份状态。配置、哨兵和恢复标记仍用 JSON。旧的活跃 JSON 账本须先导入，producer、lifecycle 和输入授权入口拒绝用它运行。已有 SQLite v1 与 v2 仍可读写，已有 v2 不需重建。标记丢失、残留文件冲突或绑定不符时，运行时拒绝推断为空账本。
+
+在 TestLoop 维护窗口关闭自动启动，先用原 producer 的准入暂停并等当前轮次自然收尾。确认对应 producer、原生子进程和相关宿主写者已停，做好已校验冷备。用与候选 producer、lifecycle 和 authority 配套的包逐个转换：
+
+```sh
+node /absolute/happy-cli/bin/happy-hosted-storage.mjs migrate /absolute/hosted-dots/<dot-id>/config.json
+```
+
+命令在启动和运行锁下核验归属、epoch 和未确认输入，保留源 `state.json.pre-sqlite`，校验临时库再发布 DB、哨兵和选库标记。再次执行仅校验已激活的库。中断时沿用同一命令，已验证阶段可继续。损坏的未发布临时缓存可在源已验证时保留为带后缀的文件再重建。有效但内容不符的库、活跃 writer 或不完整的首次初始化须先核对证据。报告只含时点、摘要、游标和计数。
+
+回退优先换回已验证能读取当前 SQLite v2 和回执的旧产物，保留**最新**数据库。只可在确认从未启动新写者、源字节仍与冷备一致时用原 JSON 恢复原版本。启动过的实例不能从迁移前副本覆盖新输入或回执。

@@ -76,17 +76,20 @@ export async function runHostedDot(raw: unknown, signal?: AbortSignal): Promise<
     const terminalTurns = new Map<string, TerminalTurn>();
     const onStop = () => { stop = true; };
     process.on('SIGTERM', onStop); process.on('SIGINT', onStop); signal?.addEventListener('abort', onStop);
-    const file = join(dir, 'state.json'), sqlite = hostedStorageBackend(dir) === 'sqlite';
+    const file = join(dir, 'state.json');
+    let sqlite: boolean;
     let state: ReturnType<typeof loadHostedState>;
     let producer: ReturnType<typeof hostedProducerIdentity>;
     let admission: ReturnType<typeof createHostedAdmission>;
+    let publishAuthority: ReturnType<typeof createHostedAuthorityPublisher>;
     try {
+        sqlite = hostedStorageBackend(dir) === 'sqlite';
         state = loadHostedState(file, config); producer = hostedProducerIdentity();
         state.instructionSettings = true;
         state.idleRestart = true;
         admission = createHostedAdmission({ directory: dir, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch }, producer);
+        publishAuthority = createHostedAuthorityPublisher(file, state, producer);
     } catch (error) { closeSync(fd); process.off('SIGTERM', onStop); process.off('SIGINT', onStop); signal?.removeEventListener('abort', onStop); throw error; }
-    const publishAuthority = createHostedAuthorityPublisher(file, state, producer);
     let delivery: HostedOutputDelivery | undefined;
     let notificationDepth = 0, notificationDirty = false, logicalBytes = 0;
     let ackTimer: ReturnType<typeof setTimeout> | undefined;

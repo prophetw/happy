@@ -3,8 +3,8 @@ import { type BigIntStats, closeSync, constants, existsSync, fstatSync, fsyncSyn
 import { spawn, spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { z } from 'zod';
-import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, HOSTED_INSTRUCTION_FILE, HostedInstructionSettings, hash, HostedDotJournal, savePrivate } from './hostedDotState';
-import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend } from './hostedDotStorage';
+import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, HOSTED_INSTRUCTION_FILE, HostedInstructionSettings, hash, HostedDotJournal, savePrivate, loadHostedState } from './hostedDotState';
+import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend, prepareHostedStorage, migrateHostedStorage } from './hostedDotStorage';
 import { withLockedHostedAdmission } from './hostedDotAdmission';
 import { hostedThreadHasDispatchedInput, isHostedDotRestart } from './hostedDotState';
 
@@ -250,7 +250,7 @@ export function startHostedDot(raw: { config: HostedDotConfig; entrypoint: strin
             if (pending) {
                 // A producer can exit before acknowledging the request. Under the
                 // runtime lock, acknowledge that exit and resume the same thread.
-                const state = journalFor(b, old);
+                const state = journalFor(b, old, true);
                 if (!state?.threadId || !hostedThreadHasDispatchedInput(state)) throw Error('hosted_restart_thread_unavailable');
                 state.controls.push(control.id);
                 state.status = 'stopped';
@@ -259,7 +259,10 @@ export function startHostedDot(raw: { config: HostedDotConfig; entrypoint: strin
             safePath(config.codexHome); mkdirSync(config.codexHome, { recursive: true, mode: 0o700 });
             if (raw.authFile && !present(join(config.codexHome, 'auth.json'))) write(join(config.codexHome, 'auth.json'), read(raw.authFile, 1024 * 1024));
             write(join(b.directory, 'settings.json'), settingsSchema.parse(raw.settings ?? { model: config.model, effort: config.effort }));
+            prepareHostedStorage(b.directory);
             write(join(b.directory, 'config.json'), config);
+            const journal = join(b.directory, 'state.json');
+            if (!journalFor(b, config)) saveHostedStorage(journal, loadHostedState(journal, config));
         } finally { runtimeRelease(); }
         const logPath = join(b.directory, 'runtime.log'); safePath(logPath);
         const log = openSync(logPath, constants.O_CREAT | constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
@@ -435,5 +438,29 @@ export function readHostedDotEpoch(raw: HostedDotBinding) {
     const b = binding(raw), state = journalFor(b, configFor(b));
     if (!state) throw Error('hosted_lifecycle_journal_missing');
     return { version: 1 as const, dotId: b.dotId, sessionId: b.sessionId, epoch: state.epoch };
+}
+
+/** Cold import also resumes a verified, interrupted publication. */
+export function migrateHostedDotJournal(raw: HostedDotBinding) {
+    const b = binding(raw), launch = lock(join(b.directory, 'launch.lock'));
+    try {
+        unfenced(b);
+        const owner = join(b.directory, 'owner.json');
+        if (present(owner) && alive(Identity.parse(read(owner)))) throw Error('dot_runtime_stop_hosted_first');
+        const runtime = lock(join(b.directory, 'runtime.lock'), 0);
+        try {
+            const config = configFor(b);
+            if (!config) throw Error('hosted_lifecycle_binding_missing');
+            const { effort, ...legacy } = config, bindings = [hash(config), hash(legacy)];
+            return migrateHostedStorage(b.directory, rawState => {
+                const state = HostedDotJournal.parse(rawState);
+                if (!bindings.includes(state.binding) || state.epoch < floor(b.directory))
+                    throw Error('hosted_lifecycle_binding_changed');
+                if (state.authority && alive(state.authority.producer)) throw Error('dot_runtime_stop_hosted_first');
+                if (state.creating || state.bootstrap?.stage === 'injecting' || state.inputs.some(row => uncertain.has(row.status)))
+                    throw Error('hosted_storage_input_unconfirmed');
+            });
+        } finally { runtime(); }
+    } finally { launch(); }
 }
 export { hostedStorageBackend };

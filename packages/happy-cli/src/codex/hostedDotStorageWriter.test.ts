@@ -22,7 +22,7 @@ function fixture(history = 600) {
             const envelope = { id: `history-${n}`, ev: { t: 'text', text: '历史🙂'.repeat(4) } };
             Object.defineProperty(envelope, 'toJSON', { value() { historicalEncodings++; return { id: this.id, ev: this.ev }; } });
             return { localId: `hosted:0:history-${n}`, sent: true, envelope };
-        }), controls: [] };
+        }), controls: [], outputReceipts: [] };
     saveHostedStorage(file, state);
     const commit = createHostedStorageWriter(file, state); commit(); historicalEncodings = 0;
     return { directory, file, state, commit, encodedHistory: () => historicalEncodings };
@@ -247,13 +247,14 @@ it('tracks output replacement/truncation while immutable envelopes prevent untra
     expect(readHostedStorage(f.file)).toEqual(f.state);
 });
 
-it('keeps JSON compatibility and refuses projection writeback in the incremental entry point', () => {
+it('rejects legacy JSON and projection writeback in the incremental entry point', () => {
     const f = fixture(2), projection = readHostedStorage(f.file, ['inputs', 'controls'])!;
     expect(() => createHostedStorageWriter(f.file, { ...projection })()).toThrow('hosted_storage_projection_read_only');
     const directory = join(f.directory, 'json'); mkdirSync(directory);
     const state = { version: 1, outputs: [output('json')] }, file = join(directory, 'state.json');
-    const commit = createHostedStorageWriter(file, state); commit(); state.outputs[0].sent = true; commit();
-    expect(readHostedStorage(file)).toEqual(state);
+    writeFileSync(file, JSON.stringify(state));
+    expect(() => createHostedStorageWriter(file, state)).toThrow('hosted_storage_migration_required');
+    expect(() => readHostedStorage(file)).toThrow('hosted_storage_migration_required');
 });
 
 it('compacts through the output proxy and preserves shifted ACK positions after writer restart', () => {

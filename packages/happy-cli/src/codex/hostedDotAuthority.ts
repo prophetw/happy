@@ -68,11 +68,11 @@ function readSnapshot(expected: Request, observe: (value: unknown, revision: num
     const configRead = readBounded(configFile), config = HostedDotConfig.parse(configRead.value);
     if (config.dotId !== expected.dotId || config.sessionId !== expected.sessionId || config.directory !== expected.directory)
         throw new Error('hosted_authority_binding_changed');
-    const sqlite = hostedStorageBackend(expected.directory) === 'sqlite';
+    if (hostedStorageBackend(expected.directory) !== 'sqlite') throw Error('hosted_storage_migration_required');
     const keys = ArchiveKeys.parse(expected.archiveKeys ?? []);
-    const stateRead = sqlite ? { value: readHostedStorage(stateFile, ['inputs'], keys), stamp: stamp(stateFile) } : readBounded(stateFile, true);
+    const stateRead = { value: readHostedStorage(stateFile, ['inputs'], keys), stamp: stamp(stateFile) };
     const read = (value: unknown) => ({ state: Journal.parse(value),
-        archivedInputs: sqlite && keys.length ? z.array(ArchiveRow).max(2).parse((value as any)?.archivedInputs ?? []) : undefined });
+        archivedInputs: keys.length ? z.array(ArchiveRow).max(2).parse((value as any)?.archivedInputs ?? []) : undefined });
     const { state, archivedInputs } = read(stateRead.value);
     const floorFile = join(expected.directory, 'reset-epoch.json');
     let floorRead: ReturnType<typeof readBounded> | undefined;
@@ -110,7 +110,7 @@ function readSnapshot(expected: Request, observe: (value: unknown, revision: num
         if (currentState.dev !== stateRead.stamp.dev || currentState.ino !== stateRead.stamp.ino) throw new StateSnapshotRace();
         throw new Error('hosted_authority_file_changed');
     }
-    if (sqlite && hash(read(readHostedStorage(stateFile, ['inputs'], keys))) !== hash({ state, archivedInputs })) throw new StateSnapshotRace();
+    if (hash(read(readHostedStorage(stateFile, ['inputs'], keys))) !== hash({ state, archivedInputs })) throw new StateSnapshotRace();
     if (realpathSync(expected.directory) !== resolve(expected.directory)) throw new Error('hosted_authority_directory_invalid');
     assertNotClearing(expected.directory);
     return { version: 1, dotId: config.dotId, sessionId: config.sessionId, epoch: state.epoch,

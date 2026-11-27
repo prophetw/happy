@@ -1,4 +1,4 @@
-/** Happy-owned storage. JSON remains readable until an explicit, cold migration. */
+/** Happy-owned SQLite storage. Legacy JSON is read only by cold maintenance. */
 import { createRequire } from 'node:module';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { type BigIntStats, closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -93,18 +93,37 @@ function marker(directory: string, backend: 'json' | 'sqlite', pending = false) 
 export function hostedStorageBackend(directory: string): 'json' | 'sqlite' {
     const p = paths(directory);
     if (!exists(p.marker)) {
-        if ([p.db, p.backup, p.temporary].some(exists)) throw Error('hosted_storage_migration_incomplete');
-        return 'json';
+        if ([p.db, p.backup, p.temporary, p.db + '-journal', p.db + '-wal', p.db + '-shm', p.db + '.pre-json'].some(exists))
+            throw Error('hosted_storage_migration_incomplete');
+        if (exists(p.json)) return 'json';
+        if (['config.json', 'owner.json', 'control.json', 'admission-status.json'].some(name => exists(join(directory, name))))
+            throw Error('hosted_storage_missing');
+        return 'sqlite';
     }
     const value = json(p.marker, 4096);
     if (value?.version !== 1 || value.kind !== 'happy-dot-state' || value.directory !== directory || !['json', 'sqlite'].includes(value.backend)) throw Error('hosted_storage_marker_invalid');
     if (value.pending !== undefined && (value.pending !== true || value.backend !== 'sqlite' || exists(p.backup))) throw Error('hosted_storage_marker_invalid');
-    if (value.backend === 'sqlite' && bytes(p.json, 4096).toString('utf8') !== sentinel) throw Error('hosted_storage_legacy_writer');
+    if (value.backend === 'sqlite' && !(value.pending && !exists(p.json))
+        && bytes(p.json, 4096).toString('utf8') !== sentinel) throw Error('hosted_storage_legacy_writer');
+    if (value.backend === 'sqlite' && !value.pending && [p.temporary, p.temporary + '-journal'].some(exists))
+        throw Error('hosted_storage_migration_incomplete');
     return value.backend;
 }
 function database<T>(directory: string, file: string, readonly: boolean, action: (db: Database) => T): T {
     regular(file, 512 * 1024 * 1024);
-    for (const suffix of ['-journal', '-wal', '-shm']) if (exists(file + suffix)) regular(file + suffix, 512 * 1024 * 1024);
+    for (const suffix of ['-journal', '-wal', '-shm']) {
+        const sidecar = file + suffix;
+        safePath(sidecar);
+        let stat = lstatSync(sidecar, { throwIfNoEntry: false });
+        // SQLite can unlink its DELETE journal while a concurrent reader is
+        // resolving the pathname. Recheck this optional file once.
+        if (suffix === '-journal' && stat?.isFile() && stat.nlink === 0) {
+            safePath(sidecar);
+            stat = lstatSync(sidecar, { throwIfNoEntry: false });
+        }
+        if (stat && (!stat.isFile() || stat.nlink !== 1 || stat.size > 512 * 1024 * 1024))
+            throw Error('hosted_storage_file_invalid');
+    }
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), before = fstatSync(fd);
     let db: Database | undefined;
     const unchanged = () => {
@@ -194,22 +213,28 @@ function readDatabase(directory: string, file: string, selected: readonly Group[
 /** Small projections deliberately skip output bodies. Always uses a fresh read transaction. */
 export function readHostedStorage(file: string, selected: readonly Group[] = groups, archiveKeys: readonly HostedInputKey[] = []): State | null {
     const directory = dirname(file);
-    if (basename(file) === 'state.json' && hostedStorageBackend(directory) === 'sqlite') {
-        if (json(paths(directory).marker, 4096).pending) return null;
-        const value = readDatabase(directory, paths(directory).db, selected, archiveKeys);
-        if (groups.some(kind => !selected.includes(kind))) Object.defineProperty(value, projection, { value: true, enumerable: true });
-        return value;
-    }
-    if (!exists(file)) return null;
-    const value = json(file);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('hosted_storage_state_invalid');
+    assertHostedStorageReadyForStart(file);
+    const p = paths(directory);
+    if (!exists(p.marker) || json(p.marker, 4096).pending) return null;
+    const value = readDatabase(directory, p.db, selected, archiveKeys);
+    if (groups.some(kind => !selected.includes(kind))) Object.defineProperty(value, projection, { value: true, enumerable: true });
     return value;
 }
 /** With the runtime lock held, staged files indicate an interrupted activation. */
 export function assertHostedStorageReadyForStart(file: string) {
-    if (basename(file) !== 'state.json') return;
+    if (basename(file) !== 'state.json') throw Error('hosted_storage_path_invalid');
     const directory = dirname(file), p = paths(directory);
-    if (hostedStorageBackend(directory) === 'sqlite' && json(p.marker, 4096).pending && [p.db, p.temporary].some(exists)) throw Error('hosted_storage_migration_incomplete');
+    if (hostedStorageBackend(directory) !== 'sqlite') throw Error('hosted_storage_migration_required');
+    if (exists(p.marker) && json(p.marker, 4096).pending
+        && [p.db, p.temporary, p.temporary + '-journal', p.db + '-journal', p.db + '-wal', p.db + '-shm'].some(exists))
+        throw Error('hosted_storage_migration_incomplete');
+}
+/** Reserve a new journal before publishing the configuration that authorizes its producer. */
+export function prepareHostedStorage(directory: string) {
+    const p = paths(directory);
+    assertHostedStorageReadyForStart(p.json);
+    if (!exists(p.marker)) marker(directory, 'sqlite', true);
+    if (!exists(p.json) && json(p.marker, 4096).pending) durable(p.json, sentinel, true);
 }
 type ReceiptRow = { position: number; localId: string; digest: string };
 function assertReceiptsDisjoint(receiptRows: ReceiptRow[] | Set<string>, outputs: unknown) {
@@ -280,7 +305,7 @@ function writeReceipts(db: Database, previous: any, encoded: ReturnType<typeof e
     }
 }
 function writeDatabase(directory: string, file: string, state: State, initial = false) {
-    const encoded = encode(state);
+    const encoded = encode(initial ? { ...state, outputReceipts: state.outputReceipts ?? [] } : state);
     return database(directory, file, false, db => {
         if (initial) db.exec(`PRAGMA journal_mode=DELETE;
             CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, directory TEXT NOT NULL, generation INTEGER NOT NULL, header TEXT NOT NULL, digest TEXT NOT NULL, logical_bytes INTEGER NOT NULL, counts TEXT NOT NULL, trees TEXT NOT NULL);
@@ -289,7 +314,7 @@ function writeDatabase(directory: string, file: string, state: State, initial = 
         db.exec('BEGIN IMMEDIATE');
         try {
             const previous = initial ? null : metadata(db, directory);
-            const version = previous?.version === HOSTED_STORAGE_VERSION || encoded.receiptRows.length ? HOSTED_STORAGE_VERSION : 1;
+            const version = initial || previous?.version === HOSTED_STORAGE_VERSION || encoded.receiptRows.length ? HOSTED_STORAGE_VERSION : 1;
             writeReceipts(db, previous, encoded, version);
             const old = new Map(db.prepare('SELECT kind,position,digest FROM records').all().map(row => [row.kind + ':' + row.position, row.digest]));
             const upsert = db.prepare('INSERT INTO records(kind,position,value,digest) VALUES(?,?,?,?) ON CONFLICT(kind,position) DO UPDATE SET value=excluded.value,digest=excluded.digest');
@@ -308,16 +333,12 @@ function writeDatabase(directory: string, file: string, state: State, initial = 
         } catch (error) { db.exec('ROLLBACK'); throw error; }
     });
 }
-/** JSON roots retain compatibility until an explicit, cold conversion. */
 export function saveHostedStorage(file: string, state: State) {
     if (Reflect.get(state, projection)) throw Error('hosted_storage_projection_read_only');
     const directory = dirname(file), p = paths(directory);
-    if (basename(file) === 'state.json') {
-        if (hostedStorageBackend(directory) === 'sqlite') return json(p.marker, 4096).pending ? activate(directory, state) : writeDatabase(directory, p.db, state);
-    }
-    const value = JSON.stringify(state);
-    if (Buffer.byteLength(value) > HOSTED_STORAGE_LIMIT) throw Error('hosted_authority_state_too_large');
-    durable(file, value); return { generation: 0, changedRecords: 0, deletedRecords: 0, logicalBytes: Buffer.byteLength(value) };
+    assertHostedStorageReadyForStart(file);
+    prepareHostedStorage(directory);
+    return json(p.marker, 4096).pending ? activate(directory, state) : writeDatabase(directory, p.db, state);
 }
 
 type EncodedRow = { position: number; value: string; digest: string; bytes: number };
@@ -432,9 +453,9 @@ type ReceiptCache = { source: string[]; rows: ReceiptRow[]; ids: Set<string>; tr
  * snapshot entry point; the live writer never re-encodes settled output bodies. */
 export function createHostedStorageWriter(file: string, state: State) {
     if (Reflect.get(state, projection)) throw Error('hosted_storage_projection_read_only');
+    if (basename(file) !== 'state.json') throw Error('hosted_storage_path_invalid');
     const directory = dirname(file), p = paths(directory);
-    if (basename(file) !== 'state.json' || hostedStorageBackend(directory) !== 'sqlite')
-        return () => saveHostedStorage(file, state);
+    prepareHostedStorage(directory);
     let outputs: OutputEncoding | undefined, generation: number | undefined;
     let receiptSource: string[] | undefined, receiptCache: ReceiptCache | undefined, receiptCandidate: ReceiptCache | undefined;
     let previousRows = new Map<string, string>();
@@ -510,13 +531,103 @@ function activate(directory: string, state: State) {
     const p = paths(directory);
     if (exists(p.temporary)) throw Error('hosted_storage_migration_temporary_exists');
     durable(p.temporary, '', true);
-    const result = writeDatabase(directory, p.temporary, state, true);
-    if (JSON.stringify(readDatabase(directory, p.temporary)) !== JSON.stringify(state)) throw Error('hosted_storage_migration_mismatch');
+    const complete = { ...state, outputReceipts: state.outputReceipts ?? [] };
+    const result = writeDatabase(directory, p.temporary, complete, true);
+    assertStorageMatches(directory, p.temporary, complete);
     if (exists(p.db)) throw Error('hosted_storage_database_exists');
     renameSync(p.temporary, p.db); syncDirectory(directory);
     // A tiny refusal marker makes old binaries reject startup rather than create an empty thread.
     durable(p.json, sentinel); marker(directory, 'sqlite');
     return result;
+}
+function assertStorageMatches(directory: string, file: string, expected: State) {
+    if (JSON.stringify(readDatabase(directory, file)) !== JSON.stringify(expected))
+        throw Error('hosted_storage_migration_mismatch');
+}
+
+/** An uncommitted stage can be retried from the verified, durable JSON source. */
+function resumeImportStage(directory: string, stage: string, expected: State) {
+    let recovered: State;
+    try { recovered = readDatabase(directory, stage); }
+    catch (error) {
+        const failure = error as Error & { errcode?: number };
+        if (!['hosted_storage_metadata_invalid', 'hosted_storage_records_invalid'].includes(failure.message)
+            && ![1, 11, 26, 776].includes(failure.errcode ?? 0)) throw error;
+        const archive = stage + '.rejected-' + randomUUID();
+        for (const suffix of ['-journal', '']) {
+            if (!exists(stage + suffix)) continue;
+            regular(stage + suffix, 512 * 1024 * 1024);
+            renameSync(stage + suffix, archive + suffix);
+        }
+        syncDirectory(directory);
+        return false;
+    }
+    if (JSON.stringify(recovered) !== JSON.stringify(expected)) throw Error('hosted_storage_migration_mismatch');
+    return true;
+}
+
+function migrationSummary(state: State) {
+    return { digest: digest(JSON.stringify(state)), epoch: state.epoch, afterSeq: state.afterSeq,
+        inputs: state.inputs.length, outputs: state.outputs.length,
+        pendingOutputs: state.outputs.filter((row: { sent: boolean }) => !row.sent).length,
+        outputReceipts: state.outputReceipts?.length ?? 0, controls: state.controls?.length ?? 0 };
+}
+
+export function readHostedStorageImportSource(file: string) {
+    const original = bytes(file);
+    return { original, state: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(original)) as State };
+}
+
+/** Caller holds the launch and runtime locks of a stopped, bound Dot. */
+export function migrateHostedStorage(directory: string, validate: (state: State) => void) {
+    const p = paths(directory), selected = exists(p.marker) ? json(p.marker, 4096) : null;
+    if (selected && (selected.version !== 1 || selected.kind !== 'happy-dot-state' || selected.directory !== directory))
+        throw Error('hosted_storage_marker_invalid');
+    if (selected?.backend === 'sqlite') {
+        if (selected.pending === true) {
+            // The first activation may have committed a complete journal but
+            // died before publishing its marker. Only promote a verified DB.
+            if (exists(p.backup) || exists(p.db) && exists(p.temporary)) throw Error('hosted_storage_migration_incomplete');
+            const file = exists(p.db) ? p.db : p.temporary;
+            const state = readDatabase(directory, file);
+            validate(state);
+            if (file === p.temporary) { renameSync(file, p.db); syncDirectory(directory); }
+            durable(p.json, sentinel); marker(directory, 'sqlite');
+            return { migrated: true, backend: 'sqlite', snapshotAt: new Date().toISOString(),
+                source: migrationSummary(state), target: migrationSummary(state) };
+        }
+        hostedStorageBackend(directory);
+        const state = readDatabase(directory, p.db);
+        validate(state);
+        return { migrated: false, backend: 'sqlite', snapshotAt: new Date().toISOString(), target: migrationSummary(state) };
+    }
+    if (selected && (selected.backend !== 'json' || selected.pending !== undefined)
+        || exists(p.db + '.pre-json') || !exists(p.backup) && [p.db, p.temporary].some(exists))
+        throw Error('hosted_storage_migration_incomplete');
+    const { original, state: source } = readHostedStorageImportSource(exists(p.backup) ? p.backup : p.json);
+    validate(source);
+    const complete = { ...source, outputReceipts: source.outputReceipts ?? [] };
+    if (!exists(p.backup)) durable(p.backup, original);
+    if (exists(p.json)) {
+        const current = bytes(p.json);
+        if (!current.equals(original) && current.toString('utf8') !== sentinel)
+            throw Error('hosted_storage_migration_source_changed');
+    }
+    if (exists(p.db)) {
+        if (exists(p.temporary)) throw Error('hosted_storage_migration_incomplete');
+        assertStorageMatches(directory, p.db, complete);
+        durable(p.json, sentinel); marker(directory, 'sqlite');
+    } else if (exists(p.temporary) && resumeImportStage(directory, p.temporary, complete)) {
+        renameSync(p.temporary, p.db); syncDirectory(directory);
+        durable(p.json, sentinel); marker(directory, 'sqlite');
+    } else {
+        activate(directory, complete);
+    }
+    const target = readDatabase(directory, p.db);
+    validate(target);
+    return { migrated: true, backend: 'sqlite', snapshotAt: new Date().toISOString(),
+        sourceBytesSHA256: createHash('sha256').update(original).digest('hex'),
+        source: migrationSummary(complete), target: migrationSummary(target) };
 }
 export function removeHostedStorage(directory: string) {
     const selected = exists(paths(directory).marker) ? json(paths(directory).marker, 4096) : null;

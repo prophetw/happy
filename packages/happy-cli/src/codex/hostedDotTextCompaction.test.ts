@@ -1,10 +1,11 @@
+import { saveHostedStorage } from './hostedDotStorage';
 import { expect, it } from 'vitest';
 import { createEnvelope, type SessionEnvelope } from '@slopus/happy-wire';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { addOutput, compactFinalTextOutputs, hash, HostedDotConfig, HostedDotJournal, loadHostedState, savePrivate, type HostedState } from './hostedDotState';
+import { addOutput, compactFinalTextOutputs, hash, HostedDotConfig, HostedDotJournal, loadHostedState,  type HostedState } from './hostedDotState';
 
 const empty = (): HostedState => HostedDotJournal.parse({ version: 1, binding: 'test', epoch: 0, threadId: null,
     creating: false, afterSeq: 0, status: 'ready', error: null, inputs: [], outputs: [], controls: [] });
@@ -91,7 +92,7 @@ it('cold-loads the compacted baseline before native replay', () => {
             instruction: 'chat', codexHome: join(directory, 'codex') });
         const state = empty(); state.binding = hash(config);
         turn(state, 'turn', [{ id: 'item', parts: ['cold', ' ', 'load'] }]);
-        const file = join(directory, 'state.json'); savePrivate(file, state);
+        const file = join(directory, 'state.json'); saveHostedStorage(file, state);
         const recovered = loadHostedState(file, config);
         expect(recovered.outputs.map(row => row.localId)).toEqual([
             'hosted:0:thread:turn:start', 'hosted:0:thread:turn:item:snapshot', 'hosted:0:thread:turn:end',

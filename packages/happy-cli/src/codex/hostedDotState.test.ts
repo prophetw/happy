@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { hash, HostedDotConfig, HostedTaskGateway, loadHostedState, savePrivate, readPrivate, addOutput } from './hostedDotState';
+import { hash, HostedDotConfig, HostedTaskGateway, loadHostedState, readPrivate, addOutput } from './hostedDotState';
+import { readHostedStorage, saveHostedStorage } from './hostedDotStorage';
 import { createEnvelope } from '@slopus/happy-wire';
 const config = () => HostedDotConfig.parse({ version: 1, dotId: randomUUID(), sessionId: 'isolated', happyHome: '/tmp/happy',
     serverUrl: 'http://127.0.0.1:4567', directory: '/tmp/dot', executable: 'codex', args: [], model: 'test', provider: 'openai', instruction: 'chat', codexHome: '/tmp/codex' });
@@ -24,7 +25,7 @@ it('preserves input delivery state and stable output identity across process rel
         const state = loadHostedState(file, c);
         state.inputs.push({ epoch: 0, id: 'm1', seq: 7, text: 'identical text', status: 'dispatching', delivery: 'queue', beforeTurns: ['old'] });
         const envelope = createEnvelope('agent', { t: 'text', text: 'answer' }, { id: 'native-item' });
-        expect(addOutput(state, envelope)).toBe(true); expect(addOutput(state, envelope)).toBe(false); savePrivate(file, state);
+        expect(addOutput(state, envelope)).toBe(true); expect(addOutput(state, envelope)).toBe(false); saveHostedStorage(file, state);
         const recovered = loadHostedState(file, c);
         expect(recovered.outputs).toHaveLength(1); expect(recovered.outputs[0].sent).toBe(false);
         expect(recovered.inputs[0].status).toBe('dispatching');
@@ -43,24 +44,24 @@ it('rejects reserved identity environment variables and non-file state', () => {
 it('migrates effort-less config bindings, preserves explicit effort and retains reset epoch', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-migrate-')), file = join(dir, 'state.json');
     try {
-        const c = config(), state = loadHostedState(file, c);
+        const c = { ...config(), directory: dir }, state = loadHostedState(file, c);
         const { effort, ...legacy } = c;
-        state.binding = hash(legacy); savePrivate(file, state);
+        state.binding = hash(legacy); saveHostedStorage(file, state);
         expect(loadHostedState(file, c).binding).toBe(hash(c));
         expect(HostedDotConfig.parse(legacy).effort).toBe('xhigh');
         expect(HostedDotConfig.parse({ ...legacy, effort: 'high' }).effort).toBe('high');
         expect(() => loadHostedState(file, { ...c, provider: 'other' })).toThrow('hosted_binding_changed');
         writeFileSync(join(dir, 'reset-epoch.json'), JSON.stringify({ epoch: 5 }));
-        expect(loadHostedState(join(dir, 'new.json'), { ...c, directory: dir }).epoch).toBe(5);
+        expect(() => loadHostedState(file, c)).toThrow('hosted_epoch_stale');
     } finally { rmSync(dir, { recursive: true }); }
 });
 it('refuses to revive a journal older than the durable reset epoch', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hosted-stale-')), file = join(dir, 'state.json');
     try {
         const c = { ...config(), directory: dir }, state = loadHostedState(file, c);
-        savePrivate(file, state); writeFileSync(join(dir, 'reset-epoch.json'), JSON.stringify({ epoch: 1 }));
+        saveHostedStorage(file, state); writeFileSync(join(dir, 'reset-epoch.json'), JSON.stringify({ epoch: 1 }));
         expect(() => loadHostedState(file, c)).toThrow('hosted_epoch_stale');
-        expect(readPrivate(file).epoch).toBe(0);
+        expect(readHostedStorage(file)?.epoch).toBe(0);
     } finally { rmSync(dir, { recursive: true }); }
 });
 
@@ -81,7 +82,7 @@ it('compacts only settled dispatch snapshots and preserves the v1 thread marker 
             expect(row.beforeTurns).toBeDefined();
         }
         expect(HostedDotJournal.parse(state)).toEqual(state);
-        savePrivate(file, state);
+        saveHostedStorage(file, state);
         const recovered = loadHostedState(file, c);
         expect(recovered).toEqual(state);
         compactSettledDispatchSnapshots(recovered);

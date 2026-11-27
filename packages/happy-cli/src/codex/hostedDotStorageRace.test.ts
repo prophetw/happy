@@ -3,7 +3,7 @@ import { linkSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { HOSTED_STORAGE_LIMIT, readHostedStorage } from './hostedDotStorage';
+import { HOSTED_STORAGE_LIMIT, readHostedStorageImportSource } from './hostedDotStorage';
 
 const hooks = vi.hoisted(() => ({
     paths: new Map<number, string>(),
@@ -52,7 +52,7 @@ for (const timing of ['onOpen', 'onRead'] as const) it(`${timing}: atomic rename
         if (path !== f.file) return;
         hooks[timing] = undefined; replacements++; replace(f.file, after);
     };
-    expect(readHostedStorage(f.file)).toEqual(after);
+    expect(readHostedStorageImportSource(f.file).state).toEqual(after);
     expect(replacements).toBe(1);
 });
 
@@ -63,7 +63,7 @@ it('a pathname stat can observe the inode just detached by atomic publication', 
         hooks.onNamedStat = undefined; replacements++; replace(f.file, after);
         return true;
     };
-    expect(readHostedStorage(f.file)).toEqual(after);
+    expect(readHostedStorageImportSource(f.file).state).toEqual(after);
     expect(replacements).toBe(1);
 });
 
@@ -75,7 +75,7 @@ it('holds the old descriptor while opening its replacement so its inode cannot b
         if (opens === 1) replace(f.file, after);
         else concurrent = [...hooks.paths.values()].filter(value => value === f.file).length;
     };
-    expect(readHostedStorage(f.file)).toEqual(after);
+    expect(readHostedStorageImportSource(f.file).state).toEqual(after);
     expect(opens).toBe(2);
     expect(concurrent).toBe(2);
     expect(hooks.paths.size).toBe(0);
@@ -87,7 +87,7 @@ it('repeated inode replacement fails after one complete reopen', () => {
         if (path !== f.file) return;
         opens++; replace(f.file, { ...after, generation: generation++ });
     };
-    expect(() => readHostedStorage(f.file)).toThrow('hosted_storage_file_changed');
+    expect(() => readHostedStorageImportSource(f.file)).toThrow('hosted_storage_file_changed');
     expect(opens).toBe(2);
 });
 
@@ -98,7 +98,7 @@ it('same-inode modification never retries or returns the earlier descriptor byte
         if (path !== f.file) return;
         hooks.onRead = undefined; writeFileSync(f.file, JSON.stringify(after));
     };
-    expect(() => readHostedStorage(f.file)).toThrow('hosted_storage_file_changed');
+    expect(() => readHostedStorageImportSource(f.file)).toThrow('hosted_storage_file_changed');
     expect(opens).toBe(1);
 });
 
@@ -112,5 +112,5 @@ for (const invalid of ['hardlink', 'symlink', 'size', 'json'] as const) it(`an i
         if (invalid === 'size') writeFileSync(f.file, 'x'.repeat(HOSTED_STORAGE_LIMIT + 1));
         if (invalid === 'json') writeFileSync(f.file, '{malformed');
     };
-    expect(() => readHostedStorage(f.file)).toThrow();
+    expect(() => readHostedStorageImportSource(f.file)).toThrow();
 });

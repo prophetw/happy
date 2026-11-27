@@ -3,6 +3,7 @@ import { chmodSync, linkSync, mkdtempSync, renameSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { prepareHostedStorage } from './hostedDotStorage';
 import { statusHostedDot } from './hostedDotLifecycle';
 import { HOSTED_STATE_MAX_BYTES } from './hostedDotState';
 
@@ -31,6 +32,7 @@ function fixture() {
         serverUrl: 'https://relay.invalid', directory, executable: 'fixture', args: [], model: 'fixture', effort: 'xhigh' as const,
         provider: 'fixture', providerConfig: {}, instruction: 'fixture', codexHome: join(directory, 'codex'), environment: [] };
     const binding = { directory, dotId: config.dotId, sessionId: config.sessionId };
+    prepareHostedStorage(directory);
     writeFileSync(join(directory, 'config.json'), JSON.stringify(config), { mode: 0o600 });
     return { directory, config, binding };
 }

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { createHostedAdmission, requestHostedAdmission } from './hostedDotAdmission';
 import { recoverHeldHostedDot, recoverHostedDot } from './hostedDotLifecycle';
 import { hash, hostedProducerIdentity, savePrivate } from './hostedDotState';
+import { readHostedStorage, saveHostedStorage } from './hostedDotStorage';
 
 const directories: string[] = [];
 afterEach(() => { for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -23,12 +24,13 @@ function fixture(owner = former) {
     const state = { authority: { version: 1, producer: owner, revision: 6 }, version: 1, binding: hash(config), epoch: 0,
         threadId: 'original-thread', creating: false, afterSeq: 150, status: 'blocked', error: 'hosted_admission_file_invalid',
         inputs: [{ seq: 117, id: 'original-input', text: 'original', status: 'completed', turnId: 'turn', preserved: 'legacy input metadata' }],
-        outputs: [{ localId: 'original-output', envelope: { original: true }, sent: true }], controls: ['old-stop'], priorMetadata: 'retained' };
-    for (const [name, value] of Object.entries({ config, owner, state, control: { id: 'old-stop', action: 'stop' } })) savePrivate(join(directory, name + '.json'), value);
+        outputs: [{ localId: 'original-output', envelope: { original: true }, sent: true }], controls: ['old-stop'], priorMetadata: 'retained', outputReceipts: [] };
+    saveHostedStorage(join(directory, 'state.json'), state);
+    for (const [name, value] of Object.entries({ config, owner, control: { id: 'old-stop', action: 'stop' } })) savePrivate(join(directory, name + '.json'), value);
     const b = { ...binding, epoch: 0 };
     requestHostedAdmission({ ...b, bootstrapStopped: true, operation: { id: 'maintenance-pause', action: 'pause', expectedRevision: 0, leaseUntil: Date.now() + 60000 } });
     createHostedAdmission(b, owner).stopped();
-    const read = (name: string) => JSON.parse(readFileSync(join(directory, name + '.json'), 'utf8'));
+    const read = (name: string) => name === 'state' ? readHostedStorage(join(directory, 'state.json'))! : JSON.parse(readFileSync(join(directory, name + '.json'), 'utf8'));
     const proof = { binding, owner, epoch: 0, operationId: 'maintenance-pause', revision: 1, journalSHA256: hash(read('state')) };
     return { binding, directory, state, proof, read };
 }
@@ -85,7 +87,7 @@ it.each(['unknown','queued','unacked','creating','injecting','duplicate-output',
     }
     if (problem === 'revision') f.proof.revision++;
     if (problem === 'pending-stop') savePrivate(join(f.directory, 'control.json'), { id: 'other', action: 'stop' });
-    savePrivate(join(f.directory, 'state.json'), state);
+    saveHostedStorage(join(f.directory, 'state.json'), state);
     if (problem !== 'stale-proof') f.proof.journalSHA256 = hash(state);
     expect(recoverHeldHostedDot(f.proof).recovered).toBe(false);
     expect(f.read('state')).toEqual(state);
