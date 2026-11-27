@@ -53,7 +53,10 @@ export class TaskScheduler {
                 current.resultCommit = observation.resultCommit; current.worktreeDirty = observation.worktreeDirty;
                 current.cursor = observation.cursor;
                 current.seq ??= observation.seq; current.messageID ??= observation.messageID; current.turnID ??= observation.turnID;
-                current.startedAt ??= observation.startedAt; current.endedAt ??= observation.endedAt;
+                if (current.workspaceID) {
+                    current.startedAt ??= observation.startedAt;
+                    current.endedAt ??= observation.endedAt;
+                }
                 // Cancellation requires exit evidence, not an old turn-end event.
                 if (current.state === 'canceling') {
                     if (observation.process === 'stopped') { current.state = 'cancelled'; current.finishedAt = Date.now(); }

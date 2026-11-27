@@ -10,6 +10,7 @@ import { canonicalBody } from './auth';
 import { z } from 'zod';
 import { checkoutDigest, executionSchema, objectID, testEvidenceSchema, type TestEvidence } from './execution';
 import { concurrencyPolicySchema, normalizeConcurrency, type ConcurrencyPolicy } from './concurrency';
+import { decodeDispatch, encodeDispatch } from './taskQueueDispatchCompatibility';
 import { decodeCandidates, encodeCandidates, holdsReviewCheckout } from './taskQueueCompatibility';
 
 export { executionSchema } from './execution';
@@ -172,6 +173,7 @@ export class TaskQueue {
             validateQueueState(state);
             if (canonicalBody(state.policy) !== canonicalBody(this.policy)) throw new ApiError('QUEUE_CONFIGURATION_CHANGED',503);
             decodeCandidates(state);
+            decodeDispatch(state);
             const before = readOnly ? '' : JSON.stringify(state);
             state.cancellations ??= [];
             const result = fn(state);
@@ -179,7 +181,7 @@ export class TaskQueue {
                 // Migration and cancellation also write through this boundary. Never persist
                 // a ledger which the next process would reject, even when an enqueue is bypassed.
                 if (!stateSchema.safeParse(state).success) throw new ApiError('QUEUE_STATE_INVALID',503);
-                const persisted = encodeCandidates(state);
+                const persisted = encodeCandidates(encodeDispatch(state));
                 if (persisted.tasks.filter(t => !terminalTask(t)).length > activeTaskLimit || state.workspaces.length > 40001 || state.cancellations.length > 5000) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
                 const payloadJSON = JSON.stringify(persisted);
                 if (Buffer.byteLength(payloadJSON) > 40 * 1024 * 1024) throw new ApiError('QUEUE_CAPACITY_EXCEEDED',503);
@@ -191,6 +193,7 @@ export class TaskQueue {
                         const { json, value } = openQueuePayload(staged, key);
                         validateQueueState(value);
                         decodeCandidates(value);
+                        decodeDispatch(value);
                         if (json !== payloadJSON) throw new QueueLedgerError('content');
                     });
                 } catch (error) {
@@ -387,7 +390,8 @@ export class TaskQueue {
                     task.state='waiting-resource';task.reason='resource-wait';reserved.push(...task.resources);continue;
                 }
                 if(workerID && task.workerID!==workerID){reserved.push(...task.resources);reservedSlots++;reservedProjects.set(key,(reservedProjects.get(key)??0)+1);continue;}
-                task.state = 'preparing'; task.reason = undefined; delete task.notBefore; task.ownerPID = process.pid; task.resourceAt = Date.now();
+                task.state = 'preparing'; task.reason = undefined; delete task.notBefore; task.ownerPID = process.pid;
+                if (task.workspaceID) task.resourceAt = Date.now();
                 return task;
             }
             return null;
