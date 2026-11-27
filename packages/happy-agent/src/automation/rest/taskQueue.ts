@@ -11,6 +11,8 @@ import { z } from 'zod';
 import { checkoutDigest, executionSchema, objectID, testEvidenceSchema, type TestEvidence } from './execution';
 import { concurrencyPolicySchema, normalizeConcurrency, type ConcurrencyPolicy } from './concurrency';
 import { decodeDispatch, encodeDispatch } from './taskQueueDispatchCompatibility';
+import { reclaimRecord } from './workspaceReclaimState';
+import { workspaceIdleCloseFenced } from './workspaceIdleProof';
 import { decodeCandidates, encodeCandidates, holdsReviewCheckout } from './taskQueueCompatibility';
 
 export { executionSchema } from './execution';
@@ -265,6 +267,7 @@ export class TaskQueue {
             const previous = s.tasks.find(t => t.id === id);
             if (previous) { if (previous.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409); return previous; }
             if (s.workspaces.find(w => w.id === input.workspaceID)?.retirement) throw new ApiError('WORKSPACE_RETIRED',409);
+            if (input.workspaceID && workspaceIdleCloseFenced(this.directory,input.workspaceID)) throw new ApiError('WORKSPACE_IDLE_CLOSE_PENDING',409);
             if (s.workspaces.find(w => w.id === input.workspaceID)?.execution.candidate?.kind === 'test'
                 && s.tasks.some(t => t.workspaceID === input.workspaceID)) throw new ApiError('TEST_CHECKOUT_SETTLED', 409);
             const task: QueueTask = { ...input, id, fingerprint, order: s.nextOrder++, state: 'queued', reason: 'scheduler-ready', dispatched: false, cursor: 0, createdAt: Date.now() };
@@ -416,6 +419,9 @@ export class TaskQueue {
         return this.transaction(s => {
         t = s.tasks.find(current => current.id === t.id) ?? t;
         const workspace = s.workspaces.find(w => w.id === t.workspaceID);
+        let reclaim;
+        try { if (workspace) reclaim = reclaimRecord(this.directory,workspace)?.status; }
+        catch { /* Reclamation audit errors must not hide the original execution receipt. */ }
         const active = s.tasks.filter(other => other.id !== t.id && occupiesSlot(other));
         const blockers = active.filter(other => conflicts(t.resources, other.resources));
         const named = t.resources.filter(r => r.key.startsWith('declared:') && blockers.some(other => conflicts([r], other.resources))).map(r => r.key.slice('declared:'.length));
@@ -461,7 +467,9 @@ export class TaskQueue {
                 reviewPending: t.checkoutDigest ? holdsReviewCheckout(t) : undefined,
                 candidateCommit: workspace.execution.candidate && workspace.execution.candidate.kind !== 'checkout' ? workspace.execution.candidate.commit : undefined,
                 candidateTree: workspace.candidateTree, testResult: t.testResult, testCleanup: workspace.testCleanup,
-                workspaceState: workspace.retirement?.phase ?? 'active', retainedRef: workspace.retirement?.retainedRef,
+                reclaimState:reclaim?.state,reclaimReason:reclaim?.reason,reclaimOperationID:reclaim?.operationID,
+                workspaceState: workspace.retirement?.phase === 'retired' && reclaim && reclaim.state !== 'released'
+                    ? 'retiring' : workspace.retirement?.phase ?? 'active', retainedRef: workspace.retirement?.retainedRef,
                 retainedCommit: workspace.retirement?.retainedCommit }, resources: workspace.execution.resources } : {}),
             canCancel: !terminalTask(t), recovery };
         },true);

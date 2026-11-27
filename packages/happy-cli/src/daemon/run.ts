@@ -3,6 +3,7 @@ import { cleanupAutomationDaemon } from './automationShutdown';
 import { createAutomationControl, observeOwnedProcess, observePersistedProcess } from './automationControl';
 import { existingAutomationAuth, bundleReplacementAction, acquireAutomationDaemonLock, clearOwnedAutomationState, releaseOwnedAutomationLock, verifyManagedStartupMachine } from './automationBootstrap';
 import { startDaemonAutomation, type DaemonAutomationOptions } from './automationWorker';
+import { managedWorkspaceCacheEnvironment, withManagedWorkspaceLaunch } from 'happy-agent/automation';
 import os from 'os';
 import * as tmp from 'tmp';
 import axios from 'axios';
@@ -322,6 +323,10 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
 
     // Spawn a new session (sessionId reserved for future --resume functionality)
     const spawnSession = async (options: SpawnSessionOptions, automationCreate?: AutomationCreateLaunch): Promise<SpawnSessionResult> => {
+      try { return await withManagedWorkspaceLaunch(options.directory, () => spawnWorkspaceSession(options,automationCreate)); }
+      catch (error) { return { type:'error',errorMessage:error instanceof Error ? error.message : String(error) }; }
+    };
+    const spawnWorkspaceSession = async (options: SpawnSessionOptions, automationCreate?: AutomationCreateLaunch): Promise<SpawnSessionResult> => {
       logger.debugLargeJson('[DAEMON RUN] Spawning session', options);
 
       const { directory, sessionId, machineId, approvedNewDirectoryCreation = true } = options;
@@ -409,6 +414,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         let extraEnv: Record<string, string> = {
           ...authEnv,
           ...sanitizeSessionEnvironment(taskEnvironment),
+          ...managedWorkspaceCacheEnvironment(directory,taskEnvironment.HAPPY_TASK_ID),
           ...(taskEnvironment.HAPPY_TASK_RESTRICTION ? { HAPPY_TASK_RESTRICTION: taskEnvironment.HAPPY_TASK_RESTRICTION } : {}),
           ...(taskEnvironment.HAPPY_TASK_ID ? { HAPPY_TASK_ID: taskEnvironment.HAPPY_TASK_ID } : {}),
           ...(taskEnvironment.HAPPY_TASK_ROOT ? { HAPPY_TASK_ROOT: taskEnvironment.HAPPY_TASK_ROOT } : {}),
@@ -929,7 +935,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
         const lateConflict = resumeConflict(happySessionId);
         if (lateConflict) return lateConflict;
 
-        return spawnTrackedHappyProcess({
+        return await withManagedWorkspaceLaunch(launch.cwd, () => spawnTrackedHappyProcess({
           args: launch.args,
           cwd: launch.cwd,
           reconnect: { happySessionId, happySessionMetadataFromLocalWebhook: metadata, encryption },
@@ -947,7 +953,7 @@ export async function startDaemon(options: { automation?: DaemonAutomationOption
               HAPPY_TASK_TITLE: metadata.happyTask.displayTitle,
             } : {}),
           }),
-        });
+        }));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : (error && typeof error === 'object' ? JSON.stringify(error) : String(error));
         logger.debug(`[DAEMON RUN] Failed to resume session: ${errorMessage}`, error instanceof Error ? error.stack : undefined);

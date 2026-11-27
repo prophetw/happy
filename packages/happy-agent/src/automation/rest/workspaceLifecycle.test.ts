@@ -9,10 +9,11 @@ import { projectResponse } from './projection';
 import { TaskQueue } from './taskQueue';
 import { MetadataStore } from './store';
 import { TaskScheduler } from './taskScheduler';
-import { prepareWorkspace, workspaceResult, workspaceResources, workspaceGit, verifyWorkspace } from './taskWorkspaces';
+import { prepareWorkspace, workspaceResult, workspaceResources, workspaceGit, verifyWorkspace, withManagedWorkspaceLaunch } from './taskWorkspaces';
 import { SessionProcessProofs, readLinuxProcess } from './sessionProcessProofs';
 import { workspaceCommand, workspaceMain } from '../production/workspaces';
 import { WorkspaceLifecycle, type WorkspacePolicy, type Activity, linuxWorkspaceActivity } from './workspaceLifecycle';
+import { reclaimRecord, reclaimRecords } from './workspaceReclaimState';
 
 const roots:string[]=[];
 const git=(cwd:string,...args:string[])=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -410,6 +411,129 @@ async function deliveryFixture(command=['/bin/sh','-c','test "$(cat feature.txt)
     return {...f,archive,remote,overrides,head,begin,resume,
         remoteHead:()=>git(remote,'rev-parse','refs/heads/main')};
 }
+
+it.each(['no-change','fast-forward','squash'] as const)('automatically reclaims %s using the real remote and keeps the original receipt',async kind=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    if (kind !== 'no-change') {
+        f.save();
+        const head=git(f.w.cwd,'rev-parse','HEAD');
+        if (kind === 'fast-forward') git(f.repo,'push','origin',head+':refs/heads/main');
+        else {
+            const peer=join(f.root,'peer');git(f.root,'clone','--branch','main',remote,peer);git(peer,'config','user.name','fixture');
+            git(peer,'config','user.email','fixture@invalid');
+            writeFileSync(join(peer,'feature.txt'),'feature\n');git(peer,'add','feature.txt');
+            git(peer,'commit','-qm','squash summary');git(peer,'push','origin','main');
+            const target=git(peer,'rev-parse','HEAD');
+            expect(()=>git(f.repo,'cat-file','-e',target+'^{commit}')).toThrow();
+        }
+    }
+    const main=git(f.repo,'rev-parse','main'), m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await Promise.all([m.reclaimDue(archive),f.manager({remote:'origin',reclaimRemoteURL:remote}).reclaimDue(archive)]);
+    const result=m.result(f.w.id,undefined,true);
+    expect(result.operation).toMatchObject({state:'removed',removal:'git-confirmed'});
+    expect(result.disposition?.proof).toBe(kind==='squash'?'exact-content':'ancestor');
+    expect(existsSync(f.w.cwd)).toBe(false);
+    expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
+    expect(git(f.repo,'rev-parse','main')).toBe(main);
+    expect(git(f.repo,'cat-file','-t',result.disposition!.retainedRef)).toBe('commit');
+    expect(f.queue.receipt(f.task).execution).toMatchObject({reclaimState:'released',workspaceState:'retired',
+        reclaimOperationID:result.operation!.id});
+    await f.manager({remote:'origin',reclaimRemoteURL:remote}).reclaimDue(archive);
+    expect(m.result(f.w.id,undefined,true).operations).toEqual(result.operations);
+});
+
+it('waits for remote, occupied sessions and unknown artifacts, then resumes the same workspace operation',async()=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    git(f.repo,'remote','add','origin',remote);
+    await f.complete();
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote}), status=()=>reclaimRecord(f.queue.directory,f.w)?.status;
+    await m.reclaimDue(archive);expect(status()).toMatchObject({state:'waiting',reason:'WORKSPACE_REMOTE_UNCONFIRMED'});
+    const id=status()?.operationID;
+    git(f.repo,'init','--bare',remote);git(f.repo,'push','origin','main');
+    f.activity({confirmed:true,blockers:['live_session_or_process'],fingerprint:'busy'});
+    f.advance(120_000);await m.reclaimDue(archive);
+    expect(status()).toMatchObject({state:'waiting',reason:'live_session_or_process',operationID:id});
+    const report=join(f.w.temporaryDirectory,'report.json');writeFileSync(report,'retain');
+    f.activity({confirmed:true,blockers:[],fingerprint:'stopped'});
+    f.advance(120_000);await m.reclaimDue(archive);
+    expect(status()).toMatchObject({state:'attention',reason:'WORKSPACE_TEMPORARY_ARTIFACTS',operationID:id});
+    expect(readFileSync(report,'utf8')).toBe('retain');rmSync(report);
+    f.advance(120_000);await f.manager({remote:'origin',reclaimRemoteURL:remote}).reclaimDue(archive);
+    expect(status()).toMatchObject({state:'released',operationID:id});expect(existsSync(f.w.cwd)).toBe(false);
+});
+
+it.each(['lost-ack','refused'] as const)('reconciles an interrupted automatic removal before another Git write (%s)',async scenario=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    let calls=0;
+    const interrupted:typeof workspaceGit=async(cwd,args,fd,timeout)=>{
+        if (args[0]==='worktree' && args[1]==='remove' && ++calls===1) {
+            if (scenario==='lost-ack') await workspaceGit(cwd,args,fd,timeout);
+            throw Error('interrupted Git effect');
+        }
+        return workspaceGit(cwd,args,fd,timeout);
+    };
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote},interrupted);
+    await m.reclaimDue(archive);
+    const prior=reclaimRecord(f.queue.directory,f.w)!.status;
+    expect(prior.state).not.toBe('released');
+    expect(existsSync(f.w.cwd)).toBe(scenario==='refused');
+    f.advance(120_000);
+    const afterRestart=f.manager({remote:'origin',reclaimRemoteURL:remote},interrupted);
+    await afterRestart.reclaimDue(archive);
+    const final=afterRestart.result(f.w.id);
+    expect(final.operation).toMatchObject({state:'removed',removal:scenario==='lost-ack'?'absence-after-intent':'git-confirmed'});
+    expect(calls).toBe(scenario==='lost-ack'?1:2);
+    if (scenario==='lost-ack') expect(final.operation?.id).toBe(prior.operationID);
+    expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
+    expect(git(f.repo,'cat-file','-t',final.disposition!.retainedRef)).toBe('commit');
+    expect(f.queue.receipt(f.task).execution).toMatchObject({workspaceState:'retired',reclaimState:'released'});
+});
+
+it('keeps pre-existing, shared and newly changed worktrees out of automatic removal',async()=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    const record=reclaimRecord(f.queue.directory,f.w)!, store=reclaimRecords(f.queue.directory)!;
+    store.delete(f.w.id);
+    const manager=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await manager.reclaimDue(archive);expect(existsSync(f.w.cwd)).toBe(true);
+    store.set(f.w.id,record);
+    writeFileSync(join(f.w.cwd,'extra.txt'),'new');
+    git(f.w.cwd,'add','extra.txt');git(f.w.cwd,'commit','-qm','additional change');
+    await manager.reclaimDue(archive);
+    expect(reclaimRecord(f.queue.directory,f.w)?.status).toMatchObject({state:'attention',reason:'WORKSPACE_HEAD_CHANGED'});
+    expect(readFileSync(join(f.w.cwd,'extra.txt'),'utf8')).toBe('new');
+    const other=f.manager({grantID:'someone-else',remote:'origin',reclaimRemoteURL:remote});f.advance(120_000);
+    await other.reclaimDue(archive);expect(existsSync(f.w.cwd)).toBe(true);
+});
+
+it('rejects an unpinned remote and serializes direct Happy startup with removal',async()=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), other=join(f.root,'wrong.git'), archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'init','--bare',other);git(f.repo,'remote','add','origin',other);
+    git(f.repo,'push','origin','main');await f.complete();
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await m.reclaimDue(archive);
+    expect(reclaimRecord(f.queue.directory,f.w)?.status).toMatchObject({state:'waiting',reason:'WORKSPACE_REMOTE_UNCONFIRMED'});
+    expect(existsSync(f.w.cwd)).toBe(true);
+    git(f.repo,'remote','set-url','origin',remote);git(f.repo,'push','origin','main');
+    f.advance(120_000);
+    await m.reclaimDue(archive);
+    expect(m.result(f.w.id).operation?.state).toBe('removed');
+
+    const machines=join(f.root,'machines');
+    const machineDirectory=join(machines,hash('other-machine'));
+    const queue=new TaskQueue(machineDirectory,{}, {machineID:'other-machine'});
+    const w=await prepareWorkspace(queue,{requestID:'create-other',grantID:'grant',projectID:'project',root:f.repo,execution:{mode:'worktree'}});
+    const launch=vi.fn(async()=>true);
+    expect(await withManagedWorkspaceLaunch(w.cwd,launch,machines)).toBe(true);
+    queue.transaction(state=>{state.workspaces[0].retirement={phase:'retiring',operationID:'op',retainedRef:'refs/keep',retainedCommit:w.baseCommit!};});
+    await expect(withManagedWorkspaceLaunch(w.cwd,launch,machines)).rejects.toThrow('WORKSPACE_RETIRING');
+    expect(launch).toHaveBeenCalledTimes(1);
+});
 
 it('reads back both remote pushes after lost replies and retires through the same archived Owner operation',async()=>{
     const f=await deliveryFixture();

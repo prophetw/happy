@@ -12,6 +12,12 @@ import { WorkspaceManagerError } from '@/sync/workspaceManagement';
 
 type Mutation = Exclude<WorkspaceWrite,{action:'plan'}>;
 type Pending = { request: Mutation; result?: WorkspaceMutationResult };
+const reclaimPrefix = 'automatic_reclaim:';
+function automaticReclaim(item: WorkspaceItem) {
+    const [,state,code] = item.reasons.find(value=>value.startsWith(reclaimPrefix))?.split(':') ?? [];
+    if (item.state === 'retired' || item.lastOperation?.state === 'removed') return {state:'released',code:undefined};
+    return state ? {state,code} : undefined;
+}
 function reason(code: string) {
     return Object.hasOwn(workspacesEn.reasons, code) ? t(`workspaces.reasons.${code}` as TranslationKey)
         : `${t('workspaces.unknown')} · ${code}`;
@@ -159,7 +165,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
             await AsyncStorage.setItem(key,JSON.stringify(state)); // Persist identity before any write request.
             const result=await client.mutate(request);known=result;const value={request,result};
             await AsyncStorage.setItem(key,JSON.stringify(value));
-            if(valid(version)){pendingRef.current=value;setPending(value);if(result.error)setError(result.error);
+            if(valid(version)){pendingRef.current=value;setPending(value);if(result.error && result.receipt?.state!=='removed')setError(result.error);
                 if(result.receipt&&detail?.item.id===request.workspaceID)void client.detail({action:'detail',...scope,workspaceID:request.workspaceID})
                     .then(v=>{if(valid(version))setDetail(v);}).catch(()=>{if(valid(version))setError('WORKSPACE_MANAGER_UNAVAILABLE');});}
         } catch(e) {
@@ -175,6 +181,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
         void action(()=>client.result({action:'result',...scope,workspaceID:p.request.workspaceID,operationID:p.request.operationID}),value=>{
             if(!('operationID' in value))return;
             const state={request:p.request,result:value};pendingRef.current=state;setPending(state);void AsyncStorage.setItem(cacheKey,JSON.stringify(state));
+            if(value.error&&value.receipt?.state!=='removed')setError(value.error);
         });
     };
     const createPlan = () => {if(scope&&detail)void action(()=>client.plan({action:'plan',...scope,workspaceID:detail.item.id}),value=>{setTicket(value);setAgreed(false);});};
@@ -189,10 +196,16 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
     const button=(label:string,onPress:()=>void,disabled=busy,danger=false)=><Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{disabled}}
         disabled={disabled} onPress={onPress} style={{minHeight:44,padding:12,borderRadius:9,backgroundColor:danger?'#973b37':theme.colors.surfaceHigh,opacity:disabled?0.5:1}}>
         <Text style={{...text,color:danger?'#fff':text.color,fontWeight:'600'}}>{label}</Text></Pressable>;
-    const reasons=(codes:string[])=>codes.map(code=><Text key={code} style={muted}>• {reason(code)}</Text>);
+    const reasons=(codes:string[])=>codes.filter(code=>!code.startsWith(reclaimPrefix)).map(code=><Text key={code} style={muted}>• {reason(code)}</Text>);
+    const reclaimLine = (item:WorkspaceItem) => {
+        const reclaim = automaticReclaim(item);
+        if (!reclaim || reclaim.state==='released') return null;
+        const state = reclaim.state === 'attention' ? 'workspaces.reclaimAttention' : 'workspaces.reclaimWaiting';
+        return <Text accessibilityLiveRegion="polite" style={text}>{t(state)}{reclaim.code ? ' · ' + reason(reclaim.code) : ''}</Text>;
+    };
     const deliveryEvidence = (value: WorkspaceDelivery, expanded = false) => <>
         <Text style={muted}>{t(`workspaces.directoryState.${value.directory}`)} · {t(`workspaces.registrationState.${value.registration}`)} · {t(`workspaces.ownershipState.${value.ownership}`)}</Text>
-        {value.receipt?.blocker&&reasons(value.receipt.blocker.split(','))}
+        {value.state!=='released'&&value.receipt?.blocker&&reasons(value.receipt.blocker.split(','))}
         {value.dirty&&<Text style={text}>{t('workspaces.dirty')}{value.untracked?` · ${t('workspaces.untracked')}`:''}</Text>}
         <Text style={text}>{t(`workspaces.deliveryNext.${value.next}`)}</Text>
         {expanded&&<>
@@ -219,7 +232,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
             {machinePicker}
             {catalog&&<><Text style={muted}>{t('workspaces.machine')} · {catalog.machineName} · {catalog.machineID}</Text>
                 <View style={row}>{catalog.projects.map(p=><View key={p.id}>{button(p.name,()=>{if(p.id!==projectID){epoch.current++;setFocused(false);setPendingRestored(false);setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);setReview(null);setItems([]);setPending(null);pendingRef.current=null;setProjectID(p.id);}},busy)}</View>)}</View>
-                <Text style={muted}>{project?`${project.name} · ${project.allowApply?t('workspaces.explicit'):t('workspaces.disabled')} · ${t('workspaces.autoOff')}`:t('workspaces.noProjects')}</Text></>}
+                <Text style={muted}>{project?`${project.name} · ${project.allowApply?t('workspaces.reclaimProject'):t('workspaces.disabled')}`:t('workspaces.noProjects')}</Text></>}
             <View style={row}>{button(t('workspaces.listing'),()=>{setRecords(false);setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);void load(undefined,false);},busy)}{button(t('workspaces.records'),()=>{setRecords(true);setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);void load(undefined,true);},busy)}
                 {focused&&button(t('workspaces.showAll'),()=>setFocused(false),busy)}
                 {button(t('workspaces.refresh'),()=>{setSelected(null);setDeliveryApproval(null);setDetail(null);if(scope)void load();else void action(()=>client.catalog(),displayCatalog);},busy)}</View>
@@ -240,7 +253,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                 {selected.tasks.map(task=><View key={task.id}><Text selectable style={muted}>{t('workspaces.request')} · {task.requestID}</Text>
                     {openSession&&button(t('workspaces.openSession'),()=>openSession(task.sessionID),busy)}</View>)}
             </View>:detail?<View style={{gap:14}}>{button(t('workspaces.back'),()=>{setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);setReview(null);void load();},busy)}
-                <View style={card}><Text style={{...text,fontWeight:'600'}}>{status({...detail.item,plan:detail.plan,delivery:selected?.delivery})}</Text><Text selectable style={text}>{detail.item.directory}</Text><Text selectable style={muted}>{t('workspaces.branch')} · {detail.item.branch??'—'}</Text>{reasons(detail.plan.reasons)}
+                <View style={card}><Text style={{...text,fontWeight:'600'}}>{status({...detail.item,plan:detail.plan,delivery:selected?.delivery})}</Text>{reclaimLine(detail.item)}<Text selectable style={text}>{detail.item.directory}</Text><Text selectable style={muted}>{t('workspaces.branch')} · {detail.item.branch??'—'}</Text>{!automaticReclaim(detail.item)&&reasons(detail.plan.reasons)}
                     <Text style={muted}>{t('workspaces.checked')} · {new Date(detail.plan.checkedAt).toLocaleString()}</Text>
                     {selected?.delivery&&deliveryEvidence(selected.delivery,true)}</View>
                 <View style={card}><Text style={{...text,fontWeight:'600'}}>{t('workspaces.evidence')}</Text>
@@ -268,11 +281,11 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                                 requestID:source.requestID,evidence:deliveryApproval.evidence.trim()||undefined});
                         },busy||unsettled)}{button(t('workspaces.cancel'),()=>setDeliveryApproval(null),busy)}</View>
                     </View>}
-                    {detail.item.state!=='retired'&&<View style={row}>{!detail.item.managed&&button(t('workspaces.adopt'),()=>setReview('adopt'),busy||unsettled||!detail.adoptionVerified)}
+                    {detail.item.state!=='retired'&&!automaticReclaim(detail.item)&&<View style={row}>{!detail.item.managed&&button(t('workspaces.adopt'),()=>setReview('adopt'),busy||unsettled||!detail.adoptionVerified)}
                         {detail.item.managed&&<>{button(t('workspaces.integrated'),()=>setReview('integrated'),busy||unsettled||!detail.inspectedHead)}{button(t('workspaces.noChange'),()=>setReview('no-change'),busy||unsettled||!detail.inspectedHead)}
                             {project?.allowArchive&&button(t('workspaces.archive'),()=>setReview('archived'),busy||unsettled||!detail.inspectedHead)}</>}</View>}
                     {!project?.allowArchive&&<Text style={muted}>{t('workspaces.archiveDisabled')}</Text>}
-                    {detail.item.state!=='retired'&&detail.item.canFinalizeIntegrated&&button(t('workspaces.finalize'),()=>setAcceptance({workspaceID:detail.item.id,text:''}),busy||unsettled||!detail.inspectedHead)}
+                    {detail.item.state!=='retired'&&!automaticReclaim(detail.item)&&detail.item.canFinalizeIntegrated&&button(t('workspaces.finalize'),()=>setAcceptance({workspaceID:detail.item.id,text:''}),busy||unsettled||!detail.inspectedHead)}
                     {acceptance?.workspaceID===detail.item.id&&<View style={{gap:8}}>
                         <Text style={muted}>{t('workspaces.finalizeHelp')}</Text>
                         <TextInput accessibilityLabel={t('workspaces.acceptanceEvidence')} value={acceptance.text} maxLength={16000} multiline
@@ -286,9 +299,9 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                     </View>}
                 </View>
                 {review&&<View style={card}><Text style={text}>{review==='adopt'?t('workspaces.adoptHelp'):t('workspaces.reviewHelp')}</Text><View style={row}>{button(t('workspaces.confirmReview'),reviewResult,busy||unsettled)}{button(t('workspaces.cancel'),()=>setReview(null),busy)}</View></View>}
-                {detail.result.operations?.map(op=><View key={op.id} style={card}><Text selectable style={muted}>{op.id} · {op.state}{op.head?`\n${op.head}`:''}</Text>{op.reason&&<Text style={muted}>{reason(op.reason)}</Text>}</View>)}
+                {detail.result.operations?.map(op=><View key={op.id} style={card}><Text selectable style={muted}>{op.id} · {op.state}{op.head?`\n${op.head}`:''}</Text>{op.reason&&(detail.item.state!=='retired'||op.state==='removed'&&op.id!==detail.result.operation?.id)&&<Text style={muted}>{reason(op.reason)}</Text>}</View>)}
                 {detail.result.rebuild&&<View style={card}><Text style={{...text,fontWeight:'600'}}>{t('workspaces.recovery')}</Text><Text style={muted}>{t('workspaces.recoveryHelp')}</Text><Text selectable style={muted}>{t('workspaces.recoveryDirectory')} · {detail.result.rebuild.args.at(-2)}{`\n`}{t('workspaces.recoveryBranch')} · {detail.result.rebuild.args[5]}</Text></View>}
-                {detail.item.state!=='retired'&&button(t('workspaces.plan'),createPlan,busy||unsettled)}
+                {detail.item.state!=='retired'&&!automaticReclaim(detail.item)&&button(t('workspaces.plan'),createPlan,busy||unsettled)}
                 {ticket&&<View testID="workspace-plan-confirmation" style={{...card,borderColor:'#bc8265'}}><Text accessibilityRole="header" style={{...text,fontWeight:'600'}}>{t('workspaces.confirmTitle')}</Text><Text selectable style={text}>{detail.item.directory}</Text>
                     <Text style={muted}>{t('workspaces.expires')} · {new Date(ticket.plan.expiresAt).toLocaleString()}</Text><Text style={muted}>{t('workspaces.keep')}</Text>{reasons(ticket.plan.reasons)}
                     {clock>=ticket.plan.expiresAt?<Text accessibilityRole="alert" style={text}>{t('workspaces.expired')}</Text>:!ticket.plan.eligible?<Text style={text}>{t('workspaces.blocked')}</Text>:<Pressable accessibilityRole="checkbox" accessibilityLabel={t('workspaces.agree')} accessibilityState={{checked:agreed,disabled:busy}}
@@ -298,8 +311,8 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
             </View>:<><Text style={muted}>{t('workspaces.total')} · {total}</Text>{visible.map(item=><View key={item.id} testID={`workspace-${item.id}`} style={card}>
                 <View style={{...row,justifyContent:'space-between'}}><Text style={{...text,fontWeight:'600'}}>{status(item)}</Text>{button(t('workspaces.inspect'),()=>inspect(item),busy)}</View>
                 <Text selectable style={text}>{item.directory}</Text><Text selectable style={muted}>{t('workspaces.branch')} · {item.branch??'—'} · {t('workspaces.task')} {item.taskCount}</Text>
-                {item.delivery&&deliveryEvidence(item.delivery)}{reasons(item.reasons)}
-                {item.lastOperation?.reason&&reasons(item.lastOperation.reason.split(','))}
+                {reclaimLine(item)}{item.delivery&&deliveryEvidence(item.delivery)}{!automaticReclaim(item)&&reasons(item.reasons)}
+                {item.state!=='retired'&&item.lastOperation?.reason&&reasons(item.lastOperation.reason.split(','))}
                 <Text style={muted}>{t('workspaces.checked')} · {item.delivery||item.lastVerification?new Date(item.delivery?.observedAt??item.lastVerification!).toLocaleString():t('workspaces.never')}</Text>
             </View>)}{!busy&&!visible.length&&<Text style={muted}>{t(records?'workspaces.noRecords':'workspaces.noItems')}</Text>}{next&&button(t('workspaces.loadMore'),()=>{void load(next);},busy)}</>}
         </ScrollView>

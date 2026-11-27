@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { join } from 'node:path';
 import { workspacePolicySchema, type ActivityProbe } from '../rest/workspaceLifecycle';
 import { privateRead } from '../rest/privateFs';
 import { readProductionConfig } from './config';
@@ -94,4 +95,24 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
     if (request.action === 'finalize-integrated') return lifecycle.finalizeIntegrated(request.workspaceID, request.operationID, request.head, request.evidence, ownerID);
     if (request.action==='start-delivery'||request.action==='resume-delivery') return lifecycle.deliver(request,ownerID);
     return lifecycle.apply(plan as Parameters<typeof lifecycle.apply>[0], request.operationID);
+}
+
+/** Internal Owner child operation. No HTTP or RPC route accepts this request. */
+export async function executeWorkspaceReclamation(file: string, ownerID: string, projectID: string,
+    authorize: () => Promise<void>, activity?: ActivityProbe) {
+    const scope = workspaceOwnerScope(file,ownerID);
+    const project = scope.projects.find(p => p.id === projectID);
+    if (!project) throw new ApiError('WORKSPACE_SCOPE_DENIED',403);
+    const current = () => {
+        const latest=workspaceOwnerScope(file,ownerID),policy=latest.projects.find(p=>p.id===projectID)?.policy;
+        if (latest.worker.registration.machineID!==scope.worker.registration.machineID || !policy
+            || canonicalBody(policy)!==canonicalBody(project.policy)) throw new ApiError('WORKSPACE_AUTHORIZATION_CHANGED',403);
+    };
+    const pins=z.record(z.string(),z.string().min(1).max(4096)).parse(JSON.parse(process.env.HAPPY_WORKSPACE_RECLAIM_REMOTE_PINS ?? '{}'));
+    const { lifecycle } = openWorkspaceLifecycle(scope.config.workerConfig,project.policyFile,{
+        reclaimRemoteURL:pins[projectID],homeDirectory:scope.config.homeDirectory,processProbeSocket:scope.config.processProbeSocket,readOnly:false,activity,
+        ownerDirectorySelection:true,authorizationCurrent:current,authorize:async()=>{current();await authorize();current();},
+    });
+    await lifecycle.reclaimDue(join(scope.config.stateDirectory,'automatic-reclamation'));
+    return {};
 }

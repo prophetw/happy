@@ -68,6 +68,8 @@ export const workTiming = z.object({
     endedAt: z.number().optional(), deliveredAt: z.number().optional(),
 });
 const executionLocation = z.object({ mode: z.string(), source: z.enum(['baseline','checkout']).optional(),
+    reclaimState: z.enum(['waiting','attention','released']).optional(), reclaimReason: z.string().max(128).optional(),
+    reclaimOperationID: z.string().max(128).optional(),
     workspaceState: z.enum(['active','retiring','retired']).optional(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional(),
     checkoutDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(), candidateCommit: gitObjectID.optional(),
     testResult: testResult.optional(), testCleanup: z.enum(['removed', 'retained']).optional() });

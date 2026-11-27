@@ -16,6 +16,8 @@ import { createTestloopDotsNavigationGuard } from '@/sync/testloopDotsNavigation
 import { testloopWorkStatus, testloopWorkQueueReason, type TestloopDotsMetadata } from '@/sync/testloopDots';
 import { kindLabel } from '@/sync/dotMemoryKinds';
 import { t } from '@/text';
+import { workspacesEn } from '@/text/workspaces';
+import type { TranslationKey } from '@/text';
 import { useAuth } from '@/auth/AuthContext';
 import { getServerUrl } from '@/sync/serverConfig';
 import { dotMemoryEditError, dotMemoryEditRejected, dotMemoryValueBytes, DOT_MEMORY_VALUE_MAX_BYTES, readDotMemoryTombstone, requestDotMemoryEdit, type DotMemoryEditRequest } from '@/sync/dotMemoryEdit';
@@ -382,7 +384,13 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {selectedTask.execution && <><Text selectable style={muted}>执行位置：{selectedTask.execution.directory}</Text>{selectedTask.execution.branch && <Text selectable style={muted}>分支：{selectedTask.execution.branch}</Text>}{selectedTask.execution.resultCommit && <Text selectable style={muted}>提交：{selectedTask.execution.resultCommit}</Text>}{selectedTask.execution.dirty && <Text style={muted}>存在未提交改动，现场已保留</Text>}</>}
             {selectedTask.execution?.testCleanup && <Text style={muted}>{selectedTask.execution.testCleanup === 'removed' ? '临时测试目录已清理' : '临时测试目录已保留'}</Text>}
             {selectedTask.execution?.source && <Text style={muted}>{selectedTask.execution.source === 'baseline' ? '固定的已提交基线' : '执行时取得的 checkout 快照'}</Text>}
-            {selectedTask.execution?.workspaceState === 'retired' && <Text style={muted}>Workspace Owner 已归档并释放工作树</Text>}
+            {selectedTask.execution?.workspaceState === 'retired'
+                ? <Text style={muted}>{t('workspaces.reclaimReleased')}</Text>
+                : selectedTask.execution?.reclaimState && <Text style={muted}>
+                    {t(selectedTask.execution.reclaimState === 'attention' ? 'workspaces.reclaimAttention' : 'workspaces.reclaimWaiting')}
+                    {selectedTask.execution.reclaimReason && ' · ' + (Object.hasOwn(workspacesEn.reasons,selectedTask.execution.reclaimReason)
+                        ? t(`workspaces.reasons.${selectedTask.execution.reclaimReason}` as TranslationKey) : t('workspaces.unknown'))}
+                </Text>}
             <DotTaskTiming timing={selectedTask.timing} waitingSince={selectedTask.waitingSince} style={muted} />
             {selectedTask.recovery && <Text style={muted}>{selectedTask.recovery}</Text>}
             {selectedTask.canCancel && action('在对话中取消此工作', () => toConversation(`请取消当前 Dot 的工作项 ${selectedTask.id}，只取消这一交办，保留已有改动，并核对停止结果。`))}

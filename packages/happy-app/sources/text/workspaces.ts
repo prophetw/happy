@@ -1,4 +1,8 @@
 export const workspacesEn = {
+    reclaimProject:'Reclamation available under project policy',
+    reclaimWaiting:'Waiting to reclaim · continues automatically',
+    reclaimAttention:'Needs attention · workspace kept',
+    reclaimReleased:'Workspace reclaimed',
     deliveryRunning:'Checking the authorized delivery…',
     showAll:'Show all project workspaces',
     startDelivery:'Start candidate delivery', resumeDelivery:'Reconcile and continue delivery', authorizeDelivery:'Authorize delivery for this candidate',
@@ -39,6 +43,9 @@ export const workspacesEn = {
     back:'Back to list', expired:'The plan expired. Create a new plan.', unavailable:'The workspace manager is unavailable. Check the connection and retry.',
     taskLimit:'Showing up to 20 linked task identifiers; task messages are not exposed.',
     reasons: {
+        task_running:'The task has not finished yet.',
+        workspace_idle_close_pending:'Waiting for the dedicated session to save its history and close.',
+        WORKSPACE_SHARED_TASKS:'This workspace has more than one task or a changed session binding. Verify sharing before reclaiming.',
         WORKSPACE_DELIVERY_CANDIDATE_CHANGED:'The original task or candidate changed. Inspect the latest result.',
         WORKSPACE_DELIVERY_MERGE_UNKNOWN:'The merge reply is inconclusive. Reconcile the original operation.',
         WORKSPACE_DELIVERY_SUPERSEDED:'A newer candidate has its own delivery authorization.',
@@ -60,7 +67,7 @@ export const workspacesEn = {
         WORKSPACE_OWNER_MISMATCH:'Workspace ownership does not match this machine or user.',
         WORKSPACE_PATH_CHANGED:'The workspace path or filesystem identity changed. Check its registration.',
         WORKSPACE_TEMP_BINDING_CHANGED:'The temporary-directory binding does not match this workspace.',
-        WORKSPACE_TEMPORARY_ARTIFACTS:'Temporary files still need to be retained.',
+        WORKSPACE_TEMPORARY_ARTIFACTS:'Save the files you need from the temporary directory, then clear only files you have verified.',
         WORKSPACE_OBJECT_STORE_UNCONFIRMED:'The shared Git object store or its dependencies cannot be verified.',
         WORKSPACE_REGISTRY_CHANGED:'Git registration changed, is locked or is incomplete.',
         WORKSPACE_GITDIR_ARTIFACTS:'Git metadata contains files that still need to be retained.',
@@ -119,6 +126,10 @@ export const workspacesEn = {
     },
 };
 export const workspacesZh = {
+    reclaimProject:'按项目授权回收',
+    reclaimWaiting:'等待回收（条件满足后自动继续）',
+    reclaimAttention:'需要处理（工作区已保留）',
+    reclaimReleased:'已回收',
     deliveryRunning:'正在推进已授权交付…',
     showAll:'查看此项目所有工作区',
     startDelivery:'交付当前候选', resumeDelivery:'对账并继续交付', authorizeDelivery:'授权交付此候选',
@@ -158,6 +169,9 @@ export const workspacesZh = {
     back:'返回列表', expired:'计划已过期，请重新生成。', unavailable:'暂时无法连接工作区管理服务，请检查连接后重试。',
     taskLimit:'最多显示20个关联任务标识，不展示任务正文。',
     reasons: {
+        task_running:'任务尚未结束。',
+        workspace_idle_close_pending:'等待专属会话保存历史并正常结束。',
+        WORKSPACE_SHARED_TASKS:'此工作区关联多个任务或会话归属发生变化，请先核对是否共享。',
         WORKSPACE_DELIVERY_CANDIDATE_CHANGED:'原任务或候选已变化，请核对最新结果。',
         WORKSPACE_DELIVERY_MERGE_UNKNOWN:'合入结果待核实，请对账原操作。',
         WORKSPACE_DELIVERY_SUPERSEDED:'新候选已有独立交付授权。',
@@ -179,7 +193,7 @@ export const workspacesZh = {
         WORKSPACE_OWNER_MISMATCH:'工作区的机器或用户归属不匹配。',
         WORKSPACE_PATH_CHANGED:'目录路径或文件身份发生变化，需要核对登记。',
         WORKSPACE_TEMP_BINDING_CHANGED:'临时目录与工作区的绑定不匹配。',
-        WORKSPACE_TEMPORARY_ARTIFACTS:'临时目录中仍有资料需要保留。',
+        WORKSPACE_TEMPORARY_ARTIFACTS:'请先从临时目录保全需要的资料，再处理已核实可以清理的文件。',
         WORKSPACE_OBJECT_STORE_UNCONFIRMED:'共享 Git 对象库或依赖尚未核实。',
         WORKSPACE_REGISTRY_CHANGED:'Git 登记已变化、被锁定或不完整。',
         WORKSPACE_GITDIR_ARTIFACTS:'Git 元数据中仍有需要保留的资料。',

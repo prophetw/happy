@@ -729,11 +729,32 @@ export class ApiSessionClient extends EventEmitter {
         this.emit('message', message);
     }
 
-    private async readMessagePage(afterSeq: number) {
+    private async readMessagePage(afterSeq: number, signal?:AbortSignal) {
         return axios.get<V3GetSessionMessagesResponse>(
             `${this.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
-            { params: { after_seq: afterSeq, limit: 100 }, headers: this.authHeaders(), timeout: this.options.receive ? 10000 : 60000 },
+            { params: { after_seq: afterSeq, limit: 100 }, headers: this.authHeaders(), signal, timeout: this.options.receive ? 10000 : 60000 },
         );
+    }
+
+    /** Read Relay directly so a delayed socket event cannot certify idle history. */
+    async confirmNoLaterUserInput(inputSequence: number):Promise<boolean> {
+        const generation=this.relayGeneration, signal=AbortSignal.timeout(8000);
+        let cursor=inputSequence;
+        for (let page=0; page<5; page++) {
+            const response=await this.readMessagePage(cursor,signal);
+            const {messages,hasMore}=response.data;
+            if (generation!==this.relayGeneration || !Array.isArray(messages) || typeof hasMore!=='boolean') return false;
+            for (const message of messages) {
+                if (message.seq!==cursor+1 || message.content?.t!=='encrypted') return false;
+                const body=decrypt(this.encryptionKey,this.encryptionVariant,decodeBase64(message.content.c));
+                if (UserMessageSchema.safeParse(body).success || FileEventMessageSchema.safeParse(body).success
+                    || body && typeof body==='object' && 'role' in body && body.role==='user') return false;
+                cursor=message.seq;
+            }
+            if (!hasMore) return true;
+            if (!messages.length) return false;
+        }
+        return false;
     }
 
     private async fetchMessages() {

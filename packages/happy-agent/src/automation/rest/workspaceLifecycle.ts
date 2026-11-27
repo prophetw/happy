@@ -15,6 +15,9 @@ import { githubDelivery, githubDeliveryPolicySchema, githubRemoteMatches } from 
 import { recoverWorkspaceIdentity } from './workspaceIdentity';
 import { retirementProcessProof } from './sessionProcessProofs';
 import { scanWorkspaceProcesses, type Activity, type ProcessScope } from './workspaceProcessScan';
+import { reclaimRecord, saveReclaimStatus, type ReclaimStatus } from './workspaceReclaimState';
+import { proveReclaimTarget, readReclaimTarget, type ReclaimTarget } from './workspaceReclaimGit';
+import { requestWorkspaceIdleClose, workspaceIdleEvidence } from './workspaceIdleProof';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), digest = z.string().regex(/^[a-f0-9]{64}$/);
 const commit = z.string().regex(/^[a-f0-9]{40,64}$/);
@@ -22,7 +25,7 @@ const absolute = z.string().max(4096).refine(s => isAbsolute(s) && resolve(s) ==
 export const workspacePolicySchema = z.object({ version: z.literal(1), id, machineID: id, grantID: id, projectID: id,
     root: absolute, mainRef: z.string().regex(/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9_./-]{0,240}$/)
         .refine(ref=>!ref.includes('..') && !ref.includes('//') && !ref.split('/').some(part=>part.startsWith('.')||part.endsWith('.lock')) && !/[./]$/.test(ref)),
-    remote: id.optional(), delivery: z.object({
+    remote: id.optional(), reclaimRemoteURL:z.string().min(1).max(4096).optional(), delivery: z.object({
         strategy:z.enum(['direct','pr']), remoteURL:z.string().min(1).max(4096).regex(/^[^\x00-\x1f]+$/),
         github:githubDeliveryPolicySchema.optional(),
         test:z.array(z.string().min(1).max(4096).regex(/^[^\x00-\x1f]+$/)).min(1).max(32),
@@ -90,15 +93,17 @@ export class WorkspaceLifecycle {
     }
     private snapshot(workspaceID: string): Snapshot {
         digest.parse(workspaceID);
-        return this.queue.transaction(s => {
+        return this.queue.transaction(s => this.snapshotFor(s,workspaceID),true);
+    }
+    private snapshotFor(s:{workspaces:Workspace[];tasks:QueueTask[]},workspaceID:string, automatic = false):Snapshot {
             const w = s.workspaces.find(w=>w.id===workspaceID);
             if (!w || w.grantID!==this.policy.grantID || w.projectID!==this.policy.projectID || w.root!==this.policy.root) error('WORKSPACE_SCOPE_DENIED');
             return { workspace: w!, tasks: s.tasks.filter(t=>t.workspaceID===workspaceID&&t.grantID===w.grantID),
                 related: s.tasks.filter(t=>(!terminalTask(t) || holdsReviewCheckout(t)) && (t.sessionID===w!.sessionID || t.resources.some(r=>r.key===`checkout:${hash(w!.cwd)}`
                     || r.mode==='exclusive'&&(r.key==='machine'||r.key===`repo:${hash(w!.repository)}`)))),
                 others: s.workspaces.filter(other=>other.id!==workspaceID && other.retirement?.phase!=='retired'
-                    && other.execution.candidate?.kind !== 'checkout' && overlaps(other.cwd,w!.cwd)) };
-        },true);
+                    && overlaps(other.cwd,w!.cwd) && (other.execution.candidate?.kind !== 'checkout' || automatic
+                        && !s.tasks.some(task => task.workspaceID===other.id && terminalTask(task)))) };
     }
     private binding(w: Workspace) { return fingerprint({ id:w.id, grant:w.grantID, project:w.projectID, root:w.root, cwd:w.cwd,
         repository:w.repository, base:w.baseCommit, creationBranch:w.branch, fingerprint:w.fingerprint, session:w.sessionID, manager:w.managedBy }); }
@@ -150,7 +155,7 @@ export class WorkspaceLifecycle {
         const entries=registry.split('\n\n').filter(block=>block.split('\n')[0]===`worktree ${cwd}`);
         if(entries.length>1)error('WORKSPACE_REGISTRY_CHANGED');return entries[0];
     }
-    private async inspectGit(w: Workspace, legacy = false): Promise<GitState> {
+    private async inspectGit(w: Workspace, legacy = false, automatic?: ReclaimTarget, localOnly = false): Promise<GitState> {
         this.ownership(w,legacy);
         if (realpathSync(w.cwd)!==w.cwd || lstatSync(w.cwd).uid!==process.getuid!() || !lstatSync(w.cwd).isDirectory()
             || !lstatSync(join(w.cwd,'.git')).isFile()) error('WORKSPACE_PATH_CHANGED');
@@ -186,10 +191,17 @@ export class WorkspaceLifecycle {
         if(existsSync(join(gitdir,'COMMIT_EDITMSG'))
             &&!(await this.git(w.cwd,['show','-s','--format=%B%x00',...messageHeads])).split('\0').map(text=>text.trim())
                 .includes(readFileSync(join(gitdir,'COMMIT_EDITMSG'),'utf8').trim()))error('WORKSPACE_GITDIR_ARTIFACTS');
-        let mainCommit=await this.git(w.root,['rev-parse','--verify',this.policy.mainRef+'^{commit}']);
-        if(this.policy.delivery) await this.verifyDeliveryRemote();
+        let mainCommit=automatic?.commit ?? await this.git(w.root,['rev-parse','--verify',this.policy.mainRef+'^{commit}']);
+        if(this.policy.delivery && !localOnly) await this.verifyDeliveryRemote();
         let remoteCommit: string|undefined;
-        if (this.policy.remote) {
+        if (localOnly) {
+            remoteCommit = automatic?.commit;
+        } else if (automatic) {
+            const remote = await readReclaimTarget(this.policy);
+            if (head !== automatic.head) error('WORKSPACE_HEAD_CHANGED');
+            if (remote.commit !== automatic.commit || remote.remoteURL !== automatic.remoteURL) error('WORKSPACE_REMOTE_UNCONFIRMED');
+            remoteCommit = remote.commit;
+        } else if (this.policy.remote) {
             remoteCommit=(await remoteDeliveryRefs(this.policy,[]))?.get(this.policy.mainRef);
             if(!remoteCommit)error('WORKSPACE_REMOTE_UNCONFIRMED');
             await this.git(w.root,['cat-file','-e',remoteCommit+'^{commit}']);
@@ -561,9 +573,11 @@ export class WorkspaceLifecycle {
         return tasks.slice(-20).map(t=>({id:t.id,requestID:t.requestID,sessionID:t.sessionID,state:t.state,resultCommit:t.resultCommit}));
     }
     private workspaceItem(w:Workspace,tasks:QueueTask[],r=this.read(w),reasons:string[]=[]):WorkspaceItem {
+        const reclaim = reclaimRecord(this.queue.directory,w)?.status;
+        const automatic = reclaim && `automatic_reclaim:${reclaim.state}:${reclaim.reason ?? ''}`;
         return { id: w.id, projectID: w.projectID, directory: w.cwd, branch: w.branch, baseCommit: w.baseCommit,
             revision: r.revision, managed: !!w.managedBy, state: w.retirement?.phase ?? (!w.managedBy ? 'legacy_unconfirmed' : r.disposition ? 'resolved' : 'pending_disposition'),
-            reasons: [...reasons, ...(!w.managedBy ? ['WORKSPACE_OWNER_UNCONFIRMED'] : [])],
+            reasons: [...reasons, ...(automatic ? [automatic] : []), ...(!w.managedBy ? ['WORKSPACE_OWNER_UNCONFIRMED'] : [])],
             taskCount: tasks.length, tasks: this.taskLinks(tasks),
             disposition: r.disposition, lastVerification: r.checkedAt, lastOperation: r.operations.at(-1),
             ...(w.execution.retireAfterIntegration && w.managedBy && this.policy.allowApply && this.policy.automaticRetirementArchive ? { canFinalizeIntegrated:true } : {}) };
@@ -575,16 +589,17 @@ export class WorkspaceLifecycle {
             try { inspectedHead = (await this.inspectGit(this.snapshot(workspaceID).workspace, true)).head; adoptionVerified = true; }
             catch { /* Missing/unsafe legacy ownership remains unconfirmed, never auto-adopted. */ }
         }
-        return { item: { ...item, reasons: plan.reasons }, plan, inspectedHead, adoptionVerified, result: this.result(workspaceID, undefined, true) };
+        return { item: { ...item, reasons: [...plan.reasons,...item.reasons.filter(code=>code.startsWith('automatic_reclaim:'))] },
+            plan, inspectedHead, adoptionVerified, result: this.result(workspaceID, undefined, true) };
     }
-    async plan(workspaceID: string, acceptedForFinalize = false): Promise<WorkspacePlan> {
-        const s=this.snapshot(workspaceID),w=s.workspace,r=this.read(w);
+    async plan(workspaceID: string, acceptedForFinalize = false, automatic?: ReclaimTarget): Promise<WorkspacePlan> {
+        const s=this.queue.transaction(state=>this.snapshotFor(state,workspaceID,!!automatic),true),w=s.workspace,r=this.read(w);
         const retired = w.retirement?.phase === 'retired';
         const reasons = retired ? ['already_retired'] : this.runtimeReasons(s);
         let state:GitState|undefined;
         if (!retired) {
             try {
-                state=await this.inspectGit(w);
+                state=await this.inspectGit(w,false,automatic);
                 if(state.dirty)reasons.push('staged_unstaged_or_untracked');
                 if(state.ignored)reasons.push('ignored_artifacts');
                 if(!r.disposition||r.disposition.head!==state.head)reasons.push(state.head===w.baseCommit?'no_change_needs_resolution':'result_needs_disposition');
@@ -613,6 +628,124 @@ export class WorkspaceLifecycle {
         const fd=await workspaceLock(this.queue.directory,workspaceID);
         try {return await action(fd);} finally {closeSync(fd);}
     }
+    async reclaimDue(archiveDirectory: string, limit = 1) {
+        if (this.queue.access.readOnly || !this.policy.allowApply || !this.policy.remote) return;
+        const now = this.now();
+        const workspaces = this.queue.transaction(state => state.workspaces.filter(w => w.projectID === this.policy.projectID
+            && w.grantID === this.policy.grantID && w.root === this.policy.root && w.stage === 'ready'), true);
+        const due = workspaces.flatMap(w => {
+            const record = reclaimRecord(this.queue.directory, w);
+            return record && record.status.state !== 'released' && record.nextAt <= now ? [{w, record}] : [];
+        }).sort((a,b) => a.record.nextAt - b.record.nextAt || a.w.id.localeCompare(b.w.id)).slice(0, limit);
+        for (const {w} of due) {
+            await this.locked(hash('automatic-retirement:' + w.id), async () => {
+                const current = reclaimRecord(this.queue.directory, w);
+                if (!current || current.status.state === 'released' || current.nextAt > this.now()) return;
+                let operationID = hash('automatic-retirement:v1:' + w.id);
+                let reason: string | undefined;
+                try {
+                    const snapshot = this.snapshot(w.id);
+                    // A fresh attempt is allowed only after the previous operation
+                    // durably failed with a verified intact checkout and no fence.
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        if (snapshot.workspace.retirement?.operationID === operationID) break;
+                        const previous = this.result(w.id, operationID).operation;
+                        if (previous?.state !== 'failed' || !['WORKTREE_REMOVE_REFUSED', 'WORKSPACE_IN_USE',
+                                'WORKSPACE_PLAN_CHANGED','WORKSPACE_PLAN_EXPIRED_OR_BLOCKED'].includes(previous.reason ?? '')) break;
+                        operationID = hash(operationID + ':retry');
+                    }
+                    reason = await this.reclaimOne(w.id, operationID, archiveDirectory);
+                }
+                catch (e) { reason = e instanceof ApiError ? e.code : 'WORKSPACE_INSPECTION_UNCONFIRMED'; }
+                const waiting = reason && ['WORKSPACE_REMOTE_UNCONFIRMED','WORKSPACE_NOT_IN_MAIN','queued_running_or_recovery_reference',
+                    'task_running','workspace_idle_close_pending','live_session_or_process','open_file_reference','process_entrypoint_reference','mount_reference',
+                    'WORKSPACE_IN_USE','activity_unconfirmed','WORKSPACE_CONTROL_UNAVAILABLE','WORKSPACE_MANAGER_BUSY',
+                    'WORKTREE_PREPARATION_UNCONFIRMED'].includes(reason);
+                const status: ReclaimStatus = reason ? {state:waiting?'waiting':'attention',reason,operationID}
+                    : {state:'released',operationID:this.result(w.id).operation?.id ?? operationID};
+                const attempt = current.status.reason === status.reason ? Math.min(current.attempt + 1, 10) : 0;
+                const nextAt = status.state === 'released' ? 0 : this.now() + Math.min(30_000 * 2 ** attempt,
+                    status.state === 'attention' ? 3_600_000 : 300_000);
+                saveReclaimStatus(this.queue.directory,{...current,status,attempt,nextAt});
+            });
+        }
+    }
+
+    private async reclaimOne(workspaceID: string, operationID: string, archiveDirectory: string): Promise<string | undefined> {
+        await this.authorize();
+        const s = this.queue.transaction(state=>this.snapshotFor(state,workspaceID,true),true), w = s.workspace;
+        if (!reclaimRecord(this.queue.directory,w)) return 'WORKSPACE_OWNER_UNCONFIRMED';
+        const existing = this.result(workspaceID,operationID).operation;
+        if (w.retirement?.phase === 'retired' && this.result(w.id).operation?.state === 'removed') return undefined;
+        if (s.tasks.some(t => !terminalTask(t)) || s.related.length || s.others.length) return 'queued_running_or_recovery_reference';
+        if (s.tasks.length === 0) return 'task_running';
+        const [task] = s.tasks;
+        if (s.tasks.length !== 1 || task.sessionID !== w.sessionID) return 'WORKSPACE_SHARED_TASKS';
+        if (task.worktreeDirty === true) return 'WORKSPACE_UNSAVED_ARTIFACTS';
+        if (!w.baseCommit || !w.branch || task.state !== 'completed' || !task.dispatched || !task.resultCommit || task.worktreeDirty !== false)
+            return 'WORKSPACE_RESULT_UNCONFIRMED';
+        if ([w.cwd,w.root,w.repository].some(path=>overlaps(path,archiveDirectory))
+            || inside(archiveDirectory,join(this.queue.directory,'worktrees'))) return 'WORKSPACE_ARCHIVE_NOT_INDEPENDENT';
+
+        const archive = new MetadataStore(archiveDirectory,128*1024), key = 'reclaim:' + operationID;
+        const targetSchema = z.strictObject({commit,head:commit,remoteURL:z.string().min(1).max(4096),
+            proof:z.enum(['ancestor','exact-content','pull-request'])});
+        const savedSchema = z.strictObject({ binding:digest,tasks:digest,policy:digest,target:targetSchema,plan:planSchema,
+            requestID:id,sessionID:id,taskID:id,retainedRef:z.string().max(256),closedThread:id.optional() });
+        const saved = archive.get(key);
+        let entry;
+        if (existing) {
+            if (!saved) return 'WORKSPACE_RECOVERY_UNCONFIRMED';
+            entry = savedSchema.parse(saved);
+            if (existing.state === 'failed' && w.retirement?.operationID !== operationID)
+                return existing.reason ?? 'WORKTREE_REMOVE_REFUSED';
+        } else {
+            this.ownership(w);
+            const target = await proveReclaimTarget(this.policy,w.repository,archiveDirectory,
+                {head:task.resultCommit,base:w.baseCommit,branch:w.branch});
+            const preview = await this.plan(w.id,true,target);
+            const blockers = preview.reasons.filter(reason => !['result_needs_disposition','no_change_needs_resolution',
+                'target_main_changed_reverify_disposition','policy_changed_reverify_disposition','result_changed_reverify_disposition'].includes(reason));
+            if (blockers.length) {
+                if (blockers.length===1 && blockers[0]==='live_session_or_process') {
+                    await this.authorize();
+                    if (this.queue.transaction(state => this.taskDigest(this.snapshotFor(state,w.id,true)) === this.taskDigest(s)
+                        && requestWorkspaceIdleClose(this.queue.directory,this.policy.machineID,w,task,this.now()),true))
+                        return 'workspace_idle_close_pending';
+                }
+                return blockers[0];
+            }
+            const closedThread = workspaceIdleEvidence(this.queue.directory,w.id,task);
+            if (closedThread === undefined) return 'WORKSPACE_RECOVERY_UNCONFIRMED';
+            const kind = target.head === w.baseCommit ? 'no-change' : 'integrated';
+            const current = this.read(w);
+            if (current.disposition?.head !== target.head || current.disposition.kind !== kind
+                || current.disposition.remoteCommit !== target.commit || current.disposition.policy !== this.policyHash
+                || current.disposition.taskDigest !== this.taskDigest(s)) {
+                await this.resolve(w.id,{operationID:hash(operationID + ':proof:' + current.revision),expectedRevision:current.revision,
+                    head:target.head,kind,source:'automatic-remote-proof:' + operationID},target);
+            }
+            const plan = await this.plan(w.id,true,target);
+            if (!plan.eligible) return plan.reasons[0] ?? 'WORKSPACE_INSPECTION_UNCONFIRMED';
+            const disposition=this.read(w).disposition!;
+            entry = savedSchema.parse({binding:this.binding(w),tasks:this.taskDigest(s),policy:this.policyHash,target,plan,
+                requestID:task.requestID,sessionID:task.sessionID,taskID:task.id,retainedRef:disposition.retainedRef,
+                closedThread:closedThread ?? undefined});
+            archive.set(key,entry);
+        }
+        const evidence = entry;
+        const verifyArchive = () => {
+            const current = this.queue.transaction(state=>this.snapshotFor(state,w.id,true),true);
+            if (fingerprint(savedSchema.parse(archive.get(key))) !== fingerprint(evidence)
+                || evidence.binding !== this.binding(current.workspace) || evidence.tasks !== this.taskDigest(current)
+                || evidence.policy !== this.policyHash || evidence.target.head !== task.resultCommit)
+                error('WORKSPACE_ARCHIVE_CHANGED');
+        };
+        verifyArchive();
+        const result = await this.apply(evidence.plan,operationID,verifyArchive,evidence.target);
+        return result.state === 'removed' ? undefined : result.reason ?? 'WORKSPACE_RECOVERY_UNCONFIRMED';
+    }
+
     async adopt(workspaceID:string,operationID:string,expectedRevision:number,expectedHead:string) {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(operationID);commit.parse(expectedHead);
@@ -630,7 +763,7 @@ export class WorkspaceLifecycle {
             r.binding=this.binding(next);r.revision++;const receipt={id:operationID,fingerprint:fp,state:'adopted' as const,revision:r.revision};this.add(r,receipt);this.write(next,r);return receipt;
         });
     }
-    async resolve(workspaceID:string,input:{operationID:string;expectedRevision:number;head:string;kind:z.infer<typeof dispositionSchema>['kind'];source:string;pullRequestMerge?:string}) {
+    async resolve(workspaceID:string,input:{operationID:string;expectedRevision:number;head:string;kind:z.infer<typeof dispositionSchema>['kind'];source:string;pullRequestMerge?:string}, automatic?: ReclaimTarget) {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(input.operationID);commit.parse(input.head);z.string().min(1).max(200).parse(input.source);
         return this.locked(workspaceID,async()=>{
@@ -639,7 +772,7 @@ export class WorkspaceLifecycle {
             const old=this.receipt(r,input.operationID,fp);if(old)return old;
             if(r.operations.length>=16)error('WORKSPACE_OPERATION_LIMIT');
             if(r.revision!==input.expectedRevision||w.retirement)error('WORKSPACE_REVISION_CHANGED');
-            const state=await this.inspectGit(w);
+            const state=await this.inspectGit(w,false,automatic);
             if(state.head!==input.head)error('WORKSPACE_HEAD_CHANGED');
             if(state.dirty||state.ignored)error('WORKSPACE_UNSAVED_ARTIFACTS');
             if(this.runtimeReasons(s).length)error('WORKSPACE_RESULT_UNCONFIRMED');
@@ -650,7 +783,8 @@ export class WorkspaceLifecycle {
             }
             let proof:z.infer<typeof dispositionSchema>['proof']='retained-ref';
             if(input.kind==='no-change'&&state.head!==w.baseCommit)error('WORKSPACE_NOT_UNCHANGED');
-            if(['integrated','no-change'].includes(input.kind)) {
+            if (automatic && ['integrated','no-change'].includes(input.kind)) proof=automatic.proof;
+            else if(['integrated','no-change'].includes(input.kind)) {
                 const target=state.remoteCommit??state.mainCommit;
                 try {await this.git(w.root,['merge-base','--is-ancestor',state.head,target]);proof='ancestor';}
                 catch {
@@ -767,7 +901,7 @@ export class WorkspaceLifecycle {
         if (!archivedPlan) error('WORKSPACE_ARCHIVE_CHANGED');
         return this.apply(archivedPlan,operationID,verifyArchive);
     }
-    async apply(raw:WorkspacePlan,operationID:string, verifyArchive?: () => void) {
+    async apply(raw:WorkspacePlan,operationID:string, verifyArchive?: () => void, automatic?: ReclaimTarget) {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(operationID);const parsed=planSchema.safeParse(raw);if(!parsed.success)error('WORKSPACE_PLAN_INVALID');
         const plan=parsed.data!,{id:planID,...body}=plan;
@@ -777,7 +911,7 @@ export class WorkspaceLifecycle {
             const s=this.snapshot(plan.workspaceID),w=s.workspace,r=this.read(w),fp=fingerprint({action:'apply',policy:this.policyHash,planID,operationID});
             let op=this.receipt(r,operationID,fp);
             if(op&&op.state!=='applying'){
-                if(op.state==='failed'&&w.retirement?.operationID===operationID)return this.fail(w,r,op,op.reason??'WORKTREE_REMOVE_REFUSED');
+                if(op.state==='failed'&&w.retirement?.operationID===operationID)return this.fail(w,r,op,op.reason??'WORKTREE_REMOVE_REFUSED',automatic);
                 return op;
             }
             if(!this.policy.allowApply)error('WORKSPACE_APPLY_DISABLED');
@@ -792,16 +926,16 @@ export class WorkspaceLifecycle {
             // after a long stop. It still has to match a new full safety check.
             const recoverArchived=!!verifyArchive&&op?.state==='applying'&&w.retirement?.operationID===operationID;
             if((!recoverArchived&&(this.now()>plan.expiresAt||this.now()<plan.checkedAt))||!plan.eligible){
-                if(op)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
+                if(op)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED',automatic);
                 error('WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
             }
-            const check=await this.plan(plan.workspaceID, !!verifyArchive);
+            const check=await this.plan(plan.workspaceID, !!verifyArchive,automatic);
             if(op) {
                 // Only our own persisted fence/revision may differ while recovering an interrupted command.
                 check.revision=plan.revision;check.reasons=check.reasons.filter(x=>x!=='retirement_in_progress');check.eligible=check.reasons.length===0;
             }
             if(!check.eligible||check.binding!==plan.binding||check.git!==plan.git||check.tasks!==plan.tasks||check.revision!==plan.revision){
-                if(op)return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED');
+                if(op)return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED',automatic);
                 error('WORKSPACE_PLAN_CHANGED');
             }
             if(!op) {
@@ -812,33 +946,34 @@ export class WorkspaceLifecycle {
             if(!w.retirement) {
                 try {this.queue.transaction(q=>{
                     const current=q.workspaces.find(x=>x.id===w.id)!;
-                    if(current.retirement||this.binding(current)!==plan.binding||q.tasks.some(t=>(!terminalTask(t) || holdsReviewCheckout(t))&&(t.workspaceID===w.id||t.sessionID===w.sessionID||t.resources.some(x=>x.key===`checkout:${hash(w.cwd)}`
+                    if(current.retirement||this.binding(current)!==plan.binding
+                        || automatic && this.taskDigest(this.snapshotFor(q,w.id,true))!==plan.tasks || q.tasks.some(t=>(!terminalTask(t) || holdsReviewCheckout(t))&&(t.workspaceID===w.id||t.sessionID===w.sessionID||t.resources.some(x=>x.key===`checkout:${hash(w.cwd)}`
                         ||x.mode==='exclusive'&&(x.key==='machine'||x.key===`repo:${hash(w.repository)}`)))))error('WORKSPACE_IN_USE');
                     current.retirement={operationID,phase:'retiring',retainedRef:op!.retainedRef!,retainedCommit:op!.head!};
-                });} catch {return this.fail(w,r,op,'WORKSPACE_IN_USE');}
+                });} catch {return this.fail(w,r,op,'WORKSPACE_IN_USE',automatic);}
             }
             // Network authorization precedes the last filesystem/activity probe.
             // It must not open an extra async gap after that safety snapshot.
-            try { await this.authorize(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
+            try { await this.authorize(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED',automatic); }
             // Recheck after the durable fence; heavy work is outside the queue transaction.
-            const latest=await this.plan(w.id, !!verifyArchive);
-            if(latest.git!==plan.git||latest.tasks!==plan.tasks||latest.reasons.some(reason=>reason!=='retirement_in_progress'))return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED');
-            try { verifyArchive?.(); } catch { return this.fail(w,r,op,'WORKSPACE_ARCHIVE_CHANGED'); }
-            try { this.authorizationCurrent(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
-            if(!recoverArchived&&(this.now()>plan.expiresAt||this.now()<plan.checkedAt))return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
+            const latest=await this.plan(w.id, !!verifyArchive,automatic);
+            if(latest.git!==plan.git||latest.tasks!==plan.tasks||latest.reasons.some(reason=>reason!=='retirement_in_progress'))return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED',automatic);
+            try { verifyArchive?.(); } catch { return this.fail(w,r,op,'WORKSPACE_ARCHIVE_CHANGED',automatic); }
+            try { this.authorizationCurrent(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED',automatic); }
+            if(!recoverArchived&&(this.now()>plan.expiresAt||this.now()<plan.checkedAt))return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED',automatic);
             try {
                 await this.git(w.root,['worktree','remove','--',w.cwd],fd);
             } catch {
                 if(!existsSync(w.cwd)){op.reason='WORKSPACE_REMOVAL_UNCONFIRMED';this.write(w,r);error('WORKSPACE_REMOVAL_UNCONFIRMED');}
-                return this.fail(w,r,op,'WORKTREE_REMOVE_REFUSED');
+                return this.fail(w,r,op,'WORKTREE_REMOVE_REFUSED',automatic);
             }
             if(existsSync(w.cwd)||this.entry(await this.registry(w),w.cwd))error('WORKSPACE_REMOVAL_UNCONFIRMED');
             return this.finish(w,r,op,'git-confirmed');
         });
     }
-    private async fail(w:Workspace,r:Record,op:z.infer<typeof operationSchema>,reason:string) {
+    private async fail(w:Workspace,r:Record,op:z.infer<typeof operationSchema>,reason:string,automatic?:ReclaimTarget) {
         let intact=false;
-        if(existsSync(w.cwd)&&op.checkout){try{intact=(await this.inspectGit(w)).checkout===op.checkout;}catch{/* Unknown keeps the fence. */}}
+        if(existsSync(w.cwd)&&op.checkout){try{intact=(await this.inspectGit(w,false,automatic,!!automatic)).checkout===op.checkout;}catch{/* Unknown keeps the fence. */}}
         if(!intact){op.state='applying';op.reason='WORKSPACE_RECOVERY_UNCONFIRMED';this.write(w,r);return op;}
         op.state='failed';op.reason=reason;r.revision++;op.revision=r.revision;this.write(w,r);
         // Clear only this operation's fence, only while the original path still exists.
@@ -847,7 +982,10 @@ export class WorkspaceLifecycle {
     }
     private finish(w:Workspace,r:Record,op:z.infer<typeof operationSchema>,removal:'git-confirmed'|'absence-after-intent') {
         this.queue.transaction(q=>{const current=q.workspaces.find(x=>x.id===w.id)!;if(current.retirement?.operationID!==op.id)error('WORKSPACE_RECOVERY_UNCONFIRMED');current.retirement!.phase='retired';});
-        op.state='removed';op.removal=removal;r.revision++;op.revision=r.revision;r.checkedAt=this.now();this.write(w,r);return op;
+        op.state='removed';delete op.reason;op.removal=removal;r.revision++;op.revision=r.revision;r.checkedAt=this.now();this.write(w,r);
+        const reclaim = reclaimRecord(this.queue.directory,w);
+        if (reclaim) saveReclaimStatus(this.queue.directory,{...reclaim,status:{state:'released',operationID:op.id},nextAt:0});
+        return op;
     }
     result(workspaceID:string,operationID?:string,history=false) {
         const w=this.snapshot(workspaceID).workspace,r=this.read(w),last=operationID?r.operations.find(op=>op.id===operationID):r.operations.at(-1);

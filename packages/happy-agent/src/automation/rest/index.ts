@@ -23,10 +23,12 @@ export { EncryptedCredentialProvider } from '../production/secrets';
 export type { SecretProvider } from '../production/secrets';
 
 export { TaskQueue } from './taskQueue';
-export { cleanCompletedWorkspace } from './taskWorkspaces';
+export { cleanCompletedWorkspace, withManagedWorkspaceLaunch } from './taskWorkspaces';
 export { WorkspaceLifecycle, workspacePolicySchema } from './workspaceLifecycle';
 export type { WorkspacePolicy, WorkspacePlan, ActivityProbe } from './workspaceLifecycle';
 export { SessionProcessProofs, readLinuxProcess, LinuxProcessIdentitySchema } from './sessionProcessProofs';
+export { readWorkspaceIdleClose, acknowledgeWorkspaceIdleClose } from './workspaceIdleProof';
+export { managedWorkspaceCacheEnvironment } from './workspaceReclaimState';
 export type { LinuxProcessIdentity } from './sessionProcessProofs';
 export { SessionProcessArchive, PersistedSessionProcessSchema } from './sessionProcessProofs';
 export type { PersistedSessionProcess } from './sessionProcessProofs';

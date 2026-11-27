@@ -21,9 +21,10 @@ export const workspaceUsage = 'happy-control workspaces inventory|plan|result|ad
 /** Same owner-authoritative queue for local CLI and authenticated owner UI. */
 export function openWorkspaceLifecycle(workerConfig: string, policyFile: string, options: {
     homeDirectory?: string; activity?: ActivityProbe; processProbeSocket?: string; readOnly?: boolean; authorize?: () => void | Promise<void>;
-    authorizationCurrent?: () => void; ownerDirectorySelection?: boolean;
+    authorizationCurrent?: () => void; ownerDirectorySelection?: boolean; reclaimRemoteURL?:string;
 } = {}) {
     const policy = workspacePolicySchema.parse(JSON.parse(privateRead(policyFile, 32768).toString('utf8')));
+    if (options.reclaimRemoteURL && !policy.reclaimRemoteURL) policy.reclaimRemoteURL=options.reclaimRemoteURL;
     const config = readProductionConfig(workerConfig);
     if (config.role !== 'worker' || config.registration.machineID !== policy.machineID) throw new ApiError('WORKSPACE_SCOPE_DENIED', 403);
     const known=config.registration.projects.find(p=>p.directory===policy.root);

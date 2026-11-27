@@ -189,6 +189,20 @@ describe('ApiSessionClient v3 messages API migration', () => {
         vi.restoreAllMocks();
     });
 
+    it('checks Relay for late user input even after the session socket is closed', async () => {
+        const client = new ApiSessionClient('fixture-token', session);
+        const row = (seq: number, body: unknown) => ({
+            seq, content: {t: 'encrypted', c: encryptContent(session, body)},
+        });
+        mockAxiosGet.mockResolvedValueOnce({data:{hasMore:false,messages:[row(11,{role:'agent',content:'done'})]}});
+        expect(await client.confirmNoLaterUserInput(10)).toBe(true);
+        await client.close();
+        mockAxiosGet.mockResolvedValueOnce({data:{hasMore:false,messages:[row(11,{role:'user',content:'new input'})]}});
+        expect(await client.confirmNoLaterUserInput(10)).toBe(false);
+        mockAxiosGet.mockResolvedValueOnce({data:{hasMore:false,messages:[row(12,{role:'agent',content:'unexpected gap'})]}});
+        expect(await client.confirmNoLaterUserInput(10)).toBe(false);
+    });
+
     it('reports permission transitions without exposing the request details', async () => {
         const client = new ApiSessionClient('token', session);
         mockSocket.emitWithAck.mockImplementation(async (_event: string, { expectedVersion, agentState }: any) => ({

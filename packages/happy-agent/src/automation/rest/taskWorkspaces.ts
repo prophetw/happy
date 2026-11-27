@@ -1,6 +1,7 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, realpathSync, constants, openSync, closeSync, fstatSync, lstatSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative } from 'node:path';
+import { userInfo } from 'node:os';
 import { promisify } from 'node:util';
 import { hash } from '../journal';
 import { canonicalBody } from './auth';
@@ -8,6 +9,8 @@ import { ApiError } from './schema';
 import { privateDirectory } from './privateFs';
 import { TaskQueue, executionSchema, type Workspace, type Resource } from './taskQueue';
 import { rememberWorkspaceIdentity } from './workspaceIdentity';
+import { reclaimRecord, rememberReclaimCreation } from './workspaceReclaimState';
+import { workspaceIdleCloseFenced } from './workspaceIdleProof';
 import { checkoutDigest, objectID, restrictedExecution } from './execution';
 
 const gitEnvironment = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
@@ -153,6 +156,26 @@ export async function finishTestCheckout(queue: TaskQueue, workspace: Workspace)
     } finally { closeSync(fd); }
 }
 
+/** Coordinate direct Happy starts/resumes with the Owner's final Git action. */
+export async function withManagedWorkspaceLaunch<T>(directory: string, launch: () => Promise<T>,
+    machines = join(userInfo().homedir,'.local/state/happy-control/machines')):Promise<T> {
+    let target = resolve(directory);
+    try { target=realpathSync(target); } catch { /* A reclaimed path still needs its fence checked. */ }
+    const [machine, kind, id] = relative(machines,target).split('/');
+    if (kind!=='worktrees' || !/^[a-f0-9]{64}$/.test(machine) || !/^[a-f0-9]{64}$/.test(id)) return launch();
+    const queueDirectory=join(machines,machine);
+    if (!existsSync(join(queueDirectory,'workspace-reclamation'))) return launch();
+    const fd=await workspaceLock(queueDirectory,id);
+    try {
+        const queue=new TaskQueue(queueDirectory,{}, {readOnly:true});
+        const workspace=queue.transaction(state=>state.workspaces.find(w=>w.id===id),true);
+        if (!workspace || !reclaimRecord(queueDirectory,workspace)) return await launch();
+        if (workspace.retirement) throw new ApiError(workspace.retirement.phase==='retired'?'WORKSPACE_RETIRED':'WORKSPACE_RETIRING',409);
+        if (workspaceIdleCloseFenced(queueDirectory,id)) throw new ApiError('WORKSPACE_IDLE_CLOSE_PENDING',409);
+        return await launch();
+    } finally { closeSync(fd); }
+}
+
 const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 export function candidateInstruction(w: Workspace) {
     const candidate = w.execution.candidate;
@@ -223,6 +246,7 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
                 await authorize();
                 const mode = workspace.branch ? ['-b', workspace.branch] : ['--detach'];
                 await gitAsync(input.root,['worktree','add',...mode,workspace.cwd,workspace.baseCommit!],fd);
+                rememberReclaimCreation(queue.directory, workspace);
             }
             privateDirectory(workspace.temporaryDirectory,true);
             // A partially checked out/conflicting directory is retained. Never reset/force it.

@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import { fork } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { userInfo } from 'node:os';
+import { setTimeout } from 'node:timers';
 import { z, ZodError } from 'zod';
 import { workspaceCatalogSchema, workspaceDetailSchema, workspaceListSchema, workspacePlanSchema,
     workspaceReadSchema, workspaceResultSchema, workspaceWriteSchema, workspaceDeliveryRequestSchema, workspaceDeliveryReceiptSchema, workspaceOperationSchema, type WorkspaceWrite } from '@slopus/happy-wire';
@@ -12,6 +14,7 @@ import { isServiceAuthorization } from '../rest/serviceTokens';
 import { hash } from '../journal';
 import { readWorkspaceOwnerConfig, workspaceOwnerScope, workspaceOwnerControlProjects } from './workspaceOwner';
 import { readProductionConfig } from './config';
+import { dueReclaimProjects } from '../rest/workspaceReclaimState';
 
 type JobReply = { ok: true; data: unknown } | { ok: false; error: { code: string } };
 export type WorkspaceOwnerRunner = (ownerID: string, request: unknown, plan?: unknown, authorization?:string) => Promise<JobReply>;
@@ -50,7 +53,8 @@ export function workspaceOwnerRunner(configFile: string, jobEntry: string): Work
  * as Control owner routes, never persisted/logged/delegated to a model. A fixed
  * trusted backend child receives it only in private IPC for final authorization. */
 export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry: string; verifyOwner?: (authorization: string|undefined) => Promise<string>;
-    verifyControl?: (authorization:string|undefined,ownerID:string,readOnly?:boolean)=>Promise<string[]>; run?: WorkspaceOwnerRunner; now?: () => number }) {
+    verifyControl?: (authorization:string|undefined,ownerID:string,readOnly?:boolean)=>Promise<string[]>; run?: WorkspaceOwnerRunner; now?: () => number;
+    reclaimCredential?: () => string | undefined }) {
     const config = readWorkspaceOwnerConfig(options.configFile), now = options.now ?? Date.now;
     // Read only registration to select the account verifier; no signing keys loaded.
     const worker = readProductionConfig(config.workerConfig);
@@ -88,6 +92,31 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
     });
     app.setNotFoundHandler((_req,reply) => reply.code(404).send({ version:1,ok:false,error:{code:'NOT_FOUND'} }));
     const ok = (data: unknown) => ({ version:1,ok:true,data });
+    let reclaimTimer: ReturnType<typeof setTimeout> | undefined;
+    let reclaiming: Promise<void> | undefined;
+    let closing = false;
+    const machineQueue = join(config.homeDirectory ?? userInfo().homedir,'.local/state/happy-control/machines',hash(worker.registration.machineID));
+    const background = async () => {
+        const due = dueReclaimProjects(machineQueue,now());
+        if (!due.size || closing) return;
+        const authorization = options.reclaimCredential?.();
+        if (!authorization) return;
+        const ownerID = await verifyOwner(authorization);
+        const allowed = new Set(await verifyControl(authorization,ownerID));
+        for (const project of workspaceOwnerScope(options.configFile,ownerID).projects) {
+            if (closing) break;
+            if (due.has(project.id) && allowed.has(project.id) && project.policy.allowApply && project.policy.remote)
+                await run(ownerID,{action:'automatic-reclamation',projectID:project.id},undefined,authorization);
+        }
+    };
+    const schedule = () => {
+        if (!options.reclaimCredential || closing) return;
+        reclaimTimer = setTimeout(() => {
+            reclaiming = background().catch(() => {}).finally(schedule);
+        },30_000);
+    };
+    app.addHook('onReady',async()=>schedule());
+    app.addHook('preClose',async()=>{closing=true;clearTimeout(reclaimTimer);});
     const scope = (ownerID: string, request: { machineID:string;projectID:string }, allowed?:Set<string>) => {
         const s = workspaceOwnerScope(options.configFile,ownerID);
         if (request.machineID !== s.worker.registration.machineID || !s.projects.some(p=>p.id===request.projectID) || allowed&&!allowed.has(request.projectID)) throw new ApiError('WORKSPACE_SCOPE_DENIED',403);
@@ -117,7 +146,7 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
             const intent=readIntent(`operation:${ownerID}:${request.operationID}`);
             if(intent && (intent.request.machineID!==request.machineID||intent.request.projectID!==request.projectID||intent.request.workspaceID!==request.workspaceID))throw new ApiError('WORKSPACE_SCOPE_DENIED',403);
             return ok({operationID:request.operationID,status:result.operation?(result.operation.state==='applying'?'unknown':'settled')
-                :active.has(`operation:${ownerID}:${request.operationID}`)?'pending':intent?.status==='settled'?'settled':'unknown',receipt:result.operation??intent?.receipt,error:intent?.error});
+                :active.has(`operation:${ownerID}:${request.operationID}`)?'pending':intent?.status==='settled'?'settled':'unknown',receipt:result.operation??intent?.receipt,error:result.operation?.state==='removed'?undefined:intent?.error});
         }
         return ok(result);
     });
@@ -162,7 +191,7 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
         admitted.add(req);
         const current=intent;
         const promise=(async()=>{
-            try {current.receipt=workspaceOperationSchema.parse(await execute(ownerID,request,plan,req.headers.authorization));current.status=current.receipt.state==='applying'?'unknown':'settled';}
+            try {current.receipt=workspaceOperationSchema.parse(await execute(ownerID,request,plan,req.headers.authorization));current.status=current.receipt.state==='applying'?'unknown':'settled';delete current.error;}
             catch(error) {current.status=!previouslyUncertain&&error instanceof ApiError&&beforeEffect.has(error.code)?'settled':'unknown';current.error=error instanceof ApiError?error.code:'WORKSPACE_RESULT_UNKNOWN';}
             intents.set(key,current);
             // Revocation/account/project changes while a job ran do not return content.
@@ -171,6 +200,6 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
         })().finally(()=>active.delete(key));
         active.set(key,promise);return promise;
     });
-    app.addHook('onClose',async()=>{await Promise.allSettled([...active.values(),...reads]);});
+    app.addHook('onClose',async()=>{await Promise.allSettled([...active.values(),...reads,...(reclaiming?[reclaiming]:[])]);});
     return app;
 }

@@ -11,6 +11,8 @@ import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
 import { createEnvelope } from '@slopus/happy-wire';
+import { acknowledgeWorkspaceIdleClose, readWorkspaceIdleClose } from 'happy-agent/automation';
+import { lstatSync, realpathSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { logger } from '@/ui/logger';
 import { Credentials, readSettings } from '@/persistence';
@@ -377,7 +379,13 @@ export async function runCodex(opts: {
         });
         session.sendSessionEvent({ type: 'message', message: 'Could not confirm delivery of your message to Codex. Please check the conversation before sending it again.' });
     });
-    session.onUserMessage(handleUserMessage);
+    let receivedInput = 0;
+    let receivedSequence: number | undefined;
+    session.onUserMessage(message => {
+        receivedInput++;
+        receivedSequence = message.seq;
+        handleUserMessage(message);
+    });
     let thinking = false;
     let turnOutcome: CodexTurnOutcome | null = null;
     let currentTurnId: string | null = null;
@@ -446,6 +454,9 @@ export async function runCodex(opts: {
     // Turn cancellation uses client.interruptTurn() — no AbortController hack needed.
     let abortController = new AbortController();
     let shouldExit = false;
+    const autoCloseWorkspace = opts.startedBy === 'daemon' ? process.env.HAPPY_TASK_ID : undefined;
+    let idleClose: { close: NonNullable<ReturnType<typeof readWorkspaceIdleClose>>; threadID: string } | undefined;
+    let soleTurnCompleted = false;
 
     /**
      * Handles aborting the current task/inference without exiting the process.
@@ -985,8 +996,28 @@ export async function runCodex(opts: {
             let message: { message: string; mode: EnhancedMode; isolate: boolean; hash: string; attachments?: PendingAttachment[] } | null = pending;
             pending = null;
             if (!message) {
+                const canClose = () => !!autoCloseWorkspace && soleTurnCompleted && receivedInput===1
+                    && messageQueue.size()===0 && !communicationHandler?.hasPendingQuestions() && !abortInProgress;
+                if (canClose()) {
+                    try {
+                        const close = readWorkspaceIdleClose(process.cwd(),autoCloseWorkspace,session.sessionId,receivedSequence);
+                        if (close && client.threadId) {
+                            const {thread} = await client.readThread({threadId:client.threadId,includeTurns:true});
+                            const last = thread.turns?.at(-1);
+                            const history = thread.path && realpathSync(thread.path);
+                            const directory = process.cwd();
+                            if (last?.status==='completed' && last.id===close.request.turnID && history
+                                && history!==directory && !history.startsWith(directory+'/') && lstatSync(history).isFile()
+                                && lstatSync(history).size>0 && canClose() && await session.confirmNoLaterUserInput(close.request.sequence)
+                                && canClose() && close.request.expiresAt>Date.now()) {
+                                idleClose={close,threadID:thread.id};
+                                break; // Exit through normal runner cleanup without interrupting a turn.
+                            }
+                        }
+                    } catch { /* No verified close or history means keep the session. */ }
+                }
                 // Capture the current signal to distinguish idle-abort from queue close
-                const waitSignal = abortController.signal;
+                const waitSignal = canClose() ? AbortSignal.any([abortController.signal,AbortSignal.timeout(5000)]) : abortController.signal;
                 const batch = await messageQueue.waitForMessagesAndGetAsString(waitSignal);
                 if (!batch) {
                     // If wait was aborted (e.g., remote abort with no active inference), ignore and continue
@@ -1147,6 +1178,7 @@ export async function runCodex(opts: {
                 // The push endpoint derives its sequence from persisted messages.
                 // Persist the outcome before recording its attention event.
                 if (turnOutcome && !shouldExit) await session.flush();
+                soleTurnCompleted = receivedInput===1 && (turnOutcome as CodexTurnOutcome | null)?.status==='completed';
                 emitReadyIfIdle({
                     pending,
                     queueSize: () => messageQueue.size(),
@@ -1186,6 +1218,7 @@ export async function runCodex(opts: {
             reconnectionHandle.cancel();
         }
 
+        let sessionClosed = false;
         try {
             logger.debug('[codex]: sendSessionDeath');
             session.sendSessionDeath();
@@ -1194,12 +1227,20 @@ export async function runCodex(opts: {
             logger.debug('[codex]: flush done');
             logger.debug('[codex]: session.close begin');
             await session.close();
+            sessionClosed = true;
             logger.debug('[codex]: session.close done');
         } catch (e) {
             logger.debug('[codex]: Error while closing session', e);
         }
         logger.debug('[codex]: client.disconnect begin');
         await client.disconnect();
+        if (idleClose && sessionClosed && receivedInput===1 && messageQueue.size()===0) {
+            try {
+                if (await session.confirmNoLaterUserInput(idleClose.close.request.sequence))
+                    acknowledgeWorkspaceIdleClose(idleClose.close,idleClose.threadID);
+            }
+            catch { /* Absence of the durable acknowledgment prevents automatic removal. */ }
+        }
         logger.debug('[codex]: client.disconnect done');
         // Stop Happy MCP server
         logger.debug('[codex]: happyServer.stop');
