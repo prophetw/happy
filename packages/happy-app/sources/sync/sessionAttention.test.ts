@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { decodeAttentionItem, encodeAttentionValue, getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecord } from './sessionAttention';
+import { decodeAttentionItem, encodeAttentionValue, getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, reconcileSessionAttention, type SessionAttentionRecord } from './sessionAttention';
 import type { Session } from './storageTypes';
 import { getSessionAttentionStatus } from '@/utils/sessionListStatus';
 import { resolveSessionState } from './sessionState';
@@ -26,9 +26,20 @@ describe('attention event reconciliation', () => {
         expect(getSessionAttentionKind({ ...session, lastTurnStatus: 'partial' }, record({ kind: 'done' }))).toBe('failed');
     });
     it('synchronizes only event metadata and strips local retry fields from the wire value', () => {
-        const value = encodeAttentionValue(record({ pendingRead: true }));
+        const value = encodeAttentionValue(record({ pendingRead: true, pendingProjection: true }));
         expect(decodeAttentionItem({ key: 'session-attention-v1:s', value, version: 2 })).toEqual(['s', record({ version: 2 })]);
         expect(decodeAttentionItem({ key: 'unrelated', value, version: 1 })).toBeNull();
+    });
+    it('projects a legacy pending permission and waits for a newer state before resolving it', () => {
+        const pushed = record({ kind: 'permission', eventId: 'permission:1:2', read: true });
+        const session = { metadata: {}, agentStateVersion: 2, agentState: null, updatedAt: 12 } as Session;
+        expect(reconcileSessionAttention(session, pushed)).toBe(pushed);
+        const waiting = reconcileSessionAttention({ ...session, agentStateVersion: 3, agentState: {
+            requests: { p: { tool: 'Bash', arguments: {}, createdAt: 13 } },
+        } }, pushed);
+        expect(waiting).toMatchObject({ pendingProjection: true, action: { kind: 'permission', version: 3 } });
+        expect(reconcileSessionAttention({ ...session, agentStateVersion: 4, updatedAt: 15 }, waiting))
+            .toMatchObject({ pendingProjection: true, action: { kind: null, version: 4, at: 15 } });
     });
     it('keeps an offline read while retrying the same event but exposes a newer completion', () => {
         const read = readAttentionRecord(record());

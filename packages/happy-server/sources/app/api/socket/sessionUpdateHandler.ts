@@ -7,6 +7,16 @@ import { AsyncLock } from "@/utils/lock";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { Socket } from "socket.io";
+import { z } from 'zod';
+import { inTx, type Tx } from '@/storage/inTx';
+import { archiveSessionAttention, retireAttentionResult, syncAttentionAction } from '@/app/push/sessionAttention';
+import { attentionActionKindSchema, attentionVisibilitySchema } from '@/app/push/sessionAttentionValue';
+
+const attentionStateSchema = z.object({
+    kind: attentionActionKindSchema.nullable(),
+    at: z.number().int().nonnegative(),
+    visibility: attentionVisibilitySchema,
+});
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
     const labels = getMetricsLabelsFromSocket(socket);
@@ -103,13 +113,20 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             }
 
             // Update agent state
-            const { count } = await db.session.updateMany({
-                where: { id: sid, agentStateVersion: expectedVersion },
-                data: {
-                    agentState: agentState,
-                    agentStateVersion: expectedVersion + 1
+            const attention = attentionStateSchema.safeParse(data.attention);
+            const updateState = async (tx: Tx) => {
+                const result = await tx.session.updateMany({
+                    where: { id: sid, agentStateVersion: expectedVersion },
+                    data: { agentState, agentStateVersion: expectedVersion + 1 }
+                });
+                if (result.count && attention.success) {
+                    const { visibility, ...action } = attention.data;
+                    const current = await tx.session.findUnique({ where: { id: sid }, select: { active: true } });
+                    await syncAttentionAction(tx, userId, sid, { ...action, version: expectedVersion + 1 }, visibility, current?.active === true);
                 }
-            });
+                return result;
+            };
+            const { count } = await (attention.success ? inTx(updateState) : updateState(db));
             if (count === 0) {
                 callback({ result: 'version-mismatch', version: session.agentStateVersion, agentState: session.agentState });
                 return null;
@@ -137,10 +154,13 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             }
         }
     });
+    let observedAttentionTurnStart = 0;
     socket.on('session-alive', async (data: {
         sid: string;
         time: number;
         thinking?: boolean;
+        turnStartedAt?: number;
+        attentionVisibility?: unknown;
     }) => {
         try {
             // Track metrics
@@ -178,6 +198,18 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 payload: sessionActivity,
                 recipientFilter: { type: 'user-scoped-only' }
             });
+            if (connection.connectionType === 'session-scoped' && connection.sessionId === sid && thinking
+                && typeof data.turnStartedAt === 'number' && Number.isSafeInteger(data.turnStartedAt)
+                && data.turnStartedAt > observedAttentionTurnStart && data.turnStartedAt <= data.time) {
+                const startedAt = data.turnStartedAt;
+                observedAttentionTurnStart = startedAt;
+                try {
+                    await retireAttentionResult(userId, sid, Math.min(startedAt, t), attentionVisibilitySchema.safeParse(data.attentionVisibility).data);
+                } catch (error) {
+                    if (observedAttentionTurnStart === startedAt) observedAttentionTurnStart = 0;
+                    throw error;
+                }
+            }
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in session-alive: ${error}`);
         }
@@ -273,9 +305,12 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             activityCache.clearSessionUpdates(sid);
 
             // Update last active at
-            await db.session.update({
-                where: { id: sid },
-                data: { lastActiveAt: new Date(t), active: false }
+            await inTx(async tx => {
+                await tx.session.update({
+                    where: { id: sid },
+                    data: { lastActiveAt: new Date(t), active: false }
+                });
+                await archiveSessionAttention(tx, userId, sid, t, true);
             });
 
             // Emit session activity update

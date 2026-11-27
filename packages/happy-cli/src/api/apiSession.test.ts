@@ -189,6 +189,23 @@ describe('ApiSessionClient v3 messages API migration', () => {
         vi.restoreAllMocks();
     });
 
+    it('reports permission transitions without exposing the request details', async () => {
+        const client = new ApiSessionClient('token', session);
+        mockSocket.emitWithAck.mockImplementation(async (_event: string, { expectedVersion, agentState }: any) => ({
+            result: 'success', version: expectedVersion + 1, agentState,
+        }));
+        try {
+            await client.updateAgentState(state => ({ ...state, requests: { request: { tool: 'Bash', arguments: { input: 'private' }, createdAt: 1 } } }));
+            expect(mockSocket.emitWithAck.mock.calls[0][1].attention).toEqual({ kind: 'permission', at: expect.any(Number), visibility: 'normal' });
+            await client.updateAgentState(state => ({ ...state, controlledByUser: true }));
+            expect(mockSocket.emitWithAck.mock.calls[1][1].attention).toBeUndefined();
+            await client.updateAgentState(state => ({ ...state, requests: {} }));
+            expect(mockSocket.emitWithAck.mock.calls[2][1].attention).toEqual({ kind: null, at: expect.any(Number), visibility: 'normal' });
+        } finally {
+            await client.close();
+        }
+    });
+
     it('uses the same receive loop for durable consumers and advances only after checkpoint', async () => {
         const checkpoint = vi.fn();
         mockAxiosGet.mockResolvedValueOnce({ data: { messages: [(createNewMessageUpdate(5, encryptContent(session, { role: 'user', content: { type: 'text', text: 'offline input' } })) as any).body.message], hasMore: false } });

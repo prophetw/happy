@@ -53,7 +53,7 @@ Notifications.setNotificationHandler({
         return {
             shouldShowAlert: !isForeground,
             shouldPlaySound: !isForeground,
-            shouldSetBadge: true,
+            shouldSetBadge: Platform.OS !== 'ios' || !isForeground,
             shouldShowBanner: !isForeground,
             shouldShowList: true,
         };

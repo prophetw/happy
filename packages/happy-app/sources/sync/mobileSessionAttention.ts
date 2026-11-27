@@ -1,5 +1,5 @@
 import type { Session } from './storageTypes';
-import type { SessionAttentionRecords } from './sessionAttention';
+import type { RelaySessionAttention, SessionAttentionRecords } from './sessionAttention';
 import { resolveSessionState } from './sessionState';
 import { getSessionAttentionStatus, type SessionAttentionStatus } from '@/utils/sessionListStatus';
 import { getSessionName } from '@/utils/sessionUtils';
@@ -12,6 +12,15 @@ export interface MobileAttentionItem {
     eventId: string;
     at: number;
     errorCode?: string;
+}
+
+export function relayMobileSessionAttention(records: RelaySessionAttention, sessions: Record<string, Session>, fallbackName: string): MobileAttentionItem[] {
+    const status = { done: 'completed', failed: 'failed', permission: 'permission_required', question: 'input_required' } as const;
+    return records.map(({ sessionId, kind, eventId, at, errorCode }) => ({
+        id: sessionId,
+        name: sessions[sessionId] ? getSessionName(sessions[sessionId]) : fallbackName,
+        status: status[kind], eventId, at, errorCode,
+    })).sort((a, b) => Number(a.status === 'completed') - Number(b.status === 'completed') || b.at - a.at);
 }
 
 export function selectMobileSessionAttention(state: {

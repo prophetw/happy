@@ -3,6 +3,7 @@ import { logger } from '@/ui/logger'
 import { Expo, ExpoPushMessage } from 'expo-server-sdk'
 import type { Metadata } from './types'
 import { configuration } from '@/configuration'
+import { sessionAttentionVisibility } from './sessionAttention'
 
 export interface PushToken {
     id: string
@@ -258,6 +259,7 @@ export class PushNotificationClient {
         metadata: Metadata | null | undefined
         data?: Record<string, any>
     }): void {
+        const occurredAt = Date.now()
         const copy = getSessionNotificationCopy(params.kind, params.metadata)
         const title = params.kind === 'failed' && typeof params.data?.errorCode === 'string'
             ? `${copy.title} (${params.data.errorCode})` : copy.title
@@ -292,6 +294,8 @@ export class PushNotificationClient {
                         title,
                         body,
                         data: payloadData,
+                        occurredAt,
+                        visibility: sessionAttentionVisibility(params.metadata),
                     },
                     {
                         headers: {

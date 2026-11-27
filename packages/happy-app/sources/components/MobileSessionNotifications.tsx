@@ -10,7 +10,7 @@ import { Typography } from '@/constants/Typography';
 import { useAuth } from '@/auth/AuthContext';
 import { storage } from '@/sync/storage';
 import { useDeepEqual } from '@/sync/storeSelectors';
-import { selectMobileSessionAttention, type MobileAttentionItem } from '@/sync/mobileSessionAttention';
+import { relayMobileSessionAttention, selectMobileSessionAttention, type MobileAttentionItem } from '@/sync/mobileSessionAttention';
 import { SESSION_ATTENTION_COLORS } from '@/utils/sessionListStatus';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { t } from '@/text';
@@ -18,11 +18,17 @@ import { t } from '@/text';
 export function MobileSessionNotifications() {
     const { isAuthenticated } = useAuth();
     const ready = storage(state => state.isDataReady);
+    React.useEffect(() => {
+        if (!isAuthenticated) void Notifications.setBadgeCountAsync(0).catch(error => console.warn('Unable to clear session badge', error));
+    }, [isAuthenticated]);
     return isAuthenticated && ready ? <MobileSessionNotificationContent /> : null;
 }
 
 export function MobileSessionNotificationContent() {
-    const items = storage(useDeepEqual(selectMobileSessionAttention));
+    const relayAttention = storage(state => state.relaySessionAttention);
+    const items = storage(useDeepEqual(state => state.relaySessionAttention
+        ? relayMobileSessionAttention(state.relaySessionAttention, state.sessions, t('sessionNotifications.title'))
+        : state.relaySessionAttention === null || Platform.OS !== 'ios' ? selectMobileSessionAttention(state) : []));
     const active = storage(state => state.appIsActive);
     const haptics = storage(state => state.settings.sessionNotificationHaptics);
     const insets = useSafeAreaInsets();
@@ -62,10 +68,12 @@ export function MobileSessionNotificationContent() {
         if (items.length === 0) { setExpanded(false); setDismissed(new Set()); }
     }, [items.length]);
 
+    const legacyActive = relayAttention === null && active;
     React.useEffect(() => {
-        if (Platform.OS !== 'ios') return;
+        if (Platform.OS !== 'ios' || AppState.currentState !== 'active' || relayAttention === undefined) return;
+        if (relayAttention === null && !legacyActive) return;
         void Notifications.setBadgeCountAsync(items.length).catch(error => console.warn('Unable to update session badge', error));
-    }, [items.length]);
+    }, [items.length, relayAttention, legacyActive]);
 
     const open = (id: string) => { setExpanded(false); setBanner(null); navigate(id); };
     const completed = items.filter(item => item.status === 'completed').length;

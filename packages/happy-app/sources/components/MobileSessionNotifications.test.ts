@@ -1,8 +1,10 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
+import { AppState } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/storageTypes';
+import type { RelaySessionAttention } from '@/sync/sessionAttention';
 
 const mocks = vi.hoisted(() => ({ navigate: vi.fn(), haptic: vi.fn(async () => {}), badge: vi.fn(async () => true) }));
 vi.mock('react-native', async () => {
@@ -34,6 +36,7 @@ vi.mock('@/sync/storage', async () => {
     const { create } = await import('zustand');
     return { storage: create(() => ({
         sessions: {} as Record<string, Session>, unreadSessionIds: new Set<string>(), sessionAttention: {},
+        relaySessionAttention: null as RelaySessionAttention | null,
         archivingSessionIds: new Set<string>(), currentViewingSessionId: null as string | null,
         appIsActive: true, isDataReady: true, settings: { sessionNotificationHaptics: true },
     })) };
@@ -52,7 +55,9 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.useFakeTimers();
     vi.clearAllMocks();
-    storage.setState({ sessions: {}, unreadSessionIds: new Set(), sessionAttention: {}, archivingSessionIds: new Set(), currentViewingSessionId: null, appIsActive: true });
+    AppState.currentState = 'active';
+    storage.setState({ sessions: {}, unreadSessionIds: new Set(), sessionAttention: {}, relaySessionAttention: null,
+        archivingSessionIds: new Set(), currentViewingSessionId: null, appIsActive: true });
     storage.setState(state => ({ settings: { ...state.settings, sessionNotificationHaptics: true } }));
     const original = console.error;
     vi.spyOn(console, 'error').mockImplementation((message: unknown, ...args: unknown[]) => {
@@ -64,6 +69,26 @@ beforeEach(() => {
 afterEach(() => { act(() => tree.unmount()); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('iOS in-app session reminders', () => {
+    it('uses the Relay list for the summary and rewrites the badge after a same-size foreground sync', () => {
+        const items = [{ sessionId: 'a', kind: 'done', eventId: 'done:2:1', at: 20 }] as const;
+        update({ sessions: { a: session('a'), b: session('b') }, unreadSessionIds: new Set(['a', 'b']), relaySessionAttention: [...items] });
+        expect(button('1 completed, 0 action. sessionNotifications.open')).toBeDefined();
+        expect(mocks.badge).toHaveBeenLastCalledWith(1);
+
+        AppState.currentState = 'background';
+        update({ appIsActive: false, relaySessionAttention: [...items] });
+        mocks.badge.mockClear();
+        AppState.currentState = 'active';
+        update({ appIsActive: true });
+        expect(mocks.badge).not.toHaveBeenCalled();
+        update({ relaySessionAttention: [...items] });
+        expect(mocks.badge).toHaveBeenCalledExactlyOnceWith(1);
+
+        update({ relaySessionAttention: [] });
+        expect(button('1 completed, 0 action. sessionNotifications.open')).toBeUndefined();
+        expect(mocks.badge).toHaveBeenLastCalledWith(0);
+    });
+
     it('ignores legacy intervention state and unread notifications without a banner or badge', () => {
         update({
             sessions: { a: session('a', { attentionKind: 'intervention', agentState: {

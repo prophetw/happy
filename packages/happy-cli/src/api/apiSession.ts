@@ -30,6 +30,7 @@ import type { Credentials } from '@/persistence';
 import { RelaySwitchController, type RelayTarget } from '@/relay/relaySwitch';
 import { relayRequest, probeRelay, prepareRelayPersistence, waitRelaySocket, wrapRelayKey, withRelayLock, publishRelaySnapshot } from '@/relay/relayConnection';
 import { recordSessionDeliveryCursor } from '@/claude/sessionDeliveryCursor';
+import { pendingAttentionKind, sessionAttentionVisibility } from './sessionAttention';
 
 /**
  * ACP (Agent Communication Protocol) message data types.
@@ -214,6 +215,8 @@ export class ApiSessionClient extends EventEmitter {
     private metadataVersion: number;
     private agentState: AgentState | null;
     private agentStateVersion: number;
+    private attentionTurnStartedAt: number | undefined;
+    private attentionVisibilitySent: ReturnType<typeof sessionAttentionVisibility> | undefined;
     private socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     private pendingMessages: UserMessage[] = [];
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null;
@@ -1091,11 +1094,15 @@ export class ApiSessionClient extends EventEmitter {
         if (process.env.DEBUG) { // too verbose for production
             logger.debug(`[API] Sending keep alive message: ${thinking}`);
         }
+        const time = Date.now();
+        this.attentionTurnStartedAt = thinking ? this.attentionTurnStartedAt ?? time : undefined;
         this.socket.volatile.emit('session-alive', {
             sid: this.sessionId,
-            time: Date.now(),
+            time,
             thinking,
-            mode
+            mode,
+            ...(this.attentionTurnStartedAt === undefined ? {} : { turnStartedAt: this.attentionTurnStartedAt,
+                attentionVisibility: sessionAttentionVisibility(this.metadata) }),
         });
     }
 
@@ -1205,12 +1212,19 @@ export class ApiSessionClient extends EventEmitter {
         return this.agentStateLock.inLock(async () => {
             await this.synchronizeState(async () => {
                 let updated = handler(this.agentState || {});
+                const visibility = sessionAttentionVisibility(this.metadata);
+                const kind = pendingAttentionKind(updated);
+                const attention = visibility !== this.attentionVisibilitySent || kind !== pendingAttentionKind(this.agentState)
+                    ? { kind, at: Date.now(), visibility } : undefined;
                 const generation = this.relayGeneration;
-                const answer = await this.stateAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion, agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null });
+                const answer = await this.stateAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion,
+                    agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null,
+                    ...(attention ? { attention } : {}) });
                 if (generation !== this.relayGeneration) throw new Error('Relay changed during update');
                 if (answer.result === 'success') {
                     this.agentState = answer.agentState ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.agentState)) : null;
                     this.agentStateVersion = answer.version;
+                    if (attention) this.attentionVisibilitySent = visibility;
                     logger.debug('Agent state updated', this.agentState);
                 } else if (answer.result === 'version-mismatch') {
                     if (answer.version > this.agentStateVersion) {

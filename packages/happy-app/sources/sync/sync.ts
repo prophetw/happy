@@ -21,7 +21,7 @@ import type { ApiEphemeralActivityUpdate } from './apiTypes';
 import { Session, Machine } from './storageTypes';
 import { InvalidateSync } from '@/utils/sync';
 import { kvBulkGet, kvMutate } from './apiKv';
-import { SESSION_ATTENTION_PREFIX, decodeAttentionItem, encodeAttentionValue, type SessionAttentionRecords } from './sessionAttention';
+import { SESSION_ATTENTION_PREFIX, RelaySessionAttentionSchema, decodeAttentionItem, encodeAttentionValue, type SessionAttentionRecords } from './sessionAttention';
 import { loadSessionAttention, saveSessionAttention } from './persistence';
 import { delay } from '@/utils/time';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
@@ -191,6 +191,7 @@ class Sync {
     private sessionsSync: InvalidateSync;
     private attentionSync: InvalidateSync;
     private attentionReadSync: InvalidateSync;
+    private mobileAttentionSync: InvalidateSync;
     private attentionUnsubscribe?: () => void;
     private attentionScope = '';
     private projectsSync: InvalidateSync;
@@ -258,6 +259,7 @@ class Sync {
         this.sessionsSync = new InvalidateSync(this.fetchSessions);
         this.attentionSync = new InvalidateSync(this.fetchSessionAttention);
         this.attentionReadSync = new InvalidateSync(this.flushAttentionReads);
+        this.mobileAttentionSync = new InvalidateSync(this.fetchMobileSessionAttention);
         this.projectsSync = new InvalidateSync(this.fetchProjects);
         this.settingsSync = new InvalidateSync(this.syncSettings);
         this.profileSync = new InvalidateSync(this.fetchProfile);
@@ -279,7 +281,10 @@ class Sync {
         AppState.addEventListener('change', (nextAppState) => {
             this.appState = nextAppState;
             storage.setState({ appIsActive: getCurrentAppState() === 'active' });
-            if (nextAppState === 'active') this.attentionSync.invalidate();
+            if (nextAppState === 'active') {
+                this.attentionSync.invalidate();
+                this.refreshMobileSessionAttention();
+            }
 
             // Notify server of focus state for push notification routing.
             // Mobile: AppState.currentState reflects fg/bg directly.
@@ -357,10 +362,31 @@ class Sync {
         }
     };
 
+    private refreshMobileSessionAttention() {
+        if (Platform.OS === 'ios' && storage.getState().appIsActive) this.mobileAttentionSync.invalidate();
+    }
+
+    private fetchMobileSessionAttention = async () => {
+        const credentials = this.credentials;
+        const endpoint = getServerUrl();
+        if (!credentials || !this.attentionScope) return;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        try {
+            const response = await apiSocket.request('/v1/session-attention', { signal: controller.signal });
+            if (response.status !== 404 && !response.ok) throw new Error(`Failed to load session reminders (${response.status})`);
+            const items = response.status === 404 ? null : RelaySessionAttentionSchema.parse(await response.json()).items;
+            if (this.credentials !== credentials || getServerUrl() !== endpoint) return;
+            storage.setState({ relaySessionAttention: items });
+        } finally {
+            clearTimeout(timeout);
+        }
+    };
+
     private flushAttentionReads = async () => {
         const credentials = this.credentials;
         if (!credentials) return;
-        const pending = Object.entries(storage.getState().sessionAttention).filter(([, record]) => record.pendingRead || record.pendingEvent);
+        const pending = Object.entries(storage.getState().sessionAttention).filter(([, record]) => record.pendingRead || record.pendingEvent || record.pendingProjection);
         for (let offset = 0; offset < pending.length; offset += 100) {
             const batch = pending.slice(offset, offset + 100);
             const result = await kvMutate(credentials, batch.map(([id, record]) => ({ key: SESSION_ATTENTION_PREFIX + id, value: encodeAttentionValue(record), version: record.version })));
@@ -370,28 +396,29 @@ class Sync {
                 for (const item of result.results) {
                     const id = item.key.slice(SESSION_ATTENTION_PREFIX.length);
                     const sent = batch.find(([key]) => key === id)?.[1];
-                    if (sent) records[id] = { ...sent, version: item.version, pendingRead: false, pendingEvent: false };
+                    if (sent) records[id] = { ...sent, version: item.version, pendingRead: false, pendingEvent: false, pendingProjection: false };
                 }
                 storage.getState().applySessionAttention(records);
+                this.refreshMobileSessionAttention();
             } else {
                 const records = Object.fromEntries(result.errors.filter(item => item.value !== null).map(item => decodeAttentionItem({ ...item, value: item.value! })).filter(item => item !== null));
                 for (const error of result.errors.filter(item => item.value === null)) {
                     const id = error.key.slice(SESSION_ATTENTION_PREFIX.length);
                     const sent = batch.find(([key]) => key === id)?.[1];
-                    if (sent) records[id] = { ...sent, version: error.version, pendingRead: false, pendingEvent: sent.pendingEvent, read: true };
+                    if (sent) records[id] = { ...sent, version: error.version, pendingRead: false, pendingEvent: sent.pendingEvent, pendingProjection: sent.pendingProjection, read: true };
                 }
                 storage.getState().applySessionAttention(records);
             }
         }
     };
 
-    private publishSessionFailure = async (sessionId: string, seq: number, at: number, errorCode?: string) => {
+    private publishSessionResult = async (sessionId: string, kind: 'done' | 'failed', seq: number, at: number, errorCode?: string) => {
         const state = storage.getState();
         const previous = state.sessionAttention[sessionId];
         if (previous?.seq !== undefined && previous.seq > seq) return;
-        if (previous?.kind === 'failed' && previous.seq === seq) return;
+        if (previous?.seq === seq && (previous.kind === kind || previous.kind === 'failed')) return;
         state.applySessionAttention({ [sessionId]: {
-            kind: 'failed', eventId: `failed:${seq}`, seq, at,
+            kind, eventId: `${kind}:${seq}`, seq, at,
             read: state.appIsActive && state.currentViewingSessionId === sessionId,
             version: previous?.version ?? -1, pendingEvent: true,
             ...(errorCode ? { errorCode } : {}),
@@ -432,11 +459,12 @@ class Sync {
         this.attentionUnsubscribe?.();
         this.attentionScope = `${getServerUrl()}|${this.serverID}`;
         const cachedAttention = loadSessionAttention(this.attentionScope);
-        storage.setState({ sessionAttention: cachedAttention.records, unreadSessionIds: new Set(cachedAttention.unread), appIsActive: getCurrentAppState() === 'active' });
+        storage.setState({ sessionAttention: cachedAttention.records, relaySessionAttention: undefined,
+            unreadSessionIds: new Set(cachedAttention.unread), appIsActive: getCurrentAppState() === 'active' });
         this.attentionUnsubscribe = storage.subscribe((state, previous) => {
             if (state.sessionAttention !== previous.sessionAttention || state.unreadSessionIds !== previous.unreadSessionIds) {
                 saveSessionAttention(this.attentionScope, state.sessionAttention, state.unreadSessionIds);
-                if (Object.values(state.sessionAttention).some(record => record.pendingRead || record.pendingEvent)) this.attentionReadSync.invalidate();
+                if (Object.values(state.sessionAttention).some(record => record.pendingRead || record.pendingEvent || record.pendingProjection)) this.attentionReadSync.invalidate();
             }
             if (state.currentViewingSessionId !== previous.currentViewingSessionId
                 || state.settings.alwaysPushToPhone !== previous.settings.alwaysPushToPhone || state.appIsActive !== previous.appIsActive) {
@@ -463,6 +491,7 @@ class Sync {
         this.sessionsSync.invalidate();
         this.attentionSync.invalidate();
         this.attentionReadSync.invalidate();
+        this.refreshMobileSessionAttention();
         this.settingsSync.invalidate();
         this.profileSync.invalidate();
         this.purchasesSync.invalidate();
@@ -2821,6 +2850,7 @@ class Sync {
         apiSocket.onReconnected(() => {
             this.attentionSync.invalidate();
             this.attentionReadSync.invalidate();
+            this.refreshMobileSessionAttention();
             log.log('🔌 Socket reconnected');
 
             // Send current focus state on reconnect so the server's
@@ -2869,6 +2899,7 @@ class Sync {
             const records = Object.fromEntries(updateData.body.changes.filter(item => item.value !== null)
                 .map(item => decodeAttentionItem({ ...item, value: item.value! })).filter(item => item !== null));
             if (Object.keys(records).length) storage.getState().applySessionAttention(records);
+            if (updateData.body.changes.some(item => item.key.startsWith(SESSION_ATTENTION_PREFIX))) this.refreshMobileSessionAttention();
         } else if (updateData.body.t === 'new-message') {
 
             // Get encryption — may not be ready if sessions are still syncing
@@ -2944,9 +2975,9 @@ class Sync {
                                 lastTurnErrorCode: failed || partial ? errorCode : undefined } : {}),
                             ...(isTaskStarted ? { thinking: true, lastTurnSeq: updateData.body.message.seq, lastTurnStatus: undefined, lastTurnErrorCode: undefined } : {})
                         }])
-                        if (isTaskComplete && failed) {
-                            void this.publishSessionFailure(session.id, updateData.body.message.seq, decrypted.createdAt, errorCode)
-                                .catch(error => console.error('Failed to sync session failure status', error));
+                        if (isTaskComplete && (failed || partial || turnStatus === 'completed')) {
+                            void this.publishSessionResult(session.id, failed || partial ? 'failed' : 'done', updateData.body.message.seq, decrypted.createdAt, errorCode)
+                                .catch(error => console.error('Failed to sync session result', error));
                         }
                     } else if (!session) {
                         // Fetch sessions again if we don't have this session
@@ -2982,6 +3013,7 @@ class Sync {
             log.log('🗑️ Delete session update received');
             const sessionId = updateData.body.sid;
             this.forgetDeletedDotSession(sessionId);
+            this.refreshMobileSessionAttention();
 
             log.log(`🗑️ Session ${sessionId} deleted from local storage`);
         } else if (updateData.body.t === 'update-session') {
@@ -3414,10 +3446,12 @@ class Sync {
 
 
         const sessions: Session[] = [];
+        let activeChanged = false;
 
         for (const [sessionId, update] of updates) {
             const session = storage.getState().sessions[sessionId];
             if (session) {
+                activeChanged ||= session.active !== update.active;
                 sessions.push({
                     ...session,
                     active: update.active,
@@ -3431,6 +3465,7 @@ class Sync {
         if (sessions.length > 0) {
             // console.log('flushing activity updates ' + sessions.length);
             this.applySessions(sessions);
+            if (activeChanged) this.refreshMobileSessionAttention();
             // log.log(`🔄 Activity updates flushed - updated ${sessions.length} sessions`);
         }
     }

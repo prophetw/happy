@@ -3,6 +3,9 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { decodeUTF8, encodeUTF8 } from '@/encryption/text';
 import type { KvItem } from './apiKv';
 import type { Session } from './storageTypes';
+import { isRigMetadata } from './rig';
+import { testloopDotsKind } from './testloopDotsList';
+import { selectPendingCommunications } from './agentCommunications';
 
 export const SESSION_ATTENTION_PREFIX = 'session-attention-v1:';
 export const AttentionValueSchema = z.object({
@@ -10,9 +13,21 @@ export const AttentionValueSchema = z.object({
     eventId: z.string().min(1), at: z.number().finite(), read: z.boolean(), seq: z.number().optional(),
     pushDelivered: z.boolean().optional(),
     errorCode: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/).optional(),
+    visibility: z.enum(['normal', 'persistent', 'hidden']).optional(),
+    occurredAt: z.number().optional(),
+    action: z.object({ kind: z.enum(['permission', 'question']).nullable(), at: z.number(), version: z.number().int() }).optional(),
+    archivedAt: z.number().optional(),
 });
+export const RelaySessionAttentionSchema = z.object({ items: z.array(z.object({
+    sessionId: z.string(), kind: z.enum(['done', 'permission', 'question', 'failed']),
+    eventId: z.string(), at: z.number(), errorCode: z.string().optional(),
+})) });
+export type RelaySessionAttention = z.infer<typeof RelaySessionAttentionSchema>['items'];
 export type AttentionKind = z.infer<typeof AttentionValueSchema>['kind'];
-export type SessionAttentionRecord = z.infer<typeof AttentionValueSchema> & { version: number; pendingRead?: boolean; pendingEvent?: boolean };
+export const CachedAttentionRecordSchema = AttentionValueSchema.extend({ version: z.number(),
+    pendingRead: z.boolean().optional(), pendingEvent: z.boolean().optional(), pendingProjection: z.boolean().optional(),
+});
+export type SessionAttentionRecord = z.infer<typeof CachedAttentionRecordSchema>;
 export type SessionAttentionRecords = Record<string, SessionAttentionRecord>;
 
 export function getSessionAttentionKind(session: Session, record: SessionAttentionRecord | undefined): AttentionKind | undefined {
@@ -58,4 +73,26 @@ export function mergeAttentionRecord(previous: SessionAttentionRecord | undefine
 
 export function readAttentionRecord(record: SessionAttentionRecord): SessionAttentionRecord {
     return record.read ? record : { ...record, read: true, pendingRead: true };
+}
+
+export function reconcileSessionAttention(session: Session | undefined, record: SessionAttentionRecord | undefined): SessionAttentionRecord | undefined {
+    if (!session?.metadata) return record;
+    const visibility = session.metadata.isSideChat || session.metadata.lifecycleState === 'archived' ? 'hidden'
+        : isRigMetadata(session.metadata) || testloopDotsKind(session) ? 'persistent' : 'normal';
+    let next = record;
+    if (record && (record.visibility ?? 'normal') !== visibility) next = { ...record, visibility, pendingProjection: true };
+    // Also cover older CLI and Rig producers. Their decrypted state arrives
+    // with the same version as the producer's public action, if one was sent.
+    const version = session.agentStateVersion;
+    if (visibility === 'hidden' || record?.archivedAt !== undefined || version <= (record?.action?.version ?? -1)) return next;
+    const kind = Object.keys(session.agentState?.requests ?? {}).length ? 'permission'
+        : selectPendingCommunications(session.agentState).length ? 'question' : null;
+    const legacyAction = record?.kind === 'permission' || record?.kind === 'question';
+    if (kind === record?.action?.kind || (!kind && !record?.action?.kind && !legacyAction)) return next;
+    // Push can arrive just before its encrypted state update. Wait for a newer
+    // agent state before declaring an older producer's request resolved.
+    if (!kind && !record?.action?.kind && legacyAction && version <= Number(record.eventId.split(':')[2])) return next;
+    const at = Math.max(session.updatedAt, record?.at ?? 0);
+    return { ...(next ?? { kind: kind!, eventId: `action:${version}`, at, read: true, version: -1 }),
+        visibility, action: { kind, version, at }, pendingProjection: true };
 }

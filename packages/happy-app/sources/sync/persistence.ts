@@ -5,14 +5,14 @@ import { LocalSettings, localSettingsDefaults, localSettingsParse } from './loca
 import { Purchases, purchasesDefaults, purchasesParse } from './purchases';
 import { Profile, profileDefaults, profileParse } from './profile';
 import type { PermissionModeKey } from '@/components/PermissionModeSelector';
-import { AttentionValueSchema, type SessionAttentionRecords } from './sessionAttention';
+import { CachedAttentionRecordSchema, type SessionAttentionRecords } from './sessionAttention';
 
 export function loadSessionAttention(scope: string): { records: SessionAttentionRecords; unread: string[] } {
     const raw = mmkv.getString(`session-attention-v1:${scope}`);
     if (!raw) return { records: {}, unread: [] };
     try {
         return z.object({
-            records: z.record(z.string(), AttentionValueSchema.extend({ version: z.number(), pendingRead: z.boolean().optional(), pendingEvent: z.boolean().optional() })),
+            records: z.record(z.string(), CachedAttentionRecordSchema),
             unread: z.array(z.string()),
         }).parse(JSON.parse(raw));
     } catch (error) {

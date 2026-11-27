@@ -159,7 +159,7 @@ describe('completion state through the real session store', () => {
         // only the native shell, socket, and encryption boundary.
         const parsed = ts.createSourceFile('sync.ts', readFileSync(new URL('./sync.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
         const klass = parsed.statements.find((node): node is ts.ClassDeclaration => ts.isClassDeclaration(node) && node.name?.text === 'Sync')!;
-        const methods = klass.members.filter(member => member.name && ['handleUpdate', 'publishSessionFailure'].includes(member.name.getText(parsed)))
+        const methods = klass.members.filter(member => member.name && ['handleUpdate', 'publishSessionResult'].includes(member.name.getText(parsed)))
             .map(member => member.getText(parsed)).join('\n');
         const Harness = new Function('ApiUpdateContainerSchema', 'normalizeRawMessage', 'storage',
             ts.transpile(`class Sync { ${methods} }; return Sync;`, { target: ts.ScriptTarget.ES2022 }))(

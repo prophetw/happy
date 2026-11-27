@@ -6,6 +6,8 @@ import { Prisma } from "@prisma/client";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { allocateUserSeq } from "@/storage/seq";
+import { inTx } from '@/storage/inTx';
+import { archiveSessionAttention } from '@/app/push/sessionAttention';
 import { sessionDelete } from "@/app/session/sessionDelete";
 import { activityCache } from "@/app/presence/sessionCache";
 import { sessionAvatar } from '@/app/session/sessionAvatar';
@@ -430,9 +432,14 @@ export function sessionRoutes(app: Fastify) {
 
         activityCache.clearSessionUpdates(sessionId);
 
-        const result = await db.session.updateMany({
-            where: { id: sessionId, accountId: userId },
-            data: { active: false, lastActiveAt: new Date() }
+        const at = Date.now();
+        const result = await inTx(async tx => {
+            const updated = await tx.session.updateMany({
+                where: { id: sessionId, accountId: userId },
+                data: { active: false, lastActiveAt: new Date(at) }
+            });
+            if (updated.count) await archiveSessionAttention(tx, userId, sessionId, at);
+            return updated;
         });
 
         if (result.count === 0) {
@@ -440,7 +447,7 @@ export function sessionRoutes(app: Fastify) {
         }
 
         // Notify all clients about the session deactivation
-        const sessionActivity = buildSessionActivityEphemeral(sessionId, false, Date.now(), false);
+        const sessionActivity = buildSessionActivityEphemeral(sessionId, false, at, false);
         eventRouter.emitEphemeral({
             userId,
             payload: sessionActivity,

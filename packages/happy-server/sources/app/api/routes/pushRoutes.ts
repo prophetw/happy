@@ -3,9 +3,13 @@ import { type Fastify } from "../types";
 import { db } from "@/storage/db";
 import { dispatchSessionEventPush } from "@/app/push/pushDispatch";
 import { buildSessionEventEphemeral, eventRouter } from "@/app/events/eventRouter";
-import { recordSessionAttention, getAttentionBadgeCount, markAttentionPushDelivered } from '@/app/push/sessionAttention';
+import { recordSessionAttention, getAttentionBadgeCount, listSessionAttention, markAttentionPushDelivered } from '@/app/push/sessionAttention';
+import { attentionKindSchema, attentionVisibilitySchema } from '@/app/push/sessionAttentionValue';
 
 export function pushRoutes(app: Fastify) {
+    app.get('/v1/session-attention', { preHandler: app.authenticate }, async (request, reply) => {
+        return reply.send({ items: await listSessionAttention(request.userId) });
+    });
     
     // Push Token Registration API
     app.post('/v1/push-tokens', {
@@ -93,9 +97,11 @@ export function pushRoutes(app: Fastify) {
                 sessionId: z.string()
             }),
             body: z.object({
-                kind: z.enum(['done', 'permission', 'question', 'failed', 'intervention']),
+                kind: attentionKindSchema,
                 title: z.string().min(1).max(200),
                 body: z.string().min(1).max(500),
+                occurredAt: z.number().int().nonnegative().optional(),
+                visibility: attentionVisibilitySchema.optional(),
                 data: z.record(z.string(), z.unknown()).optional()
             }),
             response: {
@@ -122,7 +128,7 @@ export function pushRoutes(app: Fastify) {
 
         const session = await db.session.findFirst({
             where: { id: sessionId, accountId: userId },
-            select: { id: true, seq: true, agentStateVersion: true }
+            select: { id: true, seq: true, agentStateVersion: true, active: true }
         });
         if (!session) {
             return reply.code(404).send({ error: 'Session not found' });
@@ -130,7 +136,8 @@ export function pushRoutes(app: Fastify) {
 
         const eventId = `${kind}:${session.seq}:${session.agentStateVersion}`;
         const errorCode = kind === 'failed' && typeof data?.errorCode === 'string' && /^[a-zA-Z][a-zA-Z0-9_]{0,79}$/.test(data.errorCode) ? data.errorCode : undefined;
-        const recorded = await recordSessionAttention(userId, sessionId, kind, eventId, errorCode);
+        const recorded = await recordSessionAttention(userId, sessionId, kind, eventId, errorCode,
+            { occurredAt: request.body.occurredAt, visibility: request.body.visibility, active: session.active });
         if (!recorded.shouldNotify) return reply.send({ success: true, result: 'suppressed', reason: 'duplicate-session-event' });
 
         // Fan out the event to user's connected clients (web tabs use this to

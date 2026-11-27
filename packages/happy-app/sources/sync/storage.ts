@@ -21,7 +21,7 @@ import { isMachineOnline } from '@/utils/machineUtils';
 import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
 import { resolveSessionState, type SessionState } from './sessionState';
 import { didSessionCompleteTurn } from './sessionCompletion';
-import { getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, type SessionAttentionRecords } from './sessionAttention';
+import { getSessionAttentionKind, mergeAttentionRecord, readAttentionRecord, reconcileSessionAttention, type RelaySessionAttention, type SessionAttentionRecords } from './sessionAttention';
 import { isWebTabActive } from './webTabTitle';
 import { getSessionActivityAt } from '@/utils/sessionActivity';
 import { applySettings, Settings } from "./settings";
@@ -363,6 +363,7 @@ interface StorageState {
     // Sync persists attention and unread state per account and server.
     unreadSessionIds: Set<string>;
     sessionAttention: SessionAttentionRecords;
+    relaySessionAttention: RelaySessionAttention | null | undefined;
     applySessionAttention: (records: SessionAttentionRecords) => void;
     appIsActive: boolean;
     currentViewingSessionId: string | null;
@@ -542,6 +543,7 @@ export const storage = create<StorageState>()((set, get) => {
         nativeUpdateStatus: null,
         unreadSessionIds: new Set<string>(),
         sessionAttention: {},
+        relaySessionAttention: undefined,
         appIsActive: true,
         currentViewingSessionId: null,
         archivingSessionIds: new Set<string>(),
@@ -796,7 +798,14 @@ export const storage = create<StorageState>()((set, get) => {
             let sessionAttention = state.sessionAttention;
             for (const session of sessions) {
                 const merged = mergedSessions[session.id];
-                if (merged) merged.attentionKind = getSessionAttentionKind(merged, sessionAttention[session.id]);
+                if (!merged) continue;
+                const record = sessionAttention[session.id];
+                const previous = state.sessions[session.id];
+                if (previous?.agentStateVersion !== merged.agentStateVersion || previous.metadataVersion !== merged.metadataVersion) {
+                    const reconciled = reconcileSessionAttention(merged, record);
+                    if (reconciled && reconciled !== record) sessionAttention = { ...sessionAttention, [session.id]: reconciled };
+                }
+                merged.attentionKind = getSessionAttentionKind(merged, sessionAttention[session.id]);
             }
             // A new turn supersedes the previous result. Only a transition to
             // idle (not a disconnect or blocking question) marks work complete.
@@ -1670,7 +1679,8 @@ export const storage = create<StorageState>()((set, get) => {
             const unreadSessionIds = new Set(state.unreadSessionIds);
             const sessions = { ...state.sessions };
             for (const [id, incoming] of Object.entries(records)) {
-                let record = mergeAttentionRecord(sessionAttention[id], incoming);
+                const merged = mergeAttentionRecord(sessionAttention[id], incoming);
+                let record = reconcileSessionAttention(sessions[id], merged) ?? merged;
                 // Old failures may arrive after a retry has already started or finished.
                 if (record.seq !== undefined && sessions[id]?.lastTurnSeq !== undefined && record.seq < sessions[id].lastTurnSeq!) {
                     sessionAttention[id] = readAttentionRecord(record);

@@ -49,7 +49,7 @@ const {
 
 vi.mock("@/storage/db", () => ({ db: dbMock }));
 vi.mock("@/app/push/pushSend", () => ({ sendPushNotifications: pushSendMock }));
-vi.mock('@/app/push/sessionAttention', () => ({ recordSessionAttention: vi.fn(async () => ({ created: true, shouldNotify: true })), getAttentionBadgeCount: vi.fn(async () => 1), markAttentionPushDelivered: vi.fn(async () => {}) }));
+vi.mock('@/app/push/sessionAttention', () => ({ recordSessionAttention: vi.fn(async () => ({ created: true, shouldNotify: true })), getAttentionBadgeCount: vi.fn(async () => 1), listSessionAttention: vi.fn(async () => []), markAttentionPushDelivered: vi.fn(async () => {}) }));
 
 // The real eventRouter is used so these tests exercise the production presence
 // rule end to end — a regression in hasActiveUiClient fails them. Only the
@@ -123,7 +123,7 @@ describe('POST /v1/sessions/:sessionId/push-event', () => {
         } });
         expect(res.statusCode).toBe(200);
         expect(res.json()).toMatchObject({ result: 'sent' });
-        expect(recordSessionAttention).toHaveBeenCalledWith(USER, SESSION, 'failed', expect.any(String), 'serverOverloaded');
+        expect(recordSessionAttention).toHaveBeenCalledWith(USER, SESSION, 'failed', expect.any(String), 'serverOverloaded', expect.any(Object));
         expect(state.sent[0]).toMatchObject({ title: 'Execution failed (serverOverloaded)', data: { kind: 'failed', errorCode: 'serverOverloaded' } });
     });
 
@@ -148,7 +148,7 @@ describe('POST /v1/sessions/:sessionId/push-event', () => {
         } });
         expect(res.statusCode).toBe(200);
         expect(res.json()).toMatchObject({ result: 'sent' });
-        expect(recordSessionAttention).toHaveBeenCalledWith(USER, SESSION, 'intervention', expect.any(String), undefined);
+        expect(recordSessionAttention).toHaveBeenCalledWith(USER, SESSION, 'intervention', expect.any(String), undefined, expect.any(Object));
         expect(state.sent[0]).toMatchObject({ priority: 'high', sound: 'default', data: { kind: 'intervention', sessionId: SESSION, requestId: 'request-1' } });
     });
 
