@@ -302,7 +302,7 @@ export function workspaceResult(w: Workspace) {
 // A snapshot is captured after the scheduler reserves the checkout and before
 // dispatch. The session only gets a read tool for this sealed directory.
 const snapshotScript = String.raw`
-import hashlib, json, os, stat, subprocess, sys
+import contextlib, hashlib, json, os, stat, subprocess, sys
 dest, commit = sys.argv[1:]
 def git(*args):
  return subprocess.check_output(['git','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',*args])
@@ -321,20 +321,26 @@ def source_file(name):
   os.close(fd)
 def save(name, f, size):
  global budget
- budget-=size
- if budget<0: raise RuntimeError('snapshot_limit')
- if not allowed(name): raise RuntimeError('snapshot_path_invalid')
- target=os.path.join(os.fsencode(dest),name)
- os.makedirs(os.path.dirname(target),exist_ok=True)
- digest=hashlib.sha256()
- with open(target,'xb') as out:
-  remaining=size
+ sample_size=min(size,8192)
+ sample=f.read(sample_size)
+ if len(sample)!=sample_size: raise RuntimeError('snapshot_short_read')
+ binary=b'\0' in sample
+ if not binary:
+  budget-=size
+  if budget<0: raise RuntimeError('snapshot_limit')
+  if not allowed(name): raise RuntimeError('snapshot_path_invalid')
+  target=os.path.join(os.fsencode(dest),name)
+  os.makedirs(os.path.dirname(target),exist_ok=True)
+ digest=hashlib.sha256(sample)
+ with contextlib.nullcontext() if binary else open(target,'xb') as out:
+  if out: out.write(sample)
+  remaining=size-sample_size
   while remaining:
    data=f.read(min(remaining,1048576))
    if not data: raise RuntimeError('snapshot_short_read')
    remaining-=len(data)
    digest.update(data)
-   out.write(data)
+   if out: out.write(data)
  return digest.hexdigest()
 budget=128*1024*1024
 if commit:

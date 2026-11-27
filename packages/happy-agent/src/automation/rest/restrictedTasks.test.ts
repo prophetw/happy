@@ -24,6 +24,7 @@ it('isolates text without Git and captures committed and checkout sources withou
     writeFileSync(join(repo,'file.txt'),'new commit');git(repo,'commit','-qam','next');
     writeFileSync(join(repo,'file.txt'),'unstaged');
     writeFileSync(join(repo,'untracked'),'new');
+    writeFileSync(join(repo,'binary'),Buffer.from([0,1,2]));
     writeFileSync(join(repo,'ignored'),'ignored');
     writeFileSync(join(repo,'.env'),'private');
     symlinkSync('/etc/passwd',join(repo,'link'));
@@ -34,7 +35,7 @@ it('isolates text without Git and captures committed and checkout sources withou
     expect(readFileSync(join(baseline.cwd,'source','file.txt'),'utf8')).toBe('committed');
     expect(readFileSync(join(checkout.cwd,'source','file.txt'),'utf8')).toBe('unstaged');
     expect(readFileSync(join(checkout.cwd,'source','untracked'),'utf8')).toBe('new');
-    for (const name of ['.env','ignored','link','.git']) expect(existsSync(join(checkout.cwd,'source',name))).toBe(false);
+    for (const name of ['.env','ignored','link','.git','binary']) expect(existsSync(join(checkout.cwd,'source',name))).toBe(false);
     writeFileSync(join(repo,'file.txt'),'further edits');
     await prepareInspection(checkout);
     expect(readFileSync(join(checkout.cwd,'source','file.txt'),'utf8')).toBe('unstaged');
