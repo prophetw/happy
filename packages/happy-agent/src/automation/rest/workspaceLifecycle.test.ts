@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, symlinkSync, renameSync, readlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, symlinkSync, linkSync, renameSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -630,6 +630,33 @@ it('retains a checkout if FETCH_HEAD is the only reference to fetched work',asyn
     await m.requestedReclaimDue(archive,'owner');
     expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({state:'attention',reason:'WORKSPACE_GITDIR_ONLY_RESULTS'});
     expect(existsSync(f.w.cwd)).toBe(true);
+    expect(git(f.repo,'worktree','list','--porcelain')).toContain(f.w.cwd);
+});
+it('preserves hardlinks when every alias is inside the archived tree',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    linkSync(join(f.w.cwd,'base.txt'),join(f.w.cwd,'local-alias'));
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(archive,'owner');
+    const final=readReclaimRequest(f.queue.directory,f.w.id)?.progress;
+    expect(final?.state).toBe('released');
+    const a=statSync(join(final!.archive!.checkout,'base.txt')), b=statSync(join(final!.archive!.checkout,'local-alias'));
+    expect(a.ino).toBe(b.ino);
+    expect(a.nlink).toBe(2);
+});
+it('retains the checkout when a hardlink also exists outside the archive scope',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    const external=join(f.root,'external-alias');
+    linkSync(join(f.w.cwd,'base.txt'),external);
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({state:'attention',reason:'WORKSPACE_ARCHIVE_UNSUPPORTED_FILE'});
+    expect(statSync(join(f.w.cwd,'base.txt')).ino).toBe(statSync(external).ino);
     expect(git(f.repo,'worktree','list','--porcelain')).toContain(f.w.cwd);
 });
 it('a failed independent archive cannot release either directory',async()=>{

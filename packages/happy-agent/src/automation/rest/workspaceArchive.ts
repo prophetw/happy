@@ -12,11 +12,12 @@ export function archiveTree(path:string,indexFence?:string):string|undefined {
     const dev=initial.dev, uid=BigInt(process.getuid!());
     const hash=createHash('sha256'), buffer=Buffer.alloc(128*1024);
     let count=0, total=0;
+    const hardlinks=new Map<bigint,{first:string;expected:bigint;seen:bigint}>();
     const start=Date.now();
     const changed=()=>{throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);};
     const add=(value:unknown)=>hash.update(JSON.stringify(value)+'\n');
     const verify=(a:BigIntStats,b:BigIntStats)=>{
-        if(a.ino!==b.ino||a.dev!==b.dev||a.mode!==b.mode||a.size!==b.size||a.ctimeNs!==b.ctimeNs||a.mtimeNs!==b.mtimeNs) changed();
+        if(a.ino!==b.ino||a.dev!==b.dev||a.mode!==b.mode||a.size!==b.size||a.nlink!==b.nlink||a.ctimeNs!==b.ctimeNs||a.mtimeNs!==b.mtimeNs) changed();
     };
     const walk=(physical:string,name:string,depth:number)=>{
         const before=lstatSync(physical,{bigint:true});
@@ -28,7 +29,15 @@ export function archiveTree(path:string,indexFence?:string):string|undefined {
             add(readlinkSync(physical,{encoding:'buffer'}).toString('base64'));
             verify(before,lstatSync(physical,{bigint:true}));return;
         }
-        if (!before.isDirectory() && (!before.isFile() || before.nlink!==1n)) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
+        if (!before.isDirectory()&&!before.isFile()) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
+        if(before.isFile()&&before.nlink!==1n){
+            if(indexFence) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
+            const group=hardlinks.get(before.ino)??{first:name,expected:before.nlink,seen:0n};
+            if(group.expected!==before.nlink)changed();
+            group.seen++;
+            hardlinks.set(before.ino,group);
+            add(['hardlink',group.first]);
+        }
         const fd=openSync(physical,constants.O_NOFOLLOW|constants.O_NONBLOCK|constants.O_RDONLY|(before.isDirectory()?constants.O_DIRECTORY:0));
         try {
             verify(before,fstatSync(fd,{bigint:true}));
@@ -59,6 +68,10 @@ export function archiveTree(path:string,indexFence?:string):string|undefined {
     };
     if(!initial.isDirectory()||realpathSync(path)!==path) throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
     walk(path,'',0);
+    // An alias outside this tree could change the archive after retirement.
+    for(const group of hardlinks.values()){
+        if(group.seen!==group.expected)throw new ApiError('WORKSPACE_ARCHIVE_UNSUPPORTED_FILE',409);
+    }
     // An atomic move must preserve object identity as well as bytes.
     return initial.dev+':'+initial.ino+':'+hash.digest('hex');
 }
