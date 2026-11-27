@@ -43,7 +43,7 @@ export const workspacesEn = {
     back:'Back to list', expired:'The plan expired. Create a new plan.', unavailable:'The workspace manager is unavailable. Check the connection and retry.',
     taskLimit:'Showing up to 20 linked task identifiers; task messages are not exposed.',
     guidance: {
-        reclaim:'Reclaim', archiveWait:'Waiting to reclaim',
+        reclaim:'Reclaim', oneClickAvailable:'Ready to request reclamation', archiveWait:'Waiting to reclaim',
         archiving:'Preserving workspace files', closing:'Closing the dedicated idle session',
         archiveOpen:'View or recover preserved files', archiveFolder:'Preserved files on the execution computer',
         savedCheckout:'Working files', savedTemporary:'Temporary files', savedIndex:'Preserved staging tree',
@@ -204,7 +204,7 @@ export const workspacesZh = {
     back:'返回列表', expired:'计划已过期，请重新生成。', unavailable:'暂时无法连接工作区管理服务，请检查连接后重试。',
     taskLimit:'最多显示20个关联任务标识，不展示任务正文。',
     guidance: {
-        reclaim:'回收', archiveWait:'正在等待回收',
+        reclaim:'回收', oneClickAvailable:'可申请回收', archiveWait:'正在等待回收',
         archiving:'正在保全文件', closing:'正在释放专属空闲会话',
         archiveOpen:'查看／恢复保留资料', archiveFolder:'保留资料位于执行电脑',
         savedCheckout:'工作文件', savedTemporary:'临时资料', savedIndex:'保留的暂存区',

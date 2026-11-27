@@ -321,7 +321,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                     {detail.item.state!=='retired'&&detail.item.canRequestReclaim===undefined&&!automaticReclaim(detail.item)&&<View style={row}>{!detail.item.managed&&button(t('workspaces.adopt'),()=>setReview('adopt'),busy||unsettled||!detail.adoptionVerified)}
                         {detail.item.managed&&<>{button(t('workspaces.integrated'),()=>setReview('integrated'),busy||unsettled||!detail.inspectedHead)}{button(t('workspaces.noChange'),()=>setReview('no-change'),busy||unsettled||!detail.inspectedHead)}
                             {project?.allowArchive&&button(t('workspaces.archive'),()=>setReview('archived'),busy||unsettled||!detail.inspectedHead)}</>}</View>}
-                    {!project?.allowArchive&&<Text style={muted}>{t('workspaces.archiveDisabled')}</Text>}
+                    {detail.item.canRequestReclaim===undefined&&!project?.allowArchive&&<Text style={muted}>{t('workspaces.archiveDisabled')}</Text>}
                     {detail.item.state!=='retired'&&detail.item.canRequestReclaim===undefined&&!automaticReclaim(detail.item)&&detail.item.canFinalizeIntegrated&&button(t('workspaces.finalize'),()=>setAcceptance({workspaceID:detail.item.id,text:''}),busy||unsettled||!detail.inspectedHead)}
                     {acceptance?.workspaceID===detail.item.id&&<View style={{gap:8}}>
                         <Text style={muted}>{t('workspaces.finalizeHelp')}</Text>
