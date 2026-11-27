@@ -6,7 +6,7 @@ import { ApiError, directoryAllowed, directoryProjectID } from '../rest/schema';
 import { isServiceAuthorization } from '../rest/serviceTokens';
 import { canonicalBody } from '../rest/auth';
 import { openWorkspaceLifecycle } from './workspaces';
-import { workspaceReadSchema, workspaceWriteSchema } from '@slopus/happy-wire';
+import { workspaceReadSchema, workspaceWriteSchema, workspaceDeliveryRequestSchema } from '@slopus/happy-wire';
 
 const absolute = z.string().startsWith('/').max(4096);
 export const workspaceOwnerConfigSchema = z.object({ version: z.literal(1), workerConfig: absolute, stateDirectory: absolute,
@@ -35,7 +35,7 @@ export function workspaceOwnerScope(file: string, ownerID: string) {
 }
 /** Existing Control owner-management scope, including live signed Worker
  * capability projection. This never creates a connection, grant or task. */
-export async function workspaceOwnerControlProjects(file:string,authorization:string|undefined,ownerID:string) {
+export async function workspaceOwnerControlProjects(file:string,authorization:string|undefined,ownerID:string,readOnly=false) {
     if(!authorization?.startsWith('Bearer ')||isServiceAuthorization(authorization))throw new ApiError('OWNER_AUTH_REQUIRED',401);
     const scope=workspaceOwnerScope(file,ownerID),endpoint=new URL(scope.worker.endpoint);
     let response:Response;
@@ -49,15 +49,16 @@ export async function workspaceOwnerControlProjects(file:string,authorization:st
     try {result=z.object({version:z.literal(1),ok:z.literal(true),data:z.object({workers:z.array(worker).max(100)})}).parse(await response.json());}
     catch{throw new ApiError('WORKSPACE_CONTROL_UNAVAILABLE',503);}
     const remote=result.data.workers.find(w=>w.id===scope.worker.registration.id&&w.machineID===scope.worker.registration.machineID);
-    if(!remote||!remote.projectScopes&&!remote.directoryScopes)throw new ApiError('WORKSPACE_CONTROL_UNAVAILABLE',503);
+    if(!remote||!readOnly&&!remote.projectScopes&&!remote.directoryScopes)throw new ApiError('WORKSPACE_CONTROL_UNAVAILABLE',503);
     return scope.projects.filter(p=>{
         const known=remote.projects.find(x=>x.directory===p.policy.root);
-        return known?known.id===p.id:remote.directoryScopes===1&&remote.directorySelection&&directoryAllowed(p.policy.root,remote.directorySelection.roots)
+        return known?known.id===p.id:(readOnly||remote.directoryScopes===1)&&remote.directorySelection&&directoryAllowed(p.policy.root,remote.directorySelection.roots)
             &&p.id===directoryProjectID(p.policy.root);
     }).map(p=>p.id);
 }
 export async function executeWorkspaceOwnerJob(file: string, ownerID: string, raw: unknown, plan?: unknown, dependencies: { activity?: ActivityProbe;authorize?:()=>Promise<void> } = {}) {
-    const read = workspaceReadSchema.safeParse(raw), request = read.success ? read.data : workspaceWriteSchema.parse(raw);
+    const read = workspaceReadSchema.safeParse(raw), delivery=workspaceDeliveryRequestSchema.safeParse(raw);
+    const request = read.success ? read.data : delivery.success ? delivery.data : workspaceWriteSchema.parse(raw);
     const scope = workspaceOwnerScope(file, ownerID), project = scope.projects.find(p => p.id === request.projectID);
     if (!project || request.machineID !== scope.worker.registration.machineID) throw new ApiError('WORKSPACE_SCOPE_DENIED', 403);
     const validateLocal=()=>{
@@ -68,7 +69,7 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
         homeDirectory: scope.config.homeDirectory,
         activity: dependencies.activity,
         processProbeSocket: scope.config.processProbeSocket,
-        readOnly: ['inventory','detail','result','plan'].includes(request.action),
+        readOnly: ['inventory','delivery-inventory','detail','result','plan'].includes(request.action),
         ownerDirectorySelection:true,authorizationCurrent:validateLocal,
         authorize: async () => {
             validateLocal();await dependencies.authorize?.();validateLocal();
@@ -83,6 +84,7 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
         }
         return { total: page.total, returned: items.length, next: page.next, items };
     }
+    if (request.action === 'delivery-inventory') return lifecycle.deliveryInventory(request.limit,request.after,request.view,request.requestID);
     if (request.action === 'detail') return lifecycle.detail(request.workspaceID);
     if (request.action === 'result') return lifecycle.result(request.workspaceID, request.operationID, true);
     if (request.action === 'plan') return lifecycle.plan(request.workspaceID);
@@ -90,5 +92,6 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
     if (request.action === 'resolve') return lifecycle.resolve(request.workspaceID, { operationID: request.operationID,
         expectedRevision: request.revision, head: request.head, kind: request.kind, source: `owner-ui:${request.operationID}` });
     if (request.action === 'finalize-integrated') return lifecycle.finalizeIntegrated(request.workspaceID, request.operationID, request.head, request.evidence, ownerID);
+    if (request.action==='start-delivery'||request.action==='resume-delivery') return lifecycle.deliver(request,ownerID);
     return lifecycle.apply(plan as Parameters<typeof lifecycle.apply>[0], request.operationID);
 }

@@ -71,14 +71,14 @@ const executionLocation = z.object({ mode: z.string(), source: z.enum(['baseline
     workspaceState: z.enum(['active','retiring','retired']).optional(), directory: z.string().max(4096), branch: z.string().max(200).optional(), baseCommit: z.string().optional(), resultCommit: z.string().optional(), dirty: z.boolean().optional(), projectID: z.string(), port: z.number().int().optional(),
     checkoutDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(), candidateCommit: gitObjectID.optional(),
     testResult: testResult.optional(), testCleanup: z.enum(['removed', 'retained']).optional() });
-const workDetail = workSummary.extend({ timing: workTiming.optional(), waitingSince: z.number().optional(), execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
+const workDetail = workSummary.extend({ sendRequestID:z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), timing: workTiming.optional(), waitingSince: z.number().optional(), execution: executionLocation.optional(), queueID: z.string().optional(), queueReason: z.string().max(200).optional(), canCancel: z.boolean().optional(), recovery: z.string().nullable().optional(), instruction: z.string().max(600), runId: uuid.nullable(), reason: z.string().max(200).nullable(),
     dispatchOptions: dispatchOptions.optional(), nextWakeAt: z.string().nullable(), finishedAt: z.string().nullable(), executionSessionId: sessionId.nullable(),
     executionOutcome: z.string().max(80).nullable(), businessVerification: z.string().max(80),
     steps: z.array(z.object({ id: z.string().max(100), title: z.string().max(500), status: z.string().max(80) })).max(10),
     result: z.string().max(1200).nullable(), resultTruncated: z.boolean() });
 const dotDetail = z.object({ dotId: uuid, taskTotal: z.number().int().nonnegative(), tasks: z.array(workDetail).max(10),
     pendingIntegration: z.object({ total: z.number().int().nonnegative(), items: z.array(z.object({ id: uuid, title: z.string().max(200),
-        projectID: z.string().max(200), commit: gitObjectID, sessionId: sessionId.nullable(), test: testResult.nullable() })).max(20) }).optional(),
+        projectID: z.string().max(200), commit: gitObjectID, integration:z.literal('unconfirmed').optional(), sessionId: sessionId.nullable(), test: testResult.nullable() })).max(20) }).optional(),
     memory: z.object({ total: z.number().int().nonnegative(), omittedCount: z.number().int().nonnegative(),
         access: z.array(z.enum(['read', 'write', 'forget'])), items: z.array(z.object({ key: z.string().max(200), value: z.unknown(),
             kind: z.enum(['fact', 'preference', 'commitment']), revision: z.number().int().positive(), verified: z.boolean(),

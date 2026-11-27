@@ -17,7 +17,7 @@ module.exports = function workspaceOwnerProxy(next, raw) {
         const upstream=http.request({host:'127.0.0.1',port:target.port,method:req.method,path:req.url,headers},reply=>{
             res.writeHead(reply.statusCode ?? 503, {'Content-Type':'application/json','Cache-Control':'no-store'});reply.pipe(res);
         });
-        upstream.setTimeout(25000,()=>upstream.destroy());
+        upstream.setTimeout(req.url===prefix+'delivery'?155000:25000,()=>upstream.destroy());
         upstream.on('error',()=>{if(!res.headersSent)res.writeHead(503,{'Content-Type':'application/json'});res.end(JSON.stringify({version:1,ok:false,error:{code:'WORKSPACE_RESULT_UNKNOWN'}}));});
         req.pipe(upstream);
     };

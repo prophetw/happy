@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..'),src=join(repo,'packages/happy-app/sources');
 const out=resolve(process.argv[2]);mkdirSync(out,{recursive:true,mode:0o700});
 if(!existsSync(join(out,'node_modules')))symlinkSync(join(repo,'node_modules'),join(out,'node_modules'));
@@ -42,19 +43,113 @@ await build({entryPoints:[join(repo,'packages/happy-agent/src/automation/rest/fi
         b.onResolve({filter:/^@slopus\/happy-wire$/},()=>({path:join(repo,'packages/happy-wire/src/index.ts')}));
         b.onResolve({filter:/^@slopus\/happy-wire\/serverUrl$/},()=>({path:join(repo,'packages/happy-wire/src/serverUrl.ts')}));
     }}]});
-const child=fork(join(out,'harness.mjs'),[out],{stdio:['ignore','pipe','pipe','ipc']});let log='';child.stdout.on('data',d=>{log+=d;});child.stderr.on('data',d=>{log+=d;});
-const ready=await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('exit',code=>reject(Error(`Fixture exited ${code}: ${log}`)));});
+let child, log = "";
+const start = async root => {
+    child=fork(join(out,'harness.mjs'),[out],{stdio:['ignore','pipe','pipe','ipc'],
+        env:{...process.env,...(root?{HAPPY_WORKSPACE_RESTART_ROOT:root}:{})}});
+    log='';
+    child.stdout.on('data',d=>{log+=d;});child.stderr.on('data',d=>{log+=d;});
+    return new Promise((resolve,reject)=>{child.once('message',resolve);child.once('exit',code=>reject(Error(`Fixture exited ${code}: ${log}`)));});
+};
+const ready=await start();
 const browser=await chromium.launch({headless:true}),evidence={isolated:true,root:ready.root,scenarios:[],consoleErrors:[],pageErrors:[],httpErrors:[],payloads:[]};
 const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage();
 let phase='normal';page.on('console',msg=>{if(msg.type()==='error'&&!(phase==='unknown'&&msg.text().includes('net::ERR_FAILED')))evidence.consoleErrors.push(msg.text());});page.on('pageerror',e=>evidence.pageErrors.push(e.message));page.on('response',r=>{if(r.status()>=400)evidence.httpErrors.push({url:r.url(),status:r.status()});});
-page.on('request',r=>{if(r.url().endsWith('/write'))evidence.payloads.push(JSON.parse(r.postData()??'{}'));});
+page.on('request',r=>{if(r.url().endsWith('/write')||r.url().endsWith('/delivery'))evidence.payloads.push(JSON.parse(r.postData()??'{}'));});
 const button=name=>page.getByRole('button',{name,exact:true});
-const open=async()=>{await page.goto('http://127.0.0.1:20082/');await button('工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});};
+const open=async()=>{await page.goto('http://127.0.0.1:20082/');await button('项目工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});};
 const find=async name=>{const id=ready.workspaces[name].id,card=page.getByTestId(`workspace-${id}`);if(!await card.count()){await button('加载更多').click();await card.waitFor();}await card.getByRole('button',{name:'详情与证据',exact:true}).click();await button('返回列表').waitFor();await page.getByText(ready.workspaces[name].cwd,{exact:true}).first().waitFor();await page.getByText('正在检查目录、成果与占用…',{exact:true}).waitFor({state:'hidden'});};
 const resolveNoChange=async()=>{await button('核验无代码改动').click();await button('确认核验并记录证据').click();await page.getByText('成果证据已记录',{exact:true}).waitFor();await button('生成回收计划').waitFor();};
 const finalize = process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE === '1';
 try {
-    if (finalize) {
+    if (process.env.HAPPY_WORKSPACE_RESTART_FIXTURE === '1') {
+        const git=(cwd,...args)=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:'pipe'}).trim();
+        evidence.servicePIDs=[ready.pid];
+        const restart = async () => {
+            const exit=once(child,'exit');child.kill('SIGKILL');await exit;
+            const instance=await start(ready.root);evidence.servicePIDs.push(instance.pid);await open();
+        };
+        const cardFor = async name => {
+            const card=page.getByTestId(`workspace-${ready.workspaces[name].id}`);
+            if(!await card.count()){await button('加载更多').click();await card.waitFor();}
+            return card;
+        };
+        await open();
+        let card=await cardFor('dirty');
+        await card.getByText('有未提交内容 · 含未跟踪文件',{exact:true}).waitFor();
+        await restart();
+        card=await cardFor('dirty');await card.getByText('有未提交内容 · 含未跟踪文件',{exact:true}).waitFor();
+        assert.equal(readFileSync(join(ready.workspaces.dirty.cwd,'keep.txt'),'utf8'),'must retain\n');
+        evidence.scenarios.push('dirty and untracked files survive an Owner process restart');
+        card=await cardFor('unknown-reply');await card.getByText('已推送 · 待合并',{exact:true}).waitFor();
+        await restart();
+        card=await cardFor('unknown-reply');await card.getByText('已推送 · 待合并',{exact:true}).waitFor();
+        await card.getByRole('button',{name:'详情与证据',exact:true}).click();
+        await page.getByText('原请求 · send-unknown-reply',{exact:true}).waitFor();
+        await page.screenshot({path:join(out,'pushed-after-restart.png'),fullPage:true});
+        evidence.scenarios.push('real pushed remote branch survives restart with original request association');
+        git(ready.workspaces.ready.cwd,'push','origin','HEAD:refs/heads/main');
+        await restart();
+        card=await cardFor('ready');await card.getByText('已合并 · 待收尾',{exact:true}).waitFor();
+        assert.ok(existsSync(ready.workspaces.ready.cwd));
+        await page.screenshot({path:join(out,'merged-after-restart.png'),fullPage:true});
+        evidence.scenarios.push('remote main advances while stale local main remains; merged candidate is visible after restart');
+        card=await cardFor('unconfirmed');evidence.missingCard=await card.innerText();assert.match(evidence.missingCard,/目录缺失 · Git 登记(?:存在|缺失)/);
+        const old=page.getByText(ready.old,{exact:true});
+        if(!await old.count())await button('加载更多').click();
+        await old.waitFor();
+        const oldCard=page.getByTestId(/^workspace-/).filter({has:old});
+        await oldCard.getByText('待认领',{exact:true}).waitFor();
+        await oldCard.getByRole('button',{name:'详情与证据',exact:true}).click();
+        await page.getByText('由项目所有者核对归属。',{exact:true}).waitFor();
+        assert.equal(await button('生成回收计划').count(),0);
+        assert.ok(existsSync(ready.old));
+        evidence.scenarios.push('missing checkout and historical unclaimed registration remain independently visible');
+        await button('返回列表').click();
+        card=await cardFor('live');
+        await card.getByText(/目录存在 · Git 登记存在 · 归属映射缺失/).waitFor();
+        await card.getByRole('button',{name:'详情与证据',exact:true}).click();
+        await page.getByText('原请求 · send-live',{exact:true}).waitFor();
+        assert.equal(await button('生成回收计划').count(),0);
+        await button('返回列表').click();
+        evidence.scenarios.push('separate creation evidence recovers the original request link when the queue mapping is absent');
+        const ownerRead=async (authorization,requestID,projectID='fixture-project')=>page.request.post('http://127.0.0.1:20082/api/workspace-owner/v1/read',{headers:{
+            origin:'http://127.0.0.1:20082',authorization},data:{action:'delivery-inventory',machineID:'fixture-machine',projectID,requestID}});
+        assert.equal((await ownerRead('Bearer other-owner','send-live')).status(),403);
+        assert.equal((await ownerRead('Bearer fixture-owner','send-live','other-project')).status(),403);
+        const scoped=await(await ownerRead('Bearer fixture-owner','send-live')).json();
+        assert.equal(scoped.data.items.length,1);
+        assert.equal(scoped.data.items[0].id,ready.workspaces.live.id);
+        assert.equal((await(await ownerRead('Bearer fixture-owner','send-unrelated')).json()).data.total,0);
+        evidence.scenarios.push('authenticated request filter returns only its original workspace; different account denied');
+        await find('delivery');
+        await button('交付当前候选').click();
+        await page.getByRole('textbox',{name:'业务验收证据'}).fill('Disposable browser acceptance');
+        phase='unknown';
+        await page.route('**/api/workspace-owner/v1/delivery',async route=>{
+            const reply=await route.fetch();
+            const body=await reply.json();
+            evidence.lostDeliveryReply={status:reply.status(),phase:body.data?.phase,operationID:body.data?.operationID};
+            await route.abort('failed');
+        });
+        await button('授权交付此候选').click();
+        await page.getByRole('alert').waitFor();
+        assert.equal(evidence.lostDeliveryReply.phase,'released');
+        await page.unroute('**/api/workspace-owner/v1/delivery');phase='normal';
+        await restart();
+        await button('回收记录').click();
+        card=page.getByTestId(`workspace-${ready.workspaces.delivery.id}`);await card.getByText('已回收',{exact:true}).waitFor();
+        await card.getByRole('button',{name:'详情与证据',exact:true}).click();
+        await page.getByText('目录释放已核验',{exact:true}).waitFor();
+        assert.equal(existsSync(ready.workspaces.delivery.cwd),false);
+        const releasedHead=git(ready.remote,'rev-parse','refs/heads/main');
+        assert.equal(git(ready.remote,'show',releasedHead+':delivery.txt'),'delivery');
+        assert.equal(evidence.payloads.filter(p=>p.action==='start-delivery').length,1);
+        await page.screenshot({path:join(out,'released-after-restart.png'),fullPage:true});
+        evidence.scenarios.push('one browser authorization -> real test and bare remote updates -> archive and release -> dropped HTTP acknowledgement -> released receipt after restart');
+        assert.equal(new Set(evidence.servicePIDs).size,5);
+        evidence.actualFixtureRemoved=1;evidence.realUserDirectoriesRemoved=0;
+    } else if (finalize) {
         const accept = async () => {
             await button('收尾已集成工作').click();
             await page.getByRole('textbox',{name:'业务验收证据'}).fill('Isolated business acceptance evidence');
@@ -82,7 +177,7 @@ try {
         evidence.actualFixtureRemoved=1;evidence.realUserDirectoriesRemoved=0;
     } else {
     await page.goto('http://127.0.0.1:20082/');await page.screenshot({path:join(out,'entry-desktop.png'),fullPage:true});
-    await button('工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});
+    await button('项目工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});
     await page.screenshot({path:join(out,'list-desktop.png'),fullPage:true});
     await find('dirty');await page.getByText('存在暂存、未暂存或未跟踪内容，需要先保全。',{exact:false}).first().waitFor();
     await button('生成回收计划').click();await page.getByText('此计划仍被保护条件阻挡，确认不能跳过这些检查。',{exact:true}).waitFor();assert.ok(await button('确认并回收').isDisabled());await page.screenshot({path:join(out,'dirty-protected.png'),fullPage:true});

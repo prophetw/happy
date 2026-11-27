@@ -394,3 +394,105 @@ it('leaves pre-existing managed workspaces out of owner finalization',async()=>{
         .rejects.toThrow('WORKSPACE_AUTOMATIC_RETIREMENT_DISABLED');
     expect(existsSync(f.w.cwd)).toBe(true);
 });
+
+async function deliveryFixture(command=['/bin/sh','-c','test "$(cat feature.txt)" = feature']) {
+    const f=await fixture(true);
+    await f.complete();f.save();
+    const remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    mkdirSync(archive,{mode:0o700});
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    const overrides:Partial<WorkspacePolicy>={remote:'origin',automaticRetirementArchive:archive,
+        delivery:{strategy:'direct',remoteURL:remote,test:command}};
+    const head=git(f.w.cwd,'rev-parse','HEAD');
+    const scope={machineID:'machine',projectID:'project',workspaceID:f.w.id,operationID:'delivery'};
+    const begin={action:'start-delivery' as const,...scope,head,requestID:'send',evidence:'isolated business acceptance'};
+    const resume={action:'resume-delivery' as const,...scope};
+    return {...f,archive,remote,overrides,head,begin,resume,
+        remoteHead:()=>git(remote,'rev-parse','refs/heads/main')};
+}
+
+it('reads back both remote pushes after lost replies and retires through the same archived Owner operation',async()=>{
+    const f=await deliveryFixture();
+    const calls:string[]=[];
+    const interrupted:typeof workspaceGit=async(cwd,args,fd,timeout)=>{
+        const result=await workspaceGit(cwd,args,fd,timeout);
+        if(args[0]==='push'){calls.push(args.at(-1)!);throw Error('reply lost after remote update');}
+        return result;
+    };
+    const first=await f.manager(f.overrides,interrupted).deliver(f.begin,'owner');
+    expect(first).toMatchObject({phase:'push-intent',testExitCode:0,blocker:'WORKSPACE_DELIVERY_UNCONFIRMED'});
+    expect(f.remoteHead()).toBe(f.w.baseCommit);
+    expect(await f.manager(f.overrides,interrupted).deliver(f.resume,'owner')).toMatchObject({phase:'merge-intent',pushedAt:expect.any(Number)});
+    expect(f.remoteHead()).toBe(f.head);
+    expect(existsSync(f.w.cwd)).toBe(true);
+    await expect(f.manager(f.overrides).deliver(f.resume,'another-owner')).rejects.toThrow('WORKSPACE_DELIVERY_AUTHORIZATION_CHANGED');
+    const owner=f.manager(f.overrides);
+    expect(await owner.deliver(f.resume,'owner')).toMatchObject({phase:'released',head:f.head,mergedTarget:f.head,testExitCode:0});
+    expect(calls).toEqual([`${f.head}:refs/heads/${f.w.branch}`,`${f.head}:refs/heads/main`]);
+    expect(git(f.repo,'rev-parse','main')).toBe(f.w.baseCommit);
+    expect(existsSync(f.w.cwd)).toBe(false);
+    expect(await owner.deliver(f.resume,'owner')).toMatchObject({phase:'released'});
+    const record=new MetadataStore(f.archive).get<{evidence:unknown}>(`finalize:${f.w.id}:delivery`);
+    expect(record?.evidence).toMatchObject({acceptance:{evidence:'isolated business acceptance'}});
+});
+
+it('keeps unsaved files and a failed exact candidate test from reaching the remote',async()=>{
+    const f=await deliveryFixture(['/bin/false']);
+    writeFileSync(join(f.w.cwd,'keep.txt'),'retain\n');
+    const owner=f.manager(f.overrides);
+    expect(await owner.deliver(f.begin,'owner')).toMatchObject({phase:'authorized',blocker:'WORKSPACE_UNSAVED_ARTIFACTS'});
+    expect(readFileSync(join(f.w.cwd,'keep.txt'),'utf8')).toBe('retain\n');
+    rmSync(join(f.w.cwd,'keep.txt'));
+    expect(await owner.deliver(f.resume,'owner')).toMatchObject({phase:'tested',testExitCode:1,blocker:'WORKSPACE_DELIVERY_TEST_FAILED'});
+    expect(f.remoteHead()).toBe(f.w.baseCommit);
+    expect(()=>git(f.remote,'rev-parse','--verify',f.w.branch!)).toThrow();
+});
+
+it('keeps a pushed candidate and stops if the remote target advances concurrently',async()=>{
+    const f=await deliveryFixture();
+    const other=join(f.root,'other');
+    git(f.root,'clone','--branch','main',f.remote,other);git(other,'config','user.name','other');git(other,'config','user.email','other@invalid');
+    writeFileSync(join(other,'unrelated.txt'),'concurrent\n');git(other,'add','unrelated.txt');git(other,'commit','-qm','unrelated');
+    let advanced=false;
+    const advance:typeof workspaceGit=async(cwd,args,fd,timeout)=>{
+        const result=await workspaceGit(cwd,args,fd,timeout);
+        if(!advanced&&args[0]==='push'){advanced=true;git(other,'push','origin','HEAD:refs/heads/main');}
+        return result;
+    };
+    expect(await f.manager(f.overrides,advance).deliver(f.begin,'owner')).toMatchObject({phase:'pushed',head:f.head,blocker:'WORKSPACE_DELIVERY_TARGET_ADVANCED'});
+    expect(f.remoteHead()).toBe(git(other,'rev-parse','HEAD'));
+    expect(git(f.remote,'rev-parse',f.w.branch!)).toBe(f.head);
+    expect(existsSync(f.w.cwd)).toBe(true);
+    expect(await f.manager(f.overrides).deliver(f.resume,'owner')).toMatchObject({phase:'pushed',blocker:'WORKSPACE_DELIVERY_TARGET_ADVANCED'});
+    const target=f.remoteHead();
+    git(f.w.cwd,'merge','--no-edit',target);
+    const next=git(f.w.cwd,'rev-parse','HEAD');
+    f.queue.update(f.task.id,t=>{t.resultCommit=next;});
+    const owner=f.manager(f.overrides);
+    expect((await owner.deliveryInventory(5)).items[0].delivery?.canStart).toBe(true);
+    expect(await owner.deliver({...f.begin,operationID:'retargeted',head:next},'owner')).toMatchObject({phase:'released',head:next,testedOn:target});
+    expect(await owner.deliver(f.resume,'owner')).toMatchObject({head:f.head,blocker:'WORKSPACE_DELIVERY_SUPERSEDED'});
+    expect(f.remoteHead()).toBe(next);
+});
+
+it.each(['squash','cherry-pick'])('reports exact %s content in the configured remote and unknown during an outage',async method=>{
+    const f=await deliveryFixture();
+    writeFileSync(join(f.w.cwd,'second.txt'),'second\n');
+    git(f.w.cwd,'add','second.txt');git(f.w.cwd,'commit','-qm','second feature');
+    if(method==='squash') {
+        git(f.repo,'merge','--squash',f.w.branch!);
+        git(f.repo,'commit','-qm','combined feature');
+    } else {
+        writeFileSync(join(f.repo,'unrelated.txt'),'independent remote improvement\n');
+        git(f.repo,'add','unrelated.txt');git(f.repo,'commit','-qm','unrelated');
+        git(f.repo,'cherry-pick',f.head,git(f.w.cwd,'rev-parse','HEAD'));
+    }
+    git(f.repo,'push','origin','main');
+    expect(git(f.repo,'rev-parse','main')).not.toBe(git(f.w.cwd,'rev-parse','HEAD'));
+    let view=await f.manager(f.overrides).deliveryInventory(5);
+    expect(view.items[0].delivery).toMatchObject({state:'merged',proof:'exact-content',remoteHead:f.remoteHead()});
+    renameSync(f.remote,f.remote+'-offline');
+    view=await f.manager(f.overrides).deliveryInventory(5);
+    expect(view.items[0].delivery).toMatchObject({state:'unknown',registration:'registered',directory:'present'});
+    expect(existsSync(f.w.cwd)).toBe(true);
+});

@@ -1,7 +1,8 @@
 import { closeSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { workspacePlanSchema, workspaceDispositionSchema, workspaceOperationSchema, type WorkspaceItem } from '@slopus/happy-wire';
+import { workspacePlanSchema, workspaceDispositionSchema, workspaceOperationSchema, workspaceDeliveryReceiptSchema, type WorkspaceItem, type WorkspaceDelivery, type WorkspaceDeliveryRequest, type WorkspaceDeliveryReceipt } from '@slopus/happy-wire';
 import { hash } from '../journal';
 import { canonicalBody } from './auth';
 import { ApiError } from './schema';
@@ -9,6 +10,9 @@ import { MetadataStore } from './store';
 import { privateDirectory } from './privateFs';
 import { TaskQueue, terminalTask, holdsReviewCheckout, type Workspace, type QueueTask } from './taskQueue';
 import { workspaceGit, workspaceLock } from './taskWorkspaces';
+import { checkoutEvidence, gitWorkspaces, integrationProof, remoteDeliveryRefs, ensureTargetCommit, type GitWorkspace } from './workspaceDeliveryEvidence';
+import { githubDelivery, githubDeliveryPolicySchema, githubRemoteMatches } from './workspaceGithubDelivery';
+import { recoverWorkspaceIdentity } from './workspaceIdentity';
 import { retirementProcessProof } from './sessionProcessProofs';
 import { scanWorkspaceProcesses, type Activity, type ProcessScope } from './workspaceProcessScan';
 
@@ -16,10 +20,16 @@ const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), digest = z.string().regex
 const commit = z.string().regex(/^[a-f0-9]{40,64}$/);
 const absolute = z.string().max(4096).refine(s => isAbsolute(s) && resolve(s) === s && !/[\x00-\x1f]/.test(s));
 export const workspacePolicySchema = z.object({ version: z.literal(1), id, machineID: id, grantID: id, projectID: id,
-    root: absolute, mainRef: z.literal('refs/heads/main'), remote: id.optional(),
+    root: absolute, mainRef: z.string().regex(/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9_./-]{0,240}$/)
+        .refine(ref=>!ref.includes('..') && !ref.includes('//') && !ref.split('/').some(part=>part.startsWith('.')||part.endsWith('.lock')) && !/[./]$/.test(ref)),
+    remote: id.optional(), delivery: z.object({
+        strategy:z.enum(['direct','pr']), remoteURL:z.string().min(1).max(4096).regex(/^[^\x00-\x1f]+$/),
+        github:githubDeliveryPolicySchema.optional(),
+        test:z.array(z.string().min(1).max(4096).regex(/^[^\x00-\x1f]+$/)).min(1).max(32),
+    }).strict().refine(p=>!p.github||p.strategy==='pr'&&githubRemoteMatches(p.remoteURL,p.github.repository)).optional(), inventoryDirectories: z.array(absolute).max(20).optional(),
     protectedDirectories: z.array(absolute).max(100).default([]), allowApply: z.boolean().default(false),
     automaticRetirementArchive: absolute.optional(), allowArchive: z.boolean().default(false), allowDiscard: z.boolean().default(false),
-}).strict();
+}).strict().refine(p=>!p.delivery||!!p.remote,'A delivery policy requires an explicit remote');
 export type WorkspacePolicy = z.input<typeof workspacePolicySchema>;
 export type { Activity } from './workspaceProcessScan';
 export type ActivityProbe = (workspace: Workspace, tasks: Pick<QueueTask,'processID'|'sessionID'>[]) => Promise<Activity>;
@@ -53,6 +63,11 @@ const recordSchema = z.object({ version: z.literal(1), binding: digest, revision
     disposition: dispositionSchema.optional(), operations: z.array(operationSchema).max(16), checkedAt: z.number().optional(),
 }).strict();
 type Record = z.infer<typeof recordSchema>;
+const deliveryIntentSchema=z.object({
+    scope:digest, policy:digest, ownerID:id, requestID:id, evidence:z.string().max(16000).optional(),
+    receipt:workspaceDeliveryReceiptSchema, previousPushedHead:commit.optional(),
+}).strict();
+type DeliveryIntent=z.infer<typeof deliveryIntentSchema>;
 const planSchema = workspacePlanSchema;
 export type WorkspacePlan = z.infer<typeof planSchema>;
 type Snapshot = { workspace: Workspace; tasks: QueueTask[]; related: QueueTask[]; others: Workspace[] };
@@ -60,7 +75,7 @@ type GitState = { head: string; branch: string; mainCommit: string; remoteCommit
     registry: string; identity: string; digest: string; checkout:string };
 
 /** One owner-authoritative lifecycle record per workspace, with bounded operation receipts.
- * This interface does not commit, merge, push, stop sessions or grant remote deletion rights.
+ * A remote delivery requires a separate durable Owner authorization for an exact candidate.
  */
 export class WorkspaceLifecycle {
     readonly policy: z.infer<typeof workspacePolicySchema>;
@@ -78,7 +93,7 @@ export class WorkspaceLifecycle {
         return this.queue.transaction(s => {
             const w = s.workspaces.find(w=>w.id===workspaceID);
             if (!w || w.grantID!==this.policy.grantID || w.projectID!==this.policy.projectID || w.root!==this.policy.root) error('WORKSPACE_SCOPE_DENIED');
-            return { workspace: w!, tasks: s.tasks.filter(t=>t.workspaceID===workspaceID),
+            return { workspace: w!, tasks: s.tasks.filter(t=>t.workspaceID===workspaceID&&t.grantID===w.grantID),
                 related: s.tasks.filter(t=>(!terminalTask(t) || holdsReviewCheckout(t)) && (t.sessionID===w!.sessionID || t.resources.some(r=>r.key===`checkout:${hash(w!.cwd)}`
                     || r.mode==='exclusive'&&(r.key==='machine'||r.key===`repo:${hash(w!.repository)}`)))),
                 others: s.workspaces.filter(other=>other.id!==workspaceID && other.retirement?.phase!=='retired'
@@ -171,13 +186,14 @@ export class WorkspaceLifecycle {
         if(existsSync(join(gitdir,'COMMIT_EDITMSG'))
             &&!(await this.git(w.cwd,['show','-s','--format=%B%x00',...messageHeads])).split('\0').map(text=>text.trim())
                 .includes(readFileSync(join(gitdir,'COMMIT_EDITMSG'),'utf8').trim()))error('WORKSPACE_GITDIR_ARTIFACTS');
-        const mainCommit=await this.git(w.root,['rev-parse','--verify',this.policy.mainRef+'^{commit}']);
+        let mainCommit=await this.git(w.root,['rev-parse','--verify',this.policy.mainRef+'^{commit}']);
+        if(this.policy.delivery) await this.verifyDeliveryRemote();
         let remoteCommit: string|undefined;
         if (this.policy.remote) {
-            let rows:string;try{rows=await this.git(w.root,['ls-remote','--heads','--',this.policy.remote,this.policy.mainRef]);}catch{error('WORKSPACE_REMOTE_UNCONFIRMED');}
-            if (!rows || rows.split('\n').length!==1) error('WORKSPACE_REMOTE_UNCONFIRMED');
-            remoteCommit=rows.split(/\s+/)[0];commit.parse(remoteCommit);
+            remoteCommit=(await remoteDeliveryRefs(this.policy,[]))?.get(this.policy.mainRef);
+            if(!remoteCommit)error('WORKSPACE_REMOTE_UNCONFIRMED');
             await this.git(w.root,['cat-file','-e',remoteCommit+'^{commit}']);
+            if(this.policy.delivery) mainCommit=remoteCommit;
         }
         const indexFlags=await this.git(w.cwd,['ls-files','-v']);
         if(indexFlags.split('\n').some(line=>/^[a-zS] /.test(line)))error('WORKSPACE_INDEX_FLAGS_UNCONFIRMED');
@@ -210,13 +226,345 @@ export class WorkspaceLifecycle {
         const pageCounts: {[state:string]:number}={};for(const item of items)pageCounts[item.state]=(pageCounts[item.state]??0)+1;
         return {total:rows.length,returned:items.length,pageCounts,items,next:rows.filter(w=>w.id>after).length>limit?page.at(-1)!.id:null};
     }
+    /** Read-only reconciliation. Only the returned page gets checkout and remote probes. */
+    async deliveryInventory(limit: number, after = '', view: 'pending'|'released' = 'pending', requestID?:string) {
+        const ledger = this.queue.transaction(s => {
+            const claimed = new Set<string>(), knownIDs=new Set<string>(), owned: Workspace[] = [], tasks = new Map<string, QueueTask[]>();
+            for (const w of s.workspaces) {
+                claimed.add(w.cwd);knownIDs.add(w.id);
+                if (w.grantID === this.policy.grantID && w.projectID === this.policy.projectID && w.root === this.policy.root) owned.push(w);
+            }
+            for (const t of s.tasks) {
+                if (t.grantID !== this.policy.grantID || !t.workspaceID) continue;
+                const list = tasks.get(t.workspaceID);
+                if (list) list.push(t); else tasks.set(t.workspaceID,[t]);
+            }
+            return { claimed, knownIDs, owned, tasks };
+        },true);
+        const registry = await gitWorkspaces(this.policy.root);
+        const entries = new Map(registry?.map(entry=>[entry.directory,entry]));
+        const candidates = ledger.owned.filter(w=>w.branch && !w.execution.candidate
+            && (view==='released') === (w.retirement?.phase==='retired'));
+        const roots = [this.policy.root, ...this.policy.inventoryDirectories ?? []];
+        const historical = view==='released' ? [] : (registry ?? []).filter(entry =>
+            entry.directory!==this.policy.root && !ledger.claimed.has(entry.directory) && !inside(entry.directory,this.queue.directory)
+            && !entry.branch?.startsWith('dot-task/')
+            && roots.some(root=>entry.directory!==root && inside(entry.directory,root)));
+        const orphanIDs=new Set([...ledger.tasks.keys()].filter(key=>!ledger.knownIDs.has(key)));
+        if (view==='pending') for(const entry of registry??[]) {
+            const workspaceID=entry.branch?.match(/^dot-task\/([a-f0-9]{64})$/)?.[1];
+            if(workspaceID&&!ledger.knownIDs.has(workspaceID)&&entry.directory===join(this.queue.directory,'worktrees',workspaceID)) orphanIDs.add(workspaceID);
+        }
+        const recovered=view==='released'?[]:[...orphanIDs].flatMap(id=>{
+            const identity=recoverWorkspaceIdentity(this.queue,this.policy,id);
+            if(!identity||ledger.claimed.has(identity.directory)) return [];
+            return [{id,workspace:undefined,identity,entry:entries.get(identity.directory)}];
+        });
+        const rows = [
+            ...candidates.map(workspace=>({ id:workspace.id, workspace, identity:undefined, entry:entries.get(workspace.cwd) })),
+            ...historical.map(entry=>({ id:hash(canonicalBody([this.policy.projectID,this.policy.grantID,entry.directory])), workspace:undefined, identity:undefined, entry })),
+            ...recovered,
+        ].filter(row=>!requestID||ledger.tasks.get(row.id)?.some(task=>task.requestID===requestID)).sort((a,b)=>a.id.localeCompare(b.id));
+        const remaining = rows.filter(row=>row.id>after), page = remaining.slice(0,limit);
+        const remote = view==='released' || !page.length ? undefined : await remoteDeliveryRefs(this.policy,
+            page.flatMap(row=>row.entry?.branch ?? row.workspace?.branch ?? row.identity?.branch ?? []));
+        let repository: string | undefined;
+        if (page.some(row=>!row.workspace&&!row.identity)) {
+            try { repository=realpathSync(resolve(this.policy.root,await this.git(this.policy.root,['rev-parse','--git-common-dir']))); }
+            catch { /* Keep the registry entry visible without inspecting the checkout. */ }
+        }
+        const tests = new Map<string,{ commit:string; status:string; order:number }>();
+        for (const w of ledger.owned) {
+            if (w.execution.candidate?.kind!=='test') continue;
+            const {commit}=w.execution.candidate, key=canonicalBody([w.repository,commit]);
+            for (const task of ledger.tasks.get(w.id) ?? []) {
+                if (task.state==='completed' && task.testResult && (tests.get(key)?.order ?? -1)<task.order)
+                    tests.set(key,{commit,status:task.testResult.exitCode===0?'passed':'failed',order:task.order});
+            }
+        }
+        const items = await Promise.all(page.map(async ({id,workspace,identity,entry}):Promise<WorkspaceItem> => {
+            if (workspace) {
+                const tasks=ledger.tasks.get(workspace.id) ?? [];
+                const item=this.workspaceItem(workspace,tasks);
+                const head=entry?.head??[...item.tasks].reverse().find(task=>task.resultCommit)?.resultCommit;
+                const test=head?tests.get(canonicalBody([workspace.repository,head])):undefined;
+                const intent=this.storedDelivery(workspace);
+                const receipt=intent&&{...intent.receipt,...(intent.policy!==this.policyHash?{blocker:'WORKSPACE_DELIVERY_AUTHORIZATION_CHANGED'}:{})};
+                const delivery=await this.deliveryObservation(item,workspace.repository,entry,registry!==undefined,remote,
+                    test&&{commit:test.commit,status:test.status},intent?.policy===this.policyHash?receipt?.pullRequestMerge:undefined);
+                return {...item,branch:entry?.branch??item.branch,delivery:{...delivery,receipt,
+                    canStart:!!(this.policy.delivery && workspace.managedBy && item.state!=='retired' && (!intent || this.canReplaceDelivery(intent,entry?.head)))}};
+            }
+            if(identity) {
+                const tasks=ledger.tasks.get(id)??[];
+                const item:WorkspaceItem={id,projectID:this.policy.projectID,directory:identity.directory,branch:entry?.branch??identity.branch,
+                    baseCommit:identity.baseCommit,state:'mapping-missing',managed:false,revision:0,reasons:[],taskCount:tasks.length,tasks:this.taskLinks(tasks)};
+                return {...item,delivery:await this.deliveryObservation(item,identity.repository,entry,registry!==undefined,remote)};
+            }
+            const item:WorkspaceItem={id,projectID:this.policy.projectID,directory:entry!.directory,branch:entry!.branch,
+                state:'unclaimed',managed:false,revision:0,reasons:[],taskCount:0,tasks:[]};
+            return {...item,delivery:await this.deliveryObservation(item,repository,entry,true,remote)};
+        }));
+        return { total:rows.length, returned:items.length, items,next:remaining.length>limit?page.at(-1)!.id:null };
+    }
+    private deliveryStore(create=false) {
+        const directory=join(this.queue.directory,'workspace-delivery');
+        return create||existsSync(directory)?new MetadataStore(directory,128*1024,create):undefined;
+    }
+
+    private storedDelivery(w:Workspace) {
+        const raw=this.deliveryStore()?.get<unknown>(w.id);
+        if (!raw) return undefined;
+        const record=deliveryIntentSchema.parse(raw);
+        if(record.scope!==this.binding(w)) error('WORKSPACE_METADATA_CHANGED');
+        return record;
+    }
+
+    private canReplaceDelivery(intent:DeliveryIntent, head:string|undefined) {
+        const previous=intent.receipt;
+        return !!head&&head!==previous.head&&intent.policy===this.policyHash&&(
+            ['authorized','testing','tested'].includes(previous.phase)
+            || this.policy.delivery?.strategy==='direct'&&previous.phase==='pushed'&&previous.blocker==='WORKSPACE_DELIVERY_TARGET_ADVANCED');
+    }
+
+    private async verifyDeliveryRemote() {
+        const {delivery,root,remote}=this.policy;
+        if(!delivery||!remote) error('WORKSPACE_DELIVERY_DISABLED');
+        const [read,write]=await Promise.all([
+            this.git(root,['remote','get-url','--all',remote]),this.git(root,['remote','get-url','--push','--all',remote]),
+        ]);
+        if(read!==delivery.remoteURL||write!==delivery.remoteURL) error('WORKSPACE_DELIVERY_REMOTE_CHANGED');
+        return { ...delivery, remote };
+    }
+
+    private async runDeliveryTest(directory:string, argv:string[], fd:number) {
+        return new Promise<number>((resolve,reject)=>{
+            const child=spawn(argv[0],argv.slice(1),{cwd:directory,stdio:['ignore','ignore','ignore',fd],detached:true,
+                env:{PATH:'/usr/local/bin:/usr/bin:/bin',HOME:directory,CI:'1',GIT_TERMINAL_PROMPT:'0'}});
+            const timer=setTimeout(()=>{
+                if(child.pid)try{process.kill(-child.pid,'SIGKILL');}catch {/* Already exited. */}
+            },120_000);
+            child.once('error',()=>{clearTimeout(timer);reject(new ApiError('WORKSPACE_DELIVERY_TEST_UNKNOWN',409));});
+            child.once('close',code=>{clearTimeout(timer);if(code===null)reject(new ApiError('WORKSPACE_DELIVERY_TEST_UNKNOWN',409));else resolve(code);});
+        });
+    }
+
+    /** An Owner authorizes the exact candidate once. Each retry reads observable
+     * Git state before any remote effect and rechecks current account policy. */
+    async deliver(request:WorkspaceDeliveryRequest, ownerID:string):Promise<WorkspaceDeliveryReceipt> {
+        if(this.queue.access.readOnly) error('WORKSPACE_READ_ONLY');
+        const {workspaceID,operationID}=request;
+        const progression = await this.locked(workspaceID,async fd=>{
+            await this.authorize();
+            const s=this.snapshot(workspaceID),w=s.workspace;
+            let intent=this.storedDelivery(w);
+            const previous=intent;
+            if (previous && (previous.ownerID!==ownerID||previous.policy!==this.policyHash)) error('WORKSPACE_DELIVERY_AUTHORIZATION_CHANGED');
+            if (request.action==='start-delivery') {
+                if (previous?.receipt.operationID===operationID &&
+                    (previous.requestID!==request.requestID||previous.receipt.head!==request.head||previous.evidence!==request.evidence))
+                    error('WORKSPACE_OPERATION_CONFLICT');
+                if (!previous||previous.receipt.operationID!==operationID) {
+                    this.ownership(w);
+                    if(w.retirement||!this.policy.delivery||!this.policy.remote) error('WORKSPACE_DELIVERY_DISABLED');
+                    const source=s.tasks.at(-1);
+                    if(source?.state!=='completed'||!source.dispatched||source.requestID!==request.requestID||source.resultCommit!==request.head)
+                        error('WORKSPACE_DELIVERY_CANDIDATE_CHANGED');
+                    if(previous&&!this.canReplaceDelivery(previous,request.head))error('WORKSPACE_OPERATION_CONFLICT');
+                    const store=this.deliveryStore(true)!;
+                    if(store.get(`history:${w.id}:${operationID}`))error('WORKSPACE_OPERATION_CONFLICT');
+                    const previousPushedHead=previous?.receipt.phase==='pushed'?previous.receipt.head:previous?.previousPushedHead;
+                    intent={scope:this.binding(w),policy:this.policyHash,ownerID,requestID:source.requestID,evidence:request.evidence,previousPushedHead,
+                        receipt:{operationID,head:request.head,phase:'authorized',updatedAt:this.now(),remote:this.policy.remote,
+                            targetRef:this.policy.mainRef,branch:w.branch}};
+                    if(previous)store.set(`history:${w.id}:${previous.receipt.operationID}`,previous);
+                    store.set(w.id,intent);
+                }
+            } else if(previous?.receipt.operationID!==operationID) {
+                const older=this.deliveryStore()?.get(`history:${w.id}:${operationID}`);
+                if(older) {
+                    const saved=deliveryIntentSchema.parse(older);
+                    if(saved.ownerID!==ownerID||saved.policy!==this.policyHash||saved.scope!==this.binding(w))
+                        error('WORKSPACE_DELIVERY_AUTHORIZATION_CHANGED');
+                    return {...saved,receipt:{...saved.receipt,blocker:'WORKSPACE_DELIVERY_SUPERSEDED'}};
+                }
+                error('WORKSPACE_DELIVERY_AUTHORIZATION_REQUIRED');
+            }
+            if(!intent) error('WORKSPACE_DELIVERY_AUTHORIZATION_REQUIRED');
+            const current=intent;
+            const durable=this.deliveryStore(true)!;
+            const save=(changes:Partial<WorkspaceDeliveryReceipt>)=>{
+                current.receipt=workspaceDeliveryReceiptSchema.parse({...current.receipt,blocker:undefined,...changes,updatedAt:this.now()});
+                durable.set(w.id,current);
+                return current;
+            };
+            const { head }=current.receipt;
+            if(w.retirement?.phase==='retired') return this.result(w.id,operationID).operation?.state==='removed'
+                ? save({phase:'released'}):save({blocker:'WORKSPACE_DELIVERY_RELEASE_UNCONFIRMED'});
+            if(w.retirement?.phase==='retiring') return current;
+            try {
+                const policy=await this.verifyDeliveryRemote(), targetRef=this.policy.mainRef;
+                const branch=w.branch!;
+                const baseSnapshot=async()=>{
+                    const latest=this.snapshot(w.id), source=latest.tasks.at(-1);
+                    if(source?.requestID!==current.requestID||source.resultCommit!==head||this.runtimeReasons(latest).length) error('WORKSPACE_DELIVERY_CANDIDATE_CHANGED');
+                    const state=await this.inspectGit(w);
+                    if(state.head!==head||state.branch!==branch) error('WORKSPACE_DELIVERY_CANDIDATE_CHANGED');
+                    if(state.dirty||state.ignored) error('WORKSPACE_UNSAVED_ARTIFACTS');
+                    return state;
+                };
+                const observe=async()=>{
+                    const refs=await remoteDeliveryRefs(this.policy,[branch]), target=refs?.get(targetRef);
+                    if(!target) error('WORKSPACE_REMOTE_UNCONFIRMED');
+                    await ensureTargetCommit(w.root,policy.remote,targetRef,target,fd);
+                    return {target,pushed:refs!.get('refs/heads/'+branch)};
+                };
+                let {target,pushed}=await observe();
+                if(current.receipt.phase==='push-intent'&&pushed===head)
+                    save({phase:'pushed',pushedAt:current.receipt.pushedAt??this.now()});
+                await baseSnapshot();
+                const provider=policy.github?githubDelivery(policy.github,branch,targetRef.slice('refs/heads/'.length),head):undefined;
+                if(policy.strategy==='pr'&&!provider)error('WORKSPACE_DELIVERY_PR_REQUIRED');
+                const priorPR=provider&&await provider.read();
+                const testCandidate=async(base:string)=>{
+                    save({phase:'testing',testedOn:base,testExitCode:undefined});
+                    await this.authorize();
+                    const exitCode=await this.runDeliveryTest(w.cwd,policy.test,fd);
+                    save({phase:'tested',testExitCode:exitCode});
+                    if(exitCode!==0)error('WORKSPACE_DELIVERY_TEST_FAILED');
+                    await baseSnapshot();
+                };
+                const verifyPRMerge=async(merge:string, expectedTarget:string)=>{
+                    return await integrationProof(w.root,merge,expectedTarget)==='ancestor';
+                };
+                let proof=await integrationProof(w.root,head,target,w.baseCommit);
+                if(priorPR?.state==='MERGED'&&priorPR.mergeCommit&&await verifyPRMerge(priorPR.mergeCommit.oid,target)) {
+                    if(current.receipt.testExitCode!==0)await testCandidate(target);
+                    return save({phase:'merged',pullRequest:priorPR.number,pullRequestMerge:priorPR.mergeCommit.oid,
+                        mergedAt:current.receipt.mergedAt??this.now(),mergedTarget:current.receipt.mergedTarget??target,
+                        ...(current.receipt.testExitCode!==0?{blocker:'WORKSPACE_DELIVERY_TEST_REQUIRED'}:{})});
+                }
+                if(!provider && (proof==='ancestor'||proof==='exact-content')) {
+                    if(current.receipt.testExitCode!==0)await testCandidate(target);
+                    return save({phase:'merged',mergedAt:current.receipt.mergedAt??this.now(),mergedTarget:current.receipt.mergedTarget??target});
+                }
+                if (!proof||priorPR?.state==='MERGED') error('WORKSPACE_REMOTE_UNCONFIRMED');
+                // A direct delivery may advance the target only when the tested
+                // candidate already contains it. Preserve the branch on a race.
+                if(await this.git(w.root,['merge-base',head,target],fd)!==target) error('WORKSPACE_DELIVERY_TARGET_ADVANCED');
+                if(current.receipt.testedOn!==target||current.receipt.testExitCode!==0)await testCandidate(target);
+                await baseSnapshot();
+                ({target,pushed}=await observe());
+                if(target!==current.receipt.testedOn) error('WORKSPACE_DELIVERY_TARGET_ADVANCED');
+                if(pushed&&pushed!==head&&(pushed!==current.previousPushedHead
+                    ||await this.git(w.root,['merge-base',pushed,head],fd)!==pushed))error('WORKSPACE_DELIVERY_REMOTE_BRANCH_CHANGED');
+                const push=async(ref:string, expected:string)=>{
+                    await this.authorize();
+                    await this.verifyDeliveryRemote();
+                    this.authorizationCurrent();
+                    await this.git(w.root,['push','--porcelain',`--force-with-lease=${ref}:${expected}`,'--',policy.remote,`${head}:${ref}`],fd);
+                };
+                if(pushed!==head) {
+                    save({phase:'push-intent'});
+                    await push('refs/heads/'+branch,pushed??'');
+                    if((await observe()).pushed!==head) error('WORKSPACE_DELIVERY_PUSH_UNKNOWN');
+                }
+                save({phase:'pushed',pushedAt:current.receipt.pushedAt??this.now()});
+                if(provider) {
+                    let pr=await provider.read();
+                    if(!pr) {
+                        save({phase:'pr-intent'});
+                        await this.authorize();
+                        this.authorizationCurrent();
+                        await provider.create();
+                        pr=await provider.read();
+                    }
+                    if(!pr)error('WORKSPACE_DELIVERY_PR_UNAVAILABLE');
+                    if(pr.state!=='MERGED') {
+                        save({phase:'pr-open',pullRequest:pr.number});
+                        const blocker=await provider.blocker(pr);
+                        if(blocker)return save({blocker});
+                        await this.authorize();
+                        if((await observe()).target!==target)error('WORKSPACE_DELIVERY_TARGET_ADVANCED');
+                        await baseSnapshot();
+                        this.authorizationCurrent();
+                        save({phase:'merge-intent'});
+                        await provider.merge(pr);
+                        pr=await provider.read();
+                    }
+                    const {target:confirmed}=await observe();
+                    if(pr?.state!=='MERGED'||!pr.mergeCommit||!await verifyPRMerge(pr.mergeCommit.oid,confirmed))
+                        error('WORKSPACE_DELIVERY_MERGE_UNKNOWN');
+                    return save({phase:'merged',pullRequest:pr.number,pullRequestMerge:pr.mergeCommit.oid,mergedAt:this.now(),mergedTarget:confirmed});
+                }
+                if((await observe()).target!==target) error('WORKSPACE_DELIVERY_TARGET_ADVANCED');
+                await baseSnapshot();
+                save({phase:'merge-intent'});
+                try { await push(targetRef,target); }
+                catch(error) {
+                    if(!(error instanceof ApiError)||error.code!=='WORKTREE_PREPARATION_UNCONFIRMED')throw error;
+                    const after=await observe();
+                    const integrated=await integrationProof(w.root,head,after.target,w.baseCommit);
+                    if(integrated==='ancestor'||integrated==='exact-content')
+                        return save({phase:'merged',mergedAt:this.now(),mergedTarget:after.target});
+                    if(after.target!==target)throw new ApiError('WORKSPACE_DELIVERY_TARGET_ADVANCED',409);
+                    throw new ApiError('WORKSPACE_DELIVERY_MERGE_UNKNOWN',409);
+                }
+                const confirmed=await observe();
+                proof=await integrationProof(w.root,head,confirmed.target,w.baseCommit);
+                if(proof!=='ancestor'&&proof!=='exact-content') error('WORKSPACE_DELIVERY_MERGE_UNKNOWN');
+                return save({phase:'merged',mergedAt:this.now(),mergedTarget:confirmed.target});
+            } catch(e) { return save({blocker:e instanceof ApiError?e.code:'WORKSPACE_DELIVERY_UNCONFIRMED'}); }
+        });
+        const receipt=progression.receipt;
+        if(receipt.phase!=='merged'||receipt.blocker) return receipt;
+        const check=this.snapshot(workspaceID).workspace;
+        let blocker:string|undefined;
+        try {
+            if(!progression.evidence) error('WORKSPACE_BUSINESS_ACCEPTANCE_REQUIRED');
+            const finalized=await this.finalizeIntegrated(workspaceID,operationID,receipt.head,progression.evidence!,ownerID,receipt);
+            if(finalized.state!=='removed') blocker=finalized.reason??'WORKSPACE_DELIVERY_RELEASE_UNCONFIRMED';
+        } catch(e) { blocker=e instanceof ApiError?e.code:'WORKSPACE_DELIVERY_RELEASE_UNCONFIRMED'; }
+        return this.locked(workspaceID,async()=>{
+            const latest=this.storedDelivery(check)!;
+            if(latest.receipt.phase==='released') return latest.receipt;
+            latest.receipt=workspaceDeliveryReceiptSchema.parse({...latest.receipt,phase:blocker?'merged':'released',blocker,updatedAt:this.now()});
+            this.deliveryStore(true)!.set(workspaceID,latest);
+            return latest.receipt;
+        });
+    }
+
+    private async deliveryObservation(item: WorkspaceItem, repository:string|undefined, entry:GitWorkspace|undefined,
+        registryKnown:boolean, remote:Map<string,string>|undefined, test?:WorkspaceDelivery['test'], pullRequestMerge?:string):Promise<WorkspaceDelivery> {
+        const at=this.now(), released=item.state==='retired', unclaimed=item.state==='unclaimed';
+        const head=entry?.head??[...item.tasks].reverse().find(task=>task.resultCommit)?.resultCommit??item.disposition?.head;
+        const checkout=repository?await checkoutEvidence(item.directory,repository):{directory:'unknown' as const};
+        const remoteHead=remote?.get(this.policy.mainRef);
+        const branch=entry?.branch??item.branch, pushedHead=branch?remote?.get('refs/heads/'+branch):undefined;
+        const result=head && remoteHead && !unclaimed && head!==item.baseCommit ? await integrationProof(this.policy.root,head,remoteHead,item.baseCommit):undefined;
+        const proof=result==='ancestor'||result==='exact-content'?result
+            : remoteHead&&pullRequestMerge&&await integrationProof(this.policy.root,pullRequestMerge,remoteHead)==='ancestor'?'pull-request':undefined;
+        const state=released?'released':unclaimed?'unclaimed':proof?'merged':result==='pending'?(head===pushedHead?'pushed':'pending-merge'):'unknown';
+        const registration=entry?'registered':registryKnown?'missing':'unknown';
+        const next=released?'none':unclaimed?'claim':item.state==='mapping-missing'?'restore':checkout.directory==='missing'||registration==='missing'?'restore'
+            :checkout.dirty?'preserve':proof?'finalize':state==='unknown'||checkout.dirty===undefined?'inspect'
+            :test?.status==='passed'?'integrate':'test';
+        return {...checkout,registration,ownership:unclaimed?'unclaimed':item.state==='mapping-missing'?'mapping-missing':item.managed?'managed':'legacy',state,
+            head,remote:this.policy.remote,targetRef:this.policy.mainRef,remoteHead,pushedHead,proof,observedAt:at,test,next};
+    }
     /** Owner UI projection: identifiers/status only, never task text or credentials. */
     overview(workspaceID: string): WorkspaceItem {
         const s = this.snapshot(workspaceID), w = s.workspace, r = this.read(w);
+        return this.workspaceItem(w,s.tasks,r,this.runtimeReasons(s));
+    }
+    private taskLinks(tasks:QueueTask[]) {
+        return tasks.slice(-20).map(t=>({id:t.id,requestID:t.requestID,sessionID:t.sessionID,state:t.state,resultCommit:t.resultCommit}));
+    }
+    private workspaceItem(w:Workspace,tasks:QueueTask[],r=this.read(w),reasons:string[]=[]):WorkspaceItem {
         return { id: w.id, projectID: w.projectID, directory: w.cwd, branch: w.branch, baseCommit: w.baseCommit,
             revision: r.revision, managed: !!w.managedBy, state: w.retirement?.phase ?? (!w.managedBy ? 'legacy_unconfirmed' : r.disposition ? 'resolved' : 'pending_disposition'),
-            reasons: [...this.runtimeReasons(s), ...(!w.managedBy ? ['WORKSPACE_OWNER_UNCONFIRMED'] : [])],
-            taskCount: s.tasks.length, tasks: s.tasks.slice(-20).map(t => ({ id: t.id, sessionID: t.sessionID, state: t.state, resultCommit: t.resultCommit })),
+            reasons: [...reasons, ...(!w.managedBy ? ['WORKSPACE_OWNER_UNCONFIRMED'] : [])],
+            taskCount: tasks.length, tasks: this.taskLinks(tasks),
             disposition: r.disposition, lastVerification: r.checkedAt, lastOperation: r.operations.at(-1),
             ...(w.execution.retireAfterIntegration && w.managedBy && this.policy.allowApply && this.policy.automaticRetirementArchive ? { canFinalizeIntegrated:true } : {}) };
     }
@@ -282,7 +630,7 @@ export class WorkspaceLifecycle {
             r.binding=this.binding(next);r.revision++;const receipt={id:operationID,fingerprint:fp,state:'adopted' as const,revision:r.revision};this.add(r,receipt);this.write(next,r);return receipt;
         });
     }
-    async resolve(workspaceID:string,input:{operationID:string;expectedRevision:number;head:string;kind:z.infer<typeof dispositionSchema>['kind'];source:string}) {
+    async resolve(workspaceID:string,input:{operationID:string;expectedRevision:number;head:string;kind:z.infer<typeof dispositionSchema>['kind'];source:string;pullRequestMerge?:string}) {
         if(this.queue.access.readOnly)error('WORKSPACE_READ_ONLY');
         id.parse(input.operationID);commit.parse(input.head);z.string().min(1).max(200).parse(input.source);
         return this.locked(workspaceID,async()=>{
@@ -307,12 +655,21 @@ export class WorkspaceLifecycle {
                 try {await this.git(w.root,['merge-base','--is-ancestor',state.head,target]);proof='ancestor';}
                 catch {
                     if(input.kind==='no-change')error('WORKSPACE_NOT_IN_MAIN');
+                    if(input.pullRequestMerge&&this.policy.delivery?.github) {
+                        const provider=githubDelivery(this.policy.delivery.github,state.branch,this.policy.mainRef.slice('refs/heads/'.length),state.head);
+                        const pr=await provider.read();
+                        if(pr?.state!=='MERGED'||pr.mergeCommit?.oid!==input.pullRequestMerge
+                            ||await integrationProof(w.root,pr.mergeCommit.oid,target)!=='ancestor')error('WORKSPACE_NOT_IN_MAIN');
+                        proof='pull-request';
+                    } else if(this.policy.delivery && await integrationProof(w.root,state.head,target,w.baseCommit)==='exact-content') proof='exact-content';
+                    else {
                     await this.git(w.root,['merge-base','--is-ancestor',w.baseCommit!,target]);
                     if(await this.git(w.root,['rev-list','--merges',`${target}..${state.head}`]))error('WORKSPACE_EQUIVALENCE_UNCONFIRMED');
                     const cherry=await this.git(w.root,['cherry',target,state.head,w.baseCommit!]);
                     const count=Number(await this.git(w.root,['rev-list','--count',`${target}..${state.head}`]));
                     if(!cherry||cherry.split('\n').length!==count||cherry.split('\n').some(line=>!line.startsWith('- ')))error('WORKSPACE_NOT_IN_MAIN');
                     proof='patch-equivalent';
+                    }
                 }
             } else if(input.kind==='archived'?!this.policy.allowArchive:input.kind==='discarded'?!this.policy.allowDiscard:true)error('WORKSPACE_DISPOSITION_NOT_AUTHORIZED');
             const retainedRef=`refs/happy/workspaces/${w.id}/${state.head}`;
@@ -328,7 +685,7 @@ export class WorkspaceLifecycle {
     }
     /** The authenticated Workspace Owner supplies explicit business acceptance.
      * Evidence, disposition and apply each use the existing durable owner store. */
-    async finalizeIntegrated(workspaceID: string, operationID: string, head: string, evidence: string, acceptedBy: string) {
+    async finalizeIntegrated(workspaceID: string, operationID: string, head: string, evidence: string, acceptedBy: string, delivery?:WorkspaceDeliveryReceipt) {
         id.parse(operationID); commit.parse(head);
         const acceptance = z.object({ evidence: z.string().trim().min(1).max(16000), acceptedBy: id }).parse({evidence,acceptedBy});
         await this.authorize();
@@ -340,9 +697,14 @@ export class WorkspaceLifecycle {
         if ([w.cwd, w.root, w.repository].some(path => overlaps(path, archive))
             || inside(archive, join(this.queue.directory, 'worktrees'))) error('WORKSPACE_ARCHIVE_NOT_INDEPENDENT');
         const store = new MetadataStore(archive, 128 * 1024, false), key = `finalize:${w.id}:${operationID}`;
-        const binding = { workspaceID, operationID, head, acceptance, policy: this.policyHash };
+        if(delivery&&(delivery.operationID!==operationID||delivery.head!==head||delivery.phase!=='merged'||delivery.testExitCode!==0||!delivery.mergedTarget))
+            error('WORKSPACE_DELIVERY_RELEASE_UNCONFIRMED');
+        const deliveryEvidence=delivery&&{head:delivery.head,remote:delivery.remote,targetRef:delivery.targetRef,branch:delivery.branch,
+            testedOn:delivery.testedOn,testExitCode:delivery.testExitCode,
+            pushedAt:delivery.pushedAt,mergedAt:delivery.mergedAt,mergedTarget:delivery.mergedTarget,pullRequest:delivery.pullRequest,pullRequestMerge:delivery.pullRequestMerge};
+        const binding = { workspaceID, operationID, head, acceptance, policy: this.policyHash, ...(deliveryEvidence?{delivery:deliveryEvidence}:{}) };
         const archiveSchema = z.object({ binding: digest, tasks: digest, workspace: digest, evidence: z.json() }).strict();
-        const archiveEvidence = (tasks: QueueTask[]) => JSON.parse(JSON.stringify({ acceptance, tasks: tasks.map(t => ({ id:t.id, requestID:t.requestID,
+        const archiveEvidence = (tasks: QueueTask[]) => JSON.parse(JSON.stringify({ acceptance, ...(deliveryEvidence?{delivery:deliveryEvidence}:{}), tasks: tasks.map(t => ({ id:t.id, requestID:t.requestID,
             sessionID:t.sessionID, turnID:t.turnID, seq:t.seq, resultCommit:t.resultCommit, test:t.testResult })) }));
         const planKey = key + ':plan';
         const loadPlan = () => {
@@ -367,6 +729,7 @@ export class WorkspaceLifecycle {
         };
         const previous = this.result(workspaceID,operationID).operation;
         if (prior && archivedPlan && previous) return this.apply(archivedPlan, operationID, verifyArchive);
+        const planIsCurrent=(plan:WorkspacePlan)=>plan.checkedAt<=this.now()&&plan.expiresAt>=this.now();
         const plan = await this.plan(workspaceID);
         const retained = (reasons: string[]) => ({ id: operationID, fingerprint: fingerprint(binding), state: 'failed' as const,
             revision: this.read(w).revision, reason: [...new Set(reasons)].join(',').slice(0,2048) });
@@ -375,27 +738,31 @@ export class WorkspaceLifecycle {
         if (initial.tasks.some(t => t.state !== 'completed' || !t.dispatched || t.worktreeDirty !== false || !t.resultCommit))
             blockers.push('WORKSPACE_ACCEPTED_RESULT_UNCONFIRMED');
         if (blockers.length) return retained(blockers);
-        if (!prior) store.claim(key, { binding:fingerprint(binding), workspace:this.binding(w),
-            tasks:this.taskDigest(initial), evidence:archiveEvidence(initial.tasks) });
+        if (!prior) await this.locked(workspaceID,async()=>{
+            if(!store.get(key))store.set(key,{binding:fingerprint(binding),workspace:this.binding(w),
+                tasks:this.taskDigest(initial),evidence:archiveEvidence(initial.tasks)});
+        });
         if (!load()) error('WORKSPACE_ARCHIVE_CHANGED');
         const kind = head === w.baseCommit ? 'no-change' : 'integrated';
         let disposition = this.read(w).disposition;
         if (!disposition || disposition.kind !== kind) {
             try {
                 await this.resolve(workspaceID,{ operationID:hash('finalize-disposition:' + w.id + ':' + operationID), expectedRevision:plan.revision,
-                    head, kind, source:'owner-business-acceptance:' + operationID });
+                    head, kind, source:'owner-business-acceptance:' + operationID, ...(delivery?.pullRequestMerge?{pullRequestMerge:delivery.pullRequestMerge}:{}) });
             } catch (e) { if (e instanceof ApiError) return retained([e.code]); throw e; }
             disposition=this.read(w).disposition;
         }
         if (!disposition || disposition.head !== head || disposition.kind !== kind || disposition.proof === 'retained-ref')
             return retained(['WORKSPACE_NOT_IN_MAIN']);
-        if (!archivedPlan) {
+        if (!archivedPlan||!planIsCurrent(archivedPlan)) {
             const latest = await this.plan(workspaceID, true);
             if (!latest.eligible) return retained(latest.reasons);
-            // Atomic claim gives concurrent retries one exact plan. A subsequent
-            // attempt gets a new operation ID after its previous plan expires.
-            store.claim(planKey,latest);
-            archivedPlan = loadPlan();
+            archivedPlan=await this.locked(workspaceID,async()=>{
+                const cached=loadPlan();
+                if(cached&&(planIsCurrent(cached)||this.result(workspaceID,operationID).operation))return cached;
+                store.set(planKey,latest);
+                return latest;
+            });
         }
         if (!archivedPlan) error('WORKSPACE_ARCHIVE_CHANGED');
         return this.apply(archivedPlan,operationID,verifyArchive);
@@ -421,7 +788,10 @@ export class WorkspaceLifecycle {
                 if(!r.disposition||await this.git(w.root,['rev-parse','--verify',r.disposition.retainedRef])!==op.head)error('WORKSPACE_RECOVERY_UNCONFIRMED');
                 return this.finish(w,r,op,'absence-after-intent');
             }
-            if(this.now()>plan.expiresAt||this.now()<plan.checkedAt||!plan.eligible){
+            // An archived, already fenced automatic operation can be reconciled
+            // after a long stop. It still has to match a new full safety check.
+            const recoverArchived=!!verifyArchive&&op?.state==='applying'&&w.retirement?.operationID===operationID;
+            if((!recoverArchived&&(this.now()>plan.expiresAt||this.now()<plan.checkedAt))||!plan.eligible){
                 if(op)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
                 error('WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
             }
@@ -455,7 +825,7 @@ export class WorkspaceLifecycle {
             if(latest.git!==plan.git||latest.tasks!==plan.tasks||latest.reasons.some(reason=>reason!=='retirement_in_progress'))return this.fail(w,r,op,'WORKSPACE_PLAN_CHANGED');
             try { verifyArchive?.(); } catch { return this.fail(w,r,op,'WORKSPACE_ARCHIVE_CHANGED'); }
             try { this.authorizationCurrent(); } catch { return this.fail(w,r,op,'WORKSPACE_AUTHORIZATION_CHANGED'); }
-            if(this.now()>plan.expiresAt||this.now()<plan.checkedAt)return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
+            if(!recoverArchived&&(this.now()>plan.expiresAt||this.now()<plan.checkedAt))return this.fail(w,r,op,'WORKSPACE_PLAN_EXPIRED_OR_BLOCKED');
             try {
                 await this.git(w.root,['worktree','remove','--',w.cwd],fd);
             } catch {

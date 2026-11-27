@@ -7,6 +7,7 @@ import { canonicalBody } from './auth';
 import { ApiError } from './schema';
 import { privateDirectory } from './privateFs';
 import { TaskQueue, executionSchema, type Workspace, type Resource } from './taskQueue';
+import { rememberWorkspaceIdentity } from './workspaceIdentity';
 import { checkoutDigest, objectID, restrictedExecution } from './execution';
 
 const gitEnvironment = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
@@ -29,16 +30,19 @@ export function canonicalRepository(root: string): string {
  * The per-workspace flock is inherited by Git, so parent death cannot permit
  * a second checkout while the original Git process is still running.
  */
-export async function workspaceGit(cwd: string, args: string[], lockFD?: number): Promise<string> {
+export async function workspaceGit(cwd: string, args: string[], lockFD?: number, timeoutMs = 30_000): Promise<string> {
     return new Promise((resolve, reject) => {
         const child = spawn('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false','-C',cwd,...args], { stdio: lockFD === undefined ? ['ignore','pipe','pipe'] : ['ignore','pipe','pipe',lockFD],
             detached: true, env: gitEnvironment() });
         let output = '', bytes = 0, timedOut = false;
+        let killTimer:ReturnType<typeof setTimeout>|undefined;
         child.stdout?.on('data', data => { bytes += data.length; if (bytes <= 1024*1024) output += data; });
         child.stderr?.on('data', data => { bytes += data.length; });
-        const timer = setTimeout(() => { timedOut = true; if (child.pid) { try { process.kill(-child.pid,'SIGTERM'); } catch { /* Exit is independently observed below. */ } } },30000);
-        child.once('error', () => { clearTimeout(timer); reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
-        child.once('close', code => { clearTimeout(timer); code === 0 && !timedOut && bytes <= 1024*1024 ? resolve(output.trim()) : reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
+        const stop=(signal:NodeJS.Signals)=>{if(child.pid)try{process.kill(-child.pid,signal);}catch {/* Already exited. */}};
+        const timer = setTimeout(() => { timedOut = true;stop('SIGTERM');killTimer=setTimeout(()=>stop('SIGKILL'),750); },timeoutMs);
+        const clearTimers=()=>{clearTimeout(timer);clearTimeout(killTimer);};
+        child.once('error', () => { clearTimers(); reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
+        child.once('close', code => { clearTimers(); code === 0 && !timedOut && bytes <= 1024*1024 ? resolve(output.trim()) : reject(new ApiError('WORKTREE_PREPARATION_UNCONFIRMED',503)); });
     });
 }
 export async function workspaceLock(directory: string, id: string): Promise<number> {
@@ -226,7 +230,9 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
             if(isolated && git(workspace.cwd,['status','--porcelain=v1','--untracked-files=all'])) throw new ApiError('WORKTREE_RECOVERY_REQUIRED',409);
             queue.transaction(s=>{const w=s.workspaces.find(w=>w.id===id)!;w.stage='ready';delete w.preparationError;});
         } else if (workspace.testCleanup !== 'removed') verifyWorkspace(workspace);
-        return queue.workspaces(input.grantID).find(w=>w.id===id)!;
+        const result=queue.workspaces(input.grantID).find(w=>w.id===id)!;
+        rememberWorkspaceIdentity(queue,result);
+        return result;
     } catch(e) {
         queue.transaction(s=>{const w=s.workspaces.find(w=>w.id===id)!;w.preparationError='WORKTREE_PREPARATION_UNCONFIRMED';});
         if (e instanceof ApiError && ['CANDIDATE_CHANGED', 'CANDIDATE_UNAVAILABLE'].includes(e.code)) queue.releaseCandidate(workspace);

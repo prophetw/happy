@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z, ZodError } from 'zod';
 import { workspaceCatalogSchema, workspaceDetailSchema, workspaceListSchema, workspacePlanSchema,
-    workspaceReadSchema, workspaceResultSchema, workspaceWriteSchema, workspaceOperationSchema, type WorkspaceWrite } from '@slopus/happy-wire';
+    workspaceReadSchema, workspaceResultSchema, workspaceWriteSchema, workspaceDeliveryRequestSchema, workspaceDeliveryReceiptSchema, workspaceOperationSchema, type WorkspaceWrite } from '@slopus/happy-wire';
 import { happyOwnerVerifier, canonicalBody } from '../rest/auth';
 import { MetadataStore } from '../rest/store';
 import { ApiError } from '../rest/schema';
@@ -50,13 +50,13 @@ export function workspaceOwnerRunner(configFile: string, jobEntry: string): Work
  * as Control owner routes, never persisted/logged/delegated to a model. A fixed
  * trusted backend child receives it only in private IPC for final authorization. */
 export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry: string; verifyOwner?: (authorization: string|undefined) => Promise<string>;
-    verifyControl?: (authorization:string|undefined,ownerID:string)=>Promise<string[]>; run?: WorkspaceOwnerRunner; now?: () => number }) {
+    verifyControl?: (authorization:string|undefined,ownerID:string,readOnly?:boolean)=>Promise<string[]>; run?: WorkspaceOwnerRunner; now?: () => number }) {
     const config = readWorkspaceOwnerConfig(options.configFile), now = options.now ?? Date.now;
     // Read only registration to select the account verifier; no signing keys loaded.
     const worker = readProductionConfig(config.workerConfig);
     if (worker.role !== 'worker') throw new ApiError('WORKSPACE_SCOPE_DENIED', 403);
     const verifyOwner = options.verifyOwner ?? happyOwnerVerifier(worker.relayURL);
-    const verifyControl=options.verifyControl??((authorization,ownerID)=>workspaceOwnerControlProjects(options.configFile,authorization,ownerID));
+    const verifyControl=options.verifyControl??((authorization,ownerID,readOnly)=>workspaceOwnerControlProjects(options.configFile,authorization,ownerID,readOnly));
     const run = options.run ?? workspaceOwnerRunner(options.configFile, options.jobEntry);
     const plans = new MetadataStore(join(config.stateDirectory, 'plans'), 128 * 1024);
     const intents = new MetadataStore(join(config.stateDirectory, 'intents'), 128 * 1024);
@@ -80,7 +80,7 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
         if (req.headers.authorization?.startsWith('Happy')||isServiceAuthorization(req.headers.authorization)) throw new ApiError('OWNER_AUTH_REQUIRED',401);
         const ownerID = await verifyOwner(req.headers.authorization);
         workspaceOwnerScope(options.configFile, ownerID); owners.set(req, ownerID);
-        allowedProjects.set(req,new Set(await verifyControl(req.headers.authorization,ownerID)));
+        allowedProjects.set(req,new Set(await verifyControl(req.headers.authorization,ownerID,req.url===`${base}/read`||req.url===`${base}/catalog`)));
     });
     app.setErrorHandler((error,req,reply) => {
         const code = error instanceof ApiError ? error.code : error instanceof ZodError ? 'INVALID_REQUEST' : 'WORKSPACE_INSPECTION_UNCONFIRMED';
@@ -109,8 +109,8 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
     app.post(`${base}/read`,async req => {
         const request=workspaceReadSchema.parse(req.body),ownerID=owners.get(req)!;scope(ownerID,request,allowedProjects.get(req));
         const data=await execute(ownerID,request,undefined,req.headers.authorization);
-        scope(ownerID,request,new Set(await verifyControl(req.headers.authorization,ownerID)));
-        if(request.action==='inventory')return ok(workspaceListSchema.parse(data));
+        scope(ownerID,request,new Set(await verifyControl(req.headers.authorization,ownerID,true)));
+        if(request.action==='inventory'||request.action==='delivery-inventory')return ok(workspaceListSchema.parse(data));
         if(request.action==='detail')return ok(workspaceDetailSchema.parse(data));
         const result=workspaceResultSchema.parse(data);
         if(request.operationID) {
@@ -119,6 +119,14 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
             return ok({operationID:request.operationID,status:result.operation?(result.operation.state==='applying'?'unknown':'settled')
                 :active.has(`operation:${ownerID}:${request.operationID}`)?'pending':intent?.status==='settled'?'settled':'unknown',receipt:result.operation??intent?.receipt,error:intent?.error});
         }
+        return ok(result);
+    });
+    app.post(`${base}/delivery`,async req=>{
+        const request=workspaceDeliveryRequestSchema.parse(req.body),ownerID=owners.get(req)!;
+        scope(ownerID,request,allowedProjects.get(req));
+        admitted.add(req);
+        const result=workspaceDeliveryReceiptSchema.parse(await execute(ownerID,request,undefined,req.headers.authorization));
+        scope(ownerID,request,new Set(await verifyControl(req.headers.authorization,ownerID)));
         return ok(result);
     });
     app.post(`${base}/write`,async req => {

@@ -106,6 +106,11 @@ it('accepts genuine directory-selection scope using the same Control/Worker rule
     expect(openWorkspaceLifecycle(f.workerFile,f.policyFile,{homeDirectory:f.home,ownerDirectorySelection:true}).lifecycle.policy.projectID).toBe(projectID);
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({version:1,ok:true,data:{workers:[{id:'fixture-worker',machineID:'fixture-machine',projects:[{id:'other',directory:join(f.root,'other')}],directorySelection:{roots:[f.root]},directoryScopes:1}]}})}));
     expect(await workspaceOwnerControlProjects(f.configFile,'Bearer fixture-owner','fixture-owner')).toEqual([projectID]);
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({version:1,ok:true,data:{workers:[
+        {id:'fixture-worker',machineID:'fixture-machine',projects:[],directorySelection:{roots:[f.root]}}
+    ]}})}));
+    expect(await workspaceOwnerControlProjects(f.configFile,'Bearer fixture-owner','fixture-owner',true)).toEqual([projectID]);
+    await expect(workspaceOwnerControlProjects(f.configFile,'Bearer fixture-owner','fixture-owner')).rejects.toThrow('WORKSPACE_CONTROL_UNAVAILABLE');
 });
 
 

@@ -3,7 +3,7 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Text } from '@/components/StyledText';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useAuth } from '@/auth/AuthContext';
@@ -235,6 +235,11 @@ export const SettingsView = React.memo(function SettingsView({
                     icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
                     onPress={() => router.push('/server')}
                 />
+                {Platform.OS==='web'&&<Item
+                    title={t('workspaces.title')}
+                    icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
+                    onPress={() => router.push('/settings/project-workspaces' as Href)}
+                />}
             </ItemGroup>
 
             {/* Connect Terminal - Only show on native platforms */}

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Modal as GlobalModal } from '@/modal';
 import { randomUUID } from 'expo-crypto';
+import { useRouter, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
@@ -48,7 +49,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const pending = data.pendingFor(metadata.dotId);
     const currentDots = React.useRef(data);
     currentDots.current = data;
-    const navigate = useNavigateToSession();
+    const navigate = useNavigateToSession(), router=useRouter();
     const navigation = React.useMemo(createTestloopDotsNavigationGuard, []);
     const [width, setWidth] = React.useState(0), [tab, setTab] = React.useState<Tab>('chat');
     const [managingConnections, setManagingConnections] = React.useState(false);
@@ -86,7 +87,13 @@ export function DotSessionContent({ session, metadata, active, children, topInse
     const own = data.projection?.snapshot?.dots.some(dot => dot.id === metadata.dotId && dot.sessionId === session.id);
     const view = own ? data.projection?.details[metadata.dotId] : undefined;
     const detail = view?.data;
+    const openProjectWorkspaces = (projectID:string, requestID?:string) => {
+        const query=new URLSearchParams({projectID,...(requestID?{requestID}:{})});
+        router.push((`/settings/project-workspaces?${query}`) as Href);
+    };
     const selectedTask = detail?.tasks.find(task => task.id === taskId);
+    const openSelectedWorkspace = selectedTask?.execution?.mode==='worktree' && selectedTask.sendRequestID
+        ? ()=>openProjectWorkspaces(selectedTask.execution!.projectID,selectedTask.sendRequestID) : undefined;
     type Delivery = NonNullable<NonNullable<typeof detail>['pendingIntegration']>['items'][number];
     const pendingByProject = new Map<string, Delivery[]>();
     for (const delivery of detail?.pendingIntegration?.items ?? []) {
@@ -303,9 +310,9 @@ export function DotSessionContent({ session, metadata, active, children, topInse
                     {!detail.tasks.length && <Text style={muted}>这个 Dot 还没有可查看的工作项。在对话中交办即可。</Text>}
                     {detail.taskTotal > detail.tasks.length && <Text style={muted}>当前展示 {detail.tasks.length} 项，其余工作可在对话中按名称或编号查询。</Text>}
                     {detail.pendingIntegration && <>
-                        <Text accessibilityRole="header" style={heading}>待集成 · {detail.pendingIntegration.total}</Text>
+                        <Text accessibilityRole="header" style={heading}>交付候选 · {detail.pendingIntegration.total}</Text>
                         {[...pendingByProject].map(([project, deliveries]) => <View key={project} style={{ gap: 8 }}>
-                            <Text style={heading}>{project}</Text>
+                            <Text style={heading}>{project}</Text>{action(t('workspaces.title'),()=>openProjectWorkspaces(project))}
                             {deliveries.map(delivery => <View key={delivery.id} style={{ gap: 4, paddingVertical: 8 }}>
                                 <Text style={body}>{delivery.title}</Text>
                                 <Text selectable style={muted}>{delivery.commit}</Text>
@@ -368,6 +375,7 @@ export function DotSessionContent({ session, metadata, active, children, topInse
             {['delegate', 'goal'].includes(selectedTask.kind) && <Text style={muted}>{selectedTask.businessVerification === 'independent_agent_report' ? '已有独立执行会话提供的验收报告' : '业务验收尚未核验'}</Text>}
             {selectedTask.result && <><Text style={heading}>实际回报{selectedTask.resultTruncated ? '（已截断）' : ''}</Text><Text selectable style={body}>{selectedTask.result}</Text></>}
             {selectedTask.executionSessionId && action('查看执行会话', () => void openExecution(selectedTask.executionSessionId!))}
+            {openSelectedWorkspace&&action(t('workspaces.title'),openSelectedWorkspace)}
             {action('在对话中跟进此工作', () => toConversation(`请跟进当前 Dot 的工作项 ${selectedTask.id}（${selectedTask.title}），说明最新进展和仍需处理的事项。`))}
         </>)}
         {!memoryOpen && memoryEdit?.binding === memoryBinding && memoryAttempt.current && <View style={{ padding: 12 }}>

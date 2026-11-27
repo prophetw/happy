@@ -1,7 +1,14 @@
 # Dots 工作区管理
 
-在 Dots 工作台顶部打开 **工作区 / Workspaces**。选择机器中的授权项目，查看目录、分支、关联任务/会话标识、
-成果状态、最后检查和保护原因。分页每次最多5个目录，同一目录不因多条任务引用重复计数；不显示任务正文。
+Happy 设置和 Dots 工作台有 **项目工作区** 入口。Dot 的原工作项也可以按同一个 send requestID 打开工作区。
+“待合并 / 待处理”使用持久队列、Workspace Owner 记录和本机 Git 登记，每页最多核对 5 个工作区。
+即使关联执行会话已退出，列表仍能显示工作区及原任务或会话。每张卡分别标明目录、Git 登记、归属、脏状态与下一步。
+测试记录显示实际对应的提交和结果。选配远端可查询分支 SHA 和目标 SHA，无法读取远端或相关历史时显示未知。
+
+如果目录缺失，保留原工作项、分支、候选及已有保留引用。新建的托管工作区在准备完成时保存一份仅含创建身份的独立记录。
+队列映射缺失时，服务用项目、grant、工作区 ID 和 Git 登记或剩余任务核对归属，提供只读恢复入口。
+老目录仅在项目根或策略显式批准的 `inventoryDirectories` 下盘点，缺乏托管证据时显示“待认领”。
+如果缺失的资料不足以确认账号、项目或目录，保持未知，不新增可写归属。
 
 1. 打开“详情与证据”，核对提交、结果来源和占用。
 2. 旧登记可明确“核对并纳管”；服务端仍验证机器/UID、管理根、Git登记、分支/base等。不会自动纳管。
@@ -14,10 +21,25 @@
 账号、工作台或项目变化会清除当前选中计划；未决编号仅按账号/机器/项目/工作台本地保存，刷新后可恢复。
 界面不会将“已受理”、task completed、进程消失或未知返回当成目录回收成功。
 
+## 已授权候选的交付
+
+在项目私有 Owner 策略配置 `remote`、目标 `mainRef` 和 `delivery` 后，候选详情出现“交付当前候选”。
+`delivery.remoteURL` 固定实际读写远端，`delivery.test` 是管理员批准的自测命令参数数组，在该候选的隔离目录执行。
+授权绑定项目、原请求、候选 SHA 和当时的策略。已知脏内容需先保全，待交付候选来自原任务的已提交结果。
+如同时提供业务验收证据且原任务选了收尾，Owner 通过既有的独立归档、活动探测和回收流程释放目录。
+
+- `strategy: "direct"` 用已自测的 SHA 快进远端目标。推送以本次读取的目标 SHA 为前置条件。主干前进、候选分支已占用或自测失败时保留现场。
+- `strategy: "pr"` 可配置 `github`，其中含 `repository`（`owner/repo`）、`mergeMethod`、`requiredChecks`、`minimumApprovals`。
+  使用宿主已配置的 GitHub CLI 和匹配的 github.com Git 远端，按同仓分支及精确 SHA 对账 PR。
+  自动合入需要读到严格且适用于管理员的分支保护，通过必需 CI 和审批。缺证据、需要其他平台的 PR 或检查失败时显示具体阶段。
+- 远端回读确认祖先、从同一可达基线计算的精确内容，或已验证 PR 的合入 SHA。合入后在另一个目录归档候选测试、远端与验收证据，再走原回收检查。
+- 同一操作的自测、推送、合入意图及回执持久化。重开授权账号的工作区页时核对可继续的操作，明确阻塞的操作可用“对账并继续交付”。
+  长期关闭页面期间尚无独立 CI 唤醒。掉线和状态变化后先读远端及原回执，再考虑执行下一步。
+
 ## 授权与责任
 
 `WorkspaceLifecycle`与Worker `TaskQueue`仍是唯一成果/目录权威。新增本机owner管理API，浏览器不拼shell或调用CLI。
-使用与Control相同的Happy账号验证，并读取Control既有owner options验证当前机器、项目/目录范围及在线Worker能力。
+使用与 Control 相同的 Happy 账号验证。读列表时核对 Control 持久注册的机器与项目范围，可在 Worker 离线时查询。写操作还核验当前 Worker 能力与授权。
 不会创建或扩大真实grant，不接受HappyProof/HappyService作为页面owner授权，不新增MCP或模型工具。
 配置的project/policy白名单进一步收窄到本机批准范围。合法目录选择使用原 `directoryAllowed/directoryProjectID` 规则，
 不需改真实Worker registration。原CLI静态项目验证规则保持原样。
@@ -38,7 +60,7 @@ API明确返回dispatch=unknown，页面保留原编号。正常前置拒绝才�
 管理服务的私有配置包括已核验worker配置、批准的policy文件、机器项目显示名、精确Origin、loopback监听与独立协议元数据目录。
 policy每次请求重新读取；allowApply由原策略控制，不改allowArchive/allowDiscard，不启用定时GC。
 服务入口为 `happy-agent/bin/happy-workspace-owner.mjs --config <private config>`，它是运维入口，用户正常流程无需终端。
-该服务复用队列兼容版本，不必为新页面升级或重启现有Worker/Control/producer。若Control或Worker授权无法证实，显示错误并保留目录。
+该服务复用兼容队列读写格式。新工作区的独立创建身份记录由 Worker 写入。Control 无法确认项目、或写操作无法验明 Worker 授权时，显示错误并保留目录。
 
 8989的Metro只有在配置合法loopback `HAPPY_WORKSPACE_OWNER_URL` 时转发API；缺少配置明确报不可用，不伪装空列表。
 配置代理需重启8989，但不清浏览器storage/认证或修改Relay目标。HMR仍由原Metro处理。
@@ -55,3 +77,5 @@ policy每次请求重新读取；allowApply由原策略控制，不改allowArchi
 使用实际Dots Home和管理组件，注入虚构账号/theme/locale/storage适配；HTTP、队列、Git删除、持久回执和重建真实执行，
 与真实账号/业务模型验收分开。临时夹具仅监听20082，截图不包含真实机器目录或用户内容。
 设置 `HAPPY_WORKSPACE_FIXTURE_ROOT` 与 `HAPPY_WORKSPACE_FIXTURE_SOCKET` 可通过仅指向该夹具的独立 socket 验证真实进程核验。夹具根为新建的 `/tmp/happy-owner-ui-*`，单元的工作区根对应夹具内的 `fixture-machine`。
+
+设置 `HAPPY_WORKSPACE_RESTART_FIXTURE=1` 测试恢复列表。专用浏览器入口、Owner 服务进程和 SQLite 之外的队列文件都在隔离目录中，远端为本地 bare Git。脚本强制重启 Owner，验证未提交、已推、已合入待收尾、目录和归属缺失，再执行一次实际自测、推送、合入、归档释放和回执丢失后的读取。
