@@ -1,11 +1,12 @@
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readlinkSync,
     readSync, renameSync, realpathSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { ApiError } from './schema';
 import { privateRead } from './privateFs';
 
-export function archiveTree(path:string,sync=false, indexFence?:string):string|undefined {
+export function archiveTree(path:string,indexFence?:string):string|undefined {
     const initial=lstatSync(path,{bigint:true,throwIfNoEntry:false});
     if(!initial) return;
     const dev=initial.dev, uid=BigInt(process.getuid!());
@@ -53,7 +54,6 @@ export function archiveTree(path:string,sync=false, indexFence?:string):string|u
                 add(content.digest('hex'));
             }
             verify(before,fstatSync(fd,{bigint:true}));
-            if(sync) fsyncSync(fd);
         } finally { closeSync(fd); }
         verify(before,lstatSync(physical,{bigint:true}));
     };
@@ -80,7 +80,15 @@ export function archiveMove(source:string,destination:string,expected:string|und
         renameSync(source,destination);
         syncParent(destination);syncParent(source);
     }
-    if(archiveTree(destination,true)!==expected || lstatSync(source,{throwIfNoEntry:false}))
+    // The verified rename stays on the same filesystem. A single kernel
+    // durability barrier avoids an fsync round trip for every archived file.
+    const directory=openSync(destination,constants.O_DIRECTORY|constants.O_NOFOLLOW|constants.O_RDONLY);
+    try {
+        execFileSync('/usr/bin/sync',['--file-system','--','/proc/self/fd/3'],{timeout:30_000,
+            stdio:['ignore','ignore','ignore',directory]});
+    } catch {throw new ApiError('WORKSPACE_ARCHIVE_UNAVAILABLE',409);}
+    finally {closeSync(directory);}
+    if(archiveTree(destination)!==expected || lstatSync(source,{throwIfNoEntry:false}))
         throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);
 }
 
@@ -96,7 +104,7 @@ export async function withArchiveIndexFence<T>(directory:string, fingerprint:str
     }
     if(!owns()) throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);
     try {
-        if(archiveTree(directory,false,marker)!==fingerprint) throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);
+        if(archiveTree(directory,marker)!==fingerprint) throw new ApiError('WORKSPACE_ARCHIVE_CHANGED',409);
         return await action();
     } finally {
         if(owns()){unlinkSync(path);syncParent(path);}

@@ -13,6 +13,7 @@ import { prepareWorkspace, workspaceResult, workspaceResources, workspaceGit, ve
 import { SessionProcessProofs, readLinuxProcess } from './sessionProcessProofs';
 import { workspaceCommand, workspaceMain } from '../production/workspaces';
 import { WorkspaceLifecycle, type WorkspacePolicy, type Activity, linuxWorkspaceActivity } from './workspaceLifecycle';
+import { readReclaimTarget } from './workspaceReclaimGit';
 import { readReclaimRequest } from './workspaceReclaimRequests';
 import { reclaimRecord, reclaimRecords } from './workspaceReclaimState';
 
@@ -585,6 +586,52 @@ it('one request reserves a legacy checkout, waits, preserves dirty and temporary
     expect(readFileSync(outside,'utf8')).toBe('outside data');
     expect(f.queue.receipt(f.task).execution?.workspaceState).toBe('retired');
 },20_000);
+it('can verify a pinned SSH main through a slow handshake',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),ssh=join(f.root,'fixture-ssh');
+    git(f.repo,'init','--bare',remote);
+    git(f.repo,'push',remote,'main');
+    const url='ssh://git@fixture.invalid/owner/repository.git';
+    git(f.repo,'remote','add','origin',url);
+    writeFileSync(ssh,`#!/bin/sh\nsleep 5\nexec git-upload-pack '${remote}'\n`,{mode:0o700});
+    git(f.repo,'config','core.sshCommand',ssh);
+    git(f.repo,'config','ssh.variant','ssh');
+    await expect(readReclaimTarget({root:f.repo,mainRef:'refs/heads/main',remote:'origin',reclaimRemoteURL:url}))
+        .resolves.toEqual({commit:git(f.repo,'rev-parse','main'),remoteURL:url});
+},15_000);
+it('retires a checkout with ordinary fetched history and pins those objects',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    git(f.w.cwd,'fetch','origin','main');
+    const fetched=git(f.w.cwd,'rev-parse','FETCH_HEAD');
+    const original=readFileSync(join(git(f.w.cwd,'rev-parse','--absolute-git-dir'),'FETCH_HEAD'));
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    const receipt=await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(archive,'owner');
+    const progress=readReclaimRequest(f.queue.directory,f.w.id)?.progress;
+    expect(progress).toMatchObject({operationID:receipt.operationID,state:'released'});
+    expect(git(f.repo,'rev-parse',`refs/happy/workspace-fetch/${receipt.operationID}/${fetched}`)).toBe(fetched);
+    const guide=readFileSync(join(progress!.archive!.directory,'RECOVERY.txt'),'utf8');
+    const savedFile=/FETCH_HEAD-[0-9a-f]{64}/.exec(guide)?.[0];
+    expect(savedFile).toBeTruthy();
+    expect(readFileSync(join(progress!.archive!.directory,savedFile!))).toEqual(original);
+    expect(existsSync(f.w.cwd)).toBe(false);
+    expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
+});
+it('retains a checkout if FETCH_HEAD is the only reference to fetched work',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    const unknown=git(f.w.cwd,'commit-tree','HEAD^{tree}','-m','independent fetch result');
+    const admin=git(f.w.cwd,'rev-parse','--absolute-git-dir');
+    writeFileSync(join(admin,'FETCH_HEAD'),`${unknown}\t\tbranch 'independent' of fixture\n`);
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({state:'attention',reason:'WORKSPACE_GITDIR_ONLY_RESULTS'});
+    expect(existsSync(f.w.cwd)).toBe(true);
+    expect(git(f.repo,'worktree','list','--porcelain')).toContain(f.w.cwd);
+});
 it('a failed independent archive cannot release either directory',async()=>{
     const f=await fixture(),remote=join(f.root,'remote.git'),locked=join(f.root,'not-a-directory');
     git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');

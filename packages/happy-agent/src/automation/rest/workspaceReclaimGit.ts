@@ -21,7 +21,9 @@ export async function readReclaimTarget(policy: Policy): Promise<{ commit: strin
         || /^https:\/\/[^/]*@/.test(pin))
         throw new ApiError('WORKSPACE_REMOTE_UNCONFIRMED', 409);
     try {
-        const result = await workspaceGit(policy.root, ['ls-remote','--refs','--',pin,policy.mainRef],undefined,4500);
+        // Give the pinned SSH host time to finish a cold connection. The
+        // Owner still bounds a probe and retains the checkout on timeout.
+        const result = await workspaceGit(policy.root, ['ls-remote','--refs','--',pin,policy.mainRef],undefined,12_000);
         const [commit,ref] = result.split('\t');
         if (/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit) && ref === policy.mainRef)
             return { commit, remoteURL:pin };
