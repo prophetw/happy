@@ -2,7 +2,7 @@ import { existsSync, lstatSync, openSync, closeSync, fsyncSync, readFileSync, wr
 import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { SessionEnvelope } from '@slopus/happy-wire';
-import { readHostedStorage, assertHostedStorageReadyForStart, HOSTED_INPUT_MAX_ROWS, HOSTED_OUTPUT_MAX_ROWS } from './hostedDotStorage';
+import { readHostedStorage, hostedHistoryOutput, hostedStorageReadDirectory, assertHostedStorageReadyForStart, HOSTED_INPUT_MAX_ROWS, HOSTED_OUTPUT_MAX_ROWS } from './hostedDotStorage';
 
 export const HOSTED_STATE_MAX_BYTES = 128 * 1024 * 1024;
 
@@ -39,6 +39,7 @@ export const HostedDotJournal = z.object({ authority: HostedAuthorityMetadata.op
     version: z.literal(1), binding: z.string(), epoch: z.number().int().nonnegative(),
     threadId: z.string().nullable(), creating: z.boolean(), afterSeq: z.number().int().nonnegative(),
     retiredUserSeq: z.number().int().positive().optional(),
+    historyVersion: z.literal(1).optional(),
     status: z.enum(['starting', 'ready', 'running', 'blocked', 'stopped']), error: z.string().nullable(),
     bootstrap: z.object({ stage: z.enum(['injecting', 'applied']), threadId: z.string() }).optional(),
     inputs: z.array(Input).max(HOSTED_INPUT_MAX_ROWS), outputs: z.array(z.object({ localId: z.string(), envelope: z.unknown(), sent: z.boolean() })).max(HOSTED_OUTPUT_MAX_ROWS),
@@ -66,6 +67,7 @@ export function compactSettledDispatchSnapshots(state: HostedState): void {
 }
 
 type Output = HostedState['outputs'][number];
+const receiptDirectories = new WeakMap<HostedState, string>();
 const outputReceiptSets = new WeakMap<HostedState, Set<string>>();
 function outputReceiptSet(state: HostedState): Set<string> {
     const rows = state.outputReceipts ?? [], cached = outputReceiptSets.get(state);
@@ -237,13 +239,16 @@ export function loadHostedState(file: string, config: HostedDotConfig): HostedSt
     if (existsSync(config.directory + '/reset-epoch.json') && z.object({ epoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).parse(readPrivate(config.directory + '/reset-epoch.json')).epoch > state.epoch)
         throw new Error('hosted_epoch_stale');
     if (state.bootstrap?.stage === 'injecting') throw new Error('hosted_bootstrap_unconfirmed');
+    receiptDirectories.set(state, config.directory);
     compactFinalTextOutputs(state.outputs, state);
     return state;
 }
 export function addOutput(state: HostedState, envelope: SessionEnvelope): boolean {
     const localId = `hosted:${state.epoch}:${envelope.id}`;
     const existing = state.outputs.find(o => o.localId === localId);
-    if (existing || outputReceiptSet(state).has(localId) || coveredByFinalSnapshot(state, envelope)) return false;
+    const directory = receiptDirectories.get(state) ?? hostedStorageReadDirectory(state);
+    if (existing || outputReceiptSet(state).has(localId) || coveredByFinalSnapshot(state, envelope)
+        || state.historyVersion === 1 && directory && hostedHistoryOutput(directory, localId)) return false;
     state.outputs.push({ localId, envelope, sent: false });
     return true;
 }

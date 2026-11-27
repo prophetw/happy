@@ -14,10 +14,16 @@ type Group = typeof groups[number];
 const maxRows = (kind: Group) => kind === 'inputs' ? HOSTED_INPUT_MAX_ROWS : kind === 'outputs' ? HOSTED_OUTPUT_MAX_ROWS : HOSTED_STORAGE_LIMIT;
 type State = Record<string, any>;
 const projection = Symbol('hosted-storage-read-only-projection');
+const readDirectories = new WeakMap<State, string>();
+export const hostedStorageReadDirectory = (state: State) => readDirectories.get(state);
 // Lazy loading keeps JSON-only and older-Node consumers independent of node:sqlite.
 type Database = { exec(sql: string): void; close(): void; prepare(sql: string): { get(...args: any[]): any; all(...args: any[]): any[]; run(...args: any[]): any } };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const sentinel = JSON.stringify({ version: 0, storage: 'sqlite', error: 'hosted_sqlite_reader_required' });
+const historySentinel = JSON.stringify({ version: 0, storage: 'sqlite', error: 'hosted_sqlite_history_reader_required' });
+const coldName = 'state-history.sqlite';
+export const HOSTED_RECEIPT_CHECKPOINT = 8192;
+export const HOSTED_RETENTION_PAUSED = 'hosted-retention-paused';
 const paths = (directory: string) => ({ json: join(directory, 'state.json'), marker: join(directory, 'storage.json'),
     db: join(directory, 'state.sqlite'), backup: join(directory, 'state.json.pre-sqlite'), temporary: join(directory, 'state.sqlite.migrating') });
 
@@ -107,13 +113,13 @@ export function hostedStorageBackend(directory: string): 'json' | 'sqlite' {
     if (value?.version !== 1 || value.kind !== 'happy-dot-state' || value.directory !== directory || !['json', 'sqlite'].includes(value.backend)) throw Error('hosted_storage_marker_invalid');
     if (value.pending !== undefined && (value.pending !== true || value.backend !== 'sqlite' || exists(p.backup))) throw Error('hosted_storage_marker_invalid');
     if (value.backend === 'sqlite' && !(value.pending && !exists(p.json))
-        && bytes(p.json, 4096).toString('utf8') !== sentinel) throw Error('hosted_storage_legacy_writer');
+        && ![sentinel, historySentinel].includes(bytes(p.json, 4096).toString('utf8'))) throw Error('hosted_storage_legacy_writer');
     if (value.backend === 'sqlite' && !value.pending && [p.temporary, p.temporary + '-journal'].some(exists))
         throw Error('hosted_storage_migration_incomplete');
     return value.backend;
 }
-function database<T>(directory: string, file: string, readonly: boolean, action: (db: Database) => T): T {
-    regular(file, 512 * 1024 * 1024);
+function database<T>(directory: string, file: string, readonly: boolean, action: (db: Database) => T, sizeLimit = 512 * 1024 * 1024): T {
+    regular(file, sizeLimit);
     for (const suffix of ['-journal', '-wal', '-shm']) {
         const sidecar = file + suffix;
         safePath(sidecar);
@@ -124,7 +130,7 @@ function database<T>(directory: string, file: string, readonly: boolean, action:
             safePath(sidecar);
             stat = lstatSync(sidecar, { throwIfNoEntry: false });
         }
-        if (stat && (!stat.isFile() || stat.nlink !== 1 || stat.size > 512 * 1024 * 1024))
+        if (stat && (!stat.isFile() || stat.nlink !== 1 || stat.size > sizeLimit))
             throw Error('hosted_storage_file_invalid');
     }
     const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), before = fstatSync(fd);
@@ -168,12 +174,98 @@ function writeInputArchive(db: Database, retired: readonly HostedArchivedInput[]
         stmt.run(row.epoch, row.seq, row.id, value, digest(value));
     }
 }
-function readInputArchive(db: Database, header: State, keys: readonly HostedInputKey[]): HostedArchivedInput[] {
+export type HostedArchivedEvent = { id: string; epoch: number; status: HostedArchivedInput['status']; textDigest: string; acceptedAt?: number };
+type Retirement = { users: readonly HostedArchivedInput[]; events: readonly HostedArchivedEvent[] };
+function prepareHistory(directory: string, required: boolean) {
+    const p = paths(directory), history = join(directory, coldName);
+    // Publish the older-reader fence first. A crash here can retry safely, but
+    // earlier producers must never see an apparently empty receipt set.
+    if (bytes(p.json, 4096).toString('utf8') !== historySentinel) durable(p.json, historySentinel);
+    if (!exists(history)) {
+        if (required) throw Error('hosted_history_missing');
+        durable(history, '', true);
+    }
+    const stat = regular(history, Number.MAX_SAFE_INTEGER);
+    if (stat.dev !== regular(p.db, Number.MAX_SAFE_INTEGER).dev || stat.uid !== process.getuid?.() || (stat.mode & 0o077))
+        throw Error('hosted_history_file_invalid');
+    return history;
+}
+function attachHistory(db: Database, file: string, directory: string) {
+    db.prepare('ATTACH DATABASE ? AS history').run(file);
+    db.exec('PRAGMA history.synchronous=FULL');
+    if (db.prepare('PRAGMA main.journal_mode').get()?.journal_mode !== 'delete'
+        || db.prepare('PRAGMA history.journal_mode').get()?.journal_mode !== 'delete')
+        throw Error('hosted_history_journal_mode_changed');
+    db.exec(`CREATE TABLE IF NOT EXISTS history.identity (id INTEGER PRIMARY KEY CHECK(id=1), directory TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS history.users (epoch INTEGER, seq INTEGER, id TEXT, value TEXT NOT NULL, digest TEXT NOT NULL,
+            PRIMARY KEY(epoch,seq,id)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS history.events (epoch INTEGER, id TEXT, value TEXT NOT NULL, digest TEXT NOT NULL,
+            PRIMARY KEY(epoch,id)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS history.outputs (id TEXT PRIMARY KEY, digest TEXT NOT NULL) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS history.progress (id INTEGER PRIMARY KEY CHECK(id=1), at TEXT NOT NULL,
+            users INTEGER NOT NULL, events INTEGER NOT NULL, outputs INTEGER NOT NULL);`);
+    db.prepare('INSERT OR IGNORE INTO history.identity VALUES(1,?)').run(directory);
+    if (db.prepare('SELECT directory FROM history.identity WHERE id=1').get()?.directory !== directory)
+        throw Error('hosted_history_binding_changed');
+}
+function withHistory<T>(directory: string, read: (db: Database) => T): T {
+    return database(directory, join(directory, coldName), true, db => {
+        if (db.prepare('SELECT directory FROM identity WHERE id=1').get()?.directory !== directory)
+            throw Error('hosted_history_binding_changed');
+        return read(db);
+    }, Number.MAX_SAFE_INTEGER);
+}
+function verifiedHistoryRow(row: any) {
+    if (!row) return;
+    if (typeof row.value !== 'string' || digest(row.value) !== row.digest) throw Error('hosted_history_record_changed');
+    return JSON.parse(row.value);
+}
+export function hostedHistoryOutput(directory: string, id: string) {
+    return withHistory(directory, db => {
+        const row = db.prepare('SELECT digest FROM outputs WHERE id=?').get(id);
+        if (row && row.digest !== digest(id)) throw Error('hosted_history_record_changed');
+        return !!row;
+    });
+}
+export function hostedColdOutputCount(directory: string) {
+    if (!exists(join(directory, coldName))) return 0;
+    return withHistory(directory, db => Number(db.prepare('SELECT outputs FROM progress WHERE id=1').get()?.outputs ?? 0));
+}
+export function hostedHistoryEvent(directory: string, epoch: number, id: string): HostedArchivedEvent | undefined {
+    return withHistory(directory, db => {
+        const row = verifiedHistoryRow(db.prepare('SELECT value,digest FROM events WHERE epoch=? AND id=?').get(epoch, id));
+        if (row && (row.epoch !== epoch || row.id !== id)) throw Error('hosted_history_record_changed');
+        return row;
+    });
+}
+function writeHistory(db: Database, retired: Retirement, spill: readonly ReceiptRow[]) {
+    const users = db.prepare('INSERT INTO history.users VALUES(?,?,?,?,?)'), events = db.prepare('INSERT INTO history.events VALUES(?,?,?,?)');
+    for (const row of retired.users) {
+        const value = JSON.stringify(row);
+        users.run(row.epoch, row.seq, row.id, value, digest(value));
+    }
+    for (const row of retired.events) {
+        const value = JSON.stringify(row);
+        events.run(row.epoch, row.id, value, digest(value));
+    }
+    const outputs = db.prepare('INSERT INTO history.outputs VALUES(?,?)');
+    for (const row of spill) outputs.run(row.localId, row.digest);
+    db.prepare(`INSERT INTO history.progress VALUES(1,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET at=excluded.at,users=users+excluded.users,events=events+excluded.events,outputs=outputs+excluded.outputs`)
+        .run(new Date().toISOString(), retired.users.length, retired.events.length, spill.length);
+    if (spill.length) {
+        db.exec('DELETE FROM output_receipts');
+    }
+}
+function readInputArchive(db: Database, directory: string, header: State, keys: readonly HostedInputKey[]): HostedArchivedInput[] {
     if (!keys.length || header.retiredUserSeq === undefined) return [];
-    const statement = db.prepare('SELECT value,digest FROM input_archive WHERE epoch=? AND seq=? AND id=?');
+    const statement = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='input_archive'").get()
+        ? db.prepare('SELECT value,digest FROM input_archive WHERE epoch=? AND seq=? AND id=?') : undefined;
     return keys.flatMap(key => {
         if (key.seq > header.retiredUserSeq) return [];
-        const row = statement.get(header.epoch, key.seq, key.id);
+        const row = statement?.get(header.epoch, key.seq, key.id) ?? (header.historyVersion === 1
+            ? withHistory(directory, cold => cold.prepare('SELECT value,digest FROM users WHERE epoch=? AND seq=? AND id=?')
+                .get(header.epoch, key.seq, key.id)) : undefined);
         if (!row) return [];
         if (typeof row.value !== 'string' || digest(row.value) !== row.digest) throw Error('hosted_input_archive_invalid');
         const value = JSON.parse(row.value);
@@ -208,7 +300,8 @@ function readDatabase(directory: string, file: string, selected: readonly Group[
                 });
                 if (Array.isArray(result.outputs) && result.outputs.some((row: any) => seen.has(row?.localId))) throw Error('hosted_storage_receipts_invalid');
             }
-            if (archiveKeys.length) result.archivedInputs = readInputArchive(db, result, archiveKeys);
+            if (result.historyVersion === 1 && !exists(join(directory, coldName))) throw Error('hosted_history_missing');
+            if (archiveKeys.length) result.archivedInputs = readInputArchive(db, directory, result, archiveKeys);
             return result;
         } finally { db.exec('ROLLBACK'); }
     });
@@ -220,6 +313,7 @@ export function readHostedStorage(file: string, selected: readonly Group[] = gro
     const p = paths(directory);
     if (!exists(p.marker) || json(p.marker, 4096).pending) return null;
     const value = readDatabase(directory, p.db, selected, archiveKeys);
+    readDirectories.set(value, directory);
     if (groups.some(kind => !selected.includes(kind))) Object.defineProperty(value, projection, { value: true, enumerable: true });
     return value;
 }
@@ -280,6 +374,7 @@ function encode(state: State) {
             rows.push({ kind, position, value, digest: digest(value) });
         });
         counts[kind] = state[kind].length;
+        if (kind === 'outputs') counts.pendingOutputs = state.outputs.filter((row: any) => row.sent === false).length;
         trees[kind] = digest(rows.filter(row => row.kind === kind).map(row => row.digest).join(''));
     }
     const value = JSON.stringify(header), logicalBytes = Buffer.byteLength(value) + extraBytes;
@@ -344,7 +439,7 @@ export function saveHostedStorage(file: string, state: State) {
     return json(p.marker, 4096).pending ? activate(directory, state) : writeDatabase(directory, p.db, state);
 }
 
-type EncodedRow = { position: number; value: string; digest: string; bytes: number };
+type EncodedRow = { position: number; value: string; digest: string; bytes: number; pending: boolean };
 /** Output bodies/identities are immutable. Only delivery ACKs change after append.
  * Own the array and freeze bodies so every supported mutation invalidates its
  * cache, including a retained row reference's sent setter. */
@@ -353,6 +448,8 @@ class OutputEncoding {
     private dirty = new Set<number>();
     private digests: string[] = [];
     private lengths: number[] = [];
+    private pendingRows: boolean[] = [];
+    private pending = 0;
     private checkpoints: Hash[] = [createHash('sha256')];
     private tree = digest('');
     private bytes = 0;
@@ -400,14 +497,18 @@ class OutputEncoding {
         const positions = new Set(this.dirty);
         for (let n = this.digests.length; n < count; n++) positions.add(n);
         const updates = new Map<number, EncodedRow>();
-        let bytes = this.bytes, first = count < this.digests.length ? count : Infinity;
-        for (let n = count; n < this.lengths.length; n++) bytes -= this.lengths[n];
+        let bytes = this.bytes, pending = this.pending, first = count < this.digests.length ? count : Infinity;
+        for (let n = count; n < this.lengths.length; n++) {
+            bytes -= this.lengths[n]; pending -= Number(this.pendingRows[n]);
+        }
         for (const position of positions) if (position < count) {
             const value = JSON.stringify(this.rows[position]);
             if (value === undefined) throw Error('hosted_storage_records_invalid');
             const size = Buffer.byteLength(value);
             bytes += size - (this.lengths[position] ?? 0);
-            updates.set(position, { position, value, digest: digest(value), bytes: size }); first = Math.min(first, position);
+            const unsent = !this.rows[position].sent;
+            pending += Number(unsent) - Number(this.pendingRows[position] ?? false);
+            updates.set(position, { position, value, digest: digest(value), bytes: size, pending: unsent }); first = Math.min(first, position);
         }
         let tree = this.tree;
         const start = Number.isFinite(first) ? Math.floor(first / this.stride) * this.stride : undefined;
@@ -425,12 +526,12 @@ class OutputEncoding {
             if (count % this.stride === 0) checkpoints.push(hash.copy());
             tree = hash.copy().digest('hex');
         }
-        return { rows: [...updates.values()], count, bytes, tree, committed: () => {
+        return { rows: [...updates.values()], count, bytes, pending, tree, committed: () => {
             // Advance only after COMMIT and file-identity checks succeed.
-            for (const row of updates.values()) { this.digests[row.position] = row.digest; this.lengths[row.position] = row.bytes; }
-            this.digests.length = this.lengths.length = count;
+            for (const row of updates.values()) { this.digests[row.position] = row.digest; this.lengths[row.position] = row.bytes; this.pendingRows[row.position] = row.pending; }
+            this.digests.length = this.lengths.length = this.pendingRows.length = count;
             if (start !== undefined) { this.checkpoints.length = start / this.stride; this.checkpoints.push(...checkpoints); }
-            this.bytes = bytes; this.tree = tree; this.dirty.clear();
+            this.bytes = bytes; this.pending = pending; this.tree = tree; this.dirty.clear();
         } };
     }
 }
@@ -463,7 +564,7 @@ export function createHostedStorageWriter(file: string, state: State) {
     let receiptSource: string[] | undefined, receiptCache: ReceiptCache | undefined, receiptCandidate: ReceiptCache | undefined;
     let previousRows = new Map<string, string>();
     let identity: { dev: number; ino: number } | undefined;
-    return (retired: readonly HostedArchivedInput[] = []) => {
+    return (retired: readonly HostedArchivedInput[] = [], archivedEvents: readonly HostedArchivedEvent[] = []) => {
         if (Reflect.get(state, projection)) throw Error('hosted_storage_projection_read_only');
         if (hostedStorageBackend(directory) !== 'sqlite') throw Error('hosted_storage_backend_changed');
         if (!outputs || outputs.rows !== state.outputs) {
@@ -475,7 +576,13 @@ export function createHostedStorageWriter(file: string, state: State) {
         else if (receiptSource !== state.outputReceipts) {
             receiptSource = ownReceiptRows(state.outputReceipts); state.outputReceipts = receiptSource; receiptCache = undefined;
         }
-        const receiptsUnchanged = Boolean(hasReceipts && receiptCache?.source === state.outputReceipts
+        const coldEnabled = process.env.HAPPY_HOSTED_COLD_HISTORY !== '0' && !exists(join(directory, HOSTED_RETENTION_PAUSED)) && !json(p.marker, 4096).pending;
+        const spillRequested = coldEnabled && state.outputReceipts?.length >= HOSTED_RECEIPT_CHECKPOINT;
+        const coldNeeded = coldEnabled && (retired.length > 0 || archivedEvents.length > 0 || spillRequested);
+        const preparedHistory = coldNeeded ? prepareHistory(directory, state.historyVersion === 1) : undefined;
+        if (preparedHistory) state.historyVersion = 1;
+        if (archivedEvents.length && !preparedHistory) throw Error('hosted_event_history_unavailable');
+        const receiptsUnchanged = !spillRequested && Boolean(hasReceipts && receiptCache?.source === state.outputReceipts
             && receiptCache!.rows.length === state.outputReceipts.length);
         const encodedState: State = { ...state, outputs: [] };
         if (hasReceipts) encodedState.outputReceipts = receiptsUnchanged ? [] : state.outputReceipts;
@@ -486,10 +593,17 @@ export function createHostedStorageWriter(file: string, state: State) {
             tree: JSON.parse(encoded.trees).outputReceipts,
         };
         assertReceiptsDisjoint(receiptsUnchanged ? receiptCache!.ids : encoded.receiptRows, state.outputs);
-        const counts = { ...JSON.parse(encoded.counts), outputs: output.count }, trees = { ...JSON.parse(encoded.trees), outputs: output.tree };
+        const counts = { ...JSON.parse(encoded.counts), outputs: output.count, pendingOutputs: output.pending }, trees = { ...JSON.parse(encoded.trees), outputs: output.tree };
         if (receiptsUnchanged) { counts.outputReceipts = receiptCache!.rows.length; trees.outputReceipts = receiptCache!.tree; }
         const logicalBytes = encoded.logicalBytes + output.bytes + Math.max(0, output.count - 1);
         if (logicalBytes > HOSTED_STORAGE_LIMIT) throw Error('hosted_authority_state_too_large');
+        const split = spillRequested ? encoded.receiptRows.length - 2048 : 0;
+        const spilled = encoded.receiptRows.slice(0, split);
+        const retained = split ? encoded.receiptRows.slice(split) : [];
+        if (split) {
+            counts.outputReceipts = retained.length;
+            trees.outputReceipts = digest(retained.map(row => row.digest).join(''));
+        }
         const countsJSON = JSON.stringify(counts), treesJSON = JSON.stringify(trees);
         const rows = [...encoded.rows.filter(row => previousRows.get(row.kind + ':' + row.position) !== row.digest),
             ...output.rows.map(row => ({ ...row, kind: 'outputs' as const }))];
@@ -502,13 +616,20 @@ export function createHostedStorageWriter(file: string, state: State) {
             const stat = regular(p.db, 512 * 1024 * 1024);
             if (identity && (identity.dev !== stat.dev || identity.ino !== stat.ino)) throw Error('hosted_storage_file_changed');
             result = database(directory, p.db, false, db => {
+                if (preparedHistory) attachHistory(db, preparedHistory, directory);
                 db.exec('BEGIN IMMEDIATE');
                 try {
                     const previous = metadata(db, directory);
                     if (generation !== undefined && previous.generation !== generation) throw Error('hosted_storage_revision_changed');
                     const version = previous.version === HOSTED_STORAGE_VERSION || encoded.receiptRows.length ? HOSTED_STORAGE_VERSION : 1;
                     writeReceipts(db, previous, encoded, version, receiptsUnchanged);
-                    writeInputArchive(db, retired);
+                    if (preparedHistory) {
+                        writeHistory(db, { users: retired, events: archivedEvents }, spilled);
+                        if (split) {
+                            const append = db.prepare('INSERT INTO output_receipts(position,local_id,digest) VALUES(?,?,?)');
+                            for (const [position, row] of retained.entries()) append.run(position, row.localId, row.digest);
+                        }
+                    } else writeInputArchive(db, retired);
                     const next = previous.generation + 1;
                     if (!Number.isSafeInteger(next)) throw Error('hosted_storage_revision_exhausted');
                     const upsert = db.prepare('INSERT INTO records(kind,position,value,digest) VALUES(?,?,?,?) ON CONFLICT(kind,position) DO UPDATE SET value=excluded.value,digest=excluded.digest WHERE records.digest<>excluded.digest');
@@ -525,7 +646,10 @@ export function createHostedStorageWriter(file: string, state: State) {
         }
         const stat = regular(p.db, 512 * 1024 * 1024);
         output.committed(); generation = result.generation; identity = { dev: stat.dev, ino: stat.ino };
-        if (receiptCandidate) receiptCache = receiptCandidate;
+        if (split) {
+            state.outputReceipts = receiptSource = ownReceiptRows(retained.map(row => row.localId));
+            receiptCache = undefined;
+        } else if (receiptCandidate) receiptCache = receiptCandidate;
         previousRows = new Map(encoded.rows.map(row => [row.kind + ':' + row.position, row.digest]));
         return result;
     };

@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { z } from 'zod';
 import { HostedDotConfig, HostedAuthorityMetadata, HOSTED_STATE_MAX_BYTES, HOSTED_INSTRUCTION_FILE, HostedInstructionSettings, hash, HostedDotJournal, savePrivate, loadHostedState } from './hostedDotState';
-import { readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend, prepareHostedStorage, migrateHostedStorage } from './hostedDotStorage';
+import { hostedHistoryEvent, readHostedStorage, saveHostedStorage, removeHostedStorage, hostedStorageBackend, prepareHostedStorage, migrateHostedStorage } from './hostedDotStorage';
 import { withLockedHostedAdmission } from './hostedDotAdmission';
 import { hostedThreadHasDispatchedInput, isHostedDotRestart } from './hostedDotState';
 
@@ -137,6 +137,16 @@ export function statusHostedDot(raw: HostedDotBinding) {
         clearPending: present(join(b.directory, 'lifecycle-clear.json')),
         controls: state?.controls ?? [], pendingInputs: state?.inputs.filter(row => ['queued', ...uncertain].includes(row.status)).length ?? 0 };
 }
+/** An archived event proves exact identity and prior native acceptance.
+ * Return metadata only, even when the original context has been cleared. */
+export function readHostedDotEventEvidence(raw: HostedDotBinding & { epoch: number; eventId: string }) {
+    const b = binding({ directory: raw.directory, dotId: raw.dotId, sessionId: raw.sessionId });
+    const { epoch, eventId } = z.object({ epoch: integer, eventId: z.string().regex(/^task-[a-f0-9]{64}$/) }).parse(raw);
+    if (!configFor(b) || !present(join(b.directory, 'state-history.sqlite'))) return;
+    const receipt = hostedHistoryEvent(b.directory, epoch, eventId);
+    return receipt?.acceptedAt;
+}
+
 /** Old producers never advertise settings reload. Tie the capability to the live owner. */
 export function supportsHostedDotInstruction(raw: HostedDotBinding): boolean {
     const b = binding(raw), status = statusHostedDot(b);

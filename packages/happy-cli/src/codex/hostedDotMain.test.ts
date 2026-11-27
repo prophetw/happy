@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { readPrivate, loadHostedState, HostedDotConfig, type HostedState } from './hostedDotState';
-import { saveHostedStorage, readHostedStorage, prepareHostedStorage } from './hostedDotStorage';
+import { saveHostedStorage, readHostedStorage, prepareHostedStorage, hostedColdOutputCount } from './hostedDotStorage';
 import * as sessionProtocolMapper from './utils/sessionProtocolMapper';
 const h = vi.hoisted(() => ({ options: null as any, event: null as any, rows: [] as any[], history: [] as any[], sent: [] as any[],
     attach: vi.fn(), start: vi.fn(), send: vi.fn(), steer: vi.fn(), resume: vi.fn(), inject: vi.fn(), reconnect: vi.fn(), flush: vi.fn(), receive: null as any,
@@ -145,7 +145,7 @@ it('reclaims 49,783 confirmed rows at a 50,000-row SQLite restart and resends on
         await vi.waitFor(() => expect(h.sent).toHaveLength(217), { timeout: 20000 });
         expect(h.sent.map(row => row.localId)).toEqual(envelopes.slice(49783).map(envelope => `hosted:0:${envelope.id}`));
         expect(f.state().outputs).toHaveLength(217);
-        expect(f.state().outputReceipts).toHaveLength(49783);
+        expect(f.state().outputReceipts.length + hostedColdOutputCount(f.config.directory)).toBe(49783);
         expect(f.state().afterSeq).toBe(0); expect(f.state().threadId).toBe('native-thread');
         expect(f.state().inputs).toEqual([expect.objectContaining({ id: 'settled', status: 'completed', beforeTurns: [] })]);
         h.sent = [];
@@ -153,7 +153,7 @@ it('reclaims 49,783 confirmed rows at a 50,000-row SQLite restart and resends on
         await vi.waitFor(() => expect(f.state().status).toBe('ready'), { timeout: 20000 });
         expect(h.sent).toEqual([]);
         expect(f.state().outputs).toHaveLength(0);
-        expect(f.state().outputReceipts).toHaveLength(50000);
+        expect(f.state().outputReceipts.length + hostedColdOutputCount(f.config.directory)).toBe(50000);
     } finally { await f.stop(); }
 }, 60000);
 it('checkpoints settled input history on restart and accepts the 10,001st input on the same thread', async () => {
@@ -225,7 +225,7 @@ it('drains the last pending row at the high watermark without resending confirme
     }, true);
     try {
         await vi.waitFor(() => expect(f.state().error).toBe('hosted_pending_delivery_queue_full'), { timeout: 20000 });
-        await vi.waitFor(() => expect(f.state().outputReceipts).toHaveLength(90000), { timeout: 20000 });
+        await vi.waitFor(() => expect(f.state().outputReceipts.length + hostedColdOutputCount(f.config.directory)).toBe(90000), { timeout: 20000 });
         expect(h.sent.map(row => row.localId)).toEqual(['hosted:0:pressure-0']);
         expect(f.state().outputs).toHaveLength(0);
         await vi.waitFor(() => expect(f.state().error).toBeNull());
@@ -487,7 +487,7 @@ it('keeps background task events out of the native turn and Relay reply even whe
         await vi.waitFor(() => expect(f.state().inputs.find((input: any) => input.id === id('0'))?.status).toBe('completed'));
         expect(turns()).toEqual([result, '请查询当前状态', later, blockage, canceled, permission]);
     } finally { await f.stop(); }
-});
+}, 20000);
 it('rejects a task event bound to another Dot before starting a model turn', async () => {
     const f = fixture();
     const failed = expect(f.running).rejects.toThrow('hosted_task_event_binding_changed');

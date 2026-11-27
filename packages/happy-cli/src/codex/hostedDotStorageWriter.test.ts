@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHostedStorageWriter, readHostedStorage, saveHostedStorage, HOSTED_STORAGE_LIMIT } from './hostedDotStorage';
+import { createHostedStorageWriter, readHostedStorage, saveHostedStorage, HOSTED_STORAGE_LIMIT, hostedColdOutputCount } from './hostedDotStorage';
 import { createHostedAuthorityPublisher } from './hostedDotAuthorityPublisher';
 import { hostedProducerIdentity, addOutput, compactFinalTextOutputs, reclaimDeliveredOutputPrefix } from './hostedDotState';
 import { createEnvelope } from '@slopus/happy-wire';
@@ -159,7 +159,7 @@ it('restarts a 50,000-row journal with 49,783 receipts and the original 217-row 
     expect(result.logicalBytes).toBeLessThan(32 * 1024 * 1024);
 
     const recovered: any = readHostedStorage(f.file)!;
-    expect(recovered.outputReceipts).toHaveLength(49783);
+    expect(recovered.outputReceipts.length + hostedColdOutputCount(f.directory)).toBe(49783);
     expect(recovered.outputs.map((row: any) => JSON.stringify(row))).toEqual(tail);
     expect(JSON.stringify(recovered.inputs)).toBe(input);
     expect(recovered.threadId).toBe('original-thread'); expect(recovered.afterSeq).toBe(23);

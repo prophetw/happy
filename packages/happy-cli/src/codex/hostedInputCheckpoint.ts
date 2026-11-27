@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { HostedArchivedInput } from './hostedDotStorage';
+import type { HostedArchivedEvent, HostedArchivedInput } from './hostedDotStorage';
 import type { HostedState } from './hostedDotState';
 
 const HIGH_ROWS = 8000, LOW_ROWS = 4000;
@@ -13,9 +13,10 @@ const unresolved = new Set(['dispatching', 'accepted', 'unknown']);
  * This does not touch Relay history, task-result dedupe, or unconfirmed outputs.
  * Persist the retained rows and watermark in the existing writer transaction.
  */
+export function hostedInputCheckpointDue(rows: number, bytes: number) { return rows >= HIGH_ROWS || bytes >= HIGH_JOURNAL_BYTES; }
+
 export function checkpointHostedUserInputs(state: HostedState, previousJournalBytes: number): HostedArchivedInput[] {
-    const overRows = state.inputs.length >= HIGH_ROWS;
-    if (!overRows && previousJournalBytes < HIGH_JOURNAL_BYTES) return [];
+    if (!hostedInputCheckpointDue(state.inputs.length, previousJournalBytes)) return [];
     if (!state.threadId || state.authority === undefined || state.creating || state.bootstrap?.stage === 'injecting'
         || state.inputs.some(row => unresolved.has(row.status)) || state.outputs.some(row => !row.sent)) return [];
     // Keep a real dispatched row. Its current-epoch native turn is required to
@@ -56,6 +57,24 @@ export function checkpointHostedUserInputs(state: HostedState, previousJournalBy
         textDigest: 'sha256:' + createHash('sha256').update(JSON.stringify(row.text)).digest('hex'),
         ...(row.permissionMode === undefined ? {} : { permissionMode: row.permissionMode }),
     }));
+}
+
+/** Keep the last native anchor and all not-yet-confirmed notification inputs.
+ * A terminal event can move only if its exact identity survives the rewrite. */
+export function checkpointHostedTaskInputs(state: HostedState, previousJournalBytes: number): HostedArchivedEvent[] {
+    if (!hostedInputCheckpointDue(state.inputs.length, previousJournalBytes)) return [];
+    if (!state.threadId || !state.authority || state.creating || state.bootstrap?.stage === 'injecting'
+        || state.inputs.some(row => unresolved.has(row.status)) || state.outputs.some(row => !row.sent)) return [];
+    const anchor = state.inputs.slice().reverse().find(row => row.epoch === state.epoch && !!row.turnId && row.beforeTurns !== undefined && settled.has(row.status));
+    if (!anchor) return [];
+    const old = state.inputs.filter(row => row !== anchor && row.epoch === state.epoch && row.origin === 'task-result'
+        && settled.has(row.status) && (row.status === 'rejected' || !!row.acceptedAt && !!row.turnId)).slice(0, 512);
+    if (!old.length) return [];
+    const removed = new Set(old);
+    state.inputs = state.inputs.filter(row => !removed.has(row));
+    return old.map(row => ({ id: row.id, epoch: row.epoch, status: row.status as HostedArchivedEvent['status'],
+        textDigest: 'sha256:' + createHash('sha256').update(JSON.stringify(row.text)).digest('hex'),
+        ...(row.acceptedAt ? { acceptedAt: row.acceptedAt } : {}) }));
 }
 
 /** Never match by text against turns retired from the active input journal. */
