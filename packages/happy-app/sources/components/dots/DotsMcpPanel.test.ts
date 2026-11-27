@@ -8,7 +8,7 @@ vi.mock('@/sync/sync', () => ({ sync: { ensureSessionReady: mocks.ready } }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => `33333333-3333-4333-8333-${String(++mocks.uuid).padStart(12, '0')}` }));
 vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
-    return { View: host('View'), Text: host('Text'), TextInput: host('TextInput'), Pressable: host('Pressable'), ActivityIndicator: host('ActivityIndicator'),
+    return { Platform: { OS: 'web' }, View: host('View'), Text: host('Text'), TextInput: host('TextInput'), Pressable: host('Pressable'), ActivityIndicator: host('ActivityIndicator'),
         AppState: { addEventListener: (_: string, callback: (state: string) => void) => { mocks.background = callback; return { remove: vi.fn() }; } } };
 });
 vi.mock('react-native-unistyles', () => ({ useUnistyles: () => ({ theme: { colors: {
@@ -54,6 +54,8 @@ async function render(dot?: string) {
     const button = (name: string) => renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel === name);
     const click = async (name: string) => { expect(button(name)).toBeTruthy(); await act(async () => button(name).props.onPress()); };
     const fill = async (label: string, value: string) => { await act(async () => renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === label).props.onChangeText(value)); };
+    const disclosure = renderer.root.findAllByType('Pressable').find((node: any) => node.props.accessibilityLabel?.startsWith('查看 MCP：'));
+    if (disclosure) await act(async () => disclosure.props.onPress());
     return { renderer, button, click, fill, revoke: () => { authorized = false; } };
 }
 it('requires explicit project selection for Happy background execution', async () => {
@@ -124,6 +126,23 @@ it('edits existing configuration and displays server-reported check failures', a
     mocks.rpc.mockResolvedValueOnce({ ok: true, data: { ...view(), connections: [{ ...view().connections[0], error: 'mcp_environment_missing' }] } });
     await f.click('检查 MCP：事实工具'); expect(JSON.stringify(f.renderer.toJSON())).toContain('宿主缺少配置中引用的环境变量');
 });
+it('retains a stale edit after reading the new revision and blocks saving it over a concurrent change', async () => {
+    const f = await render();
+    await f.click('编辑 MCP：事实工具');
+    await f.fill('MCP 名称', '我的草稿');
+    mocks.rpc.mockResolvedValueOnce({ ok: false, error: 'mcp_revision_changed' });
+    await f.click('检查并保存 MCP');
+    mocks.rpc.mockResolvedValueOnce({ ok: true, data: { ...view(), revision: 3,
+        connections: [{ ...view().connections[0], name: '另一处保存的名称' }] } });
+    await f.click('刷新 MCP 连接');
+    const field = f.renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === 'MCP 名称');
+    expect(field.props.value).toBe('我的草稿');
+    expect(f.button('查看 MCP：另一处保存的名称')).toBeTruthy();
+    expect(f.button('检查并保存 MCP').props.disabled).toBe(true);
+    await f.click('检查并保存 MCP');
+    expect(mocks.rpc.mock.calls.map(call => call[2].action)).toEqual(['list', 'save', 'list']);
+});
+
 it('does not retry unconfirmed writes and prevents requests after losing account scope', async () => {
     const f = await render(); mocks.rpc.mockRejectedValueOnce(new Error('offline')); await f.click('删除 MCP：事实工具');
     expect(mocks.rpc).toHaveBeenCalledTimes(2); expect(JSON.stringify(f.renderer.toJSON())).toContain('不会自动重发');
@@ -146,10 +165,13 @@ it('accepts a pasted token in a masked field and clears it after saving', async 
 });
 it('does not prefill or replace an existing token unless explicitly requested', async () => {
     mocks.rpc.mockResolvedValue({ ok: true, data: { ...view(), connections: [{ ...view().connections[0], tokenConfigured: true, credentialSource: 'stored' }] } });
+    const result = { ...view(), connections: [{ ...view().connections[0], tokenConfigured: true, credentialSource: 'stored' }] };
     const f = await render(); await f.click('编辑 MCP：事实工具');
+    mocks.rpc.mockResolvedValue({ ok: true, data: { ...result, revision: 3 } });
     const field = f.renderer.root.findAllByType('TextInput').find((node: any) => node.props.accessibilityLabel === 'MCP Token');
     expect(field.props.value).toBe(''); await f.click('检查并保存 MCP');
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).not.toHaveProperty('token');
+    mocks.rpc.mockResolvedValue({ ok: true, data: { ...result, revision: 4 } });
     await f.click('编辑 MCP：事实工具'); await f.click('清除已保存 Token'); await f.click('检查并保存 MCP');
     expect(mocks.rpc.mock.calls.at(-1)?.[2]).toHaveProperty('token', null);
 });
@@ -221,6 +243,17 @@ it('keeps truthful connection-only state when project saving fails and never ret
     expect(JSON.stringify(f.renderer.toJSON())).toContain('最多启用 16');
     await f.click('刷新 MCP 连接');
     expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(1);
+});
+
+it('retries a definitively rejected selection only when explicitly requested', async () => {
+    const { data } = projectFixture();
+    const f = await render(dotId);
+    mocks.rpc.mockResolvedValueOnce({ ok: false, error: 'mcp_project_limit' });
+    await f.click('为 Dot A 启用 MCP first');
+    expect(data.dots[0].connectionIDs).toEqual(['second']);
+    await f.click('重试保存选择');
+    expect(data.dots[0].projectBindings.first).toEqual(['a', 'b']);
+    expect(f.button('重试保存选择')).toBeUndefined();
 });
 
 it('shows a pending selection while binding and selects only the click snapshot after the response', async () => {
@@ -334,6 +367,7 @@ it('ignores an old selection response after changing session scope', async () =>
     await act(async () => f.button('为 Dot A 启用 MCP first').props.onPress());
     await act(async () => f.renderer.update(React.createElement(DotsMcpPanel, { sessionId: 'different-workspace', dotId, current: () => true })));
     await act(async () => finish());
+    await f.click('查看 MCP：first');
     expect(f.button('为 Dot A 启用 MCP first').props.accessibilityState.checked).toBe(false);
     expect(mocks.rpc.mock.calls.filter(call => call[2].action === 'bind-projects')).toHaveLength(0);
 });

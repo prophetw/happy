@@ -14,7 +14,7 @@ vi.mock('@/sync/storage', () => ({ storage: { getState: () => ({ sessions: { wor
 vi.mock('expo-crypto', () => ({ randomUUID: () => `33333333-3333-4333-8333-${String(++mocks.uuid).padStart(12, '0')}` }));
 vi.mock('react-native', async () => {
     const module = await import('react'), host = (name: string) => (props: any) => module.createElement(name, props, props.children);
-    return { View: host('View'), Text: host('Text'), TextInput: host('TextInput'), Pressable: host('Pressable'),
+    return { Platform: { OS: 'web' }, View: host('View'), Text: host('Text'), TextInput: host('TextInput'), Pressable: host('Pressable'),
         ScrollView: host('ScrollView'), Modal: host('Modal'), ActivityIndicator: host('ActivityIndicator'),
         AppState: { addEventListener: (_: string, callback: (value: string) => void) => { mocks.background = callback; return { remove: vi.fn() }; } } };
 });

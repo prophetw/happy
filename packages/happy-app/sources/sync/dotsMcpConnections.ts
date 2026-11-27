@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { apiSocket } from './apiSocket';
 
 const config = z.record(z.string(), z.unknown());
-export const DotsMcpViewSchema = z.object({ revision: z.number().int().nonnegative(), capabilities: z.object({ storedToken: z.literal(1), happyDelegation: z.literal(1).optional() }).optional(),
+export const DotsMcpViewSchema = z.object({ gatewayRefreshPending: z.boolean().optional(), revision: z.number().int().nonnegative(), capabilities: z.object({ storedToken: z.literal(1), happyDelegation: z.literal(1).optional() }).optional(),
     connections: z.array(z.object({ id: z.string(), name: z.string(), config, enabled: z.boolean(),
         tokenConfigured: z.boolean().optional(), credentialSource: z.enum(['stored', 'environment', 'none']).optional(),
         checkedAt: z.string().nullable(), error: z.string().nullable(),
