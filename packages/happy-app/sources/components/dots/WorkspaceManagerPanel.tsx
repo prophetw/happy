@@ -83,7 +83,13 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                 setItems([]);setSelected(null);setDeliveryApproval(null);setDetail(null);setProjectID('');
                 setError('WORKSPACE_PROJECT_UNAVAILABLE');return;
             }
-            const page=await client.inventory({action:'delivery-inventory',...scope,guidance:true,view:readRecords?'released':'pending',requestID:focused&&projectID===initialProjectID?originalRequestID:undefined,limit:5,...(after?{after}:{})});
+            const input={action:'delivery-inventory' as const,...scope,guidance:true,reclaim:true as const,
+                requestID:focused&&projectID===initialProjectID?originalRequestID:undefined,limit:5,...(after?{after}:{})};
+            let page=await client.inventory({...input,view:readRecords?'released':'pending'});
+            if(input.requestID && !after && !readRecords && !page.total && valid(version)) {
+                const history=await client.inventory({...input,view:'released'});
+                if(history.total&&valid(version)){page=history;setRecords(true);}
+            }
             if(valid(version)){setItems(old=>[...new Map([...(after?old:[]),...page.items].map(item=>[item.id,item])).values()]);setTotal(page.total);setNext(page.next);}}
         catch(e){if(valid(version))setError(e instanceof Error?e.message:'WORKSPACE_MANAGER_UNAVAILABLE');}
         finally{if(valid(version)){locked.current=false;setBusy(false);}}
@@ -124,7 +130,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                 :item;
             setItems(old=>old.map(change));setSelected(old=>old&&change(old));
             if(selected?.id===request.workspaceID&&receipt.phase==='released'&&scope) {
-                const currentDetail=await client.detail({action:'detail',...scope,guidance:true,workspaceID:request.workspaceID});
+                const currentDetail=await client.detail({action:'detail',...scope,guidance:true,reclaim:true as const,workspaceID:request.workspaceID});
                 if(valid(version))setDetail(old=>old?.item.id===request.workspaceID?currentDetail:old);
             }
         }).catch(error=>{
@@ -146,14 +152,14 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
     },[items, busy, delivering, cacheKey, records, selected]);
     const inspect = (item:WorkspaceItem) => {
         if(item.state==='unclaimed'||item.state==='mapping-missing') { setSelected(item);return; }
-        if(scope)void action(()=>client.detail({action:'detail',...scope,guidance:true,workspaceID:item.id}),value=>{
+        if(scope)void action(()=>client.detail({action:'detail',...scope,guidance:true,reclaim:true as const,workspaceID:item.id}),value=>{
             setSelected(item);setDetail(value);setTicket(null);setAgreed(false);setReview(null);
         });
     };
     const recheck = (item:WorkspaceItem) => {
         if (!scope) return;
         if (item.state==='unclaimed'||item.state==='mapping-missing') return;
-        void action(()=>client.detail({action:'detail',...scope,guidance:true,workspaceID:item.id}),currentDetail=>{
+        void action(()=>client.detail({action:'detail',...scope,guidance:true,reclaim:true as const,workspaceID:item.id}),currentDetail=>{
             const update = (previous:WorkspaceItem):WorkspaceItem => previous.id===item.id
                 ? {...previous,...currentDetail.item,plan:currentDetail.plan} : previous;
             setItems(old=>old.map(update));
@@ -163,6 +169,30 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
             setCheckedAfterOperation(pendingRef.current?.request.operationID);
         });
     };
+    const requestReclaim = (item:WorkspaceItem) => {
+        if(!scope || !item.canRequestReclaim) return;
+        void action(async()=>{
+            try {return await client.reclaim({...scope,workspaceID:item.id});}
+            catch (error) {
+                const observed=await client.detail({action:'detail',...scope,guidance:true,reclaim:true as const,workspaceID:item.id}).catch(()=>undefined);
+                if(observed?.item.reclaimRequest)return observed.item.reclaimRequest;
+                throw error;
+            }
+        },progress=>{
+            const update=(row:WorkspaceItem)=>row.id===item.id?{...row,reclaimRequest:progress,canRequestReclaim:false}:row;
+            setItems(old=>old.map(update));
+            setSelected(old=>old&&update(old));
+            setDetail(old=>old?.item.id===item.id?{...old,item:update(old.item)}:old);
+            setTicket(null);setAgreed(false);setReview(null);
+        });
+    };
+    const runningRequest=(detail?.item?[detail.item]:items).find(item=>item.reclaimRequest
+        && ['waiting','closing','archiving'].includes(item.reclaimRequest.state));
+    React.useEffect(()=>{
+        if(!runningRequest||busy)return;
+        const timer=setTimeout(()=>recheck(runningRequest),25_000);
+        return ()=>clearTimeout(timer);
+    },[runningRequest,busy,cacheKey]);
     const write = async (request:Mutation, retry=false) => {
         if(!scope||!pendingRestored||locked.current||!current()||(!retry&&pendingRef.current&&pendingRef.current.result?.status!=='settled'))return;
         const version=epoch.current,key=cacheKey;locked.current=true;setBusy(true);setError(null);
@@ -173,7 +203,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
             const result=await client.mutate(request);known=result;const value={request,result};
             await AsyncStorage.setItem(key,JSON.stringify(value));
             if(valid(version)){pendingRef.current=value;setPending(value);if(result.error && result.receipt?.state!=='removed')setError(result.error);
-                if(result.receipt&&detail?.item.id===request.workspaceID)void client.detail({action:'detail',...scope,guidance:true,workspaceID:request.workspaceID})
+                if(result.receipt&&detail?.item.id===request.workspaceID)void client.detail({action:'detail',...scope,guidance:true,reclaim:true as const,workspaceID:request.workspaceID})
                     .then(v=>{if(valid(version))setDetail(v);}).catch(()=>{if(valid(version))setError('WORKSPACE_MANAGER_UNAVAILABLE');});}
         } catch(e) {
             const rejected=!retry&&e instanceof WorkspaceManagerError&&e.rejected;
@@ -259,7 +289,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                     {openSession&&button(t('workspaces.openSession'),()=>openSession(task.sessionID),busy)}</View>)}
             </View>:detail?<View style={{gap:14}}>{button(t('workspaces.back'),()=>{setSelected(null);setDeliveryApproval(null);setDetail(null);setTicket(null);setReview(null);void load();},busy)}
                 <WorkspaceReclaimNotice item={shownDetail!} expanded error={actionError(detail.item)} busy={busy}
-                    recheck={()=>recheck(detail.item)} openSession={openSession}/>
+                    recheck={()=>recheck(detail.item)} reclaim={detail.item.canRequestReclaim?()=>requestReclaim(detail.item):undefined} openSession={openSession}/>
                 <View style={card}><Text style={{...text,fontWeight:'600'}}>{automaticReclaim(detail.item)?.state!=='released'&&status({...detail.item,plan:detail.plan,delivery:selected?.delivery})}</Text><Text selectable style={text}>{detail.item.directory}</Text><Text selectable style={muted}>{t('workspaces.branch')} · {detail.item.branch??'—'}</Text>
                     <Text style={muted}>{t('workspaces.checked')} · {new Date(detail.plan.checkedAt).toLocaleString()}</Text>
                     {selected?.delivery&&deliveryEvidence(selected.delivery,true,!!detail.item.reclaimGuidance)}</View>
@@ -288,11 +318,11 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                                 requestID:source.requestID,evidence:deliveryApproval.evidence.trim()||undefined});
                         },busy||unsettled)}{button(t('workspaces.cancel'),()=>setDeliveryApproval(null),busy)}</View>
                     </View>}
-                    {detail.item.state!=='retired'&&!automaticReclaim(detail.item)&&<View style={row}>{!detail.item.managed&&button(t('workspaces.adopt'),()=>setReview('adopt'),busy||unsettled||!detail.adoptionVerified)}
+                    {detail.item.state!=='retired'&&detail.item.canRequestReclaim===undefined&&!automaticReclaim(detail.item)&&<View style={row}>{!detail.item.managed&&button(t('workspaces.adopt'),()=>setReview('adopt'),busy||unsettled||!detail.adoptionVerified)}
                         {detail.item.managed&&<>{button(t('workspaces.integrated'),()=>setReview('integrated'),busy||unsettled||!detail.inspectedHead)}{button(t('workspaces.noChange'),()=>setReview('no-change'),busy||unsettled||!detail.inspectedHead)}
                             {project?.allowArchive&&button(t('workspaces.archive'),()=>setReview('archived'),busy||unsettled||!detail.inspectedHead)}</>}</View>}
                     {!project?.allowArchive&&<Text style={muted}>{t('workspaces.archiveDisabled')}</Text>}
-                    {detail.item.state!=='retired'&&!automaticReclaim(detail.item)&&detail.item.canFinalizeIntegrated&&button(t('workspaces.finalize'),()=>setAcceptance({workspaceID:detail.item.id,text:''}),busy||unsettled||!detail.inspectedHead)}
+                    {detail.item.state!=='retired'&&detail.item.canRequestReclaim===undefined&&!automaticReclaim(detail.item)&&detail.item.canFinalizeIntegrated&&button(t('workspaces.finalize'),()=>setAcceptance({workspaceID:detail.item.id,text:''}),busy||unsettled||!detail.inspectedHead)}
                     {acceptance?.workspaceID===detail.item.id&&<View style={{gap:8}}>
                         <Text style={muted}>{t('workspaces.finalizeHelp')}</Text>
                         <TextInput accessibilityLabel={t('workspaces.acceptanceEvidence')} value={acceptance.text} maxLength={16000} multiline
@@ -307,8 +337,8 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                 </View>
                 {review&&<View style={card}><Text style={text}>{review==='adopt'?t('workspaces.adoptHelp'):t('workspaces.reviewHelp')}</Text><View style={row}>{button(t('workspaces.confirmReview'),reviewResult,busy||unsettled)}{button(t('workspaces.cancel'),()=>setReview(null),busy)}</View></View>}
                 {detail.result.operations?.map(op=><View key={op.id} style={card}><Text selectable style={muted}>{op.id} · {op.state}{op.head?`\n${op.head}`:''}</Text>{op.reason&&(detail.item.state!=='retired'||op.state==='removed'&&op.id!==detail.result.operation?.id)&&<Text style={muted}>{reason(op.reason)}</Text>}</View>)}
-                {detail.result.rebuild&&<View style={card}><Text style={{...text,fontWeight:'600'}}>{t('workspaces.recovery')}</Text><Text style={muted}>{t('workspaces.recoveryHelp')}</Text><Text selectable style={muted}>{t('workspaces.recoveryDirectory')} · {detail.result.rebuild.args.at(-2)}{`\n`}{t('workspaces.recoveryBranch')} · {detail.result.rebuild.args[5]}</Text></View>}
-                {detail.item.state!=='retired'&&!automaticReclaim(detail.item)&&<View style={{gap:8}}>
+                {detail.result.rebuild&&!detail.item.reclaimRequest?.archive&&<View style={card}><Text style={{...text,fontWeight:'600'}}>{t('workspaces.recovery')}</Text><Text style={muted}>{t('workspaces.recoveryHelp')}</Text><Text selectable style={muted}>{t('workspaces.recoveryDirectory')} · {detail.result.rebuild.args.at(-2)}{`\n`}{t('workspaces.recoveryBranch')} · {detail.result.rebuild.args[5]}</Text></View>}
+                {detail.item.state!=='retired'&&detail.item.canRequestReclaim===undefined&&!automaticReclaim(detail.item)&&<View style={{gap:8}}>
                     {!detail.plan.eligible && <Text style={text}>{t('workspaces.guidance.blocked')} · {t('workspaces.guidance.readOnly')}</Text>}
                     {button(t('workspaces.plan'),createPlan,busy||unsettled)}
                     {button(t('workspaces.guidance.recheck'),()=>recheck(detail.item),busy)}
@@ -325,7 +355,7 @@ export function WorkspaceManagerPanel({ client, current, contextKey, onClose, op
                 <View style={{...row,justifyContent:'space-between'}}><Text style={{...text,fontWeight:'600'}}>{automaticReclaim(item)?.state!=='released'&&status(item)}</Text>{button(t('workspaces.inspect'),()=>inspect(item),busy)}</View>
                 <Text selectable style={text}>{item.directory}</Text><Text selectable style={muted}>{t('workspaces.branch')} · {item.branch??'—'} · {t('workspaces.task')} {item.taskCount}</Text>
                 <WorkspaceReclaimNotice item={item} error={actionError(item)} busy={busy}
-                    open={()=>inspect(item)} recheck={item.state!=='unclaimed'&&item.state!=='mapping-missing'?()=>recheck(item):undefined}/>
+                    open={()=>inspect(item)} reclaim={item.canRequestReclaim?()=>requestReclaim(item):undefined} recheck={item.state!=='unclaimed'&&item.state!=='mapping-missing'?()=>recheck(item):undefined}/>
                 {item.delivery&&deliveryEvidence(item.delivery,false,!!item.reclaimGuidance)}
 
                 <Text style={muted}>{t('workspaces.checked')} · {item.delivery||item.lastVerification?new Date(item.delivery?.observedAt??item.lastVerification!).toLocaleString():t('workspaces.never')}</Text>

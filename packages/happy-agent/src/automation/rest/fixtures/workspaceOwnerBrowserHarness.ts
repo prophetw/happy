@@ -1,5 +1,7 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { SessionProcessProofs, readLinuxProcess } from '../sessionProcessProofs';
 import { fixtureGit, workspaceOwnerFixture } from './workspaceOwnerFixture';
 import { projectResponse } from '../projection';
 import { createWorkspaceOwnerApi } from '../../production/workspaceOwnerApi';
@@ -13,10 +15,11 @@ const isFixtureRoot=(path:string)=>/^\/tmp\/happy-owner-ui-[A-Za-z0-9_]+$/.test(
 const restarting=process.env.HAPPY_WORKSPACE_RESTART_ROOT;
 const guidanceTest=process.env.HAPPY_WORKSPACE_GUIDANCE_FIXTURE==='1';
 const backgroundTest=process.env.HAPPY_WORKSPACE_RECLAIM_FIXTURE==='1';
-const restartTest=process.env.HAPPY_WORKSPACE_RESTART_FIXTURE==='1'||backgroundTest;
+const oneClick=process.env.HAPPY_WORKSPACE_ONE_CLICK_FIXTURE==='1';
+const restartTest=process.env.HAPPY_WORKSPACE_RESTART_FIXTURE==='1'||backgroundTest||oneClick;
 if ((socket || root) && (!socket || !root || !isFixtureRoot(root))) throw new Error('Invalid process probe fixture');
 if (restarting && (!restartTest || !isFixtureRoot(restarting) || socket || root)) throw new Error('Invalid restart fixture');
-const f=restarting?null:await workspaceOwnerFixture(socket&&root?{socket,root}:undefined,process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE==='1'||restartTest&&!backgroundTest,restartTest&&!backgroundTest);
+const f=restarting?null:await workspaceOwnerFixture(socket&&root?{socket,root}:undefined,process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE==='1'||restartTest&&!backgroundTest&&!oneClick,restartTest&&!backgroundTest&&!oneClick);
 const assets=process.argv[2];
 const base=f?.root??restarting!;
 const manifest=join(base,'browser-fixture.json');
@@ -31,7 +34,7 @@ if (f && guidanceTest) {
     writeFileSync(temporaryFixture!,'synthetic unknown material');
     f.blockers.set(f.workspaces.ready.id,['live_session_or_process']);
 }
-if (f&&restartTest&&!backgroundTest) {
+if (f&&restartTest&&!backgroundTest&&!oneClick) {
     const remote=join(base,'remote.git'), old=join(f.repo,'older-worktree');
     fixtureGit(f.repo,'init','--bare',remote);
     fixtureGit(f.repo,'remote','add','origin',remote);
@@ -56,19 +59,50 @@ if (f&&restartTest&&!backgroundTest) {
     Object.assign(fixtureData,{remote,old});
     writeFileSync(manifest,JSON.stringify(fixtureData),{mode:0o600});
 }
-if (f&&backgroundTest) {
+if (f&&(backgroundTest||oneClick)) {
     const remote=join(base,'remote.git');
     fixtureGit(f.repo,'remote','add','origin',remote);
+    if(oneClick) {
+        fixtureGit(f.repo,'init','--bare',remote);fixtureGit(f.repo,'push','origin','main');
+        const w=f.workspaces.live;
+        for(let i=1;i<=7;i++)writeFileSync(join(w.temporaryDirectory,'fixture-'+i+'.data'),Buffer.from([i,255,2]));
+        f.queue.transaction(s=>{const task=s.tasks.find(t=>t.workspaceID===w.id)!;task.turnID='fixture-turn';});
+        const alive=join(f.root,'idle.mjs');
+        writeFileSync(alive,`import {existsSync,writeFileSync} from 'node:fs';
+import {readWorkspaceIdleClose,acknowledgeWorkspaceIdleClose} from ${JSON.stringify(new URL('./idle-close.mjs', 'file://'+assets+'/').href)};
+const [id,root]=process.argv.slice(2);
+writeFileSync(root+'/idle-ready','ready');
+const timer=setInterval(()=>{
+ if(!existsSync(root+'/release-idle'))return;
+ const close=readWorkspaceIdleClose(process.cwd(),id,'session-live',1);
+ if(!close||close.request.turnID!=='fixture-turn')return;
+ writeFileSync(root+'/thread-history','fixture-thread saved');
+ acknowledgeWorkspaceIdleClose(close,'fixture-thread');
+ clearInterval(timer);
+},30);`);
+        const log=openSync(join(f.root,'idle.log'),'w');
+        const runner=spawn(process.execPath,[alive,w.id,f.root],{cwd:w.cwd,detached:true,stdio:['ignore','ignore',log]});
+        closeSync(log);
+        runner.unref();
+        const probe=new SessionProcessProofs(join(f.queue.directory,'session-process-proofs'),'fixture-machine');
+        let recorded=false;
+        for(let i=0;i<40&&!recorded;i++) {
+            recorded=existsSync(join(f.root,'idle-ready'))&&!!probe.recordRunning({id:'session-live',metadata:{machineId:'fixture-machine',hostPid:runner.pid,path:w.cwd}},'running');
+            if(!recorded)await new Promise(resolve=>setTimeout(resolve,50));
+        }
+        if(!recorded)throw Error('fixture dedicated process identity unavailable: '+readFileSync(join(f.root,'idle.log'),'utf8'));
+        Object.assign(fixtureData,{idlePID:runner.pid});
+    }
     writeFileSync(f.policyFile,JSON.stringify({...f.policy,remote:'origin',reclaimRemoteURL:remote}));
     Object.assign(fixtureData,{remote,workerFile:f.workerFile,policyFile:f.policyFile,home:f.home});
     writeFileSync(manifest,JSON.stringify(fixtureData),{mode:0o600});
     await f.app.close();
 }
 const activity=async (w:{id:string})=>({confirmed:true,
-    blockers:w.id===fixtureData.workspaces.live.id?['live_session_or_process']:[],fingerprint:'isolated-fixture'});
-const app=(!backgroundTest&&f?.app)||createWorkspaceOwnerApi({
+    blockers:w.id===fixtureData.workspaces.live.id && (!oneClick || !!readLinuxProcess(fixtureData.idlePID))?['live_session_or_process']:[],fingerprint:'isolated-fixture'});
+const app=(!backgroundTest&&!oneClick&&f?.app)||createWorkspaceOwnerApi({
     configFile:fixtureData.configFile, jobEntry:'fixture-not-spawned',
-    reclaimCredential:backgroundTest?()=> 'Bearer fixture-owner':undefined,
+    reclaimCredential:backgroundTest||oneClick?()=> 'Bearer fixture-owner':undefined,
     verifyControl:async()=>['fixture-project'],
     verifyOwner:async authorization=>{
         if(authorization==='Bearer fixture-owner')return 'fixture-owner';
@@ -79,7 +113,9 @@ const app=(!backgroundTest&&f?.app)||createWorkspaceOwnerApi({
         try {
             if ((request as {action?:string})?.action==='automatic-reclamation')
                 return {ok:true,data:await executeWorkspaceReclamation(fixtureData.configFile,owner,'fixture-project',async()=>{},activity)};
-            return {ok:true,data:await executeWorkspaceOwnerJob(fixtureData.configFile,owner,request,plan,{activity})};
+            const data=await executeWorkspaceOwnerJob(fixtureData.configFile,owner,request,plan,{activity});
+            // The older UI suites intentionally use the pre-reclaim read contract.
+            return {ok:true,data};
         } catch(error) { return {ok:false,error:{code:error instanceof ApiError?error.code:'WORKSPACE_INSPECTION_UNCONFIRMED'}}; }
     },
 });
@@ -101,5 +137,5 @@ process.on('message',async message=>{
         rmSync(temporaryFixture);
         process.send?.({kind:'cleared'});
     }
-    if(message==='stop'){await app.close();await f?.stopProcesses();rmSync(base,{recursive:true,force:true});process.disconnect?.();}
+    if(message==='stop'){await app.close();await f?.stopProcesses();if(oneClick&&readLinuxProcess(fixtureData.idlePID))process.kill(fixtureData.idlePID,'SIGTERM');rmSync(base,{recursive:true,force:true});process.disconnect?.();}
 });

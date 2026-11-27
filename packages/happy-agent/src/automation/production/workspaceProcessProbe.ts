@@ -8,11 +8,11 @@ const resultSchema = z.object({ confirmed: z.boolean(), fingerprint: z.string().
         'live_session_or_process', 'process_entrypoint_reference', 'open_file_reference', 'mount_reference'])).max(6),
 }).strict();
 
-export function workspaceProcessProbe(socketPath: string, queueDirectory: string) {
-    return async (cwd: string, scope: ProcessScope): Promise<Activity> => {
+export function workspaceProcessProbe(socketPath: string, queueDirectory: string, temporary = false) {
+    return async (cwd: string, scope: ProcessScope, archive?:string): Promise<Activity> => {
         const id = basename(cwd);
         if (!/^[a-f0-9]{64}$/.test(id) || cwd !== join(queueDirectory, 'worktrees', id)) throw new Error('invalid worktree for process probe');
-        const request = JSON.stringify({ id, ...scope }) + '\n';
+        const request = JSON.stringify({ id, ...scope, ...(temporary?{temporary:true,...(archive?{archive}:{})}:{}) }) + '\n';
         if (Buffer.byteLength(request) > processProbeLimit) throw new Error('process probe request too large');
         return new Promise((resolve, reject) => {
             const socket = createConnection(socketPath);

@@ -41,7 +41,10 @@ export function openWorkspaceLifecycle(workerConfig: string, policyFile: string,
     const probe = options.processProbeSocket ? workspaceProcessProbe(options.processProbeSocket, directory) : undefined;
     const activity: ActivityProbe | undefined = options.activity
         ?? (probe ? (workspace, tasks) => linuxWorkspaceActivity(workspace, tasks, directory, policy.machineID, probe) : undefined);
-    return { lifecycle: new WorkspaceLifecycle(queue, policy, activity, Date.now, workspaceGit, options.authorize, options.authorizationCurrent), registration };
+    const archiveProbe=options.processProbeSocket ? workspaceProcessProbe(options.processProbeSocket,directory,true) : undefined;
+    const archiveActivity:ActivityProbe|undefined=options.activity
+        ?? (archiveProbe ? (workspace,tasks,archive)=>linuxWorkspaceActivity(workspace,tasks,directory,policy.machineID,(cwd,scope)=>archiveProbe(cwd,scope,archive)) : undefined);
+    return { lifecycle: new WorkspaceLifecycle(queue, policy, activity, Date.now, workspaceGit, options.authorize, options.authorizationCurrent, archiveActivity), registration };
 }
 
 /** Local owner CLI only. No REST/MCP method, credential loading, worker startup or scanner. */

@@ -27,7 +27,7 @@ const humanAction = new Set([
     'WORKSPACE_SHARED_TASKS', 'WORKSPACE_REFLOG_ONLY_RESULTS', 'WORKSPACE_GITDIR_ONLY_RESULTS',
     'WORKSPACE_GITDIR_ARTIFACTS', 'business_acceptance_required',
 ]);
-type Item = Pick<WorkspaceItem, 'reasons'|'state'|'delivery'|'lastOperation'|'plan'|'tasks'|'reclaimGuidance'>;
+type Item = Pick<WorkspaceItem, 'reasons'|'state'|'delivery'|'lastOperation'|'plan'|'tasks'|'reclaimGuidance'|'reclaimRequest'>;
 type CopyKey = keyof typeof workspacesEn.guidance;
 const copy = (key: CopyKey) => t(`workspaces.guidance.${key}` as TranslationKey);
 export function workspaceReason(code: string) {
@@ -52,30 +52,33 @@ function taskStatus(status: string): CopyKey {
     return ['queued','waiting-resource'].includes(status) ? 'taskQueued' : 'taskUnknown';
 }
 
-export function WorkspaceReclaimNotice({item, expanded=false, error, busy=false, recheck, open, openSession}: {
-    item:Item; expanded?:boolean; error?:string; busy?:boolean; recheck?:()=>void; open?:()=>void; openSession?:(sessionID:string)=>void;
+export function WorkspaceReclaimNotice({item, expanded=false, error, busy=false, recheck, open, reclaim, openSession}: {
+    item:Item; expanded?:boolean; error?:string; busy?:boolean; recheck?:()=>void; open?:()=>void; reclaim?:()=>void; openSession?:(sessionID:string)=>void;
 }) {
     const {rt} = useUnistyles();
     const dark = rt?.themeName==='dark';
     const status = workspaceReclaimStatus(item);
-    const released = status?.state==='released' || item.delivery?.state==='released';
+    const request=item.reclaimRequest, archive=request?.archive;
+    const inProgress=request && ['waiting','closing','archiving'].includes(request.state);
+    const released = request?.state==='released' || status?.state==='released' || item.delivery?.state==='released';
     const fresh = !!item.reclaimGuidance || !!item.plan;
     const planReasons = item.plan?.reasons ?? item.reasons.filter(code=>!code.startsWith(prefix));
     const actions = [...new Set([
-        ...planReasons,
-        ...(item.reclaimGuidance?.reasons ?? []),
+        ...(inProgress ? [] : planReasons),
+        ...(!inProgress ? item.reclaimGuidance?.reasons ?? [] : []),
+        ...(request?.reason ? [request.reason] : []),
         // A previous automated observation can be newer or differ in authority
         // from the manual plan. Fresh local evidence supersedes old local blockers.
         ...(status?.reason && (!fresh || ['WORKSPACE_NOT_IN_MAIN','WORKSPACE_REMOTE_UNCONFIRMED','workspace_idle_close_pending'].includes(status.reason)) ? [status.reason] : []),
         ...(!fresh && item.delivery?.dirty ? [staged] : []),
     ])].filter(code=>code!=='already_retired' && (!status || !automaticChecks.has(code)));
-    const hasAction = actions.some(code=>humanAction.has(code)) || !!error;
+    const hasAction = !inProgress && (request?.state==='attention' || actions.some(code=>humanAction.has(code)) || !!error);
     const autoWait = status?.state==='waiting' && !hasAction && actions.every(code=>waiting.has(code));
     const planReady = item.plan?.eligible && (item.plan.expiresAt>Date.now()) && actions.length===0 && !error;
-    const title = released ? 'resolved' : hasAction || actions.length || status?.state==='attention'
+    const title = released ? 'resolved' : request?.state==='archiving'?'archiving':request?.state==='closing'?'closing':inProgress?'archiveWait' : hasAction || actions.length || status?.state==='attention'
         ? (autoWait?'waiting':'blocked') : autoWait?'waiting':planReady?'ready':fresh?'manual':'unchecked';
     const palette = released || title==='ready' ? (dark?['#d5fbe4','#153729','#42b88a']:['#155440','#eefbf4','#16815c'])
-        : title==='waiting'||title==='manual'||title==='unchecked' ? (dark?['#ffe5ad','#3c2b15','#eab562']:['#663a05','#fff5db','#ad680d'])
+        : title==='waiting'||title==='manual'||title==='unchecked'||inProgress ? (dark?['#ffe5ad','#3c2b15','#eab562']:['#663a05','#fff5db','#ad680d'])
         : (dark?['#ffdee1','#461820','#ff868e']:['#8b1720','#fff0f2','#b22531']);
     const [ink, backgroundColor, borderColor]=palette;
     const text = {color:ink,lineHeight:21};
@@ -94,10 +97,23 @@ export function WorkspaceReclaimNotice({item, expanded=false, error, busy=false,
             {copy(title)}
         </Text>
         {!released && hasAction && <Text style={{...text,fontWeight:'700'}}>{copy('needs')}</Text>}
-        {(open || !released && recheck) && <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
-            {open && button('open',open)}
+        {(open || !released && (recheck || reclaim)) && <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
+            {reclaim && !request && !released && button('reclaim',reclaim)}
+            {open && button(archive?'archiveOpen':'open',open)}
             {!released && recheck && button('recheck',recheck)}
         </View>}
+        {archive && expanded && <View style={{gap:4}}>
+            <Text style={{...text,fontWeight:'600'}}>{copy('archiveFolder')}</Text>
+            <Text selectable style={text}>{archive.directory}</Text>
+            <Text selectable style={text}>{copy('savedCheckout')} · {archive.checkout}</Text>
+            {archive.temporary && <Text selectable style={text}>{copy('savedTemporary')} · {archive.temporary}</Text>}
+            <Text selectable style={text}>{copy('savedIndex')} · {archive.indexRef}</Text>
+            <Text style={text}>{copy('archiveHow')}</Text>
+            <Text selectable style={text}>{archive.directory}/RECOVERY.txt</Text>
+            {!archive.integrated && <Text style={text}>{copy('archiveUnmerged')}</Text>}
+        </View>}
+        {!archive && request?.recoveryLocation && expanded && <Text selectable style={text}>{copy('archiveFolder')} · {request.recoveryLocation}</Text>}
+        {inProgress && <Text style={text}>{copy('accepted')}</Text>}
         {!released && <>
             {error && <Text style={text}>{copy('rejected')} {workspaceReason(error)}</Text>}
             {unique.map(({code,label})=><Text key={code} style={text}>• {hasAction && humanAction.has(code) ? copy('actionLabel')+' · '
@@ -122,7 +138,7 @@ export function WorkspaceReclaimNotice({item, expanded=false, error, busy=false,
                 <Text style={{...text,fontWeight:'600'}}>{t('workspaces.openSession')}</Text>
             </Pressable>}
             {status && autoWait ? <Text style={text}>{copy('auto')}</Text>
-                : !status && fresh && !planReady && <Text style={text}>{copy('legacy')}</Text>}
+                : !status && !request && !reclaim && fresh && !planReady && <Text style={text}>{copy('legacy')}</Text>}
             {expanded && item.reclaimGuidance && <Text style={text}>{copy('checkTime')} · {new Date(item.reclaimGuidance.checkedAt).toLocaleString()}</Text>}
         </>}
     </View>;

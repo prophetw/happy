@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, symlinkSync, renameSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, symlinkSync, renameSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -13,6 +13,7 @@ import { prepareWorkspace, workspaceResult, workspaceResources, workspaceGit, ve
 import { SessionProcessProofs, readLinuxProcess } from './sessionProcessProofs';
 import { workspaceCommand, workspaceMain } from '../production/workspaces';
 import { WorkspaceLifecycle, type WorkspacePolicy, type Activity, linuxWorkspaceActivity } from './workspaceLifecycle';
+import { readReclaimRequest } from './workspaceReclaimRequests';
 import { reclaimRecord, reclaimRecords } from './workspaceReclaimState';
 
 const roots:string[]=[];
@@ -28,7 +29,7 @@ async function fixture(retireAfterIntegration = false) {
     const task=queue.enqueue({requestID:'send',grantID:'grant',workerID:'worker',sessionID:'session',workspaceID:w.id,authorization:'',text:'fixture',resources:workspaceResources(w,'session')});
     let activity:Activity={confirmed:true,blockers:[],fingerprint:'clear'},clock=1000;
     const policy:WorkspacePolicy={version:1,id:'fixture-policy',machineID:'machine',grantID:'grant',projectID:'project',root:repo,mainRef:'refs/heads/main',allowApply:true};
-    const manager=(overrides:Partial<WorkspacePolicy>={},effect=workspaceGit,authorize:()=>void|Promise<void>=()=>{},current:()=>void=()=>{})=>new WorkspaceLifecycle(queue,{...policy,...overrides},async()=>activity,()=>clock,effect,authorize,current);
+    const manager=(overrides:Partial<WorkspacePolicy>={},effect=workspaceGit,authorize:()=>void|Promise<void>=()=>{},current:()=>void=()=>{})=>new WorkspaceLifecycle(queue,{...policy,...overrides},async()=>activity,()=>clock,effect,authorize,current,async()=>activity);
     const scheduler=new TaskScheduler(queue,{authorize:async()=>{},send:async()=>({seq:1,id:'sent'}),stop:async()=>{},observe:async()=>({process:'running',cursor:1,seq:1,outcome:'completed',...workspaceResult(w)})});
     const complete=async()=>{await scheduler.tick();await scheduler.tick();expect(queue.tasks()[0].state).toBe('completed');};
     const save=()=>{writeFileSync(join(w.cwd,'feature.txt'),'feature\n');git(w.cwd,'add','feature.txt');git(w.cwd,'commit','-qm','feature');queue.update(task.id,t=>{t.resultCommit=git(w.cwd,'rev-parse','HEAD');t.worktreeDirty=false;});};
@@ -535,6 +536,101 @@ it('rejects an unpinned remote and serializes direct Happy startup with removal'
     expect(launch).toHaveBeenCalledTimes(1);
 });
 
+it('one request reserves a legacy checkout, waits, preserves dirty and temporary content, and recovers a lost Git ACK',async()=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    reclaimRecords(f.queue.directory)!.delete(f.w.id);
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.scheduler.tick();
+    const policy={remote:'origin',reclaimRemoteURL:remote};
+    const m=f.manager(policy), request=await m.requestReclaim(f.w.id,'owner');
+    expect((await m.requestReclaim(f.w.id,'owner')).operationID).toBe(request.operationID);
+    expect(()=>f.queue.enqueue({requestID:'new',grantID:'grant',workerID:'worker',sessionID:'session',workspaceID:f.w.id,
+        authorization:'',text:'fixture',resources:[]})).toThrow('WORKSPACE_RECLAIM_REQUESTED');
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress.reason).toBe('queued_running_or_recovery_reference');
+    await f.scheduler.tick();
+    const bytes=Buffer.from([0,255,12,233]);
+    writeFileSync(join(f.w.cwd,'new.bin'),bytes);git(f.w.cwd,'add','new.bin');
+    writeFileSync(join(f.w.cwd,'new.bin'),Buffer.from([0,3,4]));
+    rmSync(join(f.w.cwd,'base.txt'));
+    writeFileSync(join(f.w.cwd,'unsaved'),'preserve');
+    const outside=join(f.root,'outside');writeFileSync(outside,'outside data');
+    symlinkSync(outside,join(f.w.cwd,'link'));
+    writeFileSync(join(f.w.temporaryDirectory,'unknown.txt'),'temporary evidence');
+    f.activity({confirmed:true,blockers:['open_file_reference'],fingerprint:'external'});
+    f.advance(120_000);await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress.reason).toBe('open_file_reference');
+    expect(existsSync(f.w.cwd)).toBe(true);
+    f.activity({confirmed:true,blockers:[],fingerprint:'clear'});
+    let removals=0;
+    const lost:typeof workspaceGit=async(cwd,args,fd,timeout,indexFile)=>{
+        const result=await workspaceGit(cwd,args,fd,timeout,indexFile);
+        if(args[0]==='worktree'&&args[1]==='remove'){removals++;throw Error('lost acknowledgment');}
+        return result;
+    };
+    f.advance(120_000);await f.manager(policy,lost).requestedReclaimDue(archive,'owner');
+    expect(existsSync(f.w.cwd)).toBe(false);
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress.state).not.toBe('released');
+    f.advance(120_000);await f.manager(policy,lost).requestedReclaimDue(archive,'owner');
+    const final=(await m.requestReclaim(f.w.id,'owner'));
+    expect(final).toMatchObject({operationID:request.operationID,state:'released',archive:{integrated:true}});
+    expect(removals).toBe(1);
+    expect(git(f.repo,'worktree','list','--porcelain')).not.toContain(f.w.cwd);
+    expect(readFileSync(join(final.archive!.checkout,'new.bin'))).toEqual(Buffer.from([0,3,4]));
+    expect(execFileSync('git',['-C',f.repo,'show',final.archive!.indexRef+':new.bin'])).toEqual(bytes);
+    expect(existsSync(join(final.archive!.checkout,'base.txt'))).toBe(false);
+    expect(readFileSync(join(final.archive!.checkout,'unsaved'),'utf8')).toBe('preserve');
+    expect(readFileSync(join(final.archive!.temporary!,'unknown.txt'),'utf8')).toBe('temporary evidence');
+    expect(readlinkSync(join(final.archive!.checkout,'link'))).toBe(outside);
+    expect(readFileSync(outside,'utf8')).toBe('outside data');
+    expect(f.queue.receipt(f.task).execution?.workspaceState).toBe('retired');
+},20_000);
+it('a failed independent archive cannot release either directory',async()=>{
+    const f=await fixture(),remote=join(f.root,'remote.git'),locked=join(f.root,'not-a-directory');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    writeFileSync(locked,'not a directory');
+    writeFileSync(join(f.w.temporaryDirectory,'keep'),'original');
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote});
+    await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(locked,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress.state).toBe('attention');
+    expect(readFileSync(join(f.w.temporaryDirectory,'keep'),'utf8')).toBe('original');
+    expect(existsSync(f.w.cwd)).toBe(true);
+});
+it('includes a concurrent new file on a fresh check before anything moves',async()=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();
+    let indexRead=0;
+    const duringArchive:typeof workspaceGit=async(cwd,args,fd,timeout,indexFile)=>{
+        const data=await workspaceGit(cwd,args,fd,timeout,indexFile);
+        if(args[0]==='write-tree'&&++indexRead===2)writeFileSync(join(f.w.cwd,'arrived-late'),'keep me');
+        return data;
+    };
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote},duringArchive), request=await m.requestReclaim(f.w.id,'owner');
+    await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({operationID:request.operationID,state:'waiting',reason:'WORKSPACE_ARCHIVE_SETTLING'});
+    expect(readFileSync(join(f.w.cwd,'arrived-late'),'utf8')).toBe('keep me');
+    f.advance(120_000);await m.requestedReclaimDue(archive,'owner');
+    const final=readReclaimRequest(f.queue.directory,f.w.id)!.progress;
+    expect(final).toMatchObject({operationID:request.operationID,state:'released'});
+    expect(readFileSync(join(final.archive!.checkout,'arrived-late'),'utf8')).toBe('keep me');
+},20_000);
+it('performs no merge and keeps the unmerged commit in a repo whose policy permits an archive',async()=>{
+    const f=await fixture(), remote=join(f.root,'remote.git'), archive=join(f.root,'archive');
+    git(f.repo,'init','--bare',remote);git(f.repo,'remote','add','origin',remote);git(f.repo,'push','origin','main');
+    await f.complete();f.save();
+    const sha=git(f.w.cwd,'rev-parse','HEAD'), base=f.w.baseCommit!;
+    const m=f.manager({remote:'origin',reclaimRemoteURL:remote,allowArchive:true});
+    await m.requestReclaim(f.w.id,'owner');await m.requestedReclaimDue(archive,'owner');
+    expect(readReclaimRequest(f.queue.directory,f.w.id)?.progress).toMatchObject({state:'released',archive:{commit:sha,integrated:false}});
+    const result=m.result(f.w.id);
+    expect(result.disposition).toMatchObject({kind:'archived',head:sha});
+    expect(git(f.repo,'rev-parse',result.disposition!.retainedRef)).toBe(sha);
+    expect(git(remote,'rev-parse','refs/heads/main')).toBe(base);
+    expect(git(f.repo,'rev-parse','refs/heads/'+f.w.branch)).toBe(sha);
+});
 it('reads back both remote pushes after lost replies and retires through the same archived Owner operation',async()=>{
     const f=await deliveryFixture();
     const calls:string[]=[];

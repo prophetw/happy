@@ -12,6 +12,7 @@ import { checkoutDigest, executionSchema, objectID, testEvidenceSchema, type Tes
 import { concurrencyPolicySchema, normalizeConcurrency, type ConcurrencyPolicy } from './concurrency';
 import { decodeDispatch, encodeDispatch } from './taskQueueDispatchCompatibility';
 import { reclaimRecord } from './workspaceReclaimState';
+import { reclaimRequestFenced } from './workspaceReclaimRequests';
 import { workspaceIdleCloseFenced } from './workspaceIdleProof';
 import { decodeCandidates, encodeCandidates, holdsReviewCheckout } from './taskQueueCompatibility';
 
@@ -267,6 +268,7 @@ export class TaskQueue {
             const previous = s.tasks.find(t => t.id === id);
             if (previous) { if (previous.fingerprint !== fingerprint) throw new ApiError('REQUEST_ID_CONFLICT', 409); return previous; }
             if (s.workspaces.find(w => w.id === input.workspaceID)?.retirement) throw new ApiError('WORKSPACE_RETIRED',409);
+            if (input.workspaceID && reclaimRequestFenced(this.directory,input.workspaceID)) throw new ApiError('WORKSPACE_RECLAIM_REQUESTED',409);
             if (input.workspaceID && workspaceIdleCloseFenced(this.directory,input.workspaceID)) throw new ApiError('WORKSPACE_IDLE_CLOSE_PENDING',409);
             if (s.workspaces.find(w => w.id === input.workspaceID)?.execution.candidate?.kind === 'test'
                 && s.tasks.some(t => t.workspaceID === input.workspaceID)) throw new ApiError('TEST_CHECKOUT_SETTLED', 409);

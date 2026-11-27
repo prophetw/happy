@@ -1,5 +1,5 @@
 import { workspaceCatalogSchema, workspaceDetailSchema, workspaceListSchema, workspaceMutationResultSchema,
-    workspaceResultSchema, workspaceDeliveryReceiptSchema, workspaceDeliveryRequestSchema, type WorkspaceDeliveryRequest, workspaceTicketSchema, workspaceReadSchema, workspaceWriteSchema, workspaceOwnerRpcRequestSchema, WORKSPACE_OWNER_MACHINE_RPC, type WorkspaceOwnerRpcRequest,
+    workspaceRequestReclaimSchema, workspaceReclaimProgressSchema, workspaceResultSchema, workspaceDeliveryReceiptSchema, workspaceDeliveryRequestSchema, type WorkspaceDeliveryRequest, workspaceTicketSchema, workspaceReadSchema, workspaceWriteSchema, workspaceOwnerRpcRequestSchema, WORKSPACE_OWNER_MACHINE_RPC, type WorkspaceOwnerRpcRequest,
     type WorkspaceRead, type WorkspaceWrite } from '@slopus/happy-wire';
 import type { ZodType } from 'zod';
 function decoded<T>(schema:ZodType<T>,raw:unknown):T {
@@ -13,7 +13,7 @@ export class WorkspaceManagerError extends Error {
 type OwnerTransport = (request: WorkspaceOwnerRpcRequest) => Promise<{ status: number; body: unknown }>;
 
 function unavailable(request: WorkspaceOwnerRpcRequest, readError: string) {
-    return Error(request.route === 'write' || request.route === 'delivery' ? 'WORKSPACE_RESULT_UNKNOWN' : readError);
+    return Error(request.route === 'write' || request.route === 'delivery' || request.route === 'reclaim' ? 'WORKSPACE_RESULT_UNKNOWN' : readError);
 }
 
 export function workspaceManagerClient(token: string, current: () => boolean, endpoint = '/api/workspace-owner/v1') {
@@ -68,10 +68,14 @@ function workspaceClient(send: OwnerTransport, current: () => boolean, machineID
         }
         return result.data;
     };
-    const guidedRead = async (body: WorkspaceRead) => {
+    const guidedRead = async (body: WorkspaceRead):Promise<unknown> => {
         try { return await request('read',workspaceReadSchema.parse(body)); }
         catch (error) {
             // Only retry an older endpoint's explicit schema rejection.
+            if ('reclaim' in body && body.reclaim && error instanceof WorkspaceManagerError && error.message==='INVALID_REQUEST') {
+                const {reclaim: _reclaim, ...older}=body;
+                return guidedRead(older);
+            }
             if (!('guidance' in body) || !body.guidance || !(error instanceof WorkspaceManagerError) || error.message!=='INVALID_REQUEST') throw error;
             const {guidance: _, ...legacy}=body;
             return request('read',workspaceReadSchema.parse(legacy));
@@ -110,6 +114,8 @@ function workspaceClient(send: OwnerTransport, current: () => boolean, machineID
             if(data.operationID!==input.operationID) throw Error('WORKSPACE_RESULT_UNKNOWN');
             return data;
         },
+        reclaim: async (input: {machineID:string;projectID:string;workspaceID:string}) =>
+            decoded(workspaceReclaimProgressSchema,await request('reclaim',workspaceRequestReclaimSchema.parse(input))),
         plan: async (input: Extract<WorkspaceWrite,{action:'plan'}>) => {
             const data=decoded(workspaceTicketSchema,await request('write',workspaceWriteSchema.parse(input)));
             if(data.plan.workspaceID!==input.workspaceID)throw Error('WORKSPACE_SCOPE_CHANGED');return data;

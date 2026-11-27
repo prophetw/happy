@@ -44,6 +44,15 @@ export const workspaceDeliverySchema = z.object({
     canStart: z.boolean().optional(), receipt: workspaceDeliveryReceiptSchema.optional(),
     next: z.enum(['inspect','restore','claim','preserve','test','integrate','finalize','none']),
 }).strict();
+export const workspaceReclaimProgressSchema = z.strictObject({
+    operationID: id, state: z.enum(['waiting','closing','archiving','attention','released']),
+    reason: z.string().max(128).optional(), recoveryLocation:z.string().max(4096).optional(), updatedAt: z.number().nonnegative(),
+    archive: z.object({ directory:z.string().max(4096), checkout:z.string().max(4096),
+        temporary:z.string().max(4096).optional(), commit:commit, indexRef:z.string().max(256),
+        integrated:z.boolean() }).strict().optional(),
+});
+export const workspaceRequestReclaimSchema = z.strictObject({machineID:id,projectID:id,workspaceID:digest});
+export type WorkspaceReclaimProgress = z.infer<typeof workspaceReclaimProgressSchema>;
 const workspaceReclaimGuidanceSchema = z.strictObject({
     checkedAt: z.number().int().nonnegative(),
     reasons: z.array(z.string().max(128)).max(32),
@@ -60,6 +69,7 @@ export const workspaceItemSchema = z.object({ id: digest, projectID: id, directo
     reasons: z.array(z.string()), taskCount: z.number().int().nonnegative(), tasks: z.array(z.object({ id: digest, requestID: id.optional(), sessionID: id, state: z.string(), resultCommit: commit.optional() })).max(20),
     disposition: workspaceDispositionSchema.optional(), lastVerification: z.number().optional(), lastOperation: workspaceOperationSchema.optional(),
     plan: workspacePlanSchema.optional(), delivery: workspaceDeliverySchema.optional(), reclaimGuidance: workspaceReclaimGuidanceSchema.optional(),
+    canRequestReclaim:z.boolean().optional(), reclaimRequest:workspaceReclaimProgressSchema.optional(),
 }).strict();
 export const workspaceResultSchema = z.object({ workspaceID: digest, revision: z.number(), workspaceState: z.enum(['active','retiring','retired']),
     disposition: workspaceDispositionSchema.optional(), operation: workspaceOperationSchema.optional(), operations: z.array(workspaceOperationSchema).max(16).optional(),
@@ -76,8 +86,8 @@ const scope = { machineID: id, projectID: id };
 export const workspaceReadSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('inventory'), ...scope, after: digest.optional(), limit: z.number().int().min(1).max(5).default(5) }).strict(),
     z.object({ action: z.literal('delivery-inventory'), ...scope, after: digest.optional(), limit: z.number().int().min(1).max(5).default(5),
-        view: z.enum(['pending','released']).default('pending'), requestID:id.optional(), guidance:z.boolean().optional() }).strict(),
-    z.object({ action: z.literal('detail'), ...scope, workspaceID: digest, guidance:z.boolean().optional() }).strict(),
+        view: z.enum(['pending','released']).default('pending'), requestID:id.optional(), guidance:z.boolean().optional(), reclaim:z.literal(true).optional() }).strict(),
+    z.object({ action: z.literal('detail'), ...scope, workspaceID: digest, guidance:z.boolean().optional(), reclaim:z.literal(true).optional() }).strict(),
     z.object({ action: z.literal('result'), ...scope, workspaceID: digest, operationID: id.optional() }).strict(),
 ]);
 export const workspaceWriteSchema = z.discriminatedUnion('action', [
@@ -99,6 +109,7 @@ export const workspaceOwnerRpcRequestSchema = z.discriminatedUnion('route', [
     z.strictObject({ route: z.literal('read'), body: workspaceReadSchema }),
     z.strictObject({ route: z.literal('write'), body: workspaceWriteSchema }),
     z.strictObject({ route: z.literal('delivery'), body: workspaceDeliveryRequestSchema }),
+    z.strictObject({ route: z.literal('reclaim'), body: workspaceRequestReclaimSchema }),
 ]);
 export type WorkspaceOwnerRpcRequest = z.infer<typeof workspaceOwnerRpcRequestSchema>;
 export type WorkspaceDeliveryRequest = z.infer<typeof workspaceDeliveryRequestSchema>;

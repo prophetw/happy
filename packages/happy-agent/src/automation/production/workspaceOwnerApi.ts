@@ -6,7 +6,7 @@ import { userInfo } from 'node:os';
 import { setTimeout } from 'node:timers';
 import { z, ZodError } from 'zod';
 import { workspaceCatalogSchema, workspaceDetailSchema, workspaceListSchema, workspacePlanSchema,
-    workspaceReadSchema, workspaceResultSchema, workspaceWriteSchema, workspaceDeliveryRequestSchema, workspaceDeliveryReceiptSchema, workspaceOperationSchema, type WorkspaceWrite } from '@slopus/happy-wire';
+    workspaceReadSchema, workspaceResultSchema, workspaceWriteSchema, workspaceRequestReclaimSchema, workspaceReclaimProgressSchema, workspaceDeliveryRequestSchema, workspaceDeliveryReceiptSchema, workspaceOperationSchema, type WorkspaceWrite } from '@slopus/happy-wire';
 import { happyOwnerVerifier, canonicalBody } from '../rest/auth';
 import { MetadataStore } from '../rest/store';
 import { ApiError } from '../rest/schema';
@@ -14,6 +14,7 @@ import { isServiceAuthorization } from '../rest/serviceTokens';
 import { hash } from '../journal';
 import { readWorkspaceOwnerConfig, workspaceOwnerScope, workspaceOwnerControlProjects } from './workspaceOwner';
 import { readProductionConfig } from './config';
+import { dueRequestedReclaims } from '../rest/workspaceReclaimRequests';
 import { dueReclaimProjects } from '../rest/workspaceReclaimState';
 
 type JobReply = { ok: true; data: unknown } | { ok: false; error: { code: string } };
@@ -98,6 +99,7 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
     const machineQueue = join(config.homeDirectory ?? userInfo().homedir,'.local/state/happy-control/machines',hash(worker.registration.machineID));
     const background = async () => {
         const due = dueReclaimProjects(machineQueue,now());
+        for(const pending of dueRequestedReclaims(machineQueue,now())) due.add(pending.projectID);
         if (!due.size || closing) return;
         const authorization = options.reclaimCredential?.();
         if (!authorization) return;
@@ -155,6 +157,14 @@ export function createWorkspaceOwnerApi(options: { configFile: string; jobEntry:
         scope(ownerID,request,allowedProjects.get(req));
         admitted.add(req);
         const result=workspaceDeliveryReceiptSchema.parse(await execute(ownerID,request,undefined,req.headers.authorization));
+        scope(ownerID,request,new Set(await verifyControl(req.headers.authorization,ownerID)));
+        return ok(result);
+    });
+    app.post(`${base}/reclaim`,async req=>{
+        const request=workspaceRequestReclaimSchema.parse(req.body),ownerID=owners.get(req)!;
+        scope(ownerID,request,allowedProjects.get(req));
+        admitted.add(req);
+        const result=workspaceReclaimProgressSchema.parse(await execute(ownerID,{action:'request-reclaim',...request},undefined,req.headers.authorization));
         scope(ownerID,request,new Set(await verifyControl(req.headers.authorization,ownerID)));
         return ok(result);
     });

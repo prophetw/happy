@@ -46,6 +46,14 @@ await build({entryPoints:[join(repo,'packages/happy-agent/src/automation/rest/fi
         b.onResolve({filter:/^@slopus\/happy-wire$/},()=>({path:join(repo,'packages/happy-wire/src/index.ts')}));
         b.onResolve({filter:/^@slopus\/happy-wire\/serverUrl$/},()=>({path:join(repo,'packages/happy-wire/src/serverUrl.ts')}));
     }}]});
+if (process.env.HAPPY_WORKSPACE_ONE_CLICK_FIXTURE==='1') {
+    await build({entryPoints:[join(repo,'packages/happy-agent/src/automation/rest/workspaceIdleProof.ts')],
+        outfile:join(out,'idle-close.mjs'),bundle:true,packages:'external',platform:'node',format:'esm',logLevel:'silent',
+        plugins:[{name:'idle-wire',setup(b){
+            b.onResolve({filter:/^@slopus\/happy-wire$/},()=>({path:join(repo,'packages/happy-wire/src/index.ts')}));
+            b.onResolve({filter:/^@slopus\/happy-wire\/serverUrl$/},()=>({path:join(repo,'packages/happy-wire/src/serverUrl.ts')}));
+        }}]});
+}
 let child, log = "";
 const start = async root => {
     child=fork(join(out,'harness.mjs'),[out],{stdio:['ignore','pipe','pipe','ipc'],
@@ -60,8 +68,17 @@ const context=await browser.newContext({viewport:{width:1440,height:1000}});
 context.setDefaultTimeout(22_000);
 let page=await context.newPage();
 let phase='normal';
+if (process.env.HAPPY_WORKSPACE_ONE_CLICK_FIXTURE!=='1') {
+    await context.route('**/api/workspace-owner/v1/read',async route=>{
+        const response=await route.fetch();
+        const packet=await response.json();
+        if (packet?.data?.item) delete packet.data.item.canRequestReclaim;
+        for(const row of packet?.data?.items??[])delete row.canRequestReclaim;
+        await route.fulfill({response,json:packet});
+    });
+}
 const observePage=()=>{page.on('console',msg=>{if(msg.type()==='error'&&!(phase==='unknown'&&msg.text().includes('net::ERR_FAILED')))evidence.consoleErrors.push(msg.text());});page.on('pageerror',e=>evidence.pageErrors.push(e.message));page.on('response',r=>{if(r.status()>=400)evidence.httpErrors.push({url:r.url(),status:r.status()});});
-page.on('request',r=>{if(r.url().endsWith('/write')||r.url().endsWith('/delivery'))evidence.payloads.push(JSON.parse(r.postData()??'{}'));});};
+page.on('request',r=>{if(r.url().endsWith('/write')||r.url().endsWith('/delivery')||r.url().endsWith('/reclaim'))evidence.payloads.push(JSON.parse(r.postData()??'{}'));});};
 observePage();
 const button=name=>page.getByRole('button',{name,exact:true});
 const open=async()=>{await page.goto('http://127.0.0.1:20082/');await button('项目工作区').click();await page.getByText('Fixture Project',{exact:true}).waitFor();await page.getByText('正在核对权限与工作区…',{exact:true}).waitFor({state:'hidden'});};
@@ -69,7 +86,54 @@ const find=async name=>{const id=ready.workspaces[name].id,card=page.getByTestId
 const resolveNoChange=async()=>{await button('核验无代码改动').click();await button('确认核验并记录证据').click();await page.getByText('成果证据已记录',{exact:true}).waitFor();await button('生成回收计划').waitFor();};
 const finalize = process.env.HAPPY_WORKSPACE_FINALIZE_FIXTURE === '1';
 try {
-    if (process.env.HAPPY_WORKSPACE_GUIDANCE_FIXTURE === '1') {
+    if (process.env.HAPPY_WORKSPACE_ONE_CLICK_FIXTURE==='1') {
+        const git=(cwd,...args)=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:'pipe'}).trim();
+        await page.setViewportSize({width:440,height:956});
+        await page.emulateMedia({colorScheme:'dark'});
+        await open();
+        const row=page.getByTestId('workspace-'+ready.workspaces.live.id);
+        if(!await row.count())await button('加载更多').click();
+        const reclaim=row.getByRole('button',{name:'回收',exact:true});
+        await reclaim.click();
+        await row.getByText('正在等待回收',{exact:true}).waitFor();
+        assert.equal(evidence.payloads.length,1);
+        await row.screenshot({path:join(out,'one-click-waiting.png')});
+        await page.close();
+        const stopped=once(child,'exit');child.kill('SIGKILL');await stopped;
+        const resumed=await start(ready.root);
+        assert.notEqual(ready.pid,resumed.pid);
+        const cwd=ready.workspaces.live.cwd;
+        writeFileSync(join(ready.root,'release-idle'),'allow cooperative close');
+        const started=Date.now();
+        while(existsSync(cwd)&&Date.now()-started<130_000) await new Promise(resolve=>setTimeout(resolve,250));
+        assert.ok(!existsSync(cwd));
+        assert.ok(!git(ready.repo,'worktree','list','--porcelain').includes(cwd));
+        assert.equal(readFileSync(join(ready.root,'thread-history'),'utf8'),'fixture-thread saved');
+        page=await context.newPage();observePage();
+        await open();
+        await button('回收记录').click();
+        const card=page.getByTestId('workspace-'+ready.workspaces.live.id);
+        await card.getByText('已回收',{exact:true}).first().waitFor();
+        await card.getByRole('button',{name:'查看／恢复保留资料'}).click();
+        await page.getByText('保留资料位于执行电脑',{exact:true}).waitFor();
+        await page.getByText('原请求 · send-live',{exact:true}).waitFor();
+        const detail=await page.evaluate(async id=>{
+            const response=await fetch('/api/workspace-owner/v1/read',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer fixture-owner'},
+                body:JSON.stringify({action:'detail',machineID:'fixture-machine',projectID:'fixture-project',workspaceID:id,guidance:true,reclaim:true})});
+            return (await response.json()).data;
+        },ready.workspaces.live.id);
+        assert.equal(detail.item.reclaimRequest.state,'released');
+        const archive=detail.item.reclaimRequest.archive;
+        assert.deepEqual(readFileSync(join(archive.temporary,'fixture-7.data')),Buffer.from([7,255,2]));
+        const commands=readFileSync(join(archive.directory,'RECOVERY.txt'),'utf8').split('\n').filter(line=>line.startsWith('git ')||line.startsWith('tar '));
+        execFileSync('/bin/bash',['-e','-o','pipefail','-c',commands.join('\n')],{stdio:'pipe'});
+        assert.ok(git(ready.repo,'worktree','list','--porcelain').includes('/restored/'+ready.workspaces.live.id));
+        assert.equal(evidence.payloads.length,1);
+        evidence.reclamation={operationID:detail.item.reclaimRequest.operationID,registrationAbsent:true,recoveryTested:true,servicePIDs:[ready.pid,resumed.pid]};
+        evidence.scenarios.push('one list click, close page and restart Owner, cooperative dedicated process saves history and exits, real Git registration removed, temporary bytes restored with documented recovery');
+        await page.screenshot({path:join(out,'released-recovery-440.png'),fullPage:true});
+        evidence.actualFixtureRemoved=1;evidence.realUserDirectoriesRemoved=0;
+    } else if (process.env.HAPPY_WORKSPACE_GUIDANCE_FIXTURE==='1') {
         const notice=page.getByTestId('workspace-reclaim-notice');
         const scoped=name=>page.getByTestId('workspace-'+ready.workspaces[name].id).getByTestId('workspace-reclaim-notice');
         const alert=box=>box.getByRole('alert').filter({hasText:'暂时不能回收'});

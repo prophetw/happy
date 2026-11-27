@@ -10,6 +10,7 @@ import { privateDirectory } from './privateFs';
 import { TaskQueue, executionSchema, type Workspace, type Resource } from './taskQueue';
 import { rememberWorkspaceIdentity } from './workspaceIdentity';
 import { reclaimRecord, rememberReclaimCreation } from './workspaceReclaimState';
+import { readReclaimRequest, reclaimRequestFenced } from './workspaceReclaimRequests';
 import { workspaceIdleCloseFenced } from './workspaceIdleProof';
 import { checkoutDigest, objectID, restrictedExecution } from './execution';
 
@@ -33,10 +34,10 @@ export function canonicalRepository(root: string): string {
  * The per-workspace flock is inherited by Git, so parent death cannot permit
  * a second checkout while the original Git process is still running.
  */
-export async function workspaceGit(cwd: string, args: string[], lockFD?: number, timeoutMs = 30_000): Promise<string> {
+export async function workspaceGit(cwd: string, args: string[], lockFD?: number, timeoutMs = 30_000, indexFile?:string): Promise<string> {
     return new Promise((resolve, reject) => {
         const child = spawn('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false','-C',cwd,...args], { stdio: lockFD === undefined ? ['ignore','pipe','pipe'] : ['ignore','pipe','pipe',lockFD],
-            detached: true, env: gitEnvironment() });
+            detached: true, env: {...gitEnvironment(),...(indexFile?{GIT_INDEX_FILE:indexFile}:{})} });
         let output = '', bytes = 0, timedOut = false;
         let killTimer:ReturnType<typeof setTimeout>|undefined;
         child.stdout?.on('data', data => { bytes += data.length; if (bytes <= 1024*1024) output += data; });
@@ -164,13 +165,14 @@ export async function withManagedWorkspaceLaunch<T>(directory: string, launch: (
     const [machine, kind, id] = relative(machines,target).split('/');
     if (kind!=='worktrees' || !/^[a-f0-9]{64}$/.test(machine) || !/^[a-f0-9]{64}$/.test(id)) return launch();
     const queueDirectory=join(machines,machine);
-    if (!existsSync(join(queueDirectory,'workspace-reclamation'))) return launch();
+    if (!existsSync(queueDirectory)) return launch();
     const fd=await workspaceLock(queueDirectory,id);
     try {
         const queue=new TaskQueue(queueDirectory,{}, {readOnly:true});
         const workspace=queue.transaction(state=>state.workspaces.find(w=>w.id===id),true);
-        if (!workspace || !reclaimRecord(queueDirectory,workspace)) return await launch();
+        if (!workspace || (!reclaimRecord(queueDirectory,workspace) && !readReclaimRequest(queueDirectory,id))) return await launch();
         if (workspace.retirement) throw new ApiError(workspace.retirement.phase==='retired'?'WORKSPACE_RETIRED':'WORKSPACE_RETIRING',409);
+        if (reclaimRequestFenced(queueDirectory,id)) throw new ApiError('WORKSPACE_RECLAIM_REQUESTED',409);
         if (workspaceIdleCloseFenced(queueDirectory,id)) throw new ApiError('WORKSPACE_IDLE_CLOSE_PENDING',409);
         return await launch();
     } finally { closeSync(fd); }
@@ -225,6 +227,7 @@ export async function prepareWorkspace(queue: TaskQueue, input: { requestID: str
                 const w = s.workspaces.find(w => w.id === source?.workspaceID);
                 if (!w || w.projectID !== input.projectID || w.root !== input.root || w.repository !== repository || w.retirement || w.execution.mode === 'read-only')
                     throw new ApiError('CANDIDATE_UNAVAILABLE', 409);
+                if (reclaimRequestFenced(queue.directory,w.id)) throw new ApiError('WORKSPACE_RECLAIM_REQUESTED',409);
                 if (source!.checkoutDigest && source!.checkoutDigest !== candidate.digest) throw new ApiError('CANDIDATE_CHANGED', 409);
                 cwd = w.cwd;
             }

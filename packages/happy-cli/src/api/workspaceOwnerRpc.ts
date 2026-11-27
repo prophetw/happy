@@ -39,7 +39,7 @@ export function createWorkspaceOwnerRpc(
             });
             return { status: response.status, body: await response.json() };
         } catch {
-            const mayMutate = route === 'write' || route === 'delivery';
+            const mayMutate = route === 'write' || route === 'delivery' || route === 'reclaim';
             return failure(503, mayMutate ? 'WORKSPACE_RESULT_UNKNOWN' : 'WORKSPACE_MANAGER_UNAVAILABLE',
                 mayMutate ? 'unknown' : 'not_started');
         }

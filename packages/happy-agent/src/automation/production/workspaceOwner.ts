@@ -7,7 +7,7 @@ import { ApiError, directoryAllowed, directoryProjectID } from '../rest/schema';
 import { isServiceAuthorization } from '../rest/serviceTokens';
 import { canonicalBody } from '../rest/auth';
 import { openWorkspaceLifecycle } from './workspaces';
-import { workspaceReadSchema, workspaceWriteSchema, workspaceDeliveryRequestSchema } from '@slopus/happy-wire';
+import { workspaceReadSchema, workspaceWriteSchema, workspaceDeliveryRequestSchema, workspaceRequestReclaimSchema } from '@slopus/happy-wire';
 
 const absolute = z.string().startsWith('/').max(4096);
 export const workspaceOwnerConfigSchema = z.object({ version: z.literal(1), workerConfig: absolute, stateDirectory: absolute,
@@ -57,9 +57,15 @@ export async function workspaceOwnerControlProjects(file:string,authorization:st
             &&p.id===directoryProjectID(p.policy.root);
     }).map(p=>p.id);
 }
+function reclaimPin(projectID:string) {
+    return z.record(z.string(),z.string().min(1).max(4096)).parse(JSON.parse(process.env.HAPPY_WORKSPACE_RECLAIM_REMOTE_PINS??'{}'))[projectID];
+}
+
 export async function executeWorkspaceOwnerJob(file: string, ownerID: string, raw: unknown, plan?: unknown, dependencies: { activity?: ActivityProbe;authorize?:()=>Promise<void> } = {}) {
     const read = workspaceReadSchema.safeParse(raw), delivery=workspaceDeliveryRequestSchema.safeParse(raw);
-    const request = read.success ? read.data : delivery.success ? delivery.data : workspaceWriteSchema.parse(raw);
+    const reclaim=typeof raw==='object' && raw!==null && 'action' in raw && raw.action==='request-reclaim'
+        ? (()=>{const {action:_action,...scope}=raw;return {action:'request-reclaim' as const,...workspaceRequestReclaimSchema.parse(scope)};})() : undefined;
+    const request = reclaim ?? (read.success ? read.data : delivery.success ? delivery.data : workspaceWriteSchema.parse(raw));
     const scope = workspaceOwnerScope(file, ownerID), project = scope.projects.find(p => p.id === request.projectID);
     if (!project || request.machineID !== scope.worker.registration.machineID) throw new ApiError('WORKSPACE_SCOPE_DENIED', 403);
     const validateLocal=()=>{
@@ -69,6 +75,7 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
     const { lifecycle } = openWorkspaceLifecycle(scope.config.workerConfig, project.policyFile, {
         homeDirectory: scope.config.homeDirectory,
         activity: dependencies.activity,
+        reclaimRemoteURL:request.action==='request-reclaim'?reclaimPin(request.projectID):undefined,
         processProbeSocket: scope.config.processProbeSocket,
         readOnly: ['inventory','delivery-inventory','detail','result','plan'].includes(request.action),
         ownerDirectorySelection:true,authorizationCurrent:validateLocal,
@@ -85,9 +92,10 @@ export async function executeWorkspaceOwnerJob(file: string, ownerID: string, ra
         }
         return { total: page.total, returned: items.length, next: page.next, items };
     }
-    if (request.action === 'delivery-inventory') return lifecycle.deliveryInventory(request.limit,request.after,request.view,request.requestID,request.guidance);
-    if (request.action === 'detail') return lifecycle.detail(request.workspaceID,request.guidance);
+    if (request.action === 'delivery-inventory') return lifecycle.deliveryInventory(request.limit,request.after,request.view,request.requestID,request.guidance,request.reclaim);
+    if (request.action === 'detail') return lifecycle.detail(request.workspaceID,request.guidance,request.reclaim);
     if (request.action === 'result') return lifecycle.result(request.workspaceID, request.operationID, true);
+    if (request.action === 'request-reclaim') return lifecycle.requestReclaim(request.workspaceID,ownerID);
     if (request.action === 'plan') return lifecycle.plan(request.workspaceID);
     if (request.action === 'adopt') return lifecycle.adopt(request.workspaceID, request.operationID, request.revision, request.head);
     if (request.action === 'resolve') return lifecycle.resolve(request.workspaceID, { operationID: request.operationID,
@@ -108,11 +116,11 @@ export async function executeWorkspaceReclamation(file: string, ownerID: string,
         if (latest.worker.registration.machineID!==scope.worker.registration.machineID || !policy
             || canonicalBody(policy)!==canonicalBody(project.policy)) throw new ApiError('WORKSPACE_AUTHORIZATION_CHANGED',403);
     };
-    const pins=z.record(z.string(),z.string().min(1).max(4096)).parse(JSON.parse(process.env.HAPPY_WORKSPACE_RECLAIM_REMOTE_PINS ?? '{}'));
     const { lifecycle } = openWorkspaceLifecycle(scope.config.workerConfig,project.policyFile,{
-        reclaimRemoteURL:pins[projectID],homeDirectory:scope.config.homeDirectory,processProbeSocket:scope.config.processProbeSocket,readOnly:false,activity,
+        reclaimRemoteURL:reclaimPin(projectID),homeDirectory:scope.config.homeDirectory,processProbeSocket:scope.config.processProbeSocket,readOnly:false,activity,
         ownerDirectorySelection:true,authorizationCurrent:current,authorize:async()=>{current();await authorize();current();},
     });
+    await lifecycle.requestedReclaimDue(join(scope.config.stateDirectory,'requested-reclamation'),ownerID);
     await lifecycle.reclaimDue(join(scope.config.stateDirectory,'automatic-reclamation'));
     return {};
 }

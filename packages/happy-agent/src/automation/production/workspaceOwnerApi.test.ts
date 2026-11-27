@@ -48,6 +48,21 @@ it('returns simultaneous scoped blockers and a bounded temporary listing only to
     expect(fresh.body.data.item.reclaimGuidance.reasons).toEqual([]);
     expect(existsSync(w.cwd)).toBe(true);
 });
+it('keeps the older guided contract and records one scoped one-click intent',async()=>{
+    const f=await fixture(), w=f.workspaces.live;
+    const request={...f.scope,workspaceID:w.id};
+    expect((await f.api('/reclaim',{...request,projectID:'foreign'})).status).toBe(403);
+    const old=await f.api('/read',{...request,action:'detail',guidance:true});
+    expect(old.body.data.item).not.toHaveProperty('canRequestReclaim');
+    expect(old.body.data.item).not.toHaveProperty('reclaimRequest');
+    const receipt=await f.api('/reclaim',request);
+    const again=await f.api('/reclaim',request);
+    expect(receipt.body.data).toMatchObject({state:'waiting'});
+    expect(again.body.data.operationID).toBe(receipt.body.data.operationID);
+    const observed=await f.api('/read',{...request,action:'detail',guidance:true,reclaim:true});
+    expect(observed.body.data.item.reclaimRequest).toEqual(receipt.body.data);
+    expect(existsSync(w.cwd)).toBe(true);
+});
 it('requires server proof for resolution; plans/explicit apply retain task query, refs and reconstruction data',async()=>{
     const f=await fixture(),w=f.workspaces.ready,main=fixtureGit(f.repo,'rev-parse','main');
     const before=await f.api('/write',f.request('ready','plan'));expect(before.body.data.plan.eligible).toBe(false);
